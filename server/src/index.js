@@ -4,6 +4,11 @@ import dotenv from "dotenv";
 import { odooClientFromEnv } from "./odoo.js";
 import { addLink, listLinksByConversation } from "./linkStore.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
+import { fileURLToPath } from "url";
+import path from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -447,6 +452,19 @@ function escapeHtml(s) {
 }
 
 const host = process.env.HOST || "0.0.0.0"; // force IPv4 bind
+
+// --- static files (UI) ---
+const distPath = path.join(__dirname, "../../client/dist");
+app.use(express.static(distPath));
+
+// Fallback: serve index.html for any other route (SPA) - EXCEPT /api
+app.get("*", (req, res, next) => {
+  if (req.url.startsWith("/api") || req.url === "/health") {
+    return next();
+  }
+  res.sendFile(path.join(distPath, "index.html"));
+});
+
 app.listen(port, host, () => {
   console.log(`[server] listening on http://${host}:${port}`);
 });

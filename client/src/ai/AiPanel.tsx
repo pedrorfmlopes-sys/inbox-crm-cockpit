@@ -35,13 +35,6 @@ type AiHistoryEntry = {
   text?: string;
 };
 
-const languageLine =
-  effectiveLocale === "auto"
-    ? `Responde no mesmo idioma em que o email está escrito.
-`
-    : `Escreve em ${lang}.
-`;
-
 const AI_HISTORY_KEY_V1 = "icc.aiHistory.v1";
 const AI_HISTORY_KEY_V2 = "icc.aiHistory.v2";
 const AI_BLOCK_START = "<!--ICC_AI_START-->";
@@ -58,13 +51,13 @@ function loadAiHistory(): AiHistoryEntry[] {
     const now = Date.now();
     const pruned = Array.isArray(arr)
       ? arr
-          .filter((x) => x && typeof x.ts === "number" && now - x.ts <= AI_HISTORY_KEEP_MS)
-          .map((x) => {
-            // v1 entries might not have emailKey; keep them but tag with conversationId.
-            const cid = String((x as any).conversationId || "");
-            const emailKey = String((x as any).emailKey || (cid ? `cid:${cid}` : ""));
-            return { ...(x as any), conversationId: cid, emailKey } as AiHistoryEntry;
-          })
+        .filter((x) => x && typeof x.ts === "number" && now - x.ts <= AI_HISTORY_KEEP_MS)
+        .map((x) => {
+          // v1 entries might not have emailKey; keep them but tag with conversationId.
+          const cid = String((x as any).conversationId || "");
+          const emailKey = String((x as any).emailKey || (cid ? `cid:${cid}` : ""));
+          return { ...(x as any), conversationId: cid, emailKey } as AiHistoryEntry;
+        })
       : [];
     // persist prune to keep storage clean
     localStorage.setItem(AI_HISTORY_KEY_V2, JSON.stringify(pruned));
@@ -774,7 +767,7 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
   const persistSig = (k: string, v: string) => {
     try {
       localStorage.setItem(k, v);
-    } catch {}
+    } catch { }
   };
 
   const loadSig = () => {
@@ -786,7 +779,7 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
       setSigImgUrl(localStorage.getItem(SIG_KEY_IMG) || "");
       setSigImgDataUrl(localStorage.getItem(SIG_KEY_IMG_DATA) || "");
       setSigImgMaxW(localStorage.getItem(SIG_KEY_IMG_W) || "260");
-    } catch {}
+    } catch { }
   };
 
   const buildSignatureHtml = () => {
@@ -920,70 +913,70 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
   const [addRole, setAddRole] = useState<RecipientRole>("bcc");
 
 
-// Track the currently selected emailKey so delayed tasks can cancel correctly
-const currentEmailKeyRef = useRef<string>("");
-useEffect(() => {
-  currentEmailKeyRef.current = emailKey || "";
-}, [emailKey]);
+  // Track the currently selected emailKey so delayed tasks can cancel correctly
+  const currentEmailKeyRef = useRef<string>("");
+  useEffect(() => {
+    currentEmailKeyRef.current = emailKey || "";
+  }, [emailKey]);
 
-// Auto-summary state per email (throttle + in-flight guard). We only mark success when a summary is actually saved.
-const autoSummaryStateRef = useRef<Record<string, { inflight?: boolean; lastAttempt?: number }>>({});
+  // Auto-summary state per email (throttle + in-flight guard). We only mark success when a summary is actually saved.
+  const autoSummaryStateRef = useRef<Record<string, { inflight?: boolean; lastAttempt?: number }>>({});
 
-function stripHtml(html: string): string {
-  return (html || "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+  function stripHtml(html: string): string {
+    return (html || "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
 
-useEffect(() => {
-  if (!ctx.conversationId) return;
-  if (!emailKey) return;
+  useEffect(() => {
+    if (!ctx.conversationId) return;
+    if (!emailKey) return;
 
-  // If we already have a cached summary for this email, nothing to do.
-  const cached = loadSummary(emailKey);
-  if (cached) return;
+    // If we already have a cached summary for this email, nothing to do.
+    const cached = loadSummary(emailKey);
+    if (cached) return;
 
-  // Need a body to summarize (avoid using previous email body).
-  const bodyNow = (rawBody || body || "").trim();
-  if (!bodyNow) return;
+    // Need a body to summarize (avoid using previous email body).
+    const bodyNow = (rawBody || body || "").trim();
+    if (!bodyNow) return;
 
-  const st = (autoSummaryStateRef.current[emailKey] ||= {});
-  const now = Date.now();
+    const st = (autoSummaryStateRef.current[emailKey] ||= {});
+    const now = Date.now();
 
-  // Don't run multiple times in parallel for the same email.
-  if (st.inflight) return;
+    // Don't run multiple times in parallel for the same email.
+    if (st.inflight) return;
 
-  // Throttle retries (important when the API is down; otherwise we 'give up forever').
-  if (st.lastAttempt && now - st.lastAttempt < 30000) return;
+    // Throttle retries (important when the API is down; otherwise we 'give up forever').
+    if (st.lastAttempt && now - st.lastAttempt < 30000) return;
 
-  st.inflight = true;
-  st.lastAttempt = now;
+    st.inflight = true;
+    st.lastAttempt = now;
 
-  const keyAtSchedule = emailKey;
+    const keyAtSchedule = emailKey;
 
-  const t = window.setTimeout(async () => {
-    try {
-      // If user switched emails meanwhile, cancel.
-      if (currentEmailKeyRef.current !== keyAtSchedule) return;
+    const t = window.setTimeout(async () => {
+      try {
+        // If user switched emails meanwhile, cancel.
+        if (currentEmailKeyRef.current !== keyAtSchedule) return;
 
-      // Run summarize. Summary language is always pt-PT (Portuguese Portugal).
-      await run("summarize");
-    } finally {
+        // Run summarize. Summary language is always pt-PT (Portuguese Portugal).
+        await run("summarize");
+      } finally {
+        const st2 = (autoSummaryStateRef.current[keyAtSchedule] ||= {});
+        st2.inflight = false;
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(t);
       const st2 = (autoSummaryStateRef.current[keyAtSchedule] ||= {});
       st2.inflight = false;
-    }
-  }, 350);
-
-  return () => {
-    window.clearTimeout(t);
-    const st2 = (autoSummaryStateRef.current[keyAtSchedule] ||= {});
-    st2.inflight = false;
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [ctx.conversationId, emailKey, rawBody, body]);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.conversationId, emailKey, rawBody, body]);
 
 
   async function ensureMasterCategory(displayName: string): Promise<void> {
@@ -1233,7 +1226,7 @@ useEffect(() => {
         emailForAi!.bodyText = `${email.bodyText || ""}\n\n---\nINSTRUÇÕES DO UTILIZADOR (não copiar literalmente):\n${composeNotes.trim()}\n`;
       }
 
-      
+
       const referenceText = action === "rewrite"
         ? rewriteText
         : `${email.subject || ""}
@@ -1456,222 +1449,222 @@ ${composeNotes || ""}`;
   }
 
 
-async function insertThread() {
-  try {
-    setErr("");
-    setNotice("");
+  async function insertThread() {
+    try {
+      setErr("");
+      setNotice("");
 
-    const OfficeAny = (window as any)?.Office;
-    const item = OfficeAny?.context?.mailbox?.item;
-    if (!item) throw new Error("Esta ação só funciona dentro do Outlook (email aberto).");
+      const OfficeAny = (window as any)?.Office;
+      const item = OfficeAny?.context?.mailbox?.item;
+      if (!item) throw new Error("Esta ação só funciona dentro do Outlook (email aberto).");
 
-    const html = buildHtmlForInsert();
-    if (!html) return;
+      const html = buildHtmlForInsert();
+      if (!html) return;
 
-    const sig = buildSignatureHtml();
-    const htmlWithSig = sig ? `${html}${sig}` : html;
+      const sig = buildSignatureHtml();
+      const htmlWithSig = sig ? `${html}${sig}` : html;
 
-    if (recipientPreset === "custom") {
-      // Não bloqueamos: abrimos a thread na mesma, mas avisamos.
-      // (O Outlook decide To/Cc no Reply/ReplyAll em Read mode.)
-      setNotice("Na thread, o Outlook decide To/Cc. Se precisares de controlar destinatários, usa “Nova msg”.");
-    }
-
-    const OfficeAny2 = (window as any)?.Office;
-
-    const makeOriginalItemAttachment = () => {
-      if (!attachOriginalItem) return null;
-      const itemId = item?.itemId;
-      if (!itemId) return null;
-      const t = OfficeAny2?.MailboxEnums?.AttachmentType?.Item ?? "item";
-      const safe = (ctx.subject || "email").replace(/[^a-z0-9\-_. ]+/gi, "_").slice(0, 64);
-      return { itemId, name: `${safe}.msg`, type: t };
-    };
-
-    // Compatibilidade: alguns Outlook só aceitam string (htmlBody) em vez de object { htmlBody, attachments }
-    const tryCall = (fn: any) => {
-      const original = makeOriginalItemAttachment();
-
-      // 1) tentar com object (para suportar anexos)
-      try {
-        fn(original ? { htmlBody: htmlWithSig, attachments: [original] } : { htmlBody: htmlWithSig });
-        return true;
-      } catch {}
-
-      // 2) fallback: só html (alguns clientes não aceitam attachments no form)
-      try {
-        fn(htmlWithSig);
-        setNotice("Nota: este Outlook não suportou anexar o original na resposta. Abri a resposta sem anexo.");
-        return true;
-      } catch {}
-
-      return false;
-    };
-
-    if (recipientPreset === "replyAll" && typeof item.displayReplyAllForm === "function") {
-      if (tryCall(item.displayReplyAllForm.bind(item))) return;
-    }
-
-    if (typeof item.displayReplyForm === "function") {
-      if (tryCall(item.displayReplyForm.bind(item))) return;
-    }
-
-    throw new Error("Não foi possível abrir uma resposta na thread (API indisponível).");
-  } catch (e: any) {
-    setErr(e?.message ?? String(e));
-  }
-}
-
-
-
-
-async function insertNewMessage() {
-  try {
-    setErr("");
-    setNotice("");
-
-    const OfficeAny = (window as any)?.Office;
-    const mailbox = OfficeAny?.context?.mailbox;
-    const item = mailbox?.item;
-    if (!item) throw new Error("Esta ação só funciona dentro do Outlook (email aberto).");
-
-    const html = buildHtmlForInsert();
-    if (!html) return;
-
-    const sig = buildSignatureHtml();
-    const htmlWithSig = sig ? `${html}${sig}` : html;
-
-    const { to, cc, bcc } = groupedRecipientsFromRows(recipientRows);
-    if (!to.length && !cc.length && !bcc.length) {
-      throw new Error("Escolhe pelo menos 1 destinatário (To/Cc/Bcc).");
-    }
-
-    const formData: any = {
-      subject: makeReplySubject(ctx.subject || ""),
-      htmlBody: htmlWithSig,
-    };
-
-    // Opcional: anexar o email original como .msg
-    if (attachOriginalItem && item?.itemId) {
-      const type = OfficeAny?.MailboxEnums?.AttachmentType?.Item ?? "item";
-      formData.attachments = [
-        {
-          itemId: item.itemId,
-          name: `${(ctx.subject || "email").slice(0, 60).replace(/[\\/:*?"<>|]/g, "-")}.msg`,
-          type,
-        },
-      ];
-    }
-    if (to.length) formData.toRecipients = to;
-    if (cc.length) formData.ccRecipients = cc;
-    if (bcc.length) formData.bccRecipients = bcc;
-
-    // Nota: em muitos Outlook, o método está no mailbox (não no item)
-    if (mailbox && typeof mailbox.displayNewMessageForm === "function") {
-      try {
-        mailbox.displayNewMessageForm(formData);
-        return;
-      } catch (e) {
-        if (formData.attachments) {
-          const copy: any = { ...formData };
-          delete copy.attachments;
-          try {
-            mailbox.displayNewMessageForm(copy);
-            setNotice("Nota: este Outlook não suportou anexar o original na nova mensagem. Abri a mensagem sem anexo.");
-            return;
-          } catch {}
-        }
-        throw e;
+      if (recipientPreset === "custom") {
+        // Não bloqueamos: abrimos a thread na mesma, mas avisamos.
+        // (O Outlook decide To/Cc no Reply/ReplyAll em Read mode.)
+        setNotice("Na thread, o Outlook decide To/Cc. Se precisares de controlar destinatários, usa “Nova msg”.");
       }
-    }
 
-    // fallback (algumas builds expõem no item)
-    if (typeof item.displayNewMessageForm === "function") {
-      item.displayNewMessageForm(formData);
-      return;
-    }
+      const OfficeAny2 = (window as any)?.Office;
 
-    throw new Error("Este Outlook não permite criar uma nova mensagem via add-in (API indisponível).");
-  } catch (e: any) {
-    setErr(e?.message ?? String(e));
+      const makeOriginalItemAttachment = () => {
+        if (!attachOriginalItem) return null;
+        const itemId = item?.itemId;
+        if (!itemId) return null;
+        const t = OfficeAny2?.MailboxEnums?.AttachmentType?.Item ?? "item";
+        const safe = (ctx.subject || "email").replace(/[^a-z0-9\-_. ]+/gi, "_").slice(0, 64);
+        return { itemId, name: `${safe}.msg`, type: t };
+      };
+
+      // Compatibilidade: alguns Outlook só aceitam string (htmlBody) em vez de object { htmlBody, attachments }
+      const tryCall = (fn: any) => {
+        const original = makeOriginalItemAttachment();
+
+        // 1) tentar com object (para suportar anexos)
+        try {
+          fn(original ? { htmlBody: htmlWithSig, attachments: [original] } : { htmlBody: htmlWithSig });
+          return true;
+        } catch { }
+
+        // 2) fallback: só html (alguns clientes não aceitam attachments no form)
+        try {
+          fn(htmlWithSig);
+          setNotice("Nota: este Outlook não suportou anexar o original na resposta. Abri a resposta sem anexo.");
+          return true;
+        } catch { }
+
+        return false;
+      };
+
+      if (recipientPreset === "replyAll" && typeof item.displayReplyAllForm === "function") {
+        if (tryCall(item.displayReplyAllForm.bind(item))) return;
+      }
+
+      if (typeof item.displayReplyForm === "function") {
+        if (tryCall(item.displayReplyForm.bind(item))) return;
+      }
+
+      throw new Error("Não foi possível abrir uma resposta na thread (API indisponível).");
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    }
   }
-}
 
 
-async function insertForward() {
-  try {
-    setErr("");
-    setNotice("");
 
-    const OfficeAny = (window as any)?.Office;
-    const mailbox = OfficeAny?.context?.mailbox;
-    const item = mailbox?.item;
-    if (!item) throw new Error("Esta ação só funciona dentro do Outlook (email aberto).");
 
-    const html = buildHtmlForInsert();
-    if (!html) return;
+  async function insertNewMessage() {
+    try {
+      setErr("");
+      setNotice("");
 
-    const sig = buildSignatureHtml();
-    const htmlWithSig = sig ? `${html}${sig}` : html;
+      const OfficeAny = (window as any)?.Office;
+      const mailbox = OfficeAny?.context?.mailbox;
+      const item = mailbox?.item;
+      if (!item) throw new Error("Esta ação só funciona dentro do Outlook (email aberto).");
 
-    // Forward também não é um reply real, mas dá controlo de destinatários e mantém o original no corpo.
-    // Tentamos preencher To/Cc quando o Outlook aceita formData. Bcc raramente é suportado.
-    const { to, cc, bcc } = groupedRecipientsFromRows(recipientRows);
+      const html = buildHtmlForInsert();
+      if (!html) return;
 
-    const tryCall = (fn: any) => {
-      // 1) tentar com object (melhor: respeita destinatários)
-      try {
-        fn({ htmlBody: htmlWithSig, toRecipients: to, ccRecipients: cc });
-        return true;
-      } catch {}
-      // 2) fallback: string (compat)
-      try {
-        fn(htmlWithSig);
-        if ((to && to.length) || (cc && cc.length) || (bcc && bcc.length)) {
-          setNotice("Nota: este Outlook não suportou preencher destinatários no Forward. Abri o Forward e tens de preencher manualmente.");
-        }
-        return true;
-      } catch {}
-      // 3) object sem recipients
-      try {
-        fn({ htmlBody: htmlWithSig });
-        return true;
-      } catch {}
-      return false;
-    };
+      const sig = buildSignatureHtml();
+      const htmlWithSig = sig ? `${html}${sig}` : html;
 
-    if (typeof item.displayForwardForm === "function") {
-      if (tryCall(item.displayForwardForm.bind(item))) return;
-    }
-
-    // Fallback: alguns Outlook não expõem displayForwardForm.
-    // Abrimos uma "Nova msg" com assunto FW: e incluímos o original no corpo.
-    if (mailbox && typeof mailbox.displayNewMessageForm === "function") {
-      const original = fullBody || rawBody || body || "";
-      const originalHtml = original
-        ? `<hr style="border:none;border-top:1px solid #ddd;margin:16px 0"/>` +
-          `<div style="color:#666;font-size:12px;margin-bottom:6px"><strong>Mensagem original</strong></div>` +
-          `<div style="white-space:pre-wrap;font-family:inherit;font-size:12px">${escapeHtml(original)}</div>`
-        : "";
+      const { to, cc, bcc } = groupedRecipientsFromRows(recipientRows);
+      if (!to.length && !cc.length && !bcc.length) {
+        throw new Error("Escolhe pelo menos 1 destinatário (To/Cc/Bcc).");
+      }
 
       const formData: any = {
-        subject: makeForwardSubject(ctx.subject || ""),
-        htmlBody: `${html}${originalHtml}`,
+        subject: makeReplySubject(ctx.subject || ""),
+        htmlBody: htmlWithSig,
       };
+
+      // Opcional: anexar o email original como .msg
+      if (attachOriginalItem && item?.itemId) {
+        const type = OfficeAny?.MailboxEnums?.AttachmentType?.Item ?? "item";
+        formData.attachments = [
+          {
+            itemId: item.itemId,
+            name: `${(ctx.subject || "email").slice(0, 60).replace(/[\\/:*?"<>|]/g, "-")}.msg`,
+            type,
+          },
+        ];
+      }
       if (to.length) formData.toRecipients = to;
       if (cc.length) formData.ccRecipients = cc;
       if (bcc.length) formData.bccRecipients = bcc;
 
-      mailbox.displayNewMessageForm(formData);
-      setNotice("O Outlook não expôs a API de Forward. Abri uma nova mensagem do tipo FW (com o original no corpo).");
-      return;
-    }
+      // Nota: em muitos Outlook, o método está no mailbox (não no item)
+      if (mailbox && typeof mailbox.displayNewMessageForm === "function") {
+        try {
+          mailbox.displayNewMessageForm(formData);
+          return;
+        } catch (e) {
+          if (formData.attachments) {
+            const copy: any = { ...formData };
+            delete copy.attachments;
+            try {
+              mailbox.displayNewMessageForm(copy);
+              setNotice("Nota: este Outlook não suportou anexar o original na nova mensagem. Abri a mensagem sem anexo.");
+              return;
+            } catch { }
+          }
+          throw e;
+        }
+      }
 
-    throw new Error("Não foi possível abrir um forward (API indisponível).");
-  } catch (e: any) {
-    setErr(e?.message ?? String(e));
+      // fallback (algumas builds expõem no item)
+      if (typeof item.displayNewMessageForm === "function") {
+        item.displayNewMessageForm(formData);
+        return;
+      }
+
+      throw new Error("Este Outlook não permite criar uma nova mensagem via add-in (API indisponível).");
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    }
   }
-}
+
+
+  async function insertForward() {
+    try {
+      setErr("");
+      setNotice("");
+
+      const OfficeAny = (window as any)?.Office;
+      const mailbox = OfficeAny?.context?.mailbox;
+      const item = mailbox?.item;
+      if (!item) throw new Error("Esta ação só funciona dentro do Outlook (email aberto).");
+
+      const html = buildHtmlForInsert();
+      if (!html) return;
+
+      const sig = buildSignatureHtml();
+      const htmlWithSig = sig ? `${html}${sig}` : html;
+
+      // Forward também não é um reply real, mas dá controlo de destinatários e mantém o original no corpo.
+      // Tentamos preencher To/Cc quando o Outlook aceita formData. Bcc raramente é suportado.
+      const { to, cc, bcc } = groupedRecipientsFromRows(recipientRows);
+
+      const tryCall = (fn: any) => {
+        // 1) tentar com object (melhor: respeita destinatários)
+        try {
+          fn({ htmlBody: htmlWithSig, toRecipients: to, ccRecipients: cc });
+          return true;
+        } catch { }
+        // 2) fallback: string (compat)
+        try {
+          fn(htmlWithSig);
+          if ((to && to.length) || (cc && cc.length) || (bcc && bcc.length)) {
+            setNotice("Nota: este Outlook não suportou preencher destinatários no Forward. Abri o Forward e tens de preencher manualmente.");
+          }
+          return true;
+        } catch { }
+        // 3) object sem recipients
+        try {
+          fn({ htmlBody: htmlWithSig });
+          return true;
+        } catch { }
+        return false;
+      };
+
+      if (typeof item.displayForwardForm === "function") {
+        if (tryCall(item.displayForwardForm.bind(item))) return;
+      }
+
+      // Fallback: alguns Outlook não expõem displayForwardForm.
+      // Abrimos uma "Nova msg" com assunto FW: e incluímos o original no corpo.
+      if (mailbox && typeof mailbox.displayNewMessageForm === "function") {
+        const original = fullBody || rawBody || body || "";
+        const originalHtml = original
+          ? `<hr style="border:none;border-top:1px solid #ddd;margin:16px 0"/>` +
+          `<div style="color:#666;font-size:12px;margin-bottom:6px"><strong>Mensagem original</strong></div>` +
+          `<div style="white-space:pre-wrap;font-family:inherit;font-size:12px">${escapeHtml(original)}</div>`
+          : "";
+
+        const formData: any = {
+          subject: makeForwardSubject(ctx.subject || ""),
+          htmlBody: `${html}${originalHtml}`,
+        };
+        if (to.length) formData.toRecipients = to;
+        if (cc.length) formData.ccRecipients = cc;
+        if (bcc.length) formData.bccRecipients = bcc;
+
+        mailbox.displayNewMessageForm(formData);
+        setNotice("O Outlook não expôs a API de Forward. Abri uma nova mensagem do tipo FW (com o original no corpo).");
+        return;
+      }
+
+      throw new Error("Não foi possível abrir um forward (API indisponível).");
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    }
+  }
 
 
 
@@ -1734,46 +1727,46 @@ async function insertForward() {
 
       <div style={S.resultCard}>
         <div style={S.resultTopRow}>
-        <div style={S.resultLabel}>Resultado</div>
+          <div style={S.resultLabel}>Resultado</div>
 
-        <button
-          style={resultView === "html" ? S.pillActive : S.pill}
-          onClick={() => setResultView("html")}
-          title="Ver HTML"
-        >
-          HTML
-        </button>
-        <button
-          style={resultView === "text" ? S.pillActive : S.pill}
-          onClick={() => setResultView("text")}
-          title="Ver texto"
-        >
-          Txt
-        </button>
+          <button
+            style={resultView === "html" ? S.pillActive : S.pill}
+            onClick={() => setResultView("html")}
+            title="Ver HTML"
+          >
+            HTML
+          </button>
+          <button
+            style={resultView === "text" ? S.pillActive : S.pill}
+            onClick={() => setResultView("text")}
+            title="Ver texto"
+          >
+            Txt
+          </button>
 
-        <button style={S.iconBtn} onClick={() => copyToClipboard(resultView === "html" ? buildHtmlForInsert() : textOut)} title="Copiar">
-          📋
-        </button>
+          <button style={S.iconBtn} onClick={() => copyToClipboard(resultView === "html" ? buildHtmlForInsert() : textOut)} title="Copiar">
+            📋
+          </button>
 
-        <div style={S.optionTabs}>
-          {[0, 1, 2].map((i) => (
-            <button
-              key={i}
-              style={activeOption === i ? S.optionTabActive : S.optionTab}
-              onClick={() => setActiveOption(i)}
-              title={`Opção ${i + 1}`}
-            >
-              {i + 1}
-            </button>
-          ))}
+          <div style={S.optionTabs}>
+            {[0, 1, 2].map((i) => (
+              <button
+                key={i}
+                style={activeOption === i ? S.optionTabActive : S.optionTab}
+                onClick={() => setActiveOption(i)}
+                title={`Opção ${i + 1}`}
+              >
+                {i + 1}
+              </button>
+            ))}
+          </div>
+
+          <button style={S.iconBtn} onClick={() => setSheet("options")} title="Histórico">
+            🕘
+          </button>
         </div>
 
-        <button style={S.iconBtn} onClick={() => setSheet("options")} title="Histórico">
-          🕘
-        </button>
-      </div>
-
-      {!(htmlOut || textOut) && !err ? (
+        {!(htmlOut || textOut) && !err ? (
           <div style={S.placeholder}>{busy ? "A gerar…" : "Escolhe uma ação no rodapé para gerar conteúdo."}</div>
         ) : (
           <>
@@ -1838,7 +1831,7 @@ async function insertForward() {
             </>
           )}
         </div>
-<button
+        <button
           style={busy || !canRun ? S.navBtnDisabled : S.navBtn}
           disabled={busy || !canRun}
           onClick={() => setSheet("compose")}
@@ -1870,7 +1863,7 @@ async function insertForward() {
       </div>
 
       {/* sheets */}
-      <BottomSheet open={sheet === "options"} title="Opções" onClose={() => setSheet("")}> 
+      <BottomSheet open={sheet === "options"} title="Opções" onClose={() => setSheet("")}>
         <div style={S.sheetBody}>
           <label style={S.fieldLabel}>Modo</label>
           <select style={S.select} value={mode} onChange={(e) => setMode(e.target.value as AiMode)}>
@@ -1919,132 +1912,132 @@ async function insertForward() {
                 {o.value === "auto" ? "Auto (detetar)" : o.label}
               </option>
             ))}
-          
-          <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid rgba(11,45,107,0.10)" }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: "#0b2d6b", marginBottom: 8 }}>Assinatura</div>
 
-            <label style={S.fieldLabel}>Modo</label>
-            <select
-              style={S.select}
-              value={sigMode}
-              onChange={(e) => {
-                const v = e.currentTarget.value as SigMode;
-                setSigMode(v);
-                persistSig(SIG_KEY_MODE, v);
-              }}
-            >
-              <option value="off">Desligada</option>
-              <option value="text">Texto</option>
-              <option value="html">HTML</option>
-              <option value="image">Imagem (upload/URL)</option>
-            </select>
+            <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid rgba(11,45,107,0.10)" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#0b2d6b", marginBottom: 8 }}>Assinatura</div>
 
-            {sigMode === "text" && (
-              <>
-                <label style={S.fieldLabel}>Texto da assinatura</label>
-                <textarea
-                  style={S.textarea}
-                  rows={4}
-                  value={sigText}
-                  onChange={(e) => {
-                    const v = e.currentTarget.value;
-                    setSigText(v);
-                    persistSig(SIG_KEY_TEXT, v);
-                  }}
-                  placeholder="Ex.:
+              <label style={S.fieldLabel}>Modo</label>
+              <select
+                style={S.select}
+                value={sigMode}
+                onChange={(e) => {
+                  const v = e.currentTarget.value as SigMode;
+                  setSigMode(v);
+                  persistSig(SIG_KEY_MODE, v);
+                }}
+              >
+                <option value="off">Desligada</option>
+                <option value="text">Texto</option>
+                <option value="html">HTML</option>
+                <option value="image">Imagem (upload/URL)</option>
+              </select>
+
+              {sigMode === "text" && (
+                <>
+                  <label style={S.fieldLabel}>Texto da assinatura</label>
+                  <textarea
+                    style={S.textarea}
+                    rows={4}
+                    value={sigText}
+                    onChange={(e) => {
+                      const v = e.currentTarget.value;
+                      setSigText(v);
+                      persistSig(SIG_KEY_TEXT, v);
+                    }}
+                    placeholder="Ex.:
 Pedro Lopes
 Divitek
 +351 ..."
-                />
-              </>
-            )}
+                  />
+                </>
+              )}
 
-            {sigMode === "html" && (
-              <>
-                <label style={S.fieldLabel}>HTML da assinatura</label>
-                <textarea
-                  style={S.textarea}
-                  rows={4}
-                  value={sigHtml}
-                  onChange={(e) => {
-                    const v = e.currentTarget.value;
-                    setSigHtml(v);
-                    persistSig(SIG_KEY_HTML, v);
-                  }}
-                  placeholder='Ex.: <div><b>Pedro Lopes</b><br/>Divitek</div>'
-                />
-              </>
-            )}
-
-            {sigMode === "image" && (
-              <>
-                <label style={S.fieldLabel}>Imagem (upload)</label>
-                <input
-                  style={S.input}
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const f = e.currentTarget.files?.[0];
-                    if (!f) return;
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                      const v = String(reader.result || "");
-                      setSigImgDataUrl(v);
-                      persistSig(SIG_KEY_IMG_DATA, v);
-                    };
-                    reader.readAsDataURL(f);
-                  }}
-                />
-                <div style={{ fontSize: 10, opacity: 0.75, marginTop: 4 }}>
-                  Dica: upload guarda a imagem localmente (data URL) e funciona mesmo sem link público.
-                </div>
-
-                <label style={S.fieldLabel}>Largura máx. (px)</label>
-                <input
-                  style={S.input}
-                  value={sigImgMaxW}
-                  onChange={(e) => {
-                    const v = e.currentTarget.value.replace(/[^0-9]/g, "");
-                    setSigImgMaxW(v);
-                    persistSig(SIG_KEY_IMG_W, v);
-                  }}
-                  placeholder="260"
-                />
-
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                  <button
-                    style={S.secondaryBtn}
-                    onClick={() => {
-                      setSigImgDataUrl("");
-                      persistSig(SIG_KEY_IMG_DATA, "");
-                    }}
-                  >
-                    Limpar upload
-                  </button>
-                </div>
-
-                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(11,45,107,0.10)" }}>
-                  <label style={S.fieldLabel}>OU URL da imagem</label>
-                  <input
-                    style={S.input}
-                    value={sigImgUrl}
+              {sigMode === "html" && (
+                <>
+                  <label style={S.fieldLabel}>HTML da assinatura</label>
+                  <textarea
+                    style={S.textarea}
+                    rows={4}
+                    value={sigHtml}
                     onChange={(e) => {
                       const v = e.currentTarget.value;
-                      setSigImgUrl(v);
-                      persistSig(SIG_KEY_IMG, v);
+                      setSigHtml(v);
+                      persistSig(SIG_KEY_HTML, v);
                     }}
-                    placeholder="https://.../assinatura.png"
+                    placeholder='Ex.: <div><b>Pedro Lopes</b><br/>Divitek</div>'
                   />
-                </div>
-              </>
-            )}
-          </div>
+                </>
+              )}
 
-</select>
+              {sigMode === "image" && (
+                <>
+                  <label style={S.fieldLabel}>Imagem (upload)</label>
+                  <input
+                    style={S.input}
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const f = e.currentTarget.files?.[0];
+                      if (!f) return;
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const v = String(reader.result || "");
+                        setSigImgDataUrl(v);
+                        persistSig(SIG_KEY_IMG_DATA, v);
+                      };
+                      reader.readAsDataURL(f);
+                    }}
+                  />
+                  <div style={{ fontSize: 10, opacity: 0.75, marginTop: 4 }}>
+                    Dica: upload guarda a imagem localmente (data URL) e funciona mesmo sem link público.
+                  </div>
+
+                  <label style={S.fieldLabel}>Largura máx. (px)</label>
+                  <input
+                    style={S.input}
+                    value={sigImgMaxW}
+                    onChange={(e) => {
+                      const v = e.currentTarget.value.replace(/[^0-9]/g, "");
+                      setSigImgMaxW(v);
+                      persistSig(SIG_KEY_IMG_W, v);
+                    }}
+                    placeholder="260"
+                  />
+
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button
+                      style={S.secondaryBtn}
+                      onClick={() => {
+                        setSigImgDataUrl("");
+                        persistSig(SIG_KEY_IMG_DATA, "");
+                      }}
+                    >
+                      Limpar upload
+                    </button>
+                  </div>
+
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(11,45,107,0.10)" }}>
+                    <label style={S.fieldLabel}>OU URL da imagem</label>
+                    <input
+                      style={S.input}
+                      value={sigImgUrl}
+                      onChange={(e) => {
+                        const v = e.currentTarget.value;
+                        setSigImgUrl(v);
+                        persistSig(SIG_KEY_IMG, v);
+                      }}
+                      placeholder="https://.../assinatura.png"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+          </select>
 
           <div style={S.sheetHint}>Estas opções afetam o estilo e o nível de detalhe.</div>
         </div>
-      
+
         <div style={S.sectionTitle}>Templates</div>
         <div style={S.sectionCard}>
           <div style={S.smallHint}>
@@ -2182,9 +2175,8 @@ Divitek
                 .reverse()
                 .map((x) => {
                   const d = new Date(x.ts);
-                  const label = `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — ${
-                    (x.subject || "").slice(0, 40) || "Resposta"
-                  }`;
+                  const label = `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — ${(x.subject || "").slice(0, 40) || "Resposta"
+                    }`;
                   return (
                     <option key={x.id} value={x.id}>
                       {label}
@@ -2196,9 +2188,9 @@ Divitek
 
         </div>
 
-</BottomSheet>
+      </BottomSheet>
 
-      <BottomSheet open={sheet === "context"} title="Contexto do email" onClose={() => setSheet("")}> 
+      <BottomSheet open={sheet === "context"} title="Contexto do email" onClose={() => setSheet("")}>
         <div style={S.sheetBody}>
           <label style={S.fieldLabel}>Corpo do email (para a IA)</label>
 
@@ -2247,7 +2239,7 @@ Divitek
         </div>
       </BottomSheet>
 
-      
+
       <BottomSheet open={sheet === "reminder"} title="Lembrete" onClose={() => setSheet("")}>
         <div style={S.sheetBody}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
@@ -2308,36 +2300,36 @@ Divitek
       </BottomSheet>
 
 
-      <BottomSheet open={sheet === "compose"} title="Responder" onClose={() => setSheet("")}> 
+      <BottomSheet open={sheet === "compose"} title="Responder" onClose={() => setSheet("")}>
         <div style={S.sheetBody}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
-          <select
-            style={S.select}
-            value={tplPickId}
-            onChange={(e) => {
-              const id = e.currentTarget.value;
-              setTplPickId(id);
-              const t = templates.find((x) => x.id === id);
-              if (t) {
-                const filled = applyTemplateVars(t.body, ctx);
-                setComposeNotes(filled);
-              }
-            }}
-          >
-            <option value="">— Template —</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+            <select
+              style={S.select}
+              value={tplPickId}
+              onChange={(e) => {
+                const id = e.currentTarget.value;
+                setTplPickId(id);
+                const t = templates.find((x) => x.id === id);
+                if (t) {
+                  const filled = applyTemplateVars(t.body, ctx);
+                  setComposeNotes(filled);
+                }
+              }}
+            >
+              <option value="">— Template —</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
 
-          <button style={S.secondaryBtn} onClick={() => setSheet("options")} title="Gerir templates nas opções">
-            Gerir
-          </button>
-        </div>
+            <button style={S.secondaryBtn} onClick={() => setSheet("options")} title="Gerir templates nas opções">
+              Gerir
+            </button>
+          </div>
 
-<label style={S.fieldLabel}>O que queres transmitir?</label>
+          <label style={S.fieldLabel}>O que queres transmitir?</label>
           <textarea
             style={S.textarea}
             value={composeNotes}
@@ -2363,22 +2355,22 @@ Divitek
             </button>
 
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-            <input
-              id="replyAllToggle"
-              type="checkbox"
-              checked={replyAll}
-              onChange={(e) => setReplyAll(e.currentTarget.checked)}
-            />
-            <label htmlFor="replyAllToggle" style={{ fontSize: 12, fontWeight: 500, color: "#0b2d6b" }}>
-              Responder a todos
-            </label>
-          </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+              <input
+                id="replyAllToggle"
+                type="checkbox"
+                checked={replyAll}
+                onChange={(e) => setReplyAll(e.currentTarget.checked)}
+              />
+              <label htmlFor="replyAllToggle" style={{ fontSize: 12, fontWeight: 500, color: "#0b2d6b" }}>
+                Responder a todos
+              </label>
+            </div>
           </div>
         </div>
       </BottomSheet>
 
-      <BottomSheet open={sheet === "rewrite"} title="Reescrever" onClose={() => setSheet("")}> 
+      <BottomSheet open={sheet === "rewrite"} title="Reescrever" onClose={() => setSheet("")}>
         <div style={S.sheetBody}>
           <label style={S.fieldLabel}>Texto</label>
           <textarea
@@ -2403,7 +2395,7 @@ Divitek
         </div>
       </BottomSheet>
 
-      <BottomSheet open={sheet === "recipients"} title="Destinatários" onClose={() => setSheet("")}> 
+      <BottomSheet open={sheet === "recipients"} title="Destinatários" onClose={() => setSheet("")}>
         <div style={S.sheetBody}>
           <div style={S.sheetHint}>
             “Inserir thread” usa Responder/Responder a todos (o Outlook pode mexer em To/Cc). Para controlo total,

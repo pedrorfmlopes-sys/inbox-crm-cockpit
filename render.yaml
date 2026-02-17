@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: inbox-cockpit-staging
+    env: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install && npm run build
+    startCommand: npm -w server run start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PORT
+        value: 10000
+      - key: AI_ENABLED
+        value: "0"
+      - key: AI_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        placeholder: "Sk-..."
+      - key: ODOO_URL
+        placeholder: "https://seu-odoo.com"
+      - key: ODOO_DB
+        placeholder: "db_name"
+      - key: ODOO_USER
+        placeholder: "admin"
+      - key: ODOO_PASS
+        placeholder: "password"
+    healthCheckPath: /health

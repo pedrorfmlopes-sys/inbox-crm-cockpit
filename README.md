@@ -1,56 +1,62 @@
-# Divitek Outlook Odoo Add-in (MVP)
+# Divitek Outlook Odoo Add-in (InboxCockpit)
 
-Este projeto é um *Outlook web add-in* (Office.js) com painel lateral (task pane) tipo “JIRA”, focado em:
-- Ler o email selecionado no Outlook (assunto + remetente)
-- Procurar o contacto no Odoo por email
-- Criar uma lead no Odoo com 1 clique (MVP)
+Este projeto é um *Outlook web add-in* (Office.js) com painel lateral (task pane) focado na integração entre Outlook e Odoo.
 
-> Nota: Não consigo testar aqui no teu Outlook, mas o projeto está estruturado para funcionar em Outlook na Web e no New Outlook no Windows.
+## 🚀 Ambiente Staging (Render)
+Staging is hosted on Render as a unified service (API + UI).
+- **URL**: `https://inbox-cockpit-staging.onrender.com`
+- **Health Check**: `https://inbox-cockpit-staging.onrender.com/health`
+- **Manifest**: Use `manifest/manifest.staging.xml`.
 
-## Requisitos
-- Node.js 18+ (recomendado 20+)
-- Outlook na Web (recomendado para primeiro teste) ou New Outlook no Windows
-- Acesso ao teu Odoo via URL (self-host ou Odoo Online)
+### Health Check (Unified)
+```bash
+# Verify API and UI are live
+curl https://inbox-cockpit-staging.onrender.com/health
+```
 
-## 1) Instalação
+### Configuração no Render
+No painel do Render, deves configurar as seguintes Environment Variables:
+- `AI_ENABLED`: `0` (default) ou `1`.
+- `OPENAI_API_KEY`: A tua chave (só necessária se `AI_ENABLED=1`).
+- `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_PASS`: Credenciais do Odoo.
+
+## 🛠️ Desenvolvimento Local
+
+### 1) Instalação
 Na raiz do projeto:
-
 ```bash
 npm install
 ```
+Cria `.env` na pasta `server` (copia de `server/.env.example`).
 
-Cria `.env` na pasta `server` (há um exemplo em `server/.env.example`).
-
-## 2) Arrancar em DEV (HTTPS)
+### 2) Execução (HTTPS Local)
 ```bash
 npm run dev
 ```
+- **UI**: https://localhost:5174
+- **API**: http://localhost:7071
 
-Isto levanta:
-- UI (Vite/React) em https://localhost:5173
-- API (Express) em http://localhost:7071
+### 3) Manifestos
+Existem dois manifestos principais na pasta `manifest/`:
+- `manifest.dev.xml`: Aponta para `https://localhost:5174` (para desenvolvimento).
+- `manifest.staging.xml`: Aponta para o URL do Render (para testes reais).
 
-## 3) Sideload no Outlook (DEV)
-Segue o guia oficial (aba “XML manifest”):  
-https://learn.microsoft.com/office/dev/add-ins/outlook/sideload-outlook-add-ins-for-testing
+## 📥 Instalação (Sideload)
 
-Usa o ficheiro:
-- `manifest/manifest.xml`
+### Outlook na Web / Novo Outlook
+1. Abre o Outlook e vai a "Get Add-ins" ou "Manage Add-ins".
+2. Escolhe "My add-ins" -> "Add a custom add-in" -> "Add from file...".
+3. Seleciona o manifesto pretendido (`dev` ou `staging`).
 
-Dica: começa por testar **Outlook na Web** (é o mais previsível em dev).
+### Outlook Classic (Desktop)
+1. Segue o mesmo processo via Outlook na Web (a conta sincroniza o add-in para o desktop).
+2. Se necessário, usa o botão "Sideload" no separador "File" -> "Manage Add-ins".
 
-## 4) O que já faz (MVP)
-- Mostra Subject + From
-- Botão “Procurar no Odoo”
-- Se não existir, botão “Criar Lead” (crm.lead) com o email e assunto
+## ✅ Validação Rápida
+- **Check Health**: `curl http://localhost:7071/health`
+- **Check AI**: `curl http://localhost:7071/api/ai/selftest` (se `AI_ENABLED=1`)
 
-## 5) Próximos passos (quando quiseres)
-- Editar lead/contacto (CRUD completo)
-- Pipeline stages, atividades (mail.activity), anexar email ao chatter
-- Autenticação por utilizador (SSO/OAuth) em vez de credenciais em env
-- “Modo MailMaestro” (AI): sumarizar thread + rascunhos + reescrita + inserir no compose
-
-## Referências
-- Build your first Outlook add-in (Yo/VS): https://learn.microsoft.com/office/dev/add-ins/quickstarts/outlook-quickstart-yo
-- Office.Mailbox API: https://learn.microsoft.com/javascript/api/outlook/office.mailbox
-- Odoo External API (JSON-RPC): https://www.odoo.com/documentation
+---
+### Referências
+- [Office.js API](https://learn.microsoft.com/javascript/api/outlook/office.mailbox)
+- [Odoo External API](https://www.odoo.com/documentation)

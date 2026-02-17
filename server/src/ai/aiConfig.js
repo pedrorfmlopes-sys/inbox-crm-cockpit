@@ -3,9 +3,7 @@ export function getAiConfig() {
   const provider = (process.env.AI_PROVIDER || "openai").toLowerCase();
 
   return {
-    enabled:
-      String(process.env.AI_ENABLED || "").trim() === "1" ||
-      Boolean(process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY),
+    enabled: String(process.env.AI_ENABLED || "").trim() === "1",
     provider,
     openai: {
       apiKey: process.env.OPENAI_API_KEY || "",

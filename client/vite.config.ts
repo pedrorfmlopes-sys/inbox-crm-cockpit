@@ -23,12 +23,15 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
-    port: 5173,
+    port: 5174,
     strictPort: true,
-    https: {
-      key: fs.readFileSync(path.join(certDir, "localhost.key")),
-      cert: fs.readFileSync(path.join(certDir, "localhost.crt")),
-    },
+    https:
+      fs.existsSync(path.join(certDir, "localhost.key")) && fs.existsSync(path.join(certDir, "localhost.crt"))
+        ? {
+          key: fs.readFileSync(path.join(certDir, "localhost.key")),
+          cert: fs.readFileSync(path.join(certDir, "localhost.crt")),
+        }
+        : undefined,
     proxy: {
       "/api": {
         // Use 127.0.0.1 to avoid IPv6/localhost resolution weirdness on some setups
