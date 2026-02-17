@@ -16,13 +16,13 @@ services:
       - key: AI_PROVIDER
         value: openai
       - key: OPENAI_API_KEY
-        placeholder: "Sk-..."
+        sync: false
       - key: ODOO_URL
-        placeholder: "https://seu-odoo.com"
+        sync: false
       - key: ODOO_DB
-        placeholder: "db_name"
+        sync: false
       - key: ODOO_USER
-        placeholder: "admin"
+        sync: false
       - key: ODOO_PASS
-        placeholder: "password"
+        sync: false
     healthCheckPath: /health
