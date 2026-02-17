@@ -5,3 +5,5 @@ build/
 .env
 .env.*
 auth.json
+*.bak
+PATCH-SNIPPET-*.txt
