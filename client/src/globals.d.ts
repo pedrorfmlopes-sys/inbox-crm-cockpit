@@ -1,0 +1,1 @@
+declare const Office: any;

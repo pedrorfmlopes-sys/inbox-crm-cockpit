@@ -1,0 +1,71 @@
+{
+  "conversationId:AAQkAGI1MTczZjNkLWUyZDEtNDZjNS1hZjdlLTI2M2E2MjA2YTlmZAAQAAvfSCOcbMBHk+DFlvPo2gU=": [
+    {
+      "model": "project.project",
+      "recordId": 9,
+      "recordName": "projeto teste outlook/odoo",
+      "linkedAt": "2026-01-06T13:08:42.627Z",
+      "internetMessageId": "<16.A9.39251.8172C596@i-00359e3688dc4402e.mta1vrest.sd.prd.sparkpost>",
+      "subject": "Tomorrow: Build a Browser Extension Live on Replit",
+      "fromEmail": "contact@mail.replit.com",
+      "fromName": "Replit"
+    }
+  ],
+  "conversationId:AAQkAGI1MTczZjNkLWUyZDEtNDZjNS1hZjdlLTI2M2E2MjA2YTlmZAAQAOOtmxxg8S1BoraxQK2hneg=": [
+    {
+      "model": "project.project",
+      "recordId": 10,
+      "recordName": "RE: Cerâmicas Ragno | AISA - Alteração e Ampliação do Centro de Dia e Lar de Idosos",
+      "linkedAt": "2026-01-06T13:25:44.669Z",
+      "internetMessageId": "<DU0P250MB0945F2DD2AF70A8A829A683C8A87A@DU0P250MB0945.EURP250.PROD.OUTLOOK.COM>",
+      "subject": "RE: Cerâmicas Ragno | AISA - Alteração e Ampliação do Centro de Dia e Lar de Idosos",
+      "fromEmail": "andre.hilario@somafuture.com",
+      "fromName": "André Hilário | SomaFuture"
+    }
+  ],
+  "conversationId:[object Object]": [
+    null
+  ],
+  "conversationId:AAQkAGI1MTczZjNkLWUyZDEtNDZjNS1hZjdlLTI2M2E2MjA2YTlmZAAQACzYL64VwiNIqAhbiJT9eEk=": [
+    {
+      "model": "res.partner",
+      "recordId": 29,
+      "recordName": "Elena Marzi",
+      "linkedAt": "2026-01-09T00:59:25.618Z",
+      "internetMessageId": "<MI2P293MB0039DCF78F02E303EABB0A068F85A@MI2P293MB0039.ITAP293.PROD.OUTLOOK.COM>",
+      "subject": "R: ORÇAMENTO FIMA ACTUALIZADO ** OFERTA MOODBATH 08.01",
+      "fromEmail": "jessica.renna@fimacf.com",
+      "fromName": "Jessica Renna"
+    },
+    {
+      "model": "res.partner",
+      "recordId": 28,
+      "recordName": "Sofia Anselmi",
+      "linkedAt": "2026-01-09T00:59:22.724Z",
+      "internetMessageId": "<MI2P293MB0039DCF78F02E303EABB0A068F85A@MI2P293MB0039.ITAP293.PROD.OUTLOOK.COM>",
+      "subject": "R: ORÇAMENTO FIMA ACTUALIZADO ** OFERTA MOODBATH 08.01",
+      "fromEmail": "jessica.renna@fimacf.com",
+      "fromName": "Jessica Renna"
+    },
+    {
+      "model": "res.partner",
+      "recordId": 27,
+      "recordName": "Jessica Renna",
+      "linkedAt": "2026-01-09T00:59:15.386Z",
+      "internetMessageId": "<MI2P293MB0039DCF78F02E303EABB0A068F85A@MI2P293MB0039.ITAP293.PROD.OUTLOOK.COM>",
+      "subject": "R: ORÇAMENTO FIMA ACTUALIZADO ** OFERTA MOODBATH 08.01",
+      "fromEmail": "jessica.renna@fimacf.com",
+      "fromName": "Jessica Renna"
+    },
+    {
+      "model": "res.partner",
+      "recordId": 26,
+      "recordName": "Alexandre Sá",
+      "linkedAt": "2026-01-09T00:59:11.441Z",
+      "internetMessageId": "<MI2P293MB0039DCF78F02E303EABB0A068F85A@MI2P293MB0039.ITAP293.PROD.OUTLOOK.COM>",
+      "subject": "R: ORÇAMENTO FIMA ACTUALIZADO ** OFERTA MOODBATH 08.01",
+      "fromEmail": "jessica.renna@fimacf.com",
+      "fromName": "Jessica Renna"
+    }
+  ]
+}

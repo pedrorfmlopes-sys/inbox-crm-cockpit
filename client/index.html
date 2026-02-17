@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="pt-PT">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Office.js (necessário no Outlook). -->
+    <script
+      type="text/javascript"
+      src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"
+      crossorigin="anonymous"
+    ></script>
+
+    <title>Inbox CRM Cockpit</title>
+  </head>
+
+  <body>
+    <!-- PRE-FLIGHT (dev) -->
+    <div
+      id="preflight"
+      style="font-family:system-ui,Segoe UI,Arial; padding:14px; border-bottom:1px solid #eee;"
+    >
+      <div style="font-weight:900;">Inbox CRM Cockpit • Preflight</div>
+      <div id="pf-status" style="margin-top:6px;">HTML carregou. A iniciar JS…</div>
+      <div style="margin-top:6px; color:#666; font-size:12px;">
+        Se isto ficar aqui “preso”, o bundle do Vite/React não arrancou.
+      </div>
+      <pre id="pf-error" style="margin-top:10px; white-space:pre-wrap; color:#b00020;"></pre>
+    </div>
+
+    <div id="root"></div>
+
+    <script>
+      (function () {
+        const pre = document.getElementById("preflight");
+        const statusEl = document.getElementById("pf-status");
+        const errEl = document.getElementById("pf-error");
+
+        function setStatus(s) {
+          if (statusEl) statusEl.textContent = s;
+        }
+        function showErr(e) {
+          const msg =
+            e && (e.stack || e.message)
+              ? e.stack || e.message
+              : String(e || "");
+          if (errEl) errEl.textContent = msg;
+        }
+        function isMounted() {
+          return document.documentElement.dataset.icccMounted === "1";
+        }
+        function hidePreflight() {
+          if (pre) pre.style.display = "none";
+        }
+
+        // React will dispatch this event as soon as it mounts.
+        window.addEventListener("iccc:mounted", () => hidePreflight());
+
+        // Safety net (in case event doesn't fire for any reason)
+        setInterval(() => {
+          if (isMounted()) hidePreflight();
+        }, 500);
+
+        setStatus("JS inline OK. A carregar /src/main.tsx …");
+
+        window.addEventListener("error", function (ev) {
+          const msg = String(ev && (ev.message || ev.error || "")).trim();
+
+          // IMPORTANT:
+          // "Script error." vem quase sempre de scripts externos (ex.: office.js) sem stack por cross-origin.
+          // NÃO é um erro do teu bundle, e a UI pode estar 100% OK.
+          // Por isso: só mostramos aviso leve e escondemos assim que a app montar.
+          if (msg === "Script error.") {
+            setStatus("⚠️ Aviso: Script error (cross-origin).");
+            showErr(
+              "Script error.\n\nIsto costuma vir de office.js (cross-origin) e não dá stack.\n" +
+              "Se a UI abaixo está a funcionar, podes ignorar.\n" +
+              "O Preflight vai desaparecer assim que a app montar."
+            );
+            if (isMounted()) hidePreflight();
+            return;
+          }
+
+          setStatus("❌ Erro JS (window.error)");
+          showErr(ev.error || ev.message || ev);
+        });
+
+        window.addEventListener("unhandledrejection", function (ev) {
+          setStatus("❌ Promessa rejeitada (unhandledrejection)");
+          showErr(ev.reason || ev);
+        });
+      })();
+    </script>
+
+    <!-- Entry do Vite/React -->
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

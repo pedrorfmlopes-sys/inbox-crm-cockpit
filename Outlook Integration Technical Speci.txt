@@ -1,0 +1,53 @@
+Outlook Integration Technical Specification
+This document provides the necessary API details for the Outlook Add-in agent to implement the "Buckets" upload feature into the InvoiceStudio application.
+
+Core Objective
+Allow users to drag and drop email attachments into named "Buckets" in Outlook, which automatically uploads the file to the InvoiceStudio backend for AI extraction.
+
+1. API Endpoint
+URL: {{BASE_URL}}/api/v2/extract
+Method: POST
+Content-Type: multipart/form-data
+Payload Parameters
+Field	Type	Description
+file
+Buffer / Blob	The PDF/Image file to be processed.
+Required Headers
+Header	Value	Description
+Authorization	Bearer {{JWT_TOKEN}}	Authentication token.
+x-project	{{BUCKET_NAME}}	Maps the Outlook "Bucket" to the specific project/folder in the app.
+2. Authentication Flow
+Currently, the app uses JWT tokens. For the Add-in to work:
+
+Option A (Manual): User copies their current session token from the Web App settings to the Add-in.
+Option B (Login): Add-in implements a login screen calling POST /api/auth/login.
+NOTE
+
+If AUTH_MODE is set to optional (typically in local dev), the authorization header can be skipped, and it will default to default-org.
+
+3. Bucket Mapping Logic
+The "Buckets" in the Outlook Add-in UI should map directly to the x-project header.
+
+Bucket: "Nicolazzi" -> x-project: nicolazzi
+Bucket: "Geral" -> x-project: default
+4. Response Handling
+A successful upload returns:
+
+json
+{
+  "batchId": "...",
+  "project": "nicolazzi",
+  "count": 1,
+  "results": [
+    {
+      "documentId": "uuid-...",
+      "fileName": "factura.pdf",
+      "status": "success",
+      "normalized": { ... }
+    }
+  ]
+}
+5. Deployment Details (Render)
+Production URL: https://invoicestudiogrvty.onrender.com (Example - verify in Render dashboard)
+API Base: https://invoicestudiogrvty.onrender.com/api
+Created for cross-agent coordination on 2026-02-16.
