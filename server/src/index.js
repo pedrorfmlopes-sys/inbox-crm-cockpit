@@ -10,6 +10,8 @@ import path from "path";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+import fs from "fs";
+
 dotenv.config();
 
 // --- crash visibility (avoid silent exit) ---
@@ -455,6 +457,20 @@ const host = process.env.HOST || "0.0.0.0"; // force IPv4 bind
 
 // --- static files (UI) ---
 const distPath = path.join(__dirname, "../../client/dist");
+console.log(`[server] initial distPath: ${distPath}`);
+
+if (fs.existsSync(distPath)) {
+  console.log(`[server] ✅ distPath exists: ${distPath}`);
+  const indexPath = path.join(distPath, "index.html");
+  if (fs.existsSync(indexPath)) {
+    console.log(`[server] ✅ index.html found at: ${indexPath}`);
+  } else {
+    console.error(`[server] ❌ index.html NOT found at: ${indexPath}`);
+  }
+} else {
+  console.error(`[server] ❌ distPath does NOT exist: ${distPath}`);
+}
+
 app.use(express.static(distPath));
 
 // Fallback: serve index.html for any other route (SPA) - EXCEPT /api
@@ -462,7 +478,15 @@ app.get("*", (req, res, next) => {
   if (req.url.startsWith("/api") || req.url === "/health") {
     return next();
   }
-  res.sendFile(path.join(distPath, "index.html"));
+  const indexPath = path.join(distPath, "index.html");
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      console.error(`[server] ❌ res.sendFile error: ${err.message}`);
+      if (!res.headersSent) {
+        res.status(404).send("SPA index.html not found");
+      }
+    }
+  });
 });
 
 app.listen(port, host, () => {
