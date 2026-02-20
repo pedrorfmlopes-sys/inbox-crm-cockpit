@@ -363,9 +363,13 @@ async function copyToClipboard(text: string) {
   }
 }
 
-function getMyEmailLower(): string {
+export function getMyEmailLower(): string {
   try {
-    const e = String((window as any)?.Office?.context?.mailbox?.userProfile?.emailAddress || "").trim();
+    const OfficeAny = (window as any)?.Office;
+    // Strictly avoid touching .context if not ready
+    if (!OfficeAny || !OfficeAny.context) return "";
+
+    const e = String(OfficeAny.context.mailbox?.userProfile?.emailAddress || "").trim();
     return e.toLowerCase();
   } catch {
     return "";

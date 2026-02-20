@@ -80,7 +80,48 @@ const MAILMAESTRO: SkinTokens = {
   "--iccc-weight-heavy": "650",
 };
 
+const VIBRANT: SkinTokens = {
+  "--iccc-font": "Outfit, system-ui, -apple-system, sans-serif",
+  "--iccc-text": "#0b2d6b",
+  "--iccc-text-muted": "rgba(11,45,107,0.65)",
+  "--iccc-bg": "linear-gradient(135deg, #f0f7ff 0%, #e0e7ff 100%)",
+
+  "--iccc-card-bg": "rgba(255, 255, 255, 0.7)",
+  "--iccc-card-border": "rgba(255, 255, 255, 0.4)",
+  "--iccc-shadow": "0 8px 32px 0 rgba(31, 38, 135, 0.07)",
+  "--iccc-glass-blur": "blur(10px)",
+
+  "--iccc-bottom-bg": "rgba(255, 255, 255, 0.4)",
+  "--iccc-bottom-border": "rgba(255, 255, 255, 0.18)",
+  "--iccc-bottom-shadow": "0 8px 32px 0 rgba(31, 38, 135, 0.1)",
+  "--iccc-bottom-radius": "24px",
+
+  "--iccc-radius-card": "20px",
+  "--iccc-radius-pill": "999px",
+  "--iccc-radius-btn": "14px",
+
+  "--iccc-pill-bg": "rgba(255, 255, 255, 0.5)",
+  "--iccc-pill-border": "rgba(255, 255, 255, 0.3)",
+  "--iccc-pill-text": "#0b2d6b",
+  "--iccc-pill-active-bg": "linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)",
+  "--iccc-pill-active-text": "#ffffff",
+  "--iccc-pill-active-border": "none",
+
+  "--iccc-btn-bg": "linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)",
+  "--iccc-btn-text": "#ffffff",
+  "--iccc-btn-border": "none",
+
+  "--iccc-btn2-bg": "rgba(255, 255, 255, 0.8)",
+  "--iccc-btn2-text": "#0b2d6b",
+  "--iccc-btn2-border": "rgba(255, 255, 255, 0.4)",
+
+  "--iccc-weight": "400",
+  "--iccc-weight-strong": "500",
+  "--iccc-weight-heavy": "600",
+};
+
 export function getSkinTokens(id: SkinId): SkinTokens {
+  if (id === "vibrant") return VIBRANT;
   return id === "mailmaestro" ? MAILMAESTRO : CLASSIC;
 }
 

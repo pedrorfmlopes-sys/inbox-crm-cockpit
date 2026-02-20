@@ -6,7 +6,7 @@ import type { AiTone } from "./ai/aiClient";
 export type AppLocale = "pt-PT" | "es-ES" | "en-GB" | "it-IT" | "de-DE";
 export type LangOption = AppLocale | "auto";
 export type ReplyLength = "xs" | "s" | "m" | "l";
-export type SkinId = "classic" | "mailmaestro";
+export type SkinId = "classic" | "mailmaestro" | "vibrant";
 
 export type CockpitSettingsV1 = {
   version: 1;

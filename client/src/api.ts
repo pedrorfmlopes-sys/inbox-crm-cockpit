@@ -65,25 +65,33 @@ export type AiGenerateResponse =
 type Json = any;
 
 async function requestJSON<T = Json>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  });
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
-  const ct = (res.headers.get("content-type") || "").toLowerCase();
-  const body = ct.includes("application/json") ? await res.json() : await res.text();
+  try {
+    const res = await fetch(path, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
+    });
 
-  if (!res.ok) {
-    const msg =
-      typeof body === "string"
-        ? body
-        : body?.error || body?.message || JSON.stringify(body);
-    throw new Error(`HTTP ${res.status}: ${msg}`);
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    const body = ct.includes("application/json") ? await res.json() : await res.text();
+
+    if (!res.ok) {
+      const msg =
+        typeof body === "string"
+          ? body
+          : body?.error || body?.message || JSON.stringify(body);
+      throw new Error(`HTTP ${res.status}: ${msg}`);
+    }
+    return body as T;
+  } finally {
+    clearTimeout(id);
   }
-  return body as T;
 }
 
 // -------- Odoo meta / ping --------

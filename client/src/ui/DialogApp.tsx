@@ -7,11 +7,11 @@ import {
   searchOdoo,
   searchOdooDomain,
   writeOdoo,
-} from "../api";
+} from "@/api";
 
-import DebugPanel from "./DebugPanel";
-import { getSettings } from "../settings";
-import { applySkin } from "./skins";
+import DebugPanel from "@/ui/DebugPanel";
+import { getSettings } from "@/settings";
+import { applySkin } from "@/ui/skins";
 
 type Mode = "new" | "add" | "edit";
 type Entity = "project.task" | "project.project" | "crm.lead" | "res.partner";
@@ -285,8 +285,8 @@ export default function DialogApp() {
       const normalize = (arr: any): Recipient[] =>
         Array.isArray(arr)
           ? arr
-              .map((r: any) => ({ name: String(r?.displayName || "").trim(), email: String(r?.emailAddress || "").trim() }))
-              .filter((r: any) => r.email)
+            .map((r: any) => ({ name: String(r?.displayName || "").trim(), email: String(r?.emailAddress || "").trim() }))
+            .filter((r: any) => r.email)
           : [];
 
       setCtx((c) => ({
@@ -319,7 +319,7 @@ export default function DialogApp() {
           <img src="/icon-32.png" alt="" style={S.titleLogo} />
           <div style={{ minWidth: 0 }}>
             <div style={S.h1}>Inbox CRM Cockpit</div>
-          <div style={S.h2}>{mode === "new" ? "Criar" : mode === "add" ? "Ligar / Atualizar" : "Editar"}</div>
+            <div style={S.h2}>{mode === "new" ? "Criar" : mode === "add" ? "Ligar / Atualizar" : "Editar"}</div>
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -329,7 +329,7 @@ export default function DialogApp() {
 
       <div style={S.banner}>
         <div><b>Email:</b> {ctx.subject || "—"}</div>
-                <div style={{ color: "#666" }}>{ctx.fromName ? `${ctx.fromName} <${ctx.fromEmail}>` : (ctx.fromEmail || "—")}</div>
+        <div style={{ color: "#666" }}>{ctx.fromName ? `${ctx.fromName} <${ctx.fromEmail}>` : (ctx.fromEmail || "—")}</div>
 
         <div style={{ color: "#666", marginTop: 6, fontSize: 12 }}>
           <b title="Destinatários (Para)">Para:</b>{" "}
@@ -1142,8 +1142,8 @@ function GenericMiniForm({ mode, ctx, model, editId, onStatus }: any) {
       try {
         const fields =
           model === "res.partner" ? ["name", "email"] :
-          model === "crm.lead" ? ["name", "email_from"] :
-          ["name"];
+            model === "crm.lead" ? ["name", "email_from"] :
+              ["name"];
         const rows = await readOdoo(model, [editId], fields);
         const r = rows?.[0];
         if (!r) return;
@@ -1171,8 +1171,8 @@ function GenericMiniForm({ mode, ctx, model, editId, onStatus }: any) {
 
       const values: any =
         model === "res.partner" ? { name: name || email || "Novo contacto", email } :
-        model === "crm.lead" ? { name: name || `Lead: ${ctx.subject || "sem assunto"}`, email_from: email } :
-        { name: name || `Novo: ${ctx.subject || ""}` };
+          model === "crm.lead" ? { name: name || `Lead: ${ctx.subject || "sem assunto"}`, email_from: email } :
+            { name: name || `Novo: ${ctx.subject || ""}` };
 
       const id = await createOdoo(model, values);
 

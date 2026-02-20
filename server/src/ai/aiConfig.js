@@ -4,16 +4,16 @@ export function getAiConfig() {
 
   return {
     enabled: String(process.env.AI_ENABLED || "").trim() === "1",
-    provider,
+    provider, // Primary/default provider
     openai: {
       apiKey: process.env.OPENAI_API_KEY || "",
-      modelFast: process.env.OPENAI_MODEL_FAST || "gpt-5",
+      modelFast: process.env.OPENAI_MODEL_FAST || "gpt-4o-mini",
       modelQuality:
-        process.env.OPENAI_MODEL_QUALITY || process.env.OPENAI_MODEL_FAST || "gpt-5",
+        process.env.OPENAI_MODEL_QUALITY || process.env.OPENAI_MODEL_FAST || "gpt-4o-mini",
     },
     gemini: {
       apiKey: process.env.GEMINI_API_KEY || "",
-      model: process.env.GEMINI_MODEL || "gemini-1.5-pro",
+      model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
     },
   };
 }

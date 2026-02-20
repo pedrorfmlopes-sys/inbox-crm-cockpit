@@ -13,6 +13,7 @@ import {
   type SkinId,
 } from "../settings";
 import { applySkin } from "./skins";
+import * as Icons from "./icons";
 
 type Section = "general" | "ai" | "signature";
 
@@ -52,6 +53,7 @@ const TONE_OPTIONS = [
 const SKIN_OPTIONS: Array<{ value: SkinId; label: string }> = [
   { value: "classic", label: "Classic" },
   { value: "mailmaestro", label: "MailMaestro" },
+  { value: "vibrant", label: "Vibrant (Cockpit 3.0)" },
 ];
 
 function localeShort(loc: AppLocale): string {
@@ -194,9 +196,11 @@ export function SettingsPanel(): JSX.Element {
         <div style={S.hTitle}>{title}</div>
         <div style={{ display: "flex", gap: 8 }}>
           <button style={S.btnGhost} onClick={onReset} disabled={saving} title="Repor">
+            <Icons.RotateCcw size={12} style={{ marginRight: "4px" }} />
             Repor
           </button>
           <button style={S.btn} onClick={onSave} disabled={saving}>
+            <Icons.Save size={12} style={{ marginRight: "4px" }} />
             {saving ? "A guardar…" : "Guardar"}
           </button>
         </div>
@@ -252,7 +256,9 @@ export function SettingsPanel(): JSX.Element {
                     </option>
                   ))}
                 </select>
-                <div style={S.hint}>Classic mantém o visual atual. MailMaestro torna a UI mais compacta e limpa.</div>
+                <div style={S.hint}>
+                  Classic mantém o visual atual. MailMaestro é compacto. Vibrant é o novo design Cockpit 3.0 com Glassmorphism.
+                </div>
               </Field>
 
               <Field label="Idioma de leitura (resumo/rapidas)">
@@ -512,17 +518,19 @@ const S: Record<string, React.CSSProperties> = {
     gap: 12,
     marginBottom: 10,
   },
-  hTitle: { fontWeight: 800, fontSize: 14 },
+  hTitle: { fontWeight: 800, fontSize: 14, color: "var(--iccc-text)" },
 
   card: {
-    borderRadius: 16,
-    background: "#ffffff",
-    border: "1px solid #e6e8ef",
-    boxShadow: "0 10px 30px rgba(20, 26, 52, 0.08)",
+    borderRadius: "var(--iccc-radius-card)",
+    background: "var(--iccc-card-bg)",
+    border: "1px solid var(--iccc-card-border)",
+    boxShadow: "var(--iccc-shadow)",
     padding: 10,
     display: "grid",
     gridTemplateColumns: "110px 1fr",
     gap: 10,
+    backdropFilter: "var(--iccc-glass-blur)",
+    WebkitBackdropFilter: "var(--iccc-glass-blur)",
   },
   sidebar: {
     display: "grid",
@@ -531,6 +539,7 @@ const S: Record<string, React.CSSProperties> = {
   },
   content: {
     minHeight: 220,
+    color: "var(--iccc-text)",
   },
 
   sideItem: {
@@ -541,30 +550,34 @@ const S: Record<string, React.CSSProperties> = {
     fontSize: 12,
     textAlign: "left",
     cursor: "pointer",
-    color: "#1d2b4f",
+    color: "var(--iccc-text-muted)",
   },
   sideItemOn: {
     borderRadius: 10,
     padding: "8px 10px",
-    border: "1px solid #d7dbeb",
-    background: "#f2f6ff",
+    border: "1px solid var(--iccc-card-border)",
+    background: "rgba(0,0,0,0.03)",
     fontSize: 12,
     textAlign: "left",
     cursor: "pointer",
-    color: "#0b2e7a",
+    color: "var(--iccc-pill-active-bg)",
     fontWeight: 700,
   },
 
   fieldLabel: {
-    fontSize: 12,
-    fontWeight: 700,
-    color: "#2a3558",
+    fontSize: 11,
+    fontWeight: 800,
+    textTransform: "uppercase",
+    letterSpacing: "0.02em",
+    color: "var(--iccc-text-muted)",
     marginBottom: 6,
   },
   select: {
     width: "100%",
     borderRadius: 10,
-    border: "1px solid #d7dbeb",
+    border: "1px solid var(--iccc-card-border)",
+    background: "rgba(255,255,255,0.05)",
+    color: "var(--iccc-text)",
     padding: "8px 10px",
     fontSize: 12,
     outline: "none",
@@ -572,7 +585,9 @@ const S: Record<string, React.CSSProperties> = {
   input: {
     width: "100%",
     borderRadius: 10,
-    border: "1px solid #d7dbeb",
+    border: "1px solid var(--iccc-card-border)",
+    background: "rgba(255,255,255,0.05)",
+    color: "var(--iccc-text)",
     padding: "8px 10px",
     fontSize: 12,
     outline: "none",
@@ -581,7 +596,9 @@ const S: Record<string, React.CSSProperties> = {
     width: "100%",
     minHeight: 80,
     borderRadius: 12,
-    border: "1px solid #d7dbeb",
+    border: "1px solid var(--iccc-card-border)",
+    background: "rgba(255,255,255,0.05)",
+    color: "var(--iccc-text)",
     padding: 10,
     fontSize: 12,
     outline: "none",
@@ -589,28 +606,31 @@ const S: Record<string, React.CSSProperties> = {
   },
   hint: {
     fontSize: 11,
-    color: "#66719a",
+    color: "var(--iccc-text-muted)",
     lineHeight: 1.35,
   },
 
   btn: {
     borderRadius: 999,
-    border: "1px solid #123a8f",
-    background: "#123a8f",
-    color: "#fff",
-    padding: "6px 12px",
-    fontSize: 12,
-    fontWeight: 700,
+    border: "none",
+    background: "var(--iccc-btn-bg)",
+    color: "var(--iccc-btn-text)",
+    padding: "6px 14px",
+    fontSize: 11,
+    fontWeight: 800,
+    textTransform: "uppercase",
     cursor: "pointer",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
   },
   btnGhost: {
     borderRadius: 999,
-    border: "1px solid #d7dbeb",
-    background: "#ffffff",
-    color: "#20315d",
-    padding: "6px 12px",
-    fontSize: 12,
-    fontWeight: 700,
+    border: "1px solid var(--iccc-card-border)",
+    background: "transparent",
+    color: "var(--iccc-text)",
+    padding: "6px 14px",
+    fontSize: 11,
+    fontWeight: 800,
+    textTransform: "uppercase",
     cursor: "pointer",
   },
 
@@ -618,20 +638,22 @@ const S: Record<string, React.CSSProperties> = {
     marginTop: 10,
     borderRadius: 12,
     padding: 10,
-    fontSize: 12,
-    border: "1px solid #cfe7d2",
-    background: "#f1fbf2",
-    color: "#255d2b",
+    fontSize: 11,
+    fontWeight: 600,
+    border: "1px solid var(--iccc-pill-active-bg)",
+    background: "rgba(16, 185, 129, 0.1)",
+    color: "var(--iccc-pill-active-bg)",
   },
   errorBox: {
     marginTop: 10,
     borderRadius: 12,
     padding: 10,
-    fontSize: 12,
-    border: "1px solid #f3c0c0",
-    background: "#fff2f2",
-    color: "#8a1f1f",
+    fontSize: 11,
+    fontWeight: 600,
+    border: "1px solid #ef4444",
+    background: "rgba(239, 68, 68, 0.1)",
+    color: "#ef4444",
   },
-  note: { fontSize: 12, color: "#66719a" },
-  error: { fontSize: 12, color: "#8a1f1f" },
+  note: { fontSize: 11, color: "var(--iccc-text-muted)" },
+  error: { fontSize: 11, color: "#ef4444" },
 };

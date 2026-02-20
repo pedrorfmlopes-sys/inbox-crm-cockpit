@@ -1,42 +1,56 @@
 // server/src/ai/openaiProvider.js
 // Uses native fetch (Node 18+) to avoid axios dependency issues.
-// Returns structured errors (never crashes the process).
-
-function extractTextFromResponses(data) {
-  if (!data) return "";
-  if (typeof data.output_text === "string") return data.output_text;
-
-  const output = Array.isArray(data.output) ? data.output : [];
-  const chunks = [];
-  for (const item of output) {
-    if (item?.type === "message" && Array.isArray(item?.content)) {
-      for (const c of item.content) {
-        if (c?.type === "output_text" && typeof c?.text === "string") chunks.push(c.text);
-        if (c?.type === "text" && typeof c?.text === "string") chunks.push(c.text);
-      }
-    }
-  }
-  return chunks.join("\n").trim();
-}
+// Returns standard chat completions for GPT-4o-mini etc.
 
 export async function openaiCreateResponse({
   apiKey,
-  model,
+  model = "gpt-4o-mini",
   instructions,
   input,
-  max_output_tokens = 256,
+  files = [], // NEW: Support for images
+  history = [], // NEW: Support for conversation history
+  max_output_tokens = 512,
   temperature = 0.2,
   timeout_ms = 60000,
 }) {
   if (!apiKey) throw Object.assign(new Error("OPENAI_API_KEY em falta"), { status: 400 });
-  if (!model) throw Object.assign(new Error("model em falta"), { status: 400 });
-  if (input == null || input === "") throw Object.assign(new Error("input em falta"), { status: 400 });
 
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeout_ms);
 
+  const messages = [];
+  if (instructions) {
+    messages.push({ role: "system", content: instructions });
+  }
+
+  // Add history messages
+  for (const h of history) {
+    messages.push({ role: h.role, content: h.content });
+  }
+
+  const userContent = [];
+  if (input) {
+    userContent.push({ type: "text", text: input });
+  }
+
+  // Support images in OpenAI (png, jpg, jpeg, webp)
+  for (const f of files) {
+    if (f.type && f.type.startsWith("image/")) {
+      const base64Data = f.content.includes(",") ? f.content.split(",")[1] : f.content;
+      userContent.push({
+        type: "image_url",
+        image_url: { url: `data:${f.type};base64,${base64Data}` },
+      });
+    } else if (f.name) {
+      // For non-images (like PDFs), we just mention the filename to OpenAI in text
+      userContent.push({ type: "text", text: `[Nota: Ficheiro anexo "${f.name}" (${f.type}) foi ignorado por falta de suporte visual neste motor.]` });
+    }
+  }
+
+  messages.push({ role: "user", content: userContent });
+
   try {
-    const res = await fetch("https://api.openai.com/v1/responses", {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -44,9 +58,8 @@ export async function openaiCreateResponse({
       },
       body: JSON.stringify({
         model,
-        instructions: instructions || undefined,
-        input,
-        max_output_tokens,
+        messages,
+        max_tokens: max_output_tokens,
         temperature,
       }),
       signal: controller.signal,
@@ -54,7 +67,11 @@ export async function openaiCreateResponse({
 
     const text = await res.text();
     let data;
-    try { data = text ? JSON.parse(text) : null; } catch { data = { raw_text: text }; }
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = { raw_text: text };
+    }
 
     if (!res.ok) {
       const msg =
@@ -67,17 +84,16 @@ export async function openaiCreateResponse({
       throw err;
     }
 
-    return { raw: data, text: extractTextFromResponses(data) };
+    const outputText = data?.choices?.[0]?.message?.content || "";
+    return { raw: data, text: outputText.trim() };
   } catch (e) {
-    // Normalize common errors
     if (e?.name === "AbortError") {
       const err = new Error("OpenAI timeout (abort)");
       err.status = 504;
       throw err;
     }
-    // Some network errors can be ECONNRESET; we still return a clean JSON error to the client.
     if (e?.code === "ECONNRESET") {
-      const err = new Error("OpenAI network ECONNRESET (ligação foi reiniciada)");
+      const err = new Error("OpenAI network ECONNRESET");
       err.status = 502;
       throw err;
     }

@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./ui/App";
-import DialogApp from "./ui/DialogApp";
+import UniversalApp from "@/ui/UniversalApp";
+import DialogApp from "@/ui/DialogApp";
 
 // Decide which UI to render based on URL param:
 // - taskpane: main sidebar
@@ -12,8 +12,6 @@ function getView(): string {
 }
 
 // Tell Preflight (index.html) that React mounted, so it can auto-hide.
-// This matters because Outlook sometimes reports generic "Script error." from office.js (cross-origin),
-// even when our UI is 100% OK.
 function markMounted() {
   try {
     document.documentElement.dataset.icccMounted = "1";
@@ -23,8 +21,7 @@ function markMounted() {
   }
 }
 
-// Boot wrapper: if something crashes in Compose (Outlook Classic) we show the error
-// instead of a white screen.
+// Boot wrapper
 function Boot() {
   const [fatal, setFatal] = React.useState<string | null>(null);
 
@@ -36,7 +33,6 @@ function Boot() {
           err && (err.stack || err.message)
             ? String(err.stack || err.message)
             : String(err || "Erro desconhecido");
-        // Store first fatal only (keeps UI stable)
         setFatal((prev) => prev || msg);
       } catch {
         setFatal((prev) => prev || "Erro desconhecido");
@@ -54,9 +50,9 @@ function Boot() {
   if (fatal) {
     return (
       <div style={{ padding: 12, fontFamily: "system-ui, Segoe UI, Arial" }}>
-        <div style={{ fontWeight: 800, marginBottom: 8 }}>⚠️ O add-in falhou ao iniciar</div>
+        <div style={{ fontWeight: 800, marginBottom: 8 }}>⚠️ O add-in falhou ao iniciar (v9.6)</div>
         <div style={{ color: "#444", marginBottom: 8 }}>
-          Isto acontece mais vezes no Outlook Classic em modo de resposta (Compose). Copia o erro abaixo e envia-me.
+          Tenta carregar no botão direito e "Recarregar".
         </div>
         <pre
           style={{
@@ -76,20 +72,56 @@ function Boot() {
   }
 
   const view = getView();
-  return view === "dialog" ? <DialogApp /> : <App />;
+  return view === "dialog" ? <DialogApp /> : <UniversalApp />;
 }
 
 const rootEl = document.getElementById("root");
+if (!rootEl) throw new Error("Root element #root não existe.");
 
-if (!rootEl) {
-  throw new Error("Root element #root não existe.");
+const root = ReactDOM.createRoot(rootEl);
+
+function renderApp() {
+  if ((window as any).__ICCC_BOOTED__) return;
+  (window as any).__ICCC_BOOTED__ = true;
+  console.log("[main] Rendering React App...");
+  root.render(
+    <React.StrictMode>
+      <Boot />
+    </React.StrictMode>
+  );
+  setTimeout(markMounted, 0);
 }
 
-ReactDOM.createRoot(rootEl).render(
-  <React.StrictMode>
-    <Boot />
-  </React.StrictMode>
-);
+// Safety: wait for Office.js handshake. 
+// We NO LONGER use a force-boot timeout because accessing Office APIs before ready crashes the host.
+const OfficeAny = (window as any).Office;
 
-// Next tick so DOM exists
-setTimeout(markMounted, 0);
+if (OfficeAny) {
+  console.log("[main] Office found, waiting for onReady...");
+
+  // FAILSAFE: If Office.onReady hangs (common in some Outlook versions), 
+  // we MUST boot React anyway so the user sees the app (even if limited).
+  // Otherwise they are stuck on "Preflight".
+  const bootTimer = setTimeout(() => {
+    console.warn("[main] Office.onReady took too long (>5s). Forcing boot.");
+    const statusEl = document.getElementById("pf-status");
+    if (statusEl) statusEl.textContent = "Office.onReady demorou. A forçar arranque...";
+    renderApp();
+  }, 5000);
+
+  // Also support legacy initialize via a global callback (from index.html)
+  (window as any).__ICCC_SET_READY__ = () => {
+    console.log("[main] Legacy initialize callback triggered.");
+    clearTimeout(bootTimer);
+    renderApp();
+  };
+
+  OfficeAny.onReady((info: any) => {
+    clearTimeout(bootTimer);
+    console.log("[main] Office.onReady resolved. Host:", info?.host);
+    renderApp();
+  });
+} else {
+  console.log("[main] No Office object (probably browser). Booting automatically.");
+  renderApp();
+}

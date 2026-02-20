@@ -1,5 +1,5 @@
 // client/src/ai/aiClient.ts
-export type AiAction = "reply" | "summarize" | "rewrite" | "tasks";
+export type AiAction = "summarize" | "reply" | "rewrite" | "forward" | "tasks" | "refine";
 export type AiMode = "fast" | "quality";
 export type AiTone = "neutro" | "formal" | "curto" | "direto" | "simpático";
 export type AiLocale = "pt-PT" | "es-ES" | "en-GB" | "it-IT" | "de-DE" | "auto";
@@ -24,6 +24,10 @@ export type AiGenerateRequest = {
   tone: AiTone;
   email?: AiEmailContext;
   inputText?: string;
+  knowledge?: string[];
+  files?: any[]; // optional: raw files
+  history?: Array<{ role: "user" | "assistant"; content: string }>; // NEW: Chat history
+  filesContext?: string; // optional: pre-extracted text context
 };
 
 export type AiGenerateResponse =

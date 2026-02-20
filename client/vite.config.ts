@@ -23,7 +23,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
-    port: 5174,
+    port: 5173,
     strictPort: true,
     https:
       fs.existsSync(path.join(certDir, "localhost.key")) && fs.existsSync(path.join(certDir, "localhost.crt"))
@@ -49,4 +49,9 @@ export default defineConfig({
     },
   },
   build: { outDir: "dist" },
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
 });

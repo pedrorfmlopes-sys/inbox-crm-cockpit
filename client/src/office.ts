@@ -31,10 +31,38 @@ async function waitForOffice(maxWaitMs = 5000): Promise<any> {
   }
 }
 
-async function ensureOfficeReady() {
-  const OfficeAny = await waitForOffice(8000);
-  if (!OfficeAny) throw new Error("Office.js não está disponível (o taskpane não correu dentro do Outlook?).");
-  await new Promise<void>((resolve) => OfficeAny.onReady(() => resolve()));
+async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: any;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([
+    promise.then(v => { clearTimeout(timer); return v; }),
+    timeoutPromise
+  ]);
+}
+
+async function ensureOfficeReady(): Promise<any> {
+  const OfficeAny = await waitForOffice(5000);
+  if (!OfficeAny) throw new Error("Office.js não está disponível (Script não carregou).");
+
+  // Bypass: If legacy initialize already fired and we have context, don't wait for onReady (it might hang)
+  if (OfficeAny.context) {
+    return OfficeAny;
+  }
+
+  clientLog.log("[office] waiting for onReady...");
+  // Modern Office.onReady returns a promise. We wait up to 10s for the handshake.
+  const ready = await withTimeout(OfficeAny.onReady(), 10000, null);
+
+  if (!ready) {
+    // Final check before throwing: maybe context appeared meanwhile?
+    if (OfficeAny.context) return OfficeAny;
+    clientLog.error("[office] onReady timeout (10s)");
+    throw new Error("O Office.js demorou demasiado tempo a carregar (Handshake timeout). Reabre o Cockpit.");
+  }
+
+  clientLog.log("[office] onReady finished");
   return OfficeAny;
 }
 
@@ -59,20 +87,17 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
 
   const getAsyncValue = async (obj: any, coercer: (v: any) => string): Promise<string> => {
     if (!obj?.getAsync) return "";
-    return await new Promise<string>((resolve) => {
+    const p = new Promise<string>((resolve) => {
       try {
         obj.getAsync((r: any) => {
           try {
             if (r?.status === OfficeAny.AsyncResultStatus.Succeeded) resolve(coercer(r.value));
             else resolve("");
-          } catch {
-            resolve("");
-          }
+          } catch { resolve(""); }
         });
-      } catch {
-        resolve("");
-      }
+      } catch { resolve(""); }
     });
+    return await withTimeout(p, 2000, "");
   };
 
   const getSubject = async (): Promise<string> => {
@@ -141,21 +166,28 @@ export const getSelectedMessageContext = getOutlookContext;
 
 // Ler corpo do email (texto simples) — usado pela IA
 export async function getEmailBodyText(): Promise<string> {
+  clientLog.log("[office] getEmailBodyText start");
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const item: any = (Office as any)?.context?.mailbox?.item;
+    const OfficeAny = await ensureOfficeReady();
+    const item: any = OfficeAny?.context?.mailbox?.item;
     if (!item?.body?.getAsync) return "";
-    return await new Promise<string>((resolve) => {
+
+    const p = new Promise<string>((resolve) => {
       item.body.getAsync("text", (r: any) => {
         try {
-          if (r?.status === (Office as any).AsyncResultStatus.Succeeded) resolve(String(r.value ?? ""));
+          if (r?.status === OfficeAny.AsyncResultStatus.Succeeded) resolve(String(r.value ?? ""));
           else resolve("");
         } catch {
           resolve("");
         }
       });
     });
-  } catch {
+
+    const result = await withTimeout(p, 3000, "");
+    clientLog.log("[office] getEmailBodyText end");
+    return result;
+  } catch (e) {
+    clientLog.error("[office] getEmailBodyText error", e);
     return "";
   }
 }
@@ -196,7 +228,7 @@ export async function openCockpitDialog(params: Record<string, string>) {
   // close previous if any
   try {
     if (activeDialog) activeDialog.close();
-  } catch {}
+  } catch { }
   activeDialog = null;
 
   return await new Promise<void>((resolve, reject) => {
@@ -216,7 +248,7 @@ export async function openCockpitDialog(params: Record<string, string>) {
           if (arg?.message === "close") {
             try {
               dialog.close();
-            } catch {}
+            } catch { }
             activeDialog = null;
             resolve();
           }
@@ -254,12 +286,132 @@ export async function subscribeToItemChanges(onChanged: () => void): Promise<() 
         try {
           OfficeAny.context.mailbox.removeHandlerAsync(OfficeAny.EventType.ItemChanged, { handler });
           clientLog.log("[office] unsubscribed ItemChanged");
-        } catch {}
+        } catch { }
       };
     }
   } catch (e) {
     clientLog.warn("[office] ItemChanged not supported here", e);
   }
 
-  return () => {};
+  return () => { };
+}
+
+/**
+ * Checks if the current item is in compose mode (editable).
+ */
+export async function isComposeMode(): Promise<boolean> {
+  const OfficeAny = await ensureOfficeReady();
+  return Boolean(OfficeAny?.context?.mailbox?.item?.body?.setSelectedDataAsync);
+}
+
+/**
+ * Inserts HTML or Text into the message body at the current cursor position.
+ * Only works in Compose mode.
+ */
+export async function insertTextToBody(content: string, isHtml = true): Promise<void> {
+  const OfficeAny = await ensureOfficeReady();
+  const item = OfficeAny?.context?.mailbox?.item;
+
+  clientLog.log(`[office] insertTextToBody called. Item exists: ${!!item}, setSelectedDataAsync exists: ${!!item?.body?.setSelectedDataAsync}`);
+
+  if (!item?.body?.setSelectedDataAsync) {
+    clientLog.warn("[office] insertTextToBody: Not in compose mode or not supported (setSelectedDataAsync missing).");
+    throw new Error("Não é possível inserir texto: o item não está em modo de edição ou a funcionalidade não é suportada.");
+  }
+
+  // Formatting fix: Convert newlines to <br> if HTML
+  const finalContent = isHtml ? content.replace(/\n/g, "<br/>") : content;
+
+  return await new Promise<void>((resolve, reject) => {
+    item.body.setSelectedDataAsync(
+      finalContent,
+      { coercionType: isHtml ? OfficeAny.CoercionType.Html : OfficeAny.CoercionType.Text },
+      (result: any) => {
+        if (result.status === OfficeAny.AsyncResultStatus.Succeeded) {
+          clientLog.log("[office] insertTextToBody: Success");
+          resolve();
+        } else {
+          clientLog.error(`[office] setSelectedDataAsync failed: ${result.error?.message || "unknown"}`);
+          reject(new Error(result.error?.message || "Falha ao inserir no email."));
+        }
+      }
+    );
+  });
+}
+
+/**
+ * Opens a new Reply form with pre-filled content.
+ */
+export async function displayReplyForm(content: string, isHtml = true): Promise<void> {
+  const OfficeAny = await ensureOfficeReady();
+  const item = OfficeAny?.context?.mailbox?.item;
+  if (!item?.displayReplyAllForm && !item?.displayReplyForm) {
+    throw new Error("Funcionalidade de resposta não disponível neste item.");
+  }
+
+  const finalContent = isHtml ? content.replace(/\n/g, "<br/>") : content;
+
+  if (isHtml) {
+    item.displayReplyAllForm({ htmlBody: finalContent });
+  } else {
+    item.displayReplyAllForm(finalContent);
+  }
+}
+
+/**
+ * Opens a new Forward form with pre-filled content.
+ */
+export async function displayForwardForm(content: string, isHtml = true): Promise<void> {
+  const OfficeAny = await ensureOfficeReady();
+  const item = OfficeAny?.context?.mailbox?.item;
+  if (!item?.displayForwardForm) {
+    throw new Error("Funcionalidade de reenvio não disponível neste item.");
+  }
+
+  const finalContent = isHtml ? content.replace(/\n/g, "<br/>") : content;
+
+  item.displayForwardForm({ htmlBody: isHtml ? finalContent : undefined, textBody: !isHtml ? finalContent : undefined });
+}
+
+/**
+ * Fetch attachments from the current item.
+ * Returns array of { name, contentType, contentBase64 }
+ */
+export async function getAttachments(): Promise<Array<{ name: string; contentType: string; content: string }>> {
+  const OfficeAny = await ensureOfficeReady();
+  const item = OfficeAny?.context?.mailbox?.item;
+
+  if (!item?.attachments) return [];
+
+  const attachments = item.attachments;
+  const results: Array<{ name: string; contentType: string; content: string }> = [];
+
+  for (const att of attachments) {
+    // Only process file attachments
+    if (att.attachmentType === "file") {
+      try {
+        const content = await new Promise<string>((resolve, reject) => {
+          item.getAttachmentContentAsync(att.id, (result: any) => {
+            if (result.status === OfficeAny.AsyncResultStatus.Succeeded) {
+              // result.value.content is base64
+              // result.value.format is "base64" or "url"
+              resolve(result.value.content);
+            } else {
+              reject(new Error(result.error?.message));
+            }
+          });
+        });
+
+        results.push({
+          name: att.name,
+          contentType: att.contentType,
+          content: content // base64 string
+        });
+      } catch (e) {
+        clientLog.error(`[office] Failed to download attachment ${att.name}`, e);
+      }
+    }
+  }
+
+  return results;
 }
