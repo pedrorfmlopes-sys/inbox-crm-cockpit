@@ -49,10 +49,11 @@ export async function aiCreateText({
 
   try {
     if (selectedProvider === "openai") {
-      if (!cfg.openai.apiKey) throw Object.assign(new Error("OPENAI_API_KEY em falta"), { status: 400 });
+      const apiKey = customModels.openaiApiKey || cfg.openai.apiKey;
+      if (!apiKey) throw Object.assign(new Error("OPENAI_API_KEY em falta"), { status: 400 });
       const model = customModels.openaiModelFast || (mode === "quality" ? cfg.openai.modelQuality : cfg.openai.modelFast);
       return await openaiCreateResponse({
-        apiKey: cfg.openai.apiKey,
+        apiKey,
         model,
         instructions,
         input,
@@ -64,10 +65,11 @@ export async function aiCreateText({
     }
 
     if (selectedProvider === "gemini") {
-      if (!cfg.gemini.apiKey) throw Object.assign(new Error("GEMINI_API_KEY em falta"), { status: 400 });
+      const apiKey = customModels.geminiApiKey || cfg.gemini.apiKey;
+      if (!apiKey) throw Object.assign(new Error("GEMINI_API_KEY em falta"), { status: 400 });
       const model = customModels.geminiModel || cfg.gemini.model || "gemini-1.5-flash";
       return await geminiCreateResponse({
-        apiKey: cfg.gemini.apiKey,
+        apiKey,
         model,
         instructions,
         input,
