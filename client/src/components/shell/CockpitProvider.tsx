@@ -36,6 +36,7 @@ export interface CockpitContextType {
     isAuthenticated: boolean;
     connectionStatus: "none" | "success" | "error";
     granularStatus: { odoo: boolean | null; openai: boolean | null; gemini: boolean | null };
+    granularStatusDetails: { openai: string | null; gemini: string | null };
     granularStatusString: string;
     checkConnectivity: (customModels?: any) => Promise<void>;
     login: (credentials: any) => Promise<void>;
@@ -224,6 +225,11 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         gemini: null
     });
 
+    const [granularStatusDetails, setGranularStatusDetails] = useState<{ openai: string | null; gemini: string | null }>({
+        openai: null,
+        gemini: null
+    });
+
     const [granularStatusString, setGranularStatusString] = useState<string>("Odoo: -- | OpenAI: -- | Gemini: --");
 
     async function checkConnectivity(customModels?: any) {
@@ -231,7 +237,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         try {
             const [o, a] = await Promise.all([
                 odooPing().catch(() => ({ ok: false })),
-                aiSelftest(customModels).catch(() => ({ ok: false, openai: false, gemini: false }))
+                (aiSelftest(customModels) as any).catch(() => ({ ok: false, openai: { ok: false, error: "Falha no pedido" }, gemini: { ok: false, error: "Falha no pedido" } }))
             ]);
 
             let finalOdooOk = o.ok;
@@ -258,11 +264,15 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             const newStatus = {
                 odoo: finalOdooOk,
-                openai: a.openai,
-                gemini: a.gemini
+                openai: Boolean(a.openai?.ok),
+                gemini: Boolean(a.gemini?.ok)
             };
             setGranularStatus(newStatus);
-            setGranularStatusString(`Odoo: ${finalOdooOk ? 'OK' : 'Error'} | OpenAI: ${a.openai ? 'OK' : 'Error'} | Gemini: ${a.gemini ? 'OK' : 'Error'}`);
+            setGranularStatusDetails({
+                openai: a.openai?.error || null,
+                gemini: a.gemini?.error || null
+            });
+            setGranularStatusString(`Odoo: ${finalOdooOk ? 'OK' : 'Error'} | OpenAI: ${a.openai?.ok ? 'OK' : 'Error'} | Gemini: ${a.gemini?.ok ? 'OK' : 'Error'}`);
             setConnectionStatus(finalOdooOk && a.ok ? "success" : "error");
         } catch {
             setConnectionStatus("error");
@@ -409,7 +419,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             aiState: currentAiState,
             setAiState,
             files, addFile, removeFile,
-            isAuthenticated, connectionStatus, granularStatus, granularStatusString, checkConnectivity, login, logout,
+            isAuthenticated, connectionStatus, granularStatus, granularStatusDetails, granularStatusString, checkConnectivity, login, logout,
             settings
         }}>
             {children}

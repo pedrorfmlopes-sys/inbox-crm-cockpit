@@ -291,7 +291,7 @@ export async function writeOdoo(model: string, ids: number[] | number, values: R
 }
 
 // -------- AI --------
-export async function aiSelftest(customModels?: any): Promise<{ ok: boolean; openai: boolean; gemini: boolean; error?: string }> {
+export async function aiSelftest(customModels?: any): Promise<{ ok: boolean; openai: { ok: boolean; error?: string }; gemini: { ok: boolean; error?: string }; error?: string }> {
   return await requestJSON(`/api/ai/selftest`, { method: "POST", body: JSON.stringify({ customModels }) });
 }
 

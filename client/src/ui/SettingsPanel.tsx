@@ -883,7 +883,7 @@ function ConnectionSettings({ model, setModel, onSave, setStatus, availableModel
   fetchingModels: boolean,
   refreshModels: () => Promise<void>
 }) {
-  const { connectionStatus, granularStatus, checkConnectivity, login } = useCockpit();
+  const { connectionStatus, granularStatus, granularStatusDetails, checkConnectivity, login } = useCockpit();
   const [isTesting, setIsTesting] = useState(false);
 
   const handleTest = async () => {
@@ -987,7 +987,15 @@ function ConnectionSettings({ model, setModel, onSave, setStatus, availableModel
       </div>
 
       <hr style={{ border: "none", borderTop: "1px solid var(--iccc-card-border)", margin: "4px 0" }} />
-      <div style={S.fieldLabel}>AI Intelligence (OpenAI)</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={S.fieldLabel}>AI Intelligence (OpenAI)</div>
+        <StatusDot ok={granularStatus.openai} />
+      </div>
+      {granularStatusDetails.openai && (
+        <div style={{ fontSize: 11, color: "var(--iccc-status-error)", marginBottom: 8 }}>
+          {granularStatusDetails.openai}
+        </div>
+      )}
       <Field label="OpenAI API Key (Opcional se definida no server)">
         <input
           type="password"
