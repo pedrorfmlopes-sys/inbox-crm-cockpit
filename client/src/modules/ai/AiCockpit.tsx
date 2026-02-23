@@ -272,6 +272,17 @@ export const AiCockpit: React.FC = () => {
         URL.revokeObjectURL(url);
     };
 
+    const [activeMenu, setActiveMenu] = useState<"lang" | "mode" | null>(null);
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) setActiveMenu(null);
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
     const handleKeyDown = (e: React.KeyboardEvent, action: AiAction = "reply") => {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
@@ -343,109 +354,131 @@ export const AiCockpit: React.FC = () => {
                     onKeyDown={(e) => handleKeyDown(e, "reply")}
                 />
                 <div style={S.inputFooter}>
-                    <div style={{ display: "flex", gap: "8px" }}>
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                         <button
                             style={{
-                                ...S.secondaryBtn,
-                                borderColor: isRecording ? "#ef4444" : "var(--iccc-card-border)",
-                                color: isRecording ? "#ef4444" : "var(--iccc-text-muted)",
-                                background: isRecording ? "rgba(239, 68, 68, 0.1)" : "var(--iccc-bg)",
+                                ...S.secondaryBtnPill,
+                                width: "32px",
+                                borderColor: isRecording ? "#ef4444" : "rgba(200, 210, 230, 0.6)",
+                                color: isRecording ? "#ef4444" : "#172B4D",
+                                background: isRecording ? "rgba(239, 68, 68, 0.1)" : "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
                             }}
                             onClick={toggleRecording}
                             title="Ditado por voz"
                         >
-                            <Icons.Microphone size={14} />
+                            <Icons.Microphone size={12} />
                         </button>
-                        <div style={{ width: "1px", height: "24px", background: "var(--iccc-card-border)", margin: "0 4px" }}></div>
                         <button
-                            style={S.secondaryBtn}
+                            style={S.secondaryBtnPill}
                             onClick={() => handleGenerate("summarize")}
                             disabled={isGenerating}
                             title={files.length > 0 ? "Resumir email e anexos identificados" : "Resumir este email"}
                         >
-                            <Icons.Receipt size={14} />
+                            <Icons.Receipt size={12} />
                         </button>
                         <button
-                            style={S.secondaryBtn}
+                            style={S.secondaryBtnPill}
                             onClick={() => handleGenerate("tasks")}
                             disabled={isGenerating}
                             title="Extrair tarefas"
                         >
-                            <Icons.Check size={14} />
+                            <Icons.Check size={12} />
                         </button>
                         <button
-                            style={S.secondaryBtn}
+                            style={S.secondaryBtnPill}
                             onClick={() => handleGenerate("forward")}
                             disabled={isGenerating}
                             title="Reenviar (Rascunho)"
                         >
-                            <Icons.Send size={14} />
+                            <Icons.Send size={12} />
                         </button>
                         <button
-                            style={{
-                                ...S.secondaryBtn,
-                                color: isImporting ? "var(--iccc-pill-active-bg)" : "var(--iccc-text-muted)"
-                            }}
+                            style={S.secondaryBtnPill}
                             onClick={handleImportAttachments}
                             disabled={isImporting}
                             title="Importar anexos deste email"
                         >
-                            {isImporting ? <Icons.RotateCcw size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Icons.Paperclip size={14} />}
+                            {isImporting ? <Icons.RotateCcw size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Icons.Paperclip size={12} />}
                         </button>
                     </div>
                     <button
-                        style={S.generateBtn}
+                        style={S.primaryBtnPill}
                         onClick={() => handleGenerate("reply")}
                         disabled={isGenerating}
                     >
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                            {isGenerating ? "A gerar..." : "Gerar Resposta"}
-                            <Icons.Sparkles size={14} />
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            {isGenerating ? "A GERAR..." : "GERAR RESPOSTA"}
+                            <Icons.Sparkles size={11} />
                         </div>
                     </button>
                 </div>
             </div>
 
-            <div style={S.refinerRow}>
-                <div style={{ display: "flex", alignItems: "center", background: "var(--iccc-card-bg)", border: "1px solid var(--iccc-card-border)", borderRadius: "4px", padding: "0 2px", marginRight: "3px", height: "24px" }}>
-                    <select
-                        style={S.langSelect}
-                        title="Selecionar idioma de resposta"
-                        value={aiState.locale || "auto"}
-                        onChange={(e) => {
-                            const val = e.target.value as AiLocale;
-                            setAiState({ locale: val });
-                            if (output) handleGenerate("rewrite", output);
-                        }}
+            <div style={S.refinerRow} ref={menuRef}>
+                {/* Language Cascade */}
+                <div style={{ position: "relative" }}>
+                    <button
+                        style={{ ...S.secondaryBtnLink, width: "50px", minWidth: "50px" }}
+                        onClick={() => setActiveMenu(activeMenu === "lang" ? null : "lang")}
+                        title="Idioma"
                     >
-                        {localeOptions.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                                {opt.icon} {opt.label}
-                            </option>
-                        ))}
-                    </select>
+                        {localeOptions.find(o => o.value === (aiState.locale || "auto"))?.icon}
+                        <span style={{ fontSize: "9px" }}>{(aiState.locale || "auto").split("-")[0].toUpperCase()}</span>
+                    </button>
+                    {activeMenu === "lang" && (
+                        <div style={S.cascadeMenu}>
+                            {localeOptions.map((opt) => (
+                                <button
+                                    key={opt.value}
+                                    style={S.cascadeItem}
+                                    onClick={() => {
+                                        setAiState({ locale: opt.value });
+                                        setActiveMenu(null);
+                                        if (output) handleGenerate("rewrite", output);
+                                    }}
+                                >
+                                    <span style={{ fontSize: "11px" }}>{opt.icon}</span>
+                                    {opt.label.toUpperCase()}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
-                <div style={{ width: "1px", height: "20px", background: "var(--iccc-card-border)", margin: "0 4px" }}></div>
+                <div style={{ width: "1px", height: "16px", background: "rgba(0,0,0,0.06)", margin: "0 2px" }}></div>
 
-                {toneRefiners.map((r) => (
+                {/* Mode Cascade */}
+                <div style={{ position: "relative" }}>
                     <button
-                        key={r.label}
-                        style={{
-                            ...S.refinerChip,
-                            borderColor: aiState.tone === r.tone ? "var(--iccc-pill-active-bg)" : "var(--iccc-card-border)",
-                            background: aiState.tone === r.tone ? "var(--iccc-pill-active-bg)" : "transparent",
-                            color: aiState.tone === r.tone ? "white" : "var(--iccc-text)",
-                        }}
-                        onClick={() => {
-                            setAiState({ tone: r.tone });
-                            if (output) handleGenerate("rewrite", output);
-                        }}
+                        style={{ ...S.secondaryBtnLink, width: "68px", minWidth: "68px" }}
+                        onClick={() => setActiveMenu(activeMenu === "mode" ? null : "mode")}
                     >
-                        <span style={{ marginRight: "4px" }}>{r.icon}</span>
-                        {r.label}
+                        {toneRefiners.find(t => t.tone === aiState.tone)?.icon || <Icons.Settings size={11} />}
+                        MODO
                     </button>
-                ))}
+                    {activeMenu === "mode" && (
+                        <div style={S.cascadeMenu}>
+                            {toneRefiners.map((r) => (
+                                <button
+                                    key={r.label}
+                                    style={{
+                                        ...S.cascadeItem,
+                                        background: aiState.tone === r.tone ? "rgba(37, 99, 235, 0.05)" : "transparent",
+                                        color: aiState.tone === r.tone ? "#2563eb" : "#172B4D"
+                                    }}
+                                    onClick={() => {
+                                        setAiState({ tone: r.tone });
+                                        setActiveMenu(null);
+                                        if (output) handleGenerate("rewrite", output);
+                                    }}
+                                >
+                                    {r.icon}
+                                    {r.label.toUpperCase()}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
             </div>
 
             {(output || isGenerating || aiState.history.length > 0) && (
@@ -541,206 +574,246 @@ export const AiCockpit: React.FC = () => {
     );
 };
 
-const S: Record<string, React.CSSProperties> = {
-    // ... container etc
-    chatInputWrapper: {
-        display: "flex",
-        alignItems: "center",
-        gap: "6px",
-        background: "var(--iccc-bg)",
-        border: "1px solid var(--iccc-card-border)",
-        borderRadius: "10px",
-        padding: "2px 2px 2px 10px",
+primaryBtnPill: {
+    boxSizing: "border-box",
+        height: "26px", minHeight: "26px", maxHeight: "26px",
+            borderRadius: "16px",
+                border: "1px solid rgba(0, 80, 180, 0.4)",
+                    display: "flex",
+                        alignItems: "center",
+                            justifyContent: "center",
+                                gap: "4px",
+                                    padding: "0 10px",
+                                        fontSize: "10px",
+                                            fontWeight: 800,
+                                                lineHeight: 1,
+                                                    textTransform: "uppercase",
+                                                        cursor: "pointer",
+                                                            outline: "none",
+                                                                background: "linear-gradient(180deg, rgba(80, 160, 255, 0.95) 0%, rgba(0, 100, 210, 0.85) 100%)",
+                                                                    color: "#FFFFFF",
+                                                                        boxShadow: "0 4px 10px rgba(0,100,210,0.35), inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(0,0,0,0.15)",
+                                                                            transition: "all 0.18s ease",
     },
-    chatInput: {
-        flex: 1,
-        background: "transparent",
-        border: "none",
-        color: "var(--iccc-text)",
-        fontSize: "12px",
-        outline: "none",
-        padding: "6px 0",
+secondaryBtnPill: {
+    boxSizing: "border-box",
+        width: "28px", minWidth: "28px", maxWidth: "28px",
+            height: "26px", minHeight: "26px", maxHeight: "26px",
+                borderRadius: "16px",
+                    border: "1px solid rgba(200, 210, 230, 0.6)",
+                        display: "flex",
+                            alignItems: "center",
+                                justifyContent: "center",
+                                    gap: "5px",
+                                        padding: "0",
+                                            fontSize: "10px",
+                                                fontWeight: 800,
+                                                    lineHeight: 1,
+                                                        textTransform: "uppercase",
+                                                            cursor: "pointer",
+                                                                outline: "none",
+                                                                    background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
+                                                                        color: "#172B4D",
+                                                                            boxShadow: "0 4px 10px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06)",
+                                                                                transition: "all 0.18s ease",
     },
-    chatSendBtn: {
-        background: "var(--iccc-btn-bg)",
-        color: "white",
-        border: "none",
-        borderRadius: "8px",
-        width: "28px",
-        height: "22px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
+secondaryBtnLink: {
+    boxSizing: "border-box",
+        height: "26px", minHeight: "26px", maxHeight: "26px",
+            borderRadius: "16px",
+                border: "1px solid rgba(200, 210, 230, 0.6)",
+                    display: "flex",
+                        alignItems: "center",
+                            justifyContent: "center",
+                                gap: "5px",
+                                    padding: "0 8px",
+                                        fontSize: "10px",
+                                            fontWeight: 800,
+                                                lineHeight: 1,
+                                                    textTransform: "uppercase",
+                                                        cursor: "pointer",
+                                                            outline: "none",
+                                                                background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
+                                                                    color: "#172B4D",
+                                                                        boxShadow: "0 4px 10px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06)",
+                                                                            transition: "all 0.18s ease",
     },
-    container: {
-        display: "flex",
+cascadeMenu: {
+    position: "absolute",
+        bottom: "calc(100% + 6px)",
+            left: 0,
+                display: "flex",
+                    flexDirection: "column",
+                        gap: "4px",
+                            zIndex: 100,
+                                background: "transparent",
+                                    width: "fit-content"
+},
+cascadeItem: {
+    boxSizing: "border-box",
+        height: "26px", minHeight: "26px",
+            minWidth: "80px",
+                whiteSpace: "nowrap",
+                    borderRadius: "16px",
+                        border: "1px solid rgba(200, 210, 230, 0.6)",
+                            backdropFilter: "blur(12px)",
+                                WebkitBackdropFilter: "blur(12px)",
+                                    display: "flex",
+                                        alignItems: "center",
+                                            justifyContent: "flex-start",
+                                                gap: "6px",
+                                                    padding: "0 10px",
+                                                        fontSize: "9px",
+                                                            fontWeight: 800,
+                                                                lineHeight: 1,
+                                                                    textTransform: "uppercase",
+                                                                        cursor: "pointer",
+                                                                            background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(240,245,255,0.95) 100%)",
+                                                                                color: "#172B4D",
+                                                                                    boxShadow: "0 4px 12px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,1)",
+                                                                                        transition: "all 0.18s ease",
+    },
+container: {
+    display: "flex",
         flexDirection: "column",
-        gap: "4px",
-        paddingTop: "2px",
+            gap: "4px",
+                paddingTop: "2px",
     },
-    inputCard: {
-        background: "var(--iccc-card-bg)",
+inputCard: {
+    background: "var(--iccc-card-bg)",
         border: "1px solid var(--iccc-card-border)",
-        borderRadius: "10px",
-        padding: "8px 10px",
-        boxShadow: "0 1px 4px rgba(0,0,0,0.02)",
-        display: "flex",
-        flexDirection: "column",
-        gap: "4px",
+            borderRadius: "10px",
+                padding: "8px 10px",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.02)",
+                        display: "flex",
+                            flexDirection: "column",
+                                gap: "4px",
     },
-    textarea: {
-        width: "100%",
+textarea: {
+    width: "100%",
         minHeight: "70px",
-        background: "transparent",
-        border: "none",
-        color: "var(--iccc-text)",
-        fontFamily: "var(--iccc-font)",
-        fontSize: "12px",
-        resize: "none",
-        outline: "none",
+            background: "transparent",
+                border: "none",
+                    color: "var(--iccc-text)",
+                        fontFamily: "var(--iccc-font)",
+                            fontSize: "12px",
+                                resize: "none",
+                                    outline: "none",
     },
-    inputFooter: {
-        display: "flex",
+inputFooter: {
+    display: "flex",
         justifyContent: "space-between",
-        alignItems: "center",
+            alignItems: "center",
     },
-    generateBtn: {
-        background: "linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)",
-        color: "white",
-        border: "none",
-        borderRadius: "6px",
-        padding: "5px 12px",
-        fontSize: "11px",
-        fontWeight: 600,
-        cursor: "pointer",
-        boxShadow: "0 2px 4px rgba(37, 99, 235, 0.15)",
-        transition: "transform 0.1s ease",
-    },
-    secondaryBtn: {
-        background: "transparent",
-        color: "var(--iccc-text-muted)",
-        border: "1px solid transparent",
-        borderRadius: "8px",
-        padding: "4px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-        transition: "all 0.2s",
-    },
-    refinerRow: {
-        display: "flex",
+refinerRow: {
+    display: "flex",
         gap: "4px",
-        overflowX: "auto",
-        paddingBottom: "4px",
-        alignItems: "center",
-    },
-    refinerChip: {
-        flexShrink: 0,
-        padding: "2px 4px",
-        borderRadius: "4px",
+            paddingBottom: "4px",
+                alignItems: "center",
+                    overflow: "visible"
+},
+outputCard: {
+    background: "var(--iccc-card-bg)",
         border: "1px solid var(--iccc-card-border)",
-        background: "rgba(0,0,0,0.02)",
-        fontSize: "10px",
-        fontWeight: 600,
-        cursor: "pointer",
-        transition: "all 0.2s",
-        display: "flex",
-        alignItems: "center",
-        height: "24px",
+            borderRadius: "12px",
+                padding: "12px",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
+                        display: "flex",
+                            flexDirection: "column",
+                                gap: "8px",
+                                    animation: "fadeIn 0.3s ease",
     },
-    outputCard: {
-        background: "var(--iccc-card-bg)",
-        border: "1px solid var(--iccc-card-border)",
-        borderRadius: "12px",
-        padding: "12px",
-        boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
-        display: "flex",
-        flexDirection: "column",
-        gap: "8px",
-        animation: "fadeIn 0.3s ease",
-    },
-    outputHeader: {
-        display: "flex",
+outputHeader: {
+    display: "flex",
         justifyContent: "space-between",
-        fontSize: "10px",
-        fontWeight: 700,
-        textTransform: "uppercase",
-        letterSpacing: "0.5px",
-        color: "var(--iccc-text-muted)",
+            fontSize: "10px",
+                fontWeight: 700,
+                    textTransform: "uppercase",
+                        letterSpacing: "0.5px",
+                            color: "var(--iccc-text-muted)",
     },
-    outputText: {
-        fontSize: "13px",
+outputText: {
+    fontSize: "13px",
         lineHeight: "1.25",
-        color: "var(--iccc-text)",
-        whiteSpace: "pre-wrap",
+            color: "var(--iccc-text)",
+                whiteSpace: "pre-wrap",
     },
-    outputActions: {
-        display: "flex",
-        justifyContent: "flex-end",
-        gap: "16px",
-        borderTop: "1px solid rgba(0,0,0,0.05)",
-        paddingTop: "16px",
-    },
-    actionBtn: {
-        background: "none",
-        border: "none",
-        color: "var(--iccc-text-muted)",
-        fontSize: "11px",
-        fontWeight: 600,
-        cursor: "pointer",
-    },
-    actionBtnPrimary: {
-        background: "none",
-        border: "none",
-        color: "#3b82f6",
-        fontSize: "11px",
-        fontWeight: 600,
-        cursor: "pointer",
-    },
-    typingDots: {
-        display: "flex",
+typingDots: {
+    display: "flex",
         gap: "3px",
     },
-    intentContainer: {
-        display: "flex",
+intentContainer: {
+    display: "flex",
         flexWrap: "wrap" as const,
-        gap: "6px",
-        padding: "0 4px",
-        marginBottom: "2px",
+            gap: "6px",
+                padding: "0 4px",
+                    marginBottom: "2px",
     },
-    intentChip: {
-        background: "var(--iccc-card-bg)",
+intentChip: {
+    background: "var(--iccc-card-bg)",
         border: "1px solid var(--iccc-card-border)",
-        borderRadius: "12px",
-        padding: "3px 8px",
-        fontSize: "10px",
-        color: "var(--iccc-text)",
-        cursor: "pointer",
-        transition: "all 0.2s ease",
-        whiteSpace: "nowrap" as const,
-        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+            borderRadius: "12px",
+                padding: "3px 8px",
+                    fontSize: "10px",
+                        color: "var(--iccc-text)",
+                            cursor: "pointer",
+                                transition: "all 0.2s ease",
+                                    whiteSpace: "nowrap" as const,
+                                        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
     },
-    skeletonText: {
-        fontSize: "11px",
+skeletonText: {
+    fontSize: "11px",
         color: "var(--iccc-text-muted)",
-        fontStyle: "italic",
-        padding: "4px 10px",
-        display: "flex",
-        alignItems: "center",
-        gap: "6px",
+            fontStyle: "italic",
+                padding: "4px 10px",
+                    display: "flex",
+                        alignItems: "center",
+                            gap: "6px",
     },
-    langSelect: {
+chatInputWrapper: {
+    display: "flex",
+        alignItems: "center",
+            gap: "6px",
+                background: "var(--iccc-bg)",
+                    border: "1px solid var(--iccc-card-border)",
+                        borderRadius: "10px",
+                            padding: "2px 2px 2px 10px",
+    },
+chatInput: {
+    flex: 1,
         background: "transparent",
+            border: "none",
+                color: "var(--iccc-text)",
+                    fontSize: "12px",
+                        outline: "none",
+                            padding: "6px 0",
+    },
+chatSendBtn: {
+    background: "var(--iccc-btn-bg)",
+        color: "white",
+            border: "none",
+                borderRadius: "8px",
+                    width: "28px",
+                        height: "22px",
+                            display: "flex",
+                                alignItems: "center",
+                                    justifyContent: "center",
+                                        cursor: "pointer",
+    },
+actionBtn: {
+    background: "none",
         border: "none",
-        color: "var(--iccc-text)",
-        fontSize: "10px",
-        height: "22px",
-        padding: "0",
-        outline: "none",
-        cursor: "pointer",
-        fontWeight: 700,
-        maxWidth: "60px",
+            color: "var(--iccc-text-muted)",
+                fontSize: "11px",
+                    fontWeight: 600,
+                        cursor: "pointer",
+    },
+actionBtnPrimary: {
+    background: "none",
+        border: "none",
+            color: "#3b82f6",
+                fontSize: "11px",
+                    fontWeight: 600,
+                        cursor: "pointer",
     },
 };
