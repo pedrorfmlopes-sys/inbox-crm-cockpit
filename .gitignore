@@ -7,3 +7,6 @@ build/
 auth.json
 *.bak
 PATCH-SNIPPET-*.txt
+backups/
+server/data/
+*.log

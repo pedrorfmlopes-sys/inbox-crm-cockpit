@@ -1246,6 +1246,14 @@ ${composeNotes || ""}`;
         effectiveLocale = (replyLang === "auto" ? ("auto" as any) : (replyLang as any)) as AiLocale;
       }
 
+      const customModels = settings ? {
+        openaiModelFast: settings.openaiModelFast,
+        openaiModelQuality: settings.openaiModelQuality,
+        geminiModel: settings.geminiModel,
+        openaiApiKey: settings.openaiApiKey,
+        geminiApiKey: settings.geminiApiKey,
+      } : {};
+
       const r = await aiGenerate({
         action,
         mode,
@@ -1253,6 +1261,7 @@ ${composeNotes || ""}`;
         tone,
         email: action === "rewrite" ? undefined : (emailForAi as any),
         inputText: action === "rewrite" ? rewriteText : undefined,
+        customModels,
       });
 
       const safeHtml = sanitizeAiHtml((r as any).html || "");

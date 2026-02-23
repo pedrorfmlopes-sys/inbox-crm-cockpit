@@ -37,25 +37,25 @@ function buildHttpsAgentIfNeeded(baseUrl) {
   return new https.Agent({ rejectUnauthorized: false });
 }
 
-export async function odooClientFromEnv() {
-  const baseUrl = sanitizeBaseUrl(process.env.ODOO_URL || "");
+export async function odooClientFromEnv(config = null) {
+  const baseUrl = sanitizeBaseUrl(config?.url || process.env.ODOO_URL || "");
   if (!baseUrl || baseUrl.includes("your-odoo-instance.com")) {
-    throw new Error("ODOO_URL não configurado ou contém valor de exemplo no .env do servidor.");
+    throw new Error("ODOO_URL não configurado.");
   }
 
-  const db = process.env.ODOO_DB;
+  const db = config?.db || process.env.ODOO_DB;
   if (!db || db === "your_db_name") {
-    throw new Error("ODOO_DB não configurado no .env");
+    throw new Error("ODOO_DB não configurado.");
   }
 
-  const login = process.env.ODOO_USERNAME || process.env.ODOO_USER;
+  const login = config?.login || process.env.ODOO_USERNAME || process.env.ODOO_USER;
   if (!login || login === "your_username") {
-    throw new Error("ODOO_USERNAME (ou ODOO_USER) não configurado no .env");
+    throw new Error("ODOO_USERNAME não configurado.");
   }
 
-  const password = process.env.ODOO_API_KEY || process.env.ODOO_PASS || process.env.ODOO_PASSWORD;
+  const password = config?.password || process.env.ODOO_API_KEY || process.env.ODOO_PASS || process.env.ODOO_PASSWORD;
   if (!password || password === "your_password") {
-    throw new Error("ODOO_API_KEY (ou ODOO_PASS) não configurado no .env");
+    throw new Error("ODOO_API_KEY não configurada.");
   }
 
   const jar = new CookieJar();
@@ -127,6 +127,7 @@ export async function odooClientFromEnv() {
 
   return {
     meta: {
+      baseUrl,
       webBaseUrl,
       db,
       uid,

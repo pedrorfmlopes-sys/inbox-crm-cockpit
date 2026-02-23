@@ -2,7 +2,9 @@ import React, { useState } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 
 export const GlobalHeader: React.FC = () => {
-    const { ctx } = useCockpit();
+    const cockpit = useCockpit();
+    if (!cockpit) return null;
+    const { ctx, logout } = cockpit;
     const [isExpanded, setIsExpanded] = useState(false);
 
     return (
@@ -14,9 +16,14 @@ export const GlobalHeader: React.FC = () => {
                         {ctx.subject || "Sem assunto"}
                     </div>
                 </div>
-                <button style={S.expandBtn} onClick={() => setIsExpanded(!isExpanded)}>
-                    {isExpanded ? "Ver menos ▲" : "Ver mais ▼"}
-                </button>
+                <div style={{ display: "flex", gap: "8px" }}>
+                    <button style={S.expandBtn} onClick={logout}>
+                        Sair
+                    </button>
+                    <button style={S.expandBtn} onClick={() => setIsExpanded(!isExpanded)}>
+                        {isExpanded ? "▲" : "▼"}
+                    </button>
+                </div>
             </div>
 
             {isExpanded && (

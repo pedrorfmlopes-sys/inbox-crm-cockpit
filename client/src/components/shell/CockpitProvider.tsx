@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
 import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, type OutlookMessageContext } from "@/office";
-import { getLinks, getOdooMeta, type LinkEntry, type OdooMeta } from "@/api";
-import { type AiTone, type AiLocale } from "@/ai/aiClient";
+import { getLinks, getOdooMeta, login as apiLogin, checkAuth as apiCheckAuth, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
+import { getSettings, saveSettings, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
+import { type AiTone, type AiLocale } from "@/ai/aiClient";
 
 export type CockpitTab = "ai" | "crm" | "files" | "settings";
 
@@ -12,6 +13,7 @@ export interface AiState {
     tone: AiTone;
     locale: AiLocale;
     history: Array<{ role: "user" | "assistant"; content: string }>;
+    smartReplies: string[];
 }
 
 export interface CockpitContextType {
@@ -21,6 +23,7 @@ export interface CockpitContextType {
     bodyText: string;
     meta: OdooMeta | null;
     links: LinkEntry[];
+    attachments: Array<{ name: string; contentType: string; content: string }>;
     msg: string | null;
     setMsg: (msg: string | null) => void;
     refreshLinks: () => Promise<void>;
@@ -30,6 +33,14 @@ export interface CockpitContextType {
     files: Array<{ name: string; type: string; content: string }>;
     addFile: (file: { name: string; type: string; content: string }) => void;
     removeFile: (name: string) => void;
+    isAuthenticated: boolean;
+    connectionStatus: "none" | "success" | "error";
+    granularStatus: { odoo: boolean | null; openai: boolean | null; gemini: boolean | null };
+    granularStatusString: string;
+    checkConnectivity: (customModels?: any) => Promise<void>;
+    login: (credentials: any) => Promise<void>;
+    logout: () => void;
+    settings: CockpitSettingsV1 | null;
 }
 
 // Export the context so it can be checked or used elsewhere if needed (rare)
@@ -48,16 +59,37 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [bodyText, setBodyText] = useState<string>("");
     const [meta, setMeta] = useState<OdooMeta | null>(null);
     const [links, setLinks] = useState<LinkEntry[]>([]);
+    const [attachments, setAttachments] = useState<Array<{ name: string; contentType: string; content: string }>>([]);
     const [msg, setMsg] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [connectionStatus, setConnectionStatus] = useState<"none" | "success" | "error">("none");
+    const [settings, setSettings] = useState<CockpitSettingsV1 | null>(null);
 
-    const [aiCache, setAiCache] = useState<Record<string, AiState>>({});
+    // AI History Persistence
+    const [aiCache, setAiCache] = useState<Record<string, AiState>>(() => {
+        try {
+            const saved = localStorage.getItem("iccc_ai_cache_v1");
+            return saved ? JSON.parse(saved) : {};
+        } catch { return {}; }
+    });
+
+    // Save AI cache whenever it changes
+    useEffect(() => {
+        try {
+            localStorage.setItem("iccc_ai_cache_v1", JSON.stringify(aiCache));
+        } catch (e) {
+            clientLog("error", "[Cockpit] Failed to save AI cache to localStorage", e);
+        }
+    }, [aiCache]);
+
     const [currentAiState, setCurrentAiState] = useState<AiState>({
         prompt: "",
         output: "",
         tone: "neutro",
         locale: "auto",
         history: [],
+        smartReplies: [],
     });
 
     const ctxLoadSeqRef = useRef(0);
@@ -69,15 +101,66 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         isLoadingInProgressRef.current = true;
         const reqId = ++ctxLoadSeqRef.current;
         try {
-            setIsLoading(true);
-            const [c, b] = await Promise.all([
+            // Only show the full-screen loading spinner on the initial load.
+            // Background refreshes (poll/item-changed) update silently.
+            if (reason === 'init') setIsLoading(true);
+
+            // 1. Check Auth first
+            const s = await getSettings();
+            setSettings(s);
+            let currentToken = s.odooSessionToken;
+
+            if (currentToken) {
+                setApiSessionToken(currentToken);
+                const authCheck = await apiCheckAuth();
+                if (authCheck.ok) {
+                    setIsAuthenticated(true);
+                    if (authCheck.meta) setMeta(authCheck.meta);
+                } else {
+                    // Session expired on server? Try auto-login if we have saved password
+                    if (s.odooUrl && s.odooLogin && s.odooPassword) {
+                        try {
+                            const resp = await apiLogin({
+                                url: s.odooUrl,
+                                db: s.odooDb,
+                                login: s.odooLogin,
+                                password: s.odooPassword
+                            });
+                            if (resp.ok) {
+                                currentToken = resp.token;
+                                setApiSessionToken(currentToken);
+                                setIsAuthenticated(true);
+                                setMeta(resp.meta);
+                                await saveSettings({ odooSessionToken: currentToken });
+                            } else {
+                                setIsAuthenticated(false);
+                                setApiSessionToken(null);
+                            }
+                        } catch {
+                            setIsAuthenticated(false);
+                            setApiSessionToken(null);
+                        }
+                    } else {
+                        setIsAuthenticated(false);
+                        setApiSessionToken(null);
+                    }
+                }
+            }
+
+            const [c, b, atts] = await Promise.all([
                 getSelectedMessageContext(),
                 getEmailBodyText(),
+                import("@/office").then(m => m.getAttachments())
             ]);
 
             if (reqId !== ctxLoadSeqRef.current) return;
+
+            // Update token tracker to avoid redundant polls
+            const freshTok = await getCurrentItemToken();
+            lastItemTokenRef.current = freshTok;
             setCtx(c);
             setBodyText(b);
+            setAttachments(atts || []);
 
             if (c.conversationId) {
                 setAiCache(prev => {
@@ -85,13 +168,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     if (cached) {
                         setCurrentAiState(cached);
                     } else {
-                        // Reset to clean state if no cache
                         setCurrentAiState({
-                            prompt: "",
-                            output: "",
-                            tone: "neutro",
-                            locale: "auto",
-                            history: [],
+                            prompt: "", output: "", tone: "neutro", locale: "auto", history: [], smartReplies: [],
                         });
                     }
                     return prev;
@@ -108,34 +186,103 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             setMsg(null);
 
-            // Load Odoo data optionally
-            try {
-                const [l, m] = await Promise.all([
-                    getLinks(c.conversationId).catch(err => {
-                        clientLog("warn", "[Cockpit] getLinks failed:", err);
-                        return [];
-                    }),
-                    !meta ? getOdooMeta().catch(err => {
-                        clientLog("warn", "[Cockpit] getOdooMeta failed:", err);
-                        return null;
-                    }) : Promise.resolve(meta)
-                ]);
+            // 2. Load Odoo data ONLY if authenticated
+            const isDev = (window as any).location.hostname === "localhost" || (window as any).location.hostname === "127.0.0.1";
+            if (s.odooSessionToken || (isDev && !isAuthenticated)) {
+                try {
+                    const [l, m] = await Promise.all([
+                        getLinks(c.conversationId).catch(() => []),
+                        !meta ? getOdooMeta().catch(() => null) : Promise.resolve(meta)
+                    ]);
 
-                if (reqId !== ctxLoadSeqRef.current) return;
-                setLinks(l || []);
-                if (m) setMeta(m);
-            } catch (e) {
-                clientLog("error", "[Cockpit] Unexpected load error", e);
+                    if (reqId !== ctxLoadSeqRef.current) return;
+                    setLinks(l || []);
+                    if (m) {
+                        setMeta(m);
+                        setIsAuthenticated(true);
+                    }
+                } catch (e) {
+                    clientLog("error", "[Cockpit] Unexpected Odoo load error", e);
+                }
             }
         } catch (e: any) {
             if (reqId !== ctxLoadSeqRef.current) return;
-            // Only fatal errors (like Office.js fails) should setMsg
             clientLog("error", "[Cockpit] Fatal initialization error", e);
         } finally {
             isLoadingInProgressRef.current = false;
             if (reqId === ctxLoadSeqRef.current) setIsLoading(false);
+            // Run connectivity check silently on start
+            if (reqId === ctxLoadSeqRef.current && reason === 'init') {
+                checkConnectivity();
+            }
         }
     }
+
+    const [granularStatus, setGranularStatus] = useState<{ odoo: boolean | null; openai: boolean | null; gemini: boolean | null }>({
+        odoo: null,
+        openai: null,
+        gemini: null
+    });
+
+    const [granularStatusString, setGranularStatusString] = useState<string>("Odoo: -- | OpenAI: -- | Gemini: --");
+
+    async function checkConnectivity(customModels?: any) {
+        const { odooPing, aiSelftest, getOdooMeta } = await import("@/api");
+        try {
+            const [o, a] = await Promise.all([
+                odooPing().catch(() => ({ ok: false })),
+                aiSelftest(customModels).catch(() => ({ ok: false, openai: false, gemini: false }))
+            ]);
+
+            let finalOdooOk = o.ok;
+            let currentMeta = meta;
+
+            // If ping works but meta is missing, try a proactive refresh
+            if (o.ok && !currentMeta?.baseUrl) {
+                try {
+                    const freshMeta = await getOdooMeta();
+                    if (freshMeta?.baseUrl) {
+                        setMeta(freshMeta);
+                        currentMeta = freshMeta;
+                    } else {
+                        finalOdooOk = false; // Ping works but we can't get usable metadata
+                    }
+                } catch {
+                    finalOdooOk = false;
+                }
+            } else if (o.ok && currentMeta?.baseUrl) {
+                // All good
+            } else {
+                finalOdooOk = false;
+            }
+
+            const newStatus = {
+                odoo: finalOdooOk,
+                openai: a.openai,
+                gemini: a.gemini
+            };
+            setGranularStatus(newStatus);
+            setGranularStatusString(`Odoo: ${finalOdooOk ? 'OK' : 'Error'} | OpenAI: ${a.openai ? 'OK' : 'Error'} | Gemini: ${a.gemini ? 'OK' : 'Error'}`);
+            setConnectionStatus(finalOdooOk && a.ok ? "success" : "error");
+        } catch {
+            setConnectionStatus("error");
+            setGranularStatusString("Odoo: Error | AI: Error");
+        }
+    }
+
+    // Heartbeat logic
+    useEffect(() => {
+        // Initial run
+        checkConnectivity();
+
+        const interval = setInterval(() => {
+            console.log("[Cockpit] Heartbeat: Checking connectivity...");
+            // Use current settings if available in state or just fallback to server config
+            checkConnectivity();
+        }, 5 * 60 * 1000); // 5 minutes
+
+        return () => clearInterval(interval);
+    }, []);
 
     useEffect(() => {
         loadContextAndLinks('init');
@@ -152,13 +299,23 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const intervalId = window.setInterval(async () => {
             if (isLoadingInProgressRef.current) return;
             try {
-                const tok = await getCurrentItemToken();
-                if (tok && tok !== lastItemTokenRef.current) {
-                    lastItemTokenRef.current = tok;
-                    loadContextAndLinks('poll');
+                // Using getCurrentItemToken (sync properties + poke) 
+                // as it's faster for high-frequency polling
+                const freshTok = await getCurrentItemToken();
+
+                if (freshTok && freshTok !== lastItemTokenRef.current) {
+                    clientLog("info", "[Cockpit] Change detected via poll. Triggering double-reload.");
+
+                    // Trigger immediate reload
+                    loadContextAndLinks('poll-immediate');
+
+                    // Late reload: handles Outlook bridge lag where data is partially stale right after switching
+                    window.setTimeout(() => {
+                        loadContextAndLinks('poll-late');
+                    }, 600);
                 }
             } catch { }
-        }, 3000);
+        }, 1000); // Increased frequency (1s) for more responsive UI
 
         return () => {
             unsub?.();
@@ -219,12 +376,41 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setFiles([]);
     }, [ctx.conversationId]);
 
+    const login = async (credentials: any) => {
+        const resp = await apiLogin(credentials);
+        if (resp.ok) {
+            setApiSessionToken(resp.token);
+            setIsAuthenticated(true);
+            setMeta(resp.meta);
+            await saveSettings({
+                odooUrl: credentials.url,
+                odooDb: credentials.db,
+                odooLogin: credentials.login,
+                odooPassword: credentials.password,
+                odooSessionToken: resp.token
+            });
+            await loadContextAndLinks('login-success');
+        } else {
+            throw new Error(resp.message);
+        }
+    };
+
+    const logout = async () => {
+        setApiSessionToken(null);
+        setIsAuthenticated(false);
+        setMeta(null);
+        setLinks([]);
+        await saveSettings({ odooSessionToken: "" });
+    };
+
     return (
         <CockpitContext.Provider value={{
-            tab, setTab, ctx, bodyText, meta, links, msg, setMsg, refreshLinks, isLoading,
+            tab, setTab, ctx, bodyText, attachments, meta, links, msg, setMsg, refreshLinks, isLoading,
             aiState: currentAiState,
             setAiState,
-            files, addFile, removeFile
+            files, addFile, removeFile,
+            isAuthenticated, connectionStatus, granularStatus, granularStatusString, checkConnectivity, login, logout,
+            settings
         }}>
             {children}
         </CockpitContext.Provider>

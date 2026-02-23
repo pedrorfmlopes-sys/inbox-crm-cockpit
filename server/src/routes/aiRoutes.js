@@ -1,5 +1,5 @@
 import express from "express";
-import { aiCreateText, getAiMeta } from "../ai/aiService.js";
+import { aiCreateText, getAiMeta, listAvailableModels } from "../ai/aiService.js";
 import { buildPrompt } from "../ai/promptTemplates.js";
 import { createRequire } from "module";
 
@@ -102,9 +102,11 @@ export function createAiRouter() {
         email,
         inputText,
         knowledge = [],
-        files = [],
         history = [], // NEW: Support for chat refinement
         filesContext: clientFilesContext = "",
+        persona = {}, // NEW: Persona / Style mimic
+        files = [],   // NEW: Direct files support
+        customModels = {}, // NEW: Custom models from client
       } = req.body || {};
 
       const safeEmail = email
@@ -124,32 +126,102 @@ export function createAiRouter() {
       // Option 1 (NATIVE): Send files directly to the AI service (Gemini/future OpenAI)
       console.log(`[ai] Request: action=${action}, files=${files?.length}`);
 
-      const instructions = buildPrompt({
+      const instructions = req.body.prompt || buildPrompt({
         action,
         locale,
         tone,
         email: safeEmail,
         inputText: String(inputText || ""),
         knowledge: Array.isArray(knowledge) ? knowledge.map(String) : [],
-        // We no longer pre-parse on the server if the provider supports native multimodal
         filesContext: clientFilesContext,
+        persona,
       });
 
       const result = await aiCreateText({
         mode,
         instructions,
         input: action === "refine" ? (inputText || "Refinar") : "ok",
-        files, // Pass raw files (Base64) to the AI service
-        history, // NEW: Pass history
-        max_output_tokens: action === "summarize" || action === "tasks" ? 800 : 700,
+        files,
+        history,
+        max_output_tokens: action === "summarize" || action === "tasks" || action === "summarize_actions" ? 800 : 700,
         temperature: 0.25,
+        customModels,
       });
 
-      res.json({ ok: true, html: ensureBasicHtml(result.text || ""), text: stripHtmlToText(result.text) });
+      let data = null;
+      if (result.text && (result.text.includes("{") || action === "summarize_actions")) {
+        try {
+          const jsonStr = result.text.substring(result.text.indexOf("{"), result.text.lastIndexOf("}") + 1);
+          data = JSON.parse(jsonStr);
+        } catch (e) {
+          // ignore parsing error
+        }
+      }
+
+      res.json({
+        ok: true,
+        html: ensureBasicHtml(result.text || ""),
+        text: stripHtmlToText(result.text),
+        data
+      });
 
     } catch (e) {
       console.error("[ai] generate error:", e?.message || e);
       res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  router.post("/extract-anchors", async (req, res) => {
+    try {
+      const { emailBody, emailContext, customModels } = req.body;
+      const { extractAnchors } = await import("../aiOrchestrator.js");
+      // Use full context if available, fallback to just body for backwards compatibility
+      const anchors = await extractAnchors(emailContext || emailBody, customModels);
+      res.json({ ok: true, anchors });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  router.post("/briefing", async (req, res) => {
+    try {
+      const { context, history, customModels } = req.body;
+      const { generateExecutiveSummary } = await import("../aiOrchestrator.js");
+      const summary = await generateExecutiveSummary(context, history, customModels);
+      res.json({ ok: true, summary });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  router.post("/voice-command", async (req, res) => {
+    try {
+      const { commandText, context } = req.body;
+      const { processVoiceCommand } = await import("../VoiceActionEngine.js");
+      const result = await processVoiceCommand(commandText, context);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  router.post("/selftest", async (req, res) => {
+    try {
+      const { customModels } = req.body || {};
+      const { aiSelftest } = await import("../ai/aiService.js");
+      const result = await aiSelftest(customModels);
+      res.json(result); // returns { ok, openai, gemini }
+    } catch (e) {
+      res.json({ ok: false, openai: false, gemini: false, error: e.message });
+    }
+  });
+
+  router.get("/list-models", async (req, res) => {
+    try {
+      const models = await listAvailableModels();
+      res.json({ ok: true, ...models });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
     }
   });
 

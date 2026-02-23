@@ -46,6 +46,34 @@ export type CockpitSettingsV1 = {
 
   // Freeform notes/instructions that the AI should always consider
   aiKnowledge: string[];
+
+  // Persona & Style Mimic
+  userRole?: string;
+  styleContext?: string;
+  styleExamples?: string;
+
+  // Personal Meeting Links
+  meetingLinks?: {
+    teams?: string;
+    zoom?: string;
+    meet?: string;
+  };
+
+  // Odoo Credentials (Optional, stored for persistence)
+  odooUrl?: string;
+  odooDb?: string;
+  odooLogin?: string;
+  odooPassword?: string;
+  odooSessionToken?: string;
+
+  // AI Credentials
+  geminiApiKey?: string;
+  openaiApiKey?: string;
+
+  // AI Models
+  openaiModelFast?: string;
+  openaiModelQuality?: string;
+  geminiModel?: string;
 };
 
 const KEY_API_BASE = "apiBaseUrl";
@@ -93,6 +121,24 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     "de-DE": 260,
   },
   aiKnowledge: [],
+  userRole: "",
+  styleContext: "",
+  styleExamples: "",
+  meetingLinks: {
+    teams: "",
+    zoom: "",
+    meet: "",
+  },
+  odooUrl: "",
+  odooDb: "",
+  odooLogin: "",
+  odooPassword: "",
+  odooSessionToken: "",
+  geminiApiKey: "",
+  openaiApiKey: "",
+  openaiModelFast: "gpt-4o-mini",
+  openaiModelQuality: "gpt-4o-mini",
+  geminiModel: "gemini-1.5-flash",
 };
 
 function hasOffice(): boolean {

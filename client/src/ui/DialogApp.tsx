@@ -6,15 +6,299 @@ import {
   readOdoo,
   searchOdoo,
   searchOdooDomain,
+  setApiSessionToken,
   writeOdoo,
+  aiGenerate,
 } from "@/api";
 
 import DebugPanel from "@/ui/DebugPanel";
 import { getSettings } from "@/settings";
 import { applySkin } from "@/ui/skins";
+import * as Icons from "./icons"; // Import icons symmetrically with CrmCockpit
 
+/**
+ * OdooMemoryCheck: Proactively searches for open tasks contextually.
+ */
+function OdooMemoryCheck({ partnerId, projectId, fromEmail }: { partnerId?: number | null, projectId?: number | null, fromEmail?: string }) {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    (async () => {
+      let activePartnerId = partnerId;
+
+      // Se não temos partnerId, tentamos encontrar por email
+      if (!activePartnerId && !projectId && fromEmail) {
+        try {
+          const partners = await searchOdooDomain("res.partner", [["email", "=", fromEmail]], ["id"], 1);
+          if (partners?.length) activePartnerId = partners[0].id;
+        } catch (e) {
+          console.error("[OdooMemory] Partner lookup failed", e);
+        }
+      }
+
+      if (!activePartnerId && !projectId) return setCount(0);
+
+      try {
+        const domain: any[] = [["stage_id.is_closed", "=", false]];
+        if (projectId) domain.push(["project_id", "=", projectId]);
+        else if (activePartnerId) domain.push(["partner_id", "=", activePartnerId]);
+
+        const rows = await searchOdooDomain("project.task", domain, ["id"], 100);
+        setCount(rows?.length || 0);
+      } catch (e) {
+        console.error("[OdooMemory] Task search failed", e);
+        setCount(0);
+      }
+    })();
+  }, [partnerId, projectId, fromEmail]);
+
+  if (count === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={S.yellowGlass}>
+        <Icons.AlertCircle size={12} />
+        {count} TAREFAS EM ABERTO PARA ESTE CONTEXTO
+      </div>
+    </div>
+  );
+}
+
+/**
+ * AiAssistant: Analyzes bodyText to provide summary and actions.
+ */
+function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction: (title: string, type: string) => void }) {
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<{ summary: string[], actions: string[] } | null>(null);
+
+  const analyze = async () => {
+    console.log("[IA] Analyze triggered. bodyText length:", bodyText?.length);
+    if (!bodyText || bodyText.trim().length === 0) {
+      console.warn("[IA] Cannot analyze: bodyText is empty.");
+      return;
+    }
+    setLoading(true);
+    setData(null); // Reset data when re-analyzing
+    try {
+      const res = await aiGenerate({
+        action: "summarize_actions",
+        inputText: bodyText,
+        prompt: `Analisa o seguinte email e devolve APENAS um JSON válido com:
+        - "summary": lista de exatamente 3 pontos chave do email. Remove saudações como "Olá" ou "Bom dia".
+        - "actions": lista de tarefas concretas e curtas detetadas.
+        
+        Exemplo: {"summary": ["Ponto 1", "Ponto 2", "Ponto 3"], "actions": ["Enviar proposta", "Agendar reunião"]}
+        
+        Email: ${bodyText}`
+      });
+
+      if (res.ok && res.data) {
+        setData(res.data);
+      } else if (res.ok && res.text) {
+        try {
+          const jsonStr = res.text.substring(res.text.indexOf("{"), res.text.lastIndexOf("}") + 1);
+          const parsed = JSON.parse(jsonStr);
+          setData(parsed);
+        } catch {
+          // Fallback robusto: extrair linhas se JSON falhar
+          const lines = res.text.split("\n").filter(l => l.trim().length > 10).slice(0, 3);
+          setData({ summary: lines, actions: [] });
+        }
+      }
+    } catch (e) {
+      console.error("[IA] Analysis failed", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    // Auto-trigger apenas se tivermos corpo e ainda não tivermos analisado
+    if (bodyText && !data && !loading) {
+      analyze();
+    }
+  }, [bodyText]);
+
+  if (!data || !data.summary.length) {
+    if (loading) return (
+      <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: "1px dashed #d6def2", background: "rgba(255,255,255,0.4)" }}>
+        <div style={{ fontSize: 10, fontWeight: 800, color: "#2563eb", marginBottom: 4, display: "flex", alignItems: "center", gap: "6px" }}>
+          <Icons.RefreshCw size={10} className="animate-spin" />
+          ASSISTENTE IA • A ANALISAR...
+        </div>
+      </div>
+    );
+
+    return (
+      <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: "1px solid #d6def2", background: "rgba(255,255,255,0.4)", backdropFilter: "blur(12px)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <Icons.Sparkles size={12} color="#2563eb" />
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#2563eb", textTransform: "uppercase" }}>Assistente IA</div>
+          </div>
+          <button style={S.secondaryBtn} onClick={analyze} title="Reanalisar o conteúdo">
+            <Icons.RefreshCw size={10} />
+            REANALISAR
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: bodyText ? "#BF2600" : "#777" }}>
+          {bodyText ? "⚠️ Clique em Reanalisar para processar o email." : "ℹ️ O conteúdo do email ainda não foi carregado."}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: "1px solid #d6def2", background: "rgba(255,255,255,0.4)", backdropFilter: "blur(12px)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <Icons.Sparkles size={12} color="#2563eb" />
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#2563eb", textTransform: "uppercase" }}>Assistente IA</div>
+        </div>
+        <button style={S.secondaryBtn} onClick={analyze} title="Reanalisar o conteúdo">
+          <Icons.RefreshCw size={10} />
+          REANALISAR
+        </button>
+      </div>
+
+      <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: "#172B4D", marginBottom: 12 }}>
+        {data.summary.map((s: string, i: number) => (
+          <li key={i} style={{ marginBottom: 4 }}>{s.replace(/^(Olá|Bom dia|Boa tarde|Boa noite)[^,.]*[.,\s]*/i, "").trim()}</li>
+        ))}
+      </ul>
+
+      {data.actions.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {data.actions.map((act: string, i: number) => (
+            <button
+              key={i}
+              style={S.primaryBtn}
+              onClick={() => onAddAction(act, "project.task")}
+              title="Criar tarefa"
+            >
+              <Icons.Plus size={10} />
+              {act.length > 12 ? act.substring(0, 11) + ".." : act.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 type Mode = "new" | "add" | "edit";
 type Entity = "project.task" | "project.project" | "crm.lead" | "res.partner";
+
+/**
+ * VerticalActionCascade: Ultra-compact glossy pill menu (Dialog Version).
+ */
+const VerticalActionCascade: React.FC<{ current: string; onSelect: (type: string) => void; disabled?: boolean }> = ({ current, onSelect, disabled }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setIsOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const items = [
+    { label: "Tarefa", type: "project.task", icon: "📝" },
+    { label: "Lead", type: "crm.lead", icon: "🎯" },
+    { label: "Projeto", type: "project.project", icon: "🏗️" },
+    { label: "Contato", type: "res.partner", icon: "👤" },
+  ];
+
+  const currentLabel = items.find(i => i.type === current)?.label || current;
+
+  const primaryStyle: React.CSSProperties = {
+    ...S.primaryBtn,
+    transition: "all 0.18s ease",
+    ...(hoveredBtn === "main" ? {
+      background: "linear-gradient(180deg, rgba(110,180,255,0.98) 0%, rgba(20,120,230,0.95) 100%)",
+      boxShadow: "0 6px 14px rgba(0,100,210,0.5), inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -1px 0 rgba(0,0,0,0.15)",
+      transform: "translateY(-1px)",
+    } : {}),
+  };
+
+  const secondaryStyle = (key: string): React.CSSProperties => ({
+    ...S.secondaryBtn,
+    transition: "all 0.18s ease",
+    ...(hoveredBtn === key ? {
+      background: "linear-gradient(180deg, rgba(230,240,255,0.98) 0%, rgba(195,215,248,0.95) 100%)",
+      boxShadow: "0 6px 14px rgba(0,80,200,0.15), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06)",
+      transform: "translateY(-1px)",
+    } : {}),
+  });
+
+  return (
+    <div ref={ref} style={{ display: "flex", flexDirection: "column", gap: "4px", width: "94px" }}>
+      <button
+        style={primaryStyle}
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        onMouseEnter={() => setHoveredBtn("main")}
+        onMouseLeave={() => setHoveredBtn(null)}
+        disabled={disabled}
+      >
+        {currentLabel.toUpperCase()}
+      </button>
+
+      {isOpen && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          {items.map(item => (
+            <button
+              key={item.type}
+              style={secondaryStyle(item.type)}
+              onMouseEnter={() => setHoveredBtn(item.type)}
+              onMouseLeave={() => setHoveredBtn(null)}
+              onClick={() => {
+                onSelect(item.type);
+                setIsOpen(false);
+              }}
+            >
+              <span style={{ fontSize: "12px" }}>{item.icon}</span>
+              {item.label.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * AttachmentPicker: Select attachments using compact glass pills.
+ */
+function AttachmentPicker({ attachments, selected, onToggle }: {
+  attachments: any[],
+  selected: string[],
+  onToggle: (name: string) => void
+}) {
+  if (!attachments?.length) return null;
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <label style={S.labBlock}>ANEXOS ({attachments.length})</label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
+        {attachments.map(att => {
+          const isSelected = selected.includes(att.name);
+          return (
+            <button
+              key={att.name}
+              onClick={() => onToggle(att.name)}
+              style={isSelected ? S.primaryBtn : S.secondaryBtn}
+              title={att.name}
+            >
+              {isSelected ? "✅" : "📎"} {att.name.length > 8 ? att.name.substring(0, 7) + ".." : att.name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 type Recipient = { name: string; email: string };
 
@@ -168,7 +452,7 @@ function TypeaheadPicker({
 
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <input
-          style={{ ...S.input, flex: 1, minWidth: 0 }}
+          style={{ ...S.input, flex: 1, minWidth: 0, height: "32px" }}
           value={effectiveText}
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
@@ -188,7 +472,7 @@ function TypeaheadPicker({
 
         {pickedId ? (
           <button
-            style={S.btn2}
+            className="jira-ghost-button" style={S.btn2}
             onClick={() => {
               onPick({ id: null, name: "" });
               setQ("");
@@ -200,7 +484,7 @@ function TypeaheadPicker({
             Limpar
           </button>
         ) : (
-          <button style={S.btn2} onClick={() => load(q)} disabled={busy} title="Forçar pesquisa">
+          <button style={S.btn} onClick={() => load(q)} disabled={busy} title="Forçar pesquisa">
             {busy ? "…" : "Pesquisar"}
           </button>
         )}
@@ -240,19 +524,54 @@ function TypeaheadPicker({
 }
 
 export default function DialogApp() {
-  const mode = useMemo(getMode, []);
-  const editModel = qp().get("model") || "";
-  const editRecordId = Number(qp().get("recordId") || "0");
-
+  const [mode, setMode] = useState<Mode>(() => getMode());
+  const [editId, setEditId] = useState<string | null>(() => qp().get("recordId") || null);
   const [ctx, setCtx] = useState<Ctx>(() => getCtxFromQuery());
   const [showThread, setShowThread] = useState(false);
-  const [entity, setEntity] = useState<Entity>("project.task");
+  const [entity, setEntity] = useState<Entity>(() => {
+    const m = qp().get("model") || "";
+    return (m as Entity) || "project.task";
+  });
   const [status, setStatus] = useState<string | null>(null);
+
+  const [fullBody, setFullBody] = useState("");
+  const [emailAtts, setEmailAtts] = useState<any[]>([]);
+
+  useEffect(() => {
+    const runScenario = (scenario: any) => {
+      console.log("[Simulation] Injecting scenario", scenario.id);
+      setMode(scenario.context.mode);
+      setEditId(scenario.context.editId || null);
+      setEntity(scenario.context.entity);
+      setFullBody(scenario.bodyText || "");
+      setEmailAtts(scenario.attachments || []);
+      setCtx(scenario.context);
+    };
+
+    // Global hook for easier automation
+    (window as any).icccRunScenario = runScenario;
+
+    const handler = (e: any) => runScenario(e.detail);
+    window.addEventListener("iccc:run-scenario", handler);
+    return () => window.removeEventListener("iccc:run-scenario", handler);
+  }, []);
+
+  useEffect(() => {
+    const b = localStorage.getItem("ic_bridge_body") || "";
+    const a = localStorage.getItem("ic_bridge_atts");
+    if (b) setFullBody(b);
+    if (a) {
+      try { setEmailAtts(JSON.parse(a)); } catch { }
+    }
+  }, []);
 
   useEffect(() => {
     (async () => {
       try {
         const st = await getSettings();
+        if (st.odooSessionToken) {
+          setApiSessionToken(st.odooSessionToken);
+        }
         applySkin(st.skinId || 'classic');
       } catch {
         applySkin('classic');
@@ -260,11 +579,29 @@ export default function DialogApp() {
     })();
   }, []);
 
-  // fallback: se query params vierem vazios, tenta ler do Office.js
   useEffect(() => {
     (async () => {
       try {
-        await odooPing(); // só para validar que o proxy/API está ok
+        const st = await getSettings();
+        if (st.odooSessionToken) {
+          setApiSessionToken(st.odooSessionToken);
+          const pingResult = await odooPing();
+          if (!pingResult.ok) {
+            // Session expired? Try auto-login
+            if (st.odooUrl && st.odooLogin && st.odooPassword) {
+              const { login: apiLogin } = await import("@/api");
+              const resp = await apiLogin({
+                url: st.odooUrl,
+                db: st.odooDb,
+                login: st.odooLogin,
+                password: st.odooPassword
+              });
+              if (resp.ok) {
+                setApiSessionToken(resp.token);
+              }
+            }
+          }
+        }
       } catch (e: any) {
         setStatus(`API/Proxy falhou: ${e?.message || e}`);
       }
@@ -299,100 +636,123 @@ export default function DialogApp() {
         toR: c.toR?.length ? c.toR : normalize(item.to),
         ccR: c.ccR?.length ? c.ccR : normalize(item.cc),
       }));
+
+      // Fallback: Se o bridge falhou ou está vazio, tenta ler o corpo agora
+      if (!fullBody && item.body?.getAsync) {
+        item.body.getAsync("text", (r: any) => {
+          if (r?.status === OfficeAny?.AsyncResultStatus.Succeeded && r.value) {
+            console.log("[Dialog] Body fallback success");
+            setFullBody(r.value);
+          }
+        });
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (mode === "edit" && editModel) {
-      if (editModel === "project.task") setEntity("project.task");
-      else if (editModel === "project.project") setEntity("project.project");
-      else if (editModel === "crm.lead") setEntity("crm.lead");
-      else if (editModel === "res.partner") setEntity("res.partner");
-    }
-  }, [mode, editModel]);
 
   return (
     <div style={S.page}>
+      {/* FIXED HEADER */}
       <div style={S.top}>
         <div style={S.titleBlock}>
-          <img src="/icon-32.png" alt="" style={S.titleLogo} />
-          <div style={{ minWidth: 0 }}>
-            <div style={S.h1}>Inbox CRM Cockpit</div>
-            <div style={S.h2}>{mode === "new" ? "Criar" : mode === "add" ? "Ligar / Atualizar" : "Editar"}</div>
+          <div style={S.h1}>INBOX CRM</div>
+          <div style={S.h2}>{mode === "new" ? "NOVO ITEM" : mode === "add" ? "LIGAR EXISTENTE" : "EDITAR"}</div>
+        </div>
+      </div>
+
+      {/* SCROLLABLE BODY */}
+      <div style={S.scrollBody}>
+        <div style={S.banner}>
+          <div style={S.bannerRow}>
+            <b style={S.bannerLab}>DE</b>
+            <span style={S.bannerVal}>{ctx.fromName ? `${ctx.fromName} <${ctx.fromEmail}>` : (ctx.fromEmail || "—")}</span>
+          </div>
+          <div style={S.bannerRow}>
+            <b style={S.bannerLab}>ASSUNTO</b>
+            <span style={S.bannerVal}>{ctx.subject || "—"}</span>
+          </div>
+          <div style={S.bannerRow}>
+            <b style={S.bannerLab}>PARA</b>
+            <span style={S.bannerVal}>{ctx.toR?.length ? ctx.toR.map((r) => r.email).join("; ") : "—"}</span>
+          </div>
+
+          <div style={{ color: "#999", fontSize: 11, marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+            {showThread ? (
+              <>
+                <span>Thread:</span>
+                <code title={ctx.conversationId || ""} style={{ fontSize: 10 }}>{shortId(ctx.conversationId)}</code>
+                {ctx.conversationId ? (
+                  <button style={S.btn3} onClick={() => copyToClipboard(ctx.conversationId)}>Copiar</button>
+                ) : null}
+                <button style={S.threadToggle} onClick={() => setShowThread(false)} title="Ocultar thread">▴</button>
+              </>
+            ) : (
+              <button style={S.threadToggle} onClick={() => setShowThread(true)} title="Mostrar thread">Thread ▾</button>
+            )}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button style={S.btn2} onClick={() => closeDialog()}>Fechar</button>
-        </div>
-      </div>
 
-      <div style={S.banner}>
-        <div><b>Email:</b> {ctx.subject || "—"}</div>
-        <div style={{ color: "#666" }}>{ctx.fromName ? `${ctx.fromName} <${ctx.fromEmail}>` : (ctx.fromEmail || "—")}</div>
+        <div style={S.formCard}>
+          <div style={S.row}>
+            <label style={S.lab}>TIPO</label>
+            <VerticalActionCascade
+              current={entity}
+              onSelect={(type) => setEntity(type as Entity)}
+              disabled={mode === "edit"}
+            />
+          </div>
 
-        <div style={{ color: "#666", marginTop: 6, fontSize: 12 }}>
-          <b title="Destinatários (Para)">Para:</b>{" "}
-          {ctx.toR?.length ? ctx.toR.map((r) => r.email).join("; ") : "—"}
-        </div>
-        <div style={{ color: "#666", marginTop: 2, fontSize: 12 }}>
-          <b title="Destinatários (Cc)">Cc:</b>{" "}
-          {ctx.ccR?.length ? ctx.ccR.map((r) => r.email).join("; ") : "—"}
-        </div>
-
-        <div style={{ color: "#999", fontSize: 12, display: "flex", gap: 8, alignItems: "center" }}>
-          {showThread ? (
-            <>
-              <span>Thread:</span>
-              <code title={ctx.conversationId || ""} style={{ fontSize: 11 }}>{shortId(ctx.conversationId)}</code>
-              {ctx.conversationId ? (
-                <button style={S.btn3} onClick={() => copyToClipboard(ctx.conversationId)}>Copiar</button>
-              ) : null}
-              <button style={S.threadToggle} onClick={() => setShowThread(false)} title="Ocultar thread">▴</button>
-            </>
-          ) : (
-            <button style={S.threadToggle} onClick={() => setShowThread(true)} title="Mostrar thread">Thread ▾</button>
+          {mode === "add" ? (
+            <AddExistingPanel entity={entity} ctx={ctx} onStatus={setStatus} />
+          ) : entity === "project.task" && (
+            <TaskForm
+              mode={mode}
+              ctx={ctx}
+              editId={editId}
+              fullBody={fullBody}
+              emailAtts={emailAtts}
+              onStatus={setStatus}
+              fromEmail={ctx.fromEmail}
+            />
           )}
+          {entity === "project.project" && (
+            <ProjectForm
+              mode={mode}
+              ctx={ctx}
+              editId={editId}
+              fullBody={fullBody}
+              emailAtts={emailAtts}
+              onStatus={setStatus}
+              fromEmail={ctx.fromEmail}
+            />
+          )}
+          {entity === "crm.lead" && (
+            <LeadForm
+              mode={mode}
+              ctx={ctx}
+              editId={editId}
+              fullBody={fullBody}
+              emailAtts={emailAtts}
+              onStatus={setStatus}
+              fromEmail={ctx.fromEmail}
+            />
+          )}
+          {entity === "res.partner" && <ContactHubForm mode={mode} ctx={ctx} editId={editId} onStatus={setStatus} />}
+
+          {status && <div style={S.alert}>{status}</div>}
         </div>
       </div>
 
-      <div style={S.card}>
-        <div style={S.row}>
-          <label style={S.lab}>Tipo</label>
-          <select style={S.sel} value={entity} onChange={(e) => setEntity(e.target.value as Entity)} disabled={mode === "edit"}>
-            <option value="project.task">Tarefa</option>
-            <option value="project.project">Projeto</option>
-            <option value="crm.lead">Lead</option>
-            <option value="res.partner">Contacto</option>
-          </select>
-        </div>
-
-        <div style={{ marginTop: 6, fontSize: 12, color: "#557" }} title="Modelo técnico no Odoo">
-          Modelo: <code style={{ fontSize: 11 }}>{entity}</code>
-        </div>
-
-        {mode === "add" ? (
-          <AddExistingPanel entity={entity} ctx={ctx} onStatus={setStatus} />
-        ) : entity === "project.task" ? (
-          <TaskForm mode={mode} ctx={ctx} editId={mode === "edit" ? editRecordId : 0} onStatus={setStatus} />
-        ) : entity === "project.project" ? (
-          <ProjectForm mode={mode} ctx={ctx} editId={mode === "edit" ? editRecordId : 0} onStatus={setStatus} />
-        ) : entity === "crm.lead" ? (
-          <LeadForm mode={mode} ctx={ctx} editId={mode === "edit" ? editRecordId : 0} onStatus={setStatus} />
-        ) : entity === "res.partner" ? (
-          <ContactHubForm mode={mode} ctx={ctx} editId={mode === "edit" ? editRecordId : 0} onStatus={setStatus} />
-        ) : (
-          <GenericMiniForm mode={mode} ctx={ctx} model={entity} editId={mode === "edit" ? editRecordId : 0} onStatus={setStatus} />
-        )}
-
-        {status && <div style={S.alert}>{status}</div>}
-      </div>
-
+      {/* FIXED FOOTER */}
       <div style={S.footer}>
-        <div style={{ color: "#666", fontSize: 12 }}>v6 • Dialog • typeahead (Projetos/Leads/Etapas)</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="jira-ghost-button" style={S.btn2} onClick={() => closeDialog()}>FECHAR</button>
+        </div>
+        <div style={{ color: "#6B778C", fontSize: 10, fontWeight: 700 }}>v6.2 • SPRINT 18 ULTRA-COMPACT GLOSSY</div>
       </div>
 
-      <DebugPanel compact />
+      <DebugPanel ctx={ctx} links={[]} meta={null} compact={true} />
     </div>
   );
 }
@@ -441,15 +801,21 @@ function AddExistingPanel({ entity, ctx, onStatus }: any) {
 
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
         <button style={S.btn} onClick={link} disabled={!pickedId}>Ligar ao email</button>
-        <button style={S.btn2} onClick={() => closeDialog()}>Cancelar</button>
+        <button className="jira-ghost-button" style={S.btn2} onClick={() => closeDialog()}>Cancelar</button>
       </div>
     </div>
   );
 }
 
-function TaskForm({ mode, ctx, editId, onStatus }: any) {
+function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [description, setDescription] = useState("");
+
+  useEffect(() => {
+    if (mode === "new" && fullBody) setDescription(fullBody);
+  }, [mode, fullBody]);
+
+  const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
 
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectName, setProjectName] = useState("");
@@ -465,6 +831,8 @@ function TaskForm({ mode, ctx, editId, onStatus }: any) {
   const [isSub, setIsSub] = useState(false);
   const [parentId, setParentId] = useState<number | null>(null);
   const [parentName, setParentName] = useState("");
+
+  const [pendingSubtasks, setPendingSubtasks] = useState<string[]>([]);
 
   useEffect(() => {
     if (mode !== "edit" || !editId) return;
@@ -530,36 +898,93 @@ function TaskForm({ mode, ctx, editId, onStatus }: any) {
       }
 
       id = await createOdoo("project.task", values);
+      onStatus("Tarefa criada + Ligada ✅");
 
-      await linkEmailToRecord({
-        conversationId: ctx.conversationId,
-        model: "project.task",
-        recordId: id,
-        recordName: name || "",
-        internetMessageId: ctx.internetMessageId,
-        subject: ctx.subject,
-        fromEmail: ctx.fromEmail,
-        fromName: ctx.fromName,
-        receivedAtIso: ctx.receivedAtIso,
-        emailWebLink: ctx.emailWebLink,
-      });
+      // Criar subtarefas pendentes
+      if (pendingSubtasks.length > 0) {
+        onStatus(`A criar ${pendingSubtasks.length} subtarefas detetadas...`);
+        for (const subTitle of pendingSubtasks) {
+          try {
+            await createOdoo("project.task", {
+              name: subTitle,
+              project_id: projectId || false,
+              parent_id: id,
+              user_ids: assigneeId ? [[6, 0, [assigneeId]]] : [],
+            });
+          } catch (e) {
+            console.error("Erro ao criar subtarefa diferida", e);
+          }
+        }
+      }
 
       onStatus("Criado + Ligado ✅");
+
+      // Handle Attachments
+      if (selectedAtts.length > 0) {
+        onStatus("A enviar anexos...");
+        for (const name of selectedAtts) {
+          const att = (emailAtts || []).find((a: any) => a.name === name);
+          if (att) {
+            await createOdoo("ir.attachment", {
+              name: att.name,
+              datas: att.content,
+              res_model: "project.task",
+              res_id: id,
+              type: "binary"
+            });
+          }
+        }
+      }
+
+      onStatus("Sucesso! ✅");
       setTimeout(() => closeDialog(), 500);
     } catch (e: any) {
       onStatus(e?.message ?? String(e));
     }
   }
 
+  async function handleAddAiAction(title: string) {
+    if (mode === "new") {
+      setPendingSubtasks(prev => [...prev, title]);
+      onStatus(`Subtarefa "${title}" agendada para criação ✅`);
+      return;
+    }
+
+    onStatus(`A criar tarefa: ${title}...`);
+    try {
+      const val: any = {
+        name: title,
+        project_id: projectId || false,
+        user_ids: assigneeId ? [[6, 0, [assigneeId]]] : [],
+      };
+      if (mode === "edit" && editId) val.parent_id = editId;
+
+      const newId = await createOdoo("project.task", val);
+      onStatus(`Tarefa "${title}" criada (#${newId}) ✅`);
+    } catch (e: any) {
+      onStatus(`Falha ao criar: ${e.message}`);
+    }
+  }
+
   return (
     <div>
+      <OdooMemoryCheck projectId={projectId} fromEmail={fromEmail} />
+
       <div style={S.row}>
-        <label style={S.lab2}>Título</label>
+        <label style={S.lab}>TÍTULO</label>
         <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Título da tarefa" />
       </div>
 
+      <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+
+      {pendingSubtasks.length > 0 && (
+        <div style={{ marginTop: 8, padding: "4px 8px", background: "#E3F2FD", borderRadius: 8, fontSize: 10, color: "#0D47A1", fontWeight: 700 }}>
+          AGENDADAS: {pendingSubtasks.map(s => `"${s}"`).join(", ")}
+        </div>
+      )}
+
       <TypeaheadPicker
-        label="Projeto"
+        label="PROJETO"
         placeholder="Pesquisar projeto…"
         model="project.project"
         pickedId={projectId}
@@ -573,7 +998,7 @@ function TaskForm({ mode, ctx, editId, onStatus }: any) {
       />
 
       <TypeaheadPicker
-        label="Responsável"
+        label="RESPONSÁVEL"
         placeholder="Pesquisar utilizador…"
         model="res.users"
         fields={["id", "name", "display_name", "email"]}
@@ -588,7 +1013,7 @@ function TaskForm({ mode, ctx, editId, onStatus }: any) {
 
       <div style={S.grid2}>
         <PickerStatic
-          label="Etapa"
+          label="ETAPA"
           pickedId={stageId}
           pickedName={stageName}
           items={stagePick}
@@ -597,13 +1022,13 @@ function TaskForm({ mode, ctx, editId, onStatus }: any) {
         />
 
         <div style={S.row}>
-          <label style={S.lab2}>Prazo</label>
+          <label style={S.lab}>PRAZO</label>
           <input style={S.input} type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
         </div>
       </div>
 
       <div style={S.row}>
-        <label style={S.lab2}>Subtarefa</label>
+        <label style={S.lab}>SUBTAREFA</label>
         <input
           type="checkbox"
           checked={isSub}
@@ -616,7 +1041,7 @@ function TaskForm({ mode, ctx, editId, onStatus }: any) {
 
       {isSub ? (
         <TypeaheadPicker
-          label="Parent task"
+          label="PARENT TASK"
           placeholder={projectId ? "Pesquisar tarefa (filtra por projeto)..." : "Pesquisar tarefa (global)..."}
           model="project.task"
           fields={["id", "name", "display_name", "project_id"]}
@@ -624,7 +1049,7 @@ function TaskForm({ mode, ctx, editId, onStatus }: any) {
           pickedName={parentName}
           extraDomain={(q) => {
             const d: any[] = [];
-            if (projectId) d.push(["project_id", "=", projectId]); // B: filtra se houver projeto
+            if (projectId) d.push(["project_id", "=", projectId]);
             if (q?.trim()) d.push(["name", "ilike", q.trim()]);
             return d;
           }}
@@ -636,21 +1061,27 @@ function TaskForm({ mode, ctx, editId, onStatus }: any) {
         />
       ) : null}
 
-      <div style={{ marginTop: 10 }}>
-        <label style={S.labBlock}>Descrição</label>
+
+      <div style={{ marginTop: 12 }}>
+        <label style={S.labBlock}>DESCRIÇÃO</label>
         <textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Descrição / notas..." />
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-        <button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar alterações" : "Criar + Ligar ao email"}</button>
-        <button style={S.btn2} onClick={() => closeDialog()}>Cancelar</button>
+      <AttachmentPicker
+        attachments={emailAtts}
+        selected={selectedAtts}
+        onToggle={(name) => setSelectedAtts(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name])}
+      />
+
+      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+        <button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button>
       </div>
     </div>
   );
 }
 
 
-function ProjectForm({ mode, ctx, editId, onStatus }: any) {
+function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [partnerId, setPartnerId] = useState<number | null>(null);
   const [partnerName, setPartnerName] = useState("");
@@ -659,10 +1090,15 @@ function ProjectForm({ mode, ctx, editId, onStatus }: any) {
   const [description, setDescription] = useState("");
 
   useEffect(() => {
+    if (mode === "new" && fullBody) setDescription(fullBody);
+  }, [mode, fullBody]);
+
+  const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
+
+  useEffect(() => {
     if (mode !== "edit" || !editId) return;
     (async () => {
       try {
-        // description nem sempre existe, por isso fazemos fallback seguro
         let rows: any[] | null = null;
         try {
           rows = await readOdoo("project.project", [editId], ["name", "partner_id", "user_id", "description"]);
@@ -685,7 +1121,6 @@ function ProjectForm({ mode, ctx, editId, onStatus }: any) {
         onStatus(e?.message ?? String(e));
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, editId]);
 
   async function save() {
@@ -696,7 +1131,6 @@ function ProjectForm({ mode, ctx, editId, onStatus }: any) {
       if (description) values.description = description;
 
       if (mode === "edit") {
-        // tentativa com description; se falhar, remove e tenta novamente
         try {
           await writeOdoo("project.project", editId, values);
         } catch {
@@ -709,44 +1143,59 @@ function ProjectForm({ mode, ctx, editId, onStatus }: any) {
         return;
       }
 
-      let id: number;
-      try {
-        id = await createOdoo("project.project", values);
-      } catch {
-        const v2 = { ...values };
-        delete v2.description;
-        id = await createOdoo("project.project", v2);
-      }
-
-      await linkEmailToRecord({
-        conversationId: ctx.conversationId,
-        model: "project.project",
-        recordId: id,
-        recordName: values.name,
-        internetMessageId: ctx.internetMessageId,
-        subject: ctx.subject,
-        fromEmail: ctx.fromEmail,
-        fromName: ctx.fromName,
-        receivedAtIso: ctx.receivedAtIso,
-        emailWebLink: ctx.emailWebLink,
-      });
-
+      let id = await createOdoo("project.project", values);
       onStatus("Criado + Ligado ✅");
+
+      if (selectedAtts.length > 0) {
+        onStatus("A enviar anexos...");
+        for (const fname of selectedAtts) {
+          const att = (emailAtts || []).find((a: any) => a.name === fname);
+          if (att) {
+            await createOdoo("ir.attachment", {
+              name: att.name,
+              datas: att.content,
+              res_model: "project.project",
+              res_id: id,
+              type: "binary"
+            });
+          }
+        }
+      }
+      onStatus("Sucesso! ✅");
       setTimeout(() => closeDialog(), 500);
     } catch (e: any) {
       onStatus(e?.message ?? String(e));
     }
   }
 
+  async function handleAddAiAction(title: string) {
+    onStatus(`A criar tarefa IA: ${title}...`);
+    try {
+      const val: any = {
+        name: title,
+        project_id: editId || false,
+        partner_id: partnerId || false,
+      };
+      const nId = await createOdoo("project.task", val);
+      onStatus(`Tarefa IA detetada e criada (#${nId}) ✅`);
+    } catch (e: any) {
+      onStatus(`Falha IA: ${e.message}`);
+    }
+  }
+
   return (
     <div>
+      <OdooMemoryCheck partnerId={partnerId} fromEmail={fromEmail} />
+
       <div style={S.row}>
-        <label style={S.lab2} title="Nome do projeto no Odoo">Nome</label>
+        <label style={S.lab}>NOME</label>
         <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do projeto" />
       </div>
 
+      <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+
       <TypeaheadPicker
-        label="Cliente"
+        label="CLIENTE"
         placeholder="Pesquisar contacto/empresa…"
         model="res.partner"
         pickedId={partnerId}
@@ -759,7 +1208,7 @@ function ProjectForm({ mode, ctx, editId, onStatus }: any) {
       />
 
       <TypeaheadPicker
-        label="Gestor"
+        label="GESTOR"
         placeholder="Pesquisar utilizador…"
         model="res.users"
         fields={["id", "name", "display_name", "email"]}
@@ -772,24 +1221,27 @@ function ProjectForm({ mode, ctx, editId, onStatus }: any) {
         }}
       />
 
-      <div style={{ marginTop: 10 }}>
-        <label style={S.labBlock} title="Descrição/Notas do projeto (se o teu Odoo suportar este campo)">Descrição</label>
+      <div style={{ marginTop: 12 }}>
+        <label style={S.labBlock}>DESCRIÇÃO</label>
         <textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notas do projeto…" />
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-        <button style={S.btn} onClick={save} title={mode === "edit" ? "Guardar alterações no Odoo" : "Criar no Odoo e ligar ao email"}>
-          {mode === "edit" ? "Guardar alterações" : "Criar + Ligar ao email"}
-        </button>
-        <button style={S.btn2} onClick={() => closeDialog()} title="Fechar sem guardar">
-          Cancelar
+      <AttachmentPicker
+        attachments={emailAtts}
+        selected={selectedAtts}
+        onToggle={(fname) => setSelectedAtts(prev => prev.includes(fname) ? prev.filter(n => n !== fname) : [...prev, fname])}
+      />
+
+      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+        <button style={S.btn} onClick={save}>
+          {mode === "edit" ? "Guardar" : "Criar"}
         </button>
       </div>
     </div>
   );
 }
 
-function LeadForm({ mode, ctx, editId, onStatus }: any) {
+function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [contactName, setContactName] = useState(ctx.fromName || "");
   const [email, setEmail] = useState(ctx.fromEmail || "");
@@ -799,6 +1251,12 @@ function LeadForm({ mode, ctx, editId, onStatus }: any) {
   const [stageId, setStageId] = useState<number | null>(null);
   const [stageName, setStageName] = useState("");
   const [description, setDescription] = useState("");
+
+  useEffect(() => {
+    if (mode === "new" && fullBody) setDescription(fullBody);
+  }, [mode, fullBody]);
+
+  const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
 
   useEffect(() => {
     if (mode !== "edit" || !editId) return;
@@ -823,7 +1281,6 @@ function LeadForm({ mode, ctx, editId, onStatus }: any) {
         onStatus(e?.message ?? String(e));
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, editId]);
 
   async function save() {
@@ -851,59 +1308,73 @@ function LeadForm({ mode, ctx, editId, onStatus }: any) {
         return;
       }
 
-      let id: number;
-      try {
-        id = await createOdoo("crm.lead", values);
-      } catch {
-        const v2 = { ...values };
-        delete v2.description;
-        id = await createOdoo("crm.lead", v2);
-      }
-
-      await linkEmailToRecord({
-        conversationId: ctx.conversationId,
-        model: "crm.lead",
-        recordId: id,
-        recordName: values.name,
-        internetMessageId: ctx.internetMessageId,
-        subject: ctx.subject,
-        fromEmail: ctx.fromEmail,
-        fromName: ctx.fromName,
-        receivedAtIso: ctx.receivedAtIso,
-        emailWebLink: ctx.emailWebLink,
-      });
-
+      let id = await createOdoo("crm.lead", values);
       onStatus("Criado + Ligado ✅");
+
+      if (selectedAtts.length > 0) {
+        onStatus("A enviar anexos...");
+        for (const fname of selectedAtts) {
+          const att = (emailAtts || []).find((a: any) => a.name === fname);
+          if (att) {
+            await createOdoo("ir.attachment", {
+              name: att.name,
+              datas: att.content,
+              res_model: "crm.lead",
+              res_id: id,
+              type: "binary"
+            });
+          }
+        }
+      }
+      onStatus("Sucesso! ✅");
       setTimeout(() => closeDialog(), 500);
     } catch (e: any) {
       onStatus(e?.message ?? String(e));
     }
   }
 
+  async function handleAddAiAction(title: string) {
+    onStatus(`A criar tarefa IA: ${title}...`);
+    try {
+      const val: any = {
+        name: title,
+        partner_id: partnerId || false,
+      };
+      const nId = await createOdoo("project.task", val);
+      onStatus(`Tarefa IA detetada e criada (#${nId}) ✅`);
+    } catch (e: any) {
+      onStatus(`Falha IA: ${e.message}`);
+    }
+  }
+
   return (
     <div>
+      <OdooMemoryCheck partnerId={partnerId} fromEmail={fromEmail} />
+
       <div style={S.row}>
-        <label style={S.lab2} title="Título do lead no Odoo">Nome do lead</label>
+        <label style={S.lab}>NOME LEAD</label>
         <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do lead" />
       </div>
 
+      <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+
       <div style={S.row}>
-        <label style={S.lab2} title="Nome da pessoa de contacto">Contacto</label>
+        <label style={S.lab}>CONTACTO</label>
         <input style={S.input} value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Nome do contacto" />
       </div>
 
       <div style={S.row}>
-        <label style={S.lab2} title="Email do lead">Email</label>
+        <label style={S.lab}>EMAIL</label>
         <input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@..." />
       </div>
 
       <div style={S.row}>
-        <label style={S.lab2} title="Telefone (opcional)">Telefone</label>
+        <label style={S.lab}>TELEFONE</label>
         <input style={S.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone" />
       </div>
 
       <TypeaheadPicker
-        label="Empresa/Contacto (Odoo)"
+        label="EMPRESA"
         placeholder="Pesquisar res.partner…"
         model="res.partner"
         pickedId={partnerId}
@@ -916,7 +1387,7 @@ function LeadForm({ mode, ctx, editId, onStatus }: any) {
       />
 
       <TypeaheadPicker
-        label="Etapa"
+        label="ETAPA"
         placeholder="Pesquisar etapa do lead…"
         model="crm.stage"
         fields={["id", "name"]}
@@ -929,17 +1400,20 @@ function LeadForm({ mode, ctx, editId, onStatus }: any) {
         }}
       />
 
-      <div style={{ marginTop: 10 }}>
-        <label style={S.labBlock} title="Notas do lead (se o teu Odoo suportar este campo)">Descrição</label>
+      <div style={{ marginTop: 12 }}>
+        <label style={S.labBlock}>DESCRIÇÃO</label>
         <textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notas do lead…" />
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-        <button style={S.btn} onClick={save} title={mode === "edit" ? "Guardar alterações no Odoo" : "Criar no Odoo e ligar ao email"}>
-          {mode === "edit" ? "Guardar alterações" : "Criar + Ligar ao email"}
-        </button>
-        <button style={S.btn2} onClick={() => closeDialog()} title="Fechar sem guardar">
-          Cancelar
+      <AttachmentPicker
+        attachments={emailAtts}
+        selected={selectedAtts}
+        onToggle={(fname) => setSelectedAtts(prev => prev.includes(fname) ? prev.filter(n => n !== fname) : [...prev, fname])}
+      />
+
+      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+        <button style={S.btn} onClick={save}>
+          {mode === "edit" ? "Guardar" : "Criar"}
         </button>
       </div>
     </div>
@@ -954,11 +1428,15 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
   const participants = useMemo(() => {
     const out: Array<{ role: string; name: string; email: string }> = [];
     if (ctx.fromEmail) out.push({ role: "De", name: ctx.fromName || "", email: ctx.fromEmail });
-    ctx.toR?.forEach((r: any) => out.push({ role: "Para", name: r.name || "", email: r.email }));
-    ctx.ccR?.forEach((r: any) => out.push({ role: "Cc", name: r.name || "", email: r.email }));
+
+    // Extract FROM, TO, CC
+    (ctx.toR || []).forEach((r: any) => out.push({ role: "Para", name: r.name || "", email: r.email }));
+    (ctx.ccR || []).forEach((r: any) => out.push({ role: "Cc", name: r.name || "", email: r.email }));
+
     // dedupe by email
     const seen = new Set<string>();
     return out.filter((p) => {
+      if (!p.email) return false;
       const key = p.email.toLowerCase();
       if (seen.has(key)) return false;
       seen.add(key);
@@ -1068,59 +1546,52 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
   return (
     <div>
       <div style={S.row}>
-        <label style={S.lab2} title="Nome do contacto no Odoo">Nome</label>
+        <label style={S.lab}>NOME</label>
         <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do contacto" />
       </div>
 
       <div style={S.row}>
-        <label style={S.lab2} title="Email do contacto">Email</label>
+        <label style={S.lab}>EMAIL</label>
         <input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@..." />
       </div>
 
       <div style={S.row}>
-        <label style={S.lab2} title="Telefone (opcional)">Telefone</label>
+        <label style={S.lab}>TELEFONE</label>
         <input style={S.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone" />
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-        <button style={S.btn} onClick={saveMain} title={mode === "edit" ? "Guardar alterações no Odoo" : "Criar no Odoo e ligar ao email"}>
-          {mode === "edit" ? "Guardar alterações" : "Criar + Ligar ao email"}
-        </button>
-        <button style={S.btn2} onClick={() => closeDialog()} title="Fechar sem guardar">
-          Cancelar
+      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+        <button style={S.btn} onClick={saveMain}>
+          {mode === "edit" ? "Guardar" : "Criar"}
         </button>
       </div>
 
-      <div style={{ marginTop: 16, borderTop: "1px solid #e9eefc", paddingTop: 12 }}>
-        <div style={{ fontWeight: 900, marginBottom: 6 }} title="Inspirado no HubSpot: identifica participantes e permite ligar/criar contactos">
+      <div style={{ marginTop: 20, borderTop: "1px solid #DFE1E6", paddingTop: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 12, color: "#6B778C", marginBottom: 12, textTransform: "uppercase" }}>
           Participantes no email
         </div>
 
         {participants.length === 0 ? (
-          <div style={{ color: "#557" }}>Sem participantes disponíveis.</div>
+          <div style={{ color: "#5E6C84" }}>Sem participantes disponíveis.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {participants.map((p) => {
               const m = match[p.email];
               return (
                 <div key={p.email} style={S.partRow}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 800 }}>
-                      <span style={S.badge} title="Origem do endereço">{p.role}</span> {p.name ? `${p.name} <${p.email}>` : p.email}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: "#172B4D", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      <span style={{ ...S.badge, background: "#DEEBFF", color: "#0747A6" }}>{p.role}</span> {p.name || p.email}
                     </div>
-                    <div style={{ fontSize: 12, color: "#557" }}>
-                      {m ? `Odoo: ${m.name} (#${m.id})` : "Odoo: não encontrado"}
+                    <div style={{ fontSize: 11, color: "#6B778C" }}>
+                      {m ? `Odoo: ${m.name}` : "Não encontrado no Odoo"}
                     </div>
                   </div>
 
                   {m ? (
-                    <button style={S.btn3} onClick={() => linkToPartner(m.id, m.name)} title="Criar ligação oculta email ↔ contacto (esta conversa)">
-                      Ligar
-                    </button>
+                    <button style={S.btn} onClick={() => linkToPartner(m.id, m.name)}>Ligar</button>
                   ) : (
-                    <button style={S.btn3} onClick={() => createPartnerFrom(p)} title="Criar novo contacto no Odoo e ligar ao email">
-                      Criar
-                    </button>
+                    <button style={S.btn} onClick={() => createPartnerFrom(p)}>Criar</button>
                   )}
                 </div>
               );
@@ -1211,8 +1682,8 @@ function GenericMiniForm({ mode, ctx, model, editId, onStatus }: any) {
       ) : null}
 
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-        <button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar alterações" : "Criar + Ligar ao email"}</button>
-        <button style={S.btn2} onClick={() => closeDialog()}>Cancelar</button>
+        <button style={S.btn} onClick={save}>{mode === "edit" ? "GUARDAR" : "CRIAR"}</button>
+        <button className="jira-ghost-button" style={S.btn2} onClick={() => closeDialog()}>CANCELAR</button>
       </div>
     </div>
   );
@@ -1240,30 +1711,203 @@ function PickerStatic({ label, pickedId, pickedName, items, onPick, placeholder 
 }
 
 const S: Record<string, React.CSSProperties> = {
-  page: { fontFamily: "system-ui,Segoe UI,Arial", padding: 16, background: "#f7f9ff", minHeight: "100vh", color: "#0b3d91" },
-  top: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  h1: { fontWeight: 900, fontSize: 20, color: "#0b3d91" },
-  h2: { color: "#557", marginTop: 2 },
-  banner: { background: "#fff", border: "1px solid #d6def2", borderRadius: 12, padding: 12, marginBottom: 12 },
-  card: { background: "#fff", border: "1px solid #d6def2", borderRadius: 12, padding: 12 },
-  footer: { marginTop: 10, display: "flex", justifyContent: "space-between", color: "#557" },
+  page: {
+    fontFamily: "var(--iccc-font)",
+    background: "linear-gradient(135deg, #f0f4f8 0%, #d9e8f5 50%, #e8edf5 100%)",
+    height: "100vh",
+    color: "#172B4D",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden"
+  },
+  top: {
+    padding: "12px 20px",
+    borderBottom: "1px solid #DFE1E6",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexShrink: 0
+  },
+  h1: { fontWeight: 700, fontSize: 14, color: "#172B4D" },
+  h2: { color: "#5E6C84", marginTop: 2, fontSize: 12 },
 
-  row: { display: "grid", gridTemplateColumns: "140px 1fr", gap: 10, alignItems: "center", marginTop: 10 },
-  lab: { fontWeight: 800, color: "#0b3d91" },
-  lab2: { fontWeight: 800, color: "#0b3d91" },
-  labBlock: { display: "block", fontWeight: 800, marginBottom: 6, color: "#0b3d91" },
+  scrollBody: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "16px 20px",
+    background: "transparent",
+  },
 
-  sel: { padding: "8px 10px", border: "1px solid #d6def2", borderRadius: 10, color: "#0b3d91", background: "#fff" },
-  input: { width: "100%", padding: "8px 10px", border: "1px solid #d6def2", borderRadius: 10, color: "#122", background: "#fff" },
-  ta: { width: "100%", minHeight: 90, padding: "10px 10px", border: "1px solid #d6def2", borderRadius: 10, resize: "vertical", color: "#122" },
+  banner: {
+    background: "#F4F5F7",
+    border: "1px solid #DFE1E6",
+    borderRadius: 3,
+    padding: "8px 12px",
+    marginBottom: 16
+  },
+  bannerRow: {
+    display: "grid",
+    gridTemplateColumns: "70px 1fr",
+    gap: 8,
+    alignItems: "start",
+    marginBottom: 4
+  },
+  bannerLab: { color: "#6B778C", fontSize: 11, fontWeight: 700, textTransform: "uppercase" },
+  bannerVal: { fontSize: 13, color: "#172B4D", minWidth: 0, wordBreak: "break-all" },
 
-  btn: { padding: "10px 12px", borderRadius: 10, border: "1px solid #0b3d91", background: "#0b3d91", color: "#fff", fontWeight: 900, cursor: "pointer" },
-  btn2: { padding: "10px 12px", borderRadius: 10, border: "1px solid #d6def2", background: "#fff", cursor: "pointer", color: "#0b3d91", fontWeight: 900 },
-  btn3: { padding: "6px 10px", borderRadius: 10, border: "1px solid #d6def2", background: "#fff", cursor: "pointer", fontSize: 12, color: "#0b3d91", fontWeight: 800 },
+  formCard: { background: "rgba(255,255,255,0.55)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.4)", borderRadius: "12px", padding: "16px", marginBottom: 12 },
 
-  alert: { marginTop: 12, padding: 10, borderRadius: 10, border: "1px solid #f1d39a", background: "#fff7e6", color: "#623" },
+  footer: {
+    padding: "12px 20px",
+    borderTop: "1px solid rgba(255,255,255,0.4)",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    background: "rgba(255,255,255,0.6)",
+    backdropFilter: "blur(8px)",
+    WebkitBackdropFilter: "blur(8px)",
+    flexShrink: 0
+  },
+
+  row: { display: "grid", gridTemplateColumns: "100px 1fr", gap: 12, alignItems: "start", marginTop: 12 },
+  lab: { fontSize: "12px", fontWeight: 700, color: "#6B778C", textTransform: "uppercase" },
+  lab2: { fontSize: "12px", fontWeight: 700, color: "#6B778C", textTransform: "uppercase" },
+  labBlock: { display: "block", fontSize: "12px", fontWeight: 700, marginBottom: 6, color: "#6B778C", textTransform: "uppercase" },
+
+  sel: { padding: "6px 8px", border: "1px solid #DFE1E6", borderRadius: 3, color: "#172B4D", background: "#FAFBFC", fontSize: 13, height: "32px", outline: "none" },
+  input: { width: "100%", padding: "6px 8px", border: "2px solid #DFE1E6", borderRadius: 3, color: "#172B4D", background: "#FAFBFC", fontSize: 13, height: "32px", outline: "none" },
+  ta: { width: "100%", minHeight: 80, padding: "8px", border: "2px solid #DFE1E6", borderRadius: 3, resize: "vertical", color: "#172B4D", background: "#FAFBFC", fontSize: 13, outline: "none" },
 
   grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+
+  btn: {
+    boxSizing: "border-box",
+    width: "94px", minWidth: "94px", maxWidth: "94px",
+    height: "26px", minHeight: "26px", maxHeight: "26px",
+    borderRadius: "16px",
+    border: "1px solid rgba(0, 80, 180, 0.4)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "5px",
+    padding: "0 8px",
+    fontSize: "10px",
+    fontWeight: 800,
+    lineHeight: 1,
+    textTransform: "uppercase",
+    cursor: "pointer",
+    flexShrink: 0,
+    margin: 0,
+    outline: "none",
+    background: "linear-gradient(180deg, rgba(80,160,255,0.95) 0%, rgba(0,100,210,0.85) 100%)",
+    color: "#FFFFFF",
+    boxShadow: "0 4px 10px rgba(0,100,210,0.35), inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(0,0,0,0.15)",
+  },
+  btn2: {
+    boxSizing: "border-box",
+    width: "94px", minWidth: "94px", maxWidth: "94px",
+    height: "26px", minHeight: "26px", maxHeight: "26px",
+    borderRadius: "16px",
+    border: "1px solid rgba(200, 210, 230, 0.6)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: "5px",
+    padding: "0 8px",
+    fontSize: "10px",
+    fontWeight: 800,
+    lineHeight: 1,
+    textTransform: "uppercase",
+    cursor: "pointer",
+    flexShrink: 0,
+    margin: 0,
+    outline: "none",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
+    color: "#172B4D",
+    boxShadow: "0 4px 10px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06)",
+  },
+  btn3: {
+    boxSizing: "border-box",
+    width: "94px", minWidth: "94px", maxWidth: "94px",
+    height: "26px", minHeight: "26px", maxHeight: "26px",
+    borderRadius: "16px",
+    border: "1px solid rgba(200, 210, 230, 0.6)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: "5px",
+    padding: "0 8px",
+    fontSize: "10px",
+    fontWeight: 800,
+    lineHeight: 1,
+    textTransform: "uppercase",
+    cursor: "pointer",
+    flexShrink: 0,
+    margin: 0,
+    outline: "none",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
+    color: "#172B4D",
+    boxShadow: "0 4px 10px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06)",
+  },
+
+  alert: { marginTop: 12, padding: "8px 12px", borderRadius: 3, border: "1px solid #FFBDAD", background: "#FFEBE6", color: "#BF2600", fontSize: 12 },
+
+  primaryBtn: {
+    boxSizing: "border-box",
+    width: "94px", minWidth: "94px", maxWidth: "94px",
+    height: "26px", minHeight: "26px", maxHeight: "26px",
+    borderRadius: "16px",
+    border: "1px solid rgba(0, 80, 180, 0.4)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "5px",
+    padding: "0 8px",
+    fontSize: "10px",
+    fontWeight: 800,
+    lineHeight: 1,
+    textTransform: "uppercase",
+    cursor: "pointer",
+    flexShrink: 0,
+    margin: 0,
+    outline: "none",
+    background: "linear-gradient(180deg, rgba(80,160,255,0.95) 0%, rgba(0,100,210,0.85) 100%)",
+    color: "#FFFFFF",
+    boxShadow: "0 4px 10px rgba(0,100,210,0.35), inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(0,0,0,0.15)",
+  },
+  secondaryBtn: {
+    boxSizing: "border-box",
+    width: "94px", minWidth: "94px", maxWidth: "94px",
+    height: "26px", minHeight: "26px", maxHeight: "26px",
+    borderRadius: "16px",
+    border: "1px solid rgba(200, 210, 230, 0.6)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: "5px",
+    padding: "0 8px",
+    fontSize: "10px",
+    fontWeight: 800,
+    lineHeight: 1,
+    textTransform: "uppercase",
+    cursor: "pointer",
+    flexShrink: 0,
+    margin: 0,
+    outline: "none",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
+    color: "#172B4D",
+    boxShadow: "0 4px 10px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06)",
+  },
 
   pickList: {
     position: "absolute",
@@ -1304,20 +1948,46 @@ const S: Record<string, React.CSSProperties> = {
   badge: {
     display: "inline-block",
     padding: "2px 8px",
-    borderRadius: 999,
-    border: "1px solid #d6def2",
-    background: "#fff",
-    color: "#0b3d91",
-    fontSize: 12,
+    borderRadius: "16px",
+    border: "1px solid rgba(255, 255, 255, 0.3)",
+    background: "rgba(255, 255, 255, 0.4)",
+    backdropFilter: "blur(8px)",
+    color: "#42526E",
+    fontSize: 10,
     marginRight: 6,
+    fontWeight: 700,
   },
   threadToggle: {
-    border: "1px solid var(--iccc-border, #d7dbeb)",
-    background: "var(--iccc-card, #ffffff)",
-    borderRadius: 999,
-    padding: "2px 8px",
-    fontSize: 11,
+    border: "1px solid rgba(255, 255, 255, 0.3)",
+    background: "rgba(255, 255, 255, 0.4)",
+    backdropFilter: "blur(8px)",
+    borderRadius: "16px",
+    padding: "2px 10px",
+    fontSize: 10,
     cursor: "pointer",
-    color: "var(--iccc-text, #0b2d6b)",
+    color: "#42526E",
+    fontWeight: 700,
+  },
+  yellowGlass: {
+    width: "94px",
+    height: "26px",
+    borderRadius: "16px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "6px",
+    fontSize: "10px",
+    fontWeight: 700,
+    textTransform: "uppercase",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    cursor: "default",
+    transition: "all 0.2s ease",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+    padding: "0 8px",
+    /* Yellow Glass */
+    background: "rgba(251, 191, 36, 0.4)",
+    color: "#92400E",
+    border: "1px solid rgba(251, 191, 36, 0.3)",
   },
 };

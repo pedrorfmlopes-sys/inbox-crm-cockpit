@@ -67,5 +67,39 @@
       "fromEmail": "jessica.renna@fimacf.com",
       "fromName": "Jessica Renna"
     }
+  ],
+  "conversationId:AAQkAGI1MTczZjNkLWUyZDEtNDZjNS1hZjdlLTI2M2E2MjA2YTlmZAAQALLPVgxnbkURhkFJjK4ygF8=": [
+    {
+      "model": "project.project",
+      "recordId": 2,
+      "recordName": "projeto teste 1",
+      "linkedAt": "2026-02-22T20:52:58.978Z",
+      "internetMessageId": "<04ee01dca293$dca7f800$95f7e800$@waterworks.pt>",
+      "subject": "URGENTE !!!!! RE: NICOLAZZI ",
+      "fromEmail": "iso@waterworks.pt",
+      "fromName": "iso@waterworks.pt"
+    },
+    {
+      "model": "res.partner",
+      "recordId": 10,
+      "recordName": "iso@waterworks.pt",
+      "linkedAt": "2026-02-22T20:22:57.235Z",
+      "internetMessageId": "<04ee01dca293$dca7f800$95f7e800$@waterworks.pt>",
+      "subject": "URGENTE !!!!! RE: NICOLAZZI ",
+      "fromEmail": "iso@waterworks.pt",
+      "fromName": "iso@waterworks.pt"
+    }
+  ],
+  "conversationId:AAQkAGI1MTczZjNkLWUyZDEtNDZjNS1hZjdlLTI2M2E2MjA2YTlmZAAQALjGSdEwW0DLiBWwHbaHDdo=": [
+    {
+      "model": "res.partner",
+      "recordId": 14,
+      "recordName": "Inês Oliveira",
+      "linkedAt": "2026-02-22T23:54:35.753Z",
+      "internetMessageId": "<04d801dca293$230785a0$691690e0$@waterworks.pt>",
+      "subject": "ENCOMENDA LX2 045 - NICOLAZZI ",
+      "fromEmail": "iso@waterworks.pt",
+      "fromName": "iso@waterworks.pt"
+    }
   ]
 }

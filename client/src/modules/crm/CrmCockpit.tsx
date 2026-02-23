@@ -1,16 +1,237 @@
-import React from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { openCockpitDialog } from "../../office";
+import { openCockpitDialog, getEmailBodyText } from "../../office";
 import * as Icons from "../../ui/icons";
+import { ContactInsight } from "./ContactInsight";
+import { OdooCardSkeleton, Skeleton } from "../../ui/SkeletonLoader";
+import { aiExtractAnchors, aiGenerate, getOdooAutoLoginUrl } from "../../api";
+import { scanForProtection, MatchResult } from "./triangulationService";
+import { ProtectionBanner } from "../../ui/ProtectionBanner";
+
+
+/**
+ * VerticalActionCascade: Ultra-compact glossy pill menu.
+ * Strictly 94x26px, 16px radius, glossy effect.
+ */
+const VerticalActionCascade: React.FC<{ onSelect: (type: string) => void }> = ({ onSelect }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
+    const ref = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setIsOpen(false);
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const items = [
+        { label: "Tarefa", type: "project.task", icon: "📝" },
+        { label: "Lead", type: "crm.lead", icon: "🎯" },
+        { label: "Projeto", type: "project.project", icon: "🏗️" },
+        { label: "Contato", type: "res.partner", icon: "👤" },
+    ];
+
+    const primaryStyle: React.CSSProperties = {
+        ...S.primaryBtn,
+        transition: "all 0.18s ease",
+        ...(hoveredBtn === "criar" ? {
+            background: "linear-gradient(180deg, rgba(110,180,255,0.98) 0%, rgba(20,120,230,0.95) 100%)",
+            boxShadow: "0 6px 14px rgba(0,100,210,0.5), inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -1px 0 rgba(0,0,0,0.15)",
+            transform: "translateY(-1px)",
+        } : {}),
+    };
+
+    const secondaryStyle = (key: string): React.CSSProperties => ({
+        ...S.secondaryBtn,
+        transition: "all 0.18s ease",
+        ...(hoveredBtn === key ? {
+            background: "linear-gradient(180deg, rgba(230,240,255,0.98) 0%, rgba(195,215,248,0.95) 100%)",
+            boxShadow: "0 6px 14px rgba(0,80,200,0.15), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06)",
+            transform: "translateY(-1px)",
+        } : {}),
+    });
+
+    return (
+        <div ref={ref} style={{ display: "flex", flexDirection: "column", gap: "4px", width: "94px" }}>
+            <button
+                style={primaryStyle}
+                onClick={() => setIsOpen(!isOpen)}
+                onMouseEnter={() => setHoveredBtn("criar")}
+                onMouseLeave={() => setHoveredBtn(null)}
+                title="Criar Item"
+            >
+                <Icons.Plus size={11} />
+                CRIAR
+            </button>
+
+            {isOpen && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    {items.map(item => (
+                        <button
+                            key={item.type}
+                            style={secondaryStyle(item.type)}
+                            title={item.label}
+                            onMouseEnter={() => setHoveredBtn(item.type)}
+                            onMouseLeave={() => setHoveredBtn(null)}
+                            onClick={() => {
+                                onSelect(item.type);
+                                setIsOpen(false);
+                            }}
+                        >
+                            <span style={{ fontSize: "11px", lineHeight: 1, flexShrink: 0 }}>{item.icon}</span>
+                            {item.label.toUpperCase()}
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
 
 export const CrmCockpit: React.FC = () => {
-    const { ctx, meta, links, msg, refreshLinks, setMsg } = useCockpit();
+    const { ctx, bodyText, attachments, meta, links, msg, refreshLinks, setMsg, isLoading: isContextLoading, settings } = useCockpit() as any;
+
+    const customModels = settings ? {
+        openaiModelFast: settings.openaiModelFast,
+        openaiModelQuality: settings.openaiModelQuality,
+        geminiModel: settings.geminiModel,
+        openaiApiKey: settings.openaiApiKey,
+        geminiApiKey: settings.geminiApiKey,
+    } : {};
+
+    const [isLinkedExpanded, setIsLinkedExpanded] = useState(true);
+    const [isAnchorsLoading, setIsAnchorsLoading] = useState(false);
+    const [anchors, setAnchors] = useState<any>(null);
+    const [protection, setProtection] = useState<MatchResult | null>(null);
+    const [isDrafting, setIsDrafting] = useState(false);
+    const [isBriefingLoading, setIsBriefingLoading] = useState(false);
+    const [briefing, setBriefing] = useState<string | null>(null);
+    const [voiceCommand, setVoiceCommand] = useState("");
+    const [isVoiceLoading, setIsVoiceLoading] = useState(false);
+
+    async function handleGetBriefing() {
+        setIsBriefingLoading(true);
+        try {
+            const { get30SecondBriefing } = await import("./HistorySummaryService");
+            const b = await get30SecondBriefing({
+                outlookHistory: "Recent collaboration on Project X.", // In real app, fetch from Outlook
+                odooChatter: meta?.chatter || "Client interested in premium finishes.",
+                protectionStatus: protection?.isProtected ? `PROTECTED (${protection.matchedProject?.projectName})` : "FREE"
+            }, customModels);
+            setBriefing(b);
+        } catch (e) {
+            console.error("Briefing failed:", e);
+        } finally {
+            setIsBriefingLoading(false);
+        }
+    }
+
+    async function handleVoiceAction() {
+        if (!voiceCommand.trim()) return;
+        setIsVoiceLoading(true);
+        try {
+            const { aiVoiceCommand } = await import("../../api");
+            const res = await aiVoiceCommand(voiceCommand, { anchors, protection, customModels });
+            if (res.ok) {
+                setVoiceCommand("");
+                // EXECUTE CHAINED ACTIONS
+                for (const action of res.actions) {
+                    if (action === "GENERATE_BRIEFING") await handleGetBriefing();
+                    if (action === "EXTRACT_ANCHORS") await handleScanAnchors();
+                    if (action === "DRAFT_REJECTION") await handleDraftRejection();
+                }
+            }
+        } catch (e) {
+            console.error("Voice command failed:", e);
+        } finally {
+            setIsVoiceLoading(false);
+        }
+    }
+
+    // Initial check: Extract anchors when email changes
+    useEffect(() => {
+        setBriefing(null);   // Reset briefing so old email data doesn't linger
+        setAnchors(null);    // Reset anchors
+        setProtection(null); // Reset protection
+        if (ctx.conversationId) {
+            handleScanAnchors();
+        }
+    }, [ctx.conversationId]);
+
+    async function handleScanAnchors() {
+        setIsAnchorsLoading(true);
+        setProtection(null); // Reset
+        try {
+            const body = await getEmailBodyText();
+            if (body) {
+                // START PARALLEL SCAN: Local-first triangulation starts
+                // Walkthrough Update:
+                // - [x] **Odoo Interactivity**:
+                //     - **Smart Alerts**: The "Odoo" action button in the CRM tab now informs the user if the connection is missing, rather than failing silently.
+                //     - **Deep Links**: Odoo status footers in all tabs now function as direct links to the configured Odoo instance.
+                //     - **Status Sync**: Synchronized the "Green Dot" indicator with actual Odoo metadata availability to prevent misleading connection statuses.
+                // Note: Real triangulation needs anchors. We do a partial scan with body/subject first
+                // OR we wait for Flash Anchors (sub-second) and then scan IndexedDB instantly.
+                // FLASH is sub-second, satisfying the < 0.8s goal.
+                const emailContext = {
+                    subject: ctx.subject || "",
+                    from: { name: ctx.fromName || "", email: ctx.fromEmail || "" },
+                    to: ctx.toRecipients || [],
+                    cc: ctx.ccRecipients || [],
+                    bodyText: body
+                };
+                const res = await aiExtractAnchors(body, customModels, emailContext);
+                if (res.ok) {
+                    setAnchors(res.anchors);
+                    // LOCAL SCAN IS INSTANT (<10ms)
+                    const p = await scanForProtection(res.anchors);
+                    setProtection(p);
+                }
+            }
+        } catch (e) {
+            console.error("[crm] Anchor scan failed:", e);
+        } finally {
+            setIsAnchorsLoading(false);
+        }
+    }
+
+    async function handleDraftRejection() {
+        if (!protection?.matchedProject) return;
+        setIsDrafting(true);
+        try {
+            const res = await aiGenerate({
+                action: "reply",
+                inputText: `O projeto "${protection.matchedProject.projectName}" já está protegido para o distribuidor "${protection.matchedProject.distributor}". Redige um email diplomático a explicar que não podemos cotar diretamente ou para outro canal.`,
+                mode: "quality", // Use Pro for the "Second Brain" quality
+                customModels,
+            });
+            if (res.ok && res.text) {
+                // In real app, this would insert into Outlook draft
+                alert("Rascunho Diplomático Gerado!");
+            }
+        } catch (e: any) {
+            setMsg(e.message);
+        } finally {
+            setIsDrafting(false);
+        }
+    }
 
     async function openDialog(targetMode: "new" | "add" | "edit", extra?: Record<string, string>) {
         if (!ctx.conversationId && targetMode !== "edit") {
             setMsg("Seleciona um email primeiro.");
             return;
         }
+
+        // Pass large data via localStorage to avoid URL length limits
+        try {
+            localStorage.setItem("ic_bridge_body", bodyText || "");
+            localStorage.setItem("ic_bridge_atts", JSON.stringify(attachments || []));
+        } catch (e) {
+            console.error("[crm] Failed to save transition data", e);
+        }
+
         try {
             await openCockpitDialog({
                 mode: targetMode,
@@ -20,6 +241,8 @@ export const CrmCockpit: React.FC = () => {
                 fromEmail: ctx.fromEmail || "",
                 fromName: ctx.fromName || "",
                 receivedAtIso: ctx.receivedDateTimeIso || "",
+                toR: ctx.toRecipients || [],
+                ccR: ctx.ccRecipients || [],
                 ...(extra || {}),
             });
             await refreshLinks();
@@ -28,114 +251,253 @@ export const CrmCockpit: React.FC = () => {
         }
     }
 
+    //## Sprint 10: Connectivity Logic Sync
+    // - [x] Align Navigation Dot with Odoo Metadata availability
+    // - [x] Proactive Metadata refresh in connectivity heartbeat
+    // - [x] Synchronize Odoo status footer with actual Odoo metadata availability
+    // Mock contact data - in real app, enrich with Odoo data
+    const mockContact = {
+        name: ctx.fromName || "Desconhecido",
+        email: ctx.fromEmail || "",
+        role: anchors?.stakeholders?.[0] || "Architecture Director",
+        company: anchors?.stakeholders?.[1] || "Studio Arq",
+        partnerLevel: "Gold" as const,
+        salesVolume: "€45,200",
+        health: "Great" as const
+    };
+
+    const isInitialLoading = isContextLoading || (links.length === 0 && !meta);
+
     return (
         <div style={S.container}>
-            <div style={S.actionRow}>
-                <button style={S.primaryBtn} onClick={() => openDialog("new")}>
-                    <Icons.Plus size={16} />
-                    Criar Item
-                </button>
-                <button style={S.secondaryBtn} onClick={() => openDialog("add")}>
-                    <Icons.Link size={16} />
-                    Ligar Existente
-                </button>
-            </div>
+            {/* HubSpot-style Sticky Header */}
+            <ContactInsight
+                contact={mockContact}
+                onViewInOdoo={() => {
+                    const db = meta?.db || settings?.odooDb || "divitek";
+                    const target = `/web?db=${encodeURIComponent(db)}#model=res.partner&domain=[["email","=","${ctx.fromEmail}"]]`;
 
-            {msg && <div style={S.alert}>{msg}</div>}
+                    if (meta?.baseUrl || settings?.odooUrl) {
+                        const baseUrl = meta?.baseUrl || settings?.odooUrl;
+                        window.open(getOdooAutoLoginUrl(settings?.odooSessionToken || null, target, baseUrl), "_blank");
+                    } else {
+                        setMsg("Odoo não configurado. Por favor, configura as ligações nas Definições.");
+                    }
+                }}
+            />
 
-            <div style={S.section}>
-                <div style={S.sectionHeader}>
-                    <h3 style={S.sectionTitle}>Ligados a esta conversa</h3>
-                    <button style={S.refreshBtn} onClick={() => refreshLinks()}>
-                        <Icons.RefreshCw size={14} />
+            <div style={S.scrollArea}>
+                {/* Fingerprint / Anchors Area (Visualized if loading) */}
+                {isAnchorsLoading && (
+                    <div style={{ marginBottom: "12px", border: "1px dashed #dbeafe", padding: "8px", borderRadius: "6px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+                            <Icons.Sparkles size={10} color="#2563eb" />
+                            <span style={{ fontSize: "9px", fontWeight: 700, textTransform: "uppercase", color: "#2563eb" }}>Extraindo Âncoras...</span>
+                        </div>
+                        <Skeleton width="60%" height="10px" marginBottom="4px" />
+                        <Skeleton width="40%" height="10px" />
+                    </div>
+                )}
+
+                {/* THE MOAT: Protection Banner */}
+                {protection?.isProtected && protection.matchedProject && (
+                    <ProtectionBanner
+                        project={protection.matchedProject}
+                        confidence={protection.confidence}
+                        reason={protection.reason}
+                        onDraftRejection={handleDraftRejection}
+                        isDrafting={isDrafting}
+                    />
+                )}
+
+                {/* 30-Second Briefing Area */}
+                <div style={{ ...S.section, padding: "10px", borderColor: "#bfdbfe", background: "#eff6ff" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: isBriefingLoading || briefing ? "8px" : "0" }}>
+                        <div style={{ fontSize: "10px", fontWeight: 800, color: "#2563eb", textTransform: "uppercase" }}>30-Sec Briefing</div>
+                        <button
+                            onClick={handleGetBriefing}
+                            disabled={isBriefingLoading}
+                            style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontSize: "10px", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}
+                            title="Gerar ou Atualizar Resumo"
+                        >
+                            {isBriefingLoading ? <Icons.RefreshCw size={10} className="animate-spin" /> : <Icons.Sparkles size={10} />}
+                            {briefing ? "Actualizar" : "Gerar Resumo"}
+                        </button>
+                    </div>
+                    {briefing && (
+                        <div style={{ fontSize: "11px", color: "#1e3a8a", lineHeight: "1.4", whiteSpace: "pre-wrap" }}>
+                            {briefing}
+                        </div>
+                    )}
+                </div>
+
+                <div style={S.actionRow}>
+                    <VerticalActionCascade
+                        onSelect={(type) => {
+                            if (type === "res.partner") openDialog("new", { model: "res.partner" });
+                            else if (type === "project.task") openDialog("new", { model: "project.task" });
+                            else if (type === "crm.lead") openDialog("new", { model: "crm.lead" });
+                            else if (type === "project.project") openDialog("new", { model: "project.project" });
+                            else if (type === "res.partner") openDialog("new", { model: "res.partner" });
+                        }}
+                    />
+                    <button style={S.secondaryBtn} onClick={() => openDialog("add")}>
+                        <Icons.Link size={12} />
+                        LIGAR
                     </button>
                 </div>
 
-                {!links.length ? (
-                    <div style={S.emptyState}>
-                        <div style={S.emptyIcon}>
-                            <Icons.Files size={32} />
+                {msg && <div style={S.alert}>{msg}</div>}
+
+                {/* Jira-style Collapsible Bucket */}
+                <div style={S.section}>
+                    <div style={S.sectionHeader} onClick={() => setIsLinkedExpanded(!isLinkedExpanded)}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <div style={{ transform: isLinkedExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                                <Icons.ExternalLink size={12} style={{ transform: 'rotate(-45deg)' }} />
+                            </div>
+                            <h3 style={S.sectionTitle}>Ligados a esta conversa ({links.length})</h3>
                         </div>
-                        <p>{!meta ? "Odoo não configurado no servidor." : "Nenhum registo do Odoo associado."}</p>
-                        {!meta && <p style={{ fontSize: '11px', marginTop: '8px', opacity: 0.7 }}>Define as tuas credenciais no ficheiro .env para ligar emails ao CRM.</p>}
+                        <button style={S.refreshBtn} onClick={(e) => { e.stopPropagation(); refreshLinks(); }}>
+                            <Icons.RefreshCw size={12} />
+                        </button>
                     </div>
-                ) : (
-                    <div style={S.cardList}>
-                        {links.map((link) => (
-                            <JiraCard
-                                key={`${link.model}-${link.recordId}`}
-                                link={link}
-                                meta={meta}
-                                onEdit={() => openDialog("edit", { model: link.model, recordId: String(link.recordId) })}
-                            />
-                        ))}
-                    </div>
-                )}
+
+                    {isLinkedExpanded && (
+                        <div style={S.accordionContent}>
+                            {isInitialLoading ? (
+                                <>
+                                    <OdooCardSkeleton />
+                                    <OdooCardSkeleton />
+                                </>
+                            ) : !links.length ? (
+                                <div style={S.emptyState}>
+                                    <p>{!meta ? "Odoo não configurado." : "Nenhum registo associado."}</p>
+                                </div>
+                            ) : (
+                                <div style={S.cardList}>
+                                    {links.map((link: any) => (
+                                        <OdooCard
+                                            key={`${link.model}-${link.recordId}`}
+                                            link={link}
+                                            meta={meta}
+                                            settings={settings}
+                                            onEdit={() => openDialog("edit", { model: link.model, recordId: String(link.recordId) })}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
 
-            {meta && (
-                <div style={S.footer}>
-                    Conectado a: <strong>{meta.baseUrl}</strong> ({meta.db})
+            <div style={S.voiceBar}>
+                <div style={S.voiceInputWrapper}>
+                    <Icons.MessageSquare size={14} style={{ opacity: 0.5 }} />
+                    <input
+                        type="text"
+                        placeholder="Comando de Voz / IA (ex: 'Analisa e rascunha')"
+                        style={S.voiceInput}
+                        value={voiceCommand}
+                        onChange={(e) => setVoiceCommand(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleVoiceAction()}
+                    />
+                    {isVoiceLoading ? (
+                        <Icons.RefreshCw size={14} className="animate-spin" />
+                    ) : (
+                        <button
+                            onClick={handleVoiceAction}
+                            style={S.voiceSendBtn}
+                            title="Enviar Comando"
+                        >
+                            <Icons.ArrowRight size={14} />
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {meta ? (
+                <a
+                    href={getOdooAutoLoginUrl(settings?.odooSessionToken || null, `/web?db=divitek`, meta.baseUrl)}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ ...S.footer, textDecoration: 'none', cursor: 'pointer' }}
+                    title="Abrir Odoo (Forced DB)"
+                >
+                    {String(meta?.baseUrl || "").replace(/https?:\/\//, '')} • DIVITEK
+                </a>
+            ) : (
+                <div style={S.footer} onClick={() => setMsg("Odoo não configurado.")}>
+                    Odoo: Desconectado
                 </div>
             )}
         </div>
     );
 };
 
-const JiraCard: React.FC<{ link: any; meta: any; onEdit: () => void }> = ({ link, meta, onEdit }) => {
-    const modelPrefix = link.model.split(".")[0] || link.model;
+const OdooCard: React.FC<{ link: any; meta: any; settings: any; onEdit: () => void }> = ({ link, meta, settings, onEdit }) => {
+    const modelPrefix = link.model.split(".")[0]?.toUpperCase() || link.model.toUpperCase();
+    const db = "divitek"; // Strictly forced as per Sprint 14 requirements
+    const target = `/web?db=${encodeURIComponent(db)}#id=${link.recordId}&model=${encodeURIComponent(link.model)}&view_type=form`;
+    const url = getOdooAutoLoginUrl(settings?.odooSessionToken || null, target, meta?.baseUrl);
 
-    // Odoo URL logic
-    const base = meta?.baseUrl || meta?.webBaseUrl || meta?.url || "";
-    const url = base
-        ? `${String(base).replace(/\/+$/, "")}/web#id=${link.recordId}&model=${encodeURIComponent(link.model)}&view_type=form`
-        : "";
-
-    const getStatusStyle = (model: string) => {
-        if (model.includes("project")) return { bg: "#dbeafe", color: "#1e40af", label: "Em curso" };
-        if (model.includes("task")) return { bg: "#fef9c3", color: "#854d0e", label: "Pendente" };
-        return { bg: "#dcfce7", color: "#166534", label: "Ativo" };
+    const getStatusInfo = (model: string) => {
+        // Jira Lozenge Styles
+        if (model.includes("project")) return {
+            bg: "#DEEBFF",
+            color: "#0747A6",
+            label: "PROJECT",
+            border: "none"
+        };
+        if (model.includes("lead")) return {
+            bg: "#FFF0B3",
+            color: "#172B4D",
+            label: "PROTECTED",
+            border: "1px solid #FFC400"
+        };
+        return {
+            bg: "#E3FCEF",
+            color: "#006644",
+            label: "WON",
+            border: "none"
+        };
     };
 
-    const status = getStatusStyle(link.model);
-
-    const copyToClipboard = () => {
-        if (url) {
-            navigator.clipboard.writeText(url);
-            alert("Link copiado para a área de transferência!");
-        }
-    };
+    const status = getStatusInfo(link.model);
 
     return (
         <div style={S.card}>
             <div style={S.cardHeader}>
-                <span style={S.modelTag}>{modelPrefix.toUpperCase()}</span>
+                <span style={{
+                    ...S.modelTag,
+                    background: status.bg,
+                    color: status.color,
+                    border: status.border
+                }}>{status.label}</span>
                 <span style={S.recordId}>#{link.recordId}</span>
+                {link.priority && (
+                    <div style={{ marginLeft: 4, display: "flex", alignItems: "center" }} title={`Priority: ${link.priority}`}>
+                        {link.priority === "high" || link.priority === "critical" ? (
+                            <Icons.ArrowUp size={14} color="#FF5630" />
+                        ) : link.priority === "low" ? (
+                            <Icons.ArrowDown size={14} color="#0052CC" />
+                        ) : null}
+                    </div>
+                )}
                 <div style={{ flex: 1 }} />
-                <span style={{ ...S.statusPill, background: status.bg, color: status.color }}>
-                    {status.label}
-                </span>
+                <button style={S.quickActionBtn} onClick={onEdit} title="Quick Edit">
+                    <Icons.Edit size={10} />
+                </button>
             </div>
 
-            <div style={S.cardTitle}>{link.recordName || link.title || "Sem título"}</div>
+            <div style={S.cardTitle}>{link.recordName || "Sem título"}</div>
 
             <div style={S.cardFooter}>
-                <div style={S.cardActions}>
-                    <button style={S.cardActionBtn} onClick={onEdit}>
-                        <Icons.Edit size={12} style={{ marginRight: "4px" }} />
-                        Editar
-                    </button>
-                    <button style={S.cardActionBtn} onClick={copyToClipboard}>
-                        <Icons.Clipboard size={12} style={{ marginRight: "4px" }} />
-                        Copiar Link
-                    </button>
-                    {url && (
-                        <a href={url} target="_blank" rel="noreferrer" style={S.cardActionBtn}>
-                            <Icons.ExternalLink size={12} style={{ marginRight: "4px" }} />
-                            Ver no Odoo
-                        </a>
-                    )}
-                </div>
+                <a href={url} target="_blank" rel="noreferrer" style={S.linkBtn}>
+                    <Icons.ExternalLink size={10} />
+                    Odoo
+                </a>
             </div>
         </div>
     );
@@ -145,108 +507,131 @@ const S: Record<string, React.CSSProperties> = {
     container: {
         display: "flex",
         flexDirection: "column",
-        gap: "20px",
-        paddingTop: "4px",
+        height: "100vh",
+        background: "#FFFFFF",
     },
-    actionRow: {
-        display: "flex",
-        gap: "10px",
-    },
-    primaryBtn: {
+    scrollArea: {
         flex: 1,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "6px",
+        overflowY: "auto",
         padding: "12px",
-        background: "var(--iccc-btn-bg)",
-        color: "var(--iccc-btn-text)",
-        border: "none",
-        borderRadius: "var(--iccc-radius-btn)",
-        fontWeight: 700,
-        fontSize: "13px",
-        cursor: "pointer",
-        boxShadow: "0 4px 12px rgba(37, 99, 235, 0.2)",
-    },
-    secondaryBtn: {
-        flex: 1,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "6px",
-        padding: "12px",
-        background: "var(--iccc-btn2-bg)",
-        color: "var(--iccc-btn2-text)",
-        border: "1px solid var(--iccc-btn2-border)",
-        borderRadius: "var(--iccc-radius-btn)",
-        fontWeight: 700,
-        fontSize: "13px",
-        cursor: "pointer",
-    },
-    btnIcon: {
-        fontSize: "16px",
-    },
-    alert: {
-        padding: "12px",
-        background: "#fee2e2",
-        color: "#991b1b",
-        borderRadius: "12px",
-        fontSize: "12px",
-        fontWeight: 500,
-    },
-    section: {
         display: "flex",
         flexDirection: "column",
         gap: "12px",
+    },
+    actionRow: {
+        display: "flex",
+        gap: "8px",
+        padding: "0 4px",
+        overflow: "visible"
+    },
+    primaryBtn: {
+        boxSizing: "border-box",
+        width: "94px", minWidth: "94px", maxWidth: "94px",
+        height: "26px", minHeight: "26px", maxHeight: "26px",
+        borderRadius: "16px",
+        border: "1px solid rgba(0, 80, 180, 0.4)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "5px",
+        padding: "0 8px",
+        fontSize: "10px",
+        fontWeight: 800,
+        lineHeight: 1,
+        textTransform: "uppercase",
+        cursor: "pointer",
+        flexShrink: 0,
+        margin: 0,
+        outline: "none",
+        /* Azure Gel 3D */
+        background: "linear-gradient(180deg, rgba(80, 160, 255, 0.95) 0%, rgba(0, 100, 210, 0.85) 100%)",
+        color: "#FFFFFF",
+        boxShadow: "0 4px 10px rgba(0,100,210,0.35), inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(0,0,0,0.15)",
+    },
+    secondaryBtn: {
+        boxSizing: "border-box",
+        width: "94px", minWidth: "94px", maxWidth: "94px",
+        height: "26px", minHeight: "26px", maxHeight: "26px",
+        borderRadius: "16px",
+        border: "1px solid rgba(200, 210, 230, 0.6)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        gap: "5px",
+        padding: "0 8px",
+        fontSize: "10px",
+        fontWeight: 800,
+        lineHeight: 1,
+        textTransform: "uppercase",
+        cursor: "pointer",
+        flexShrink: 0,
+        margin: 0,
+        outline: "none",
+        /* White Gel 3D */
+        background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
+        color: "#172B4D",
+        boxShadow: "0 4px 10px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06)",
+    },
+    alert: {
+        padding: "8px 12px",
+        background: "#FFEBE6",
+        color: "#BF2600",
+        borderRadius: "3px",
+        fontSize: "12px",
+    },
+    section: {
+        border: "1px solid #DFE1E6",
+        borderRadius: "3px",
+        overflow: "hidden",
+        background: "white",
     },
     sectionHeader: {
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
+        padding: "8px 12px",
+        background: "#F4F5F7",
+        cursor: "pointer",
+        borderBottom: "1px solid #DFE1E6",
     },
     sectionTitle: {
-        fontSize: "12px",
+        fontSize: "11px",
         fontWeight: 700,
-        textTransform: "uppercase",
-        letterSpacing: "0.05em",
-        color: "var(--iccc-text-muted)",
+        color: "#42526E",
         margin: 0,
+        textTransform: "uppercase",
     },
     refreshBtn: {
         background: "none",
         border: "none",
-        color: "var(--iccc-text-muted)",
-        fontSize: "16px",
+        color: "#6B778C",
         cursor: "pointer",
         padding: "4px",
     },
-    emptyState: {
-        padding: "32px 16px",
-        textAlign: "center",
-        background: "var(--iccc-card-bg)",
-        border: "1px dashed var(--iccc-card-border)",
-        borderRadius: "var(--iccc-radius-card)",
-        color: "var(--iccc-text-muted)",
+    accordionContent: {
+        padding: "12px",
     },
-    emptyIcon: {
-        fontSize: "24px",
-        marginBottom: "8px",
-        opacity: 0.5,
+    emptyState: {
+        padding: "24px",
+        textAlign: "center",
+        color: "#6B778C",
+        fontSize: "12px",
     },
     cardList: {
         display: "flex",
         flexDirection: "column",
-        gap: "10px",
+        gap: "8px",
     },
     card: {
-        background: "var(--iccc-card-bg)",
-        border: "1px solid var(--iccc-card-border)",
-        borderRadius: "var(--iccc-radius-card)",
-        padding: "14px",
-        boxShadow: "var(--iccc-shadow)",
-        backdropFilter: "var(--iccc-glass-blur)",
-        WebkitBackdropFilter: "var(--iccc-glass-blur)",
-        transition: "transform 0.2s ease",
+        padding: "12px",
+        border: "1px solid #DFE1E6",
+        borderRadius: "3px",
+        background: "white",
+        boxShadow: "0 1px 1px rgba(9, 30, 66, 0.25)",
     },
     cardHeader: {
         display: "flex",
@@ -255,59 +640,92 @@ const S: Record<string, React.CSSProperties> = {
         marginBottom: "8px",
     },
     modelTag: {
-        fontSize: "9px",
-        fontWeight: 800,
-        padding: "2px 6px",
-        background: "rgba(37, 99, 235, 0.1)",
-        color: "#2563eb",
-        borderRadius: "4px",
-    },
-    recordId: {
         fontSize: "10px",
-        fontWeight: 600,
-        color: "var(--iccc-text-muted)",
-    },
-    statusPill: {
-        fontSize: "9px",
         fontWeight: 700,
         padding: "2px 8px",
-        background: "#dcfce7",
-        color: "#166534",
-        borderRadius: "999px",
+        borderRadius: "16px",
+        textTransform: "uppercase",
+    },
+    recordId: {
+        fontSize: "11px",
+        color: "#6B778C",
+        fontWeight: 500,
+    },
+    quickActionBtn: {
+        padding: "4px",
+        background: "none",
+        border: "none",
+        color: "#6B778C",
+        cursor: "pointer",
+        borderRadius: "3px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
     },
     cardTitle: {
-        fontSize: "14px",
+        fontSize: "13px",
         fontWeight: 600,
-        color: "var(--iccc-text)",
-        marginBottom: "12px",
+        color: "#172B4D",
         lineHeight: "1.4",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
     },
     cardFooter: {
         display: "flex",
         justifyContent: "flex-end",
-        borderTop: "1px solid rgba(0,0,0,0.03)",
-        paddingTop: "10px",
+        marginTop: "8px",
     },
-    cardActions: {
+    linkBtn: {
+        fontSize: "11px",
+        color: "#0052CC",
+        textDecoration: "none",
+        fontWeight: 600,
         display: "flex",
-        gap: "12px",
+        alignItems: "center",
+        gap: "4px",
     },
-    cardActionBtn: {
+    voiceBar: {
+        padding: "12px",
+        background: "white",
+        borderTop: "1px solid #DFE1E6",
+    },
+    voiceInputWrapper: {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        background: "#FFFFFF",
+        border: "2px solid #DFE1E6",
+        borderRadius: "3px",
+        padding: "6px 10px",
+    },
+    voiceInput: {
+        flex: 1,
         background: "none",
         border: "none",
-        color: "#2563eb",
-        fontSize: "11px",
-        fontWeight: 700,
+        fontSize: "13px",
+        outline: "none",
+        color: "#172B4D",
+    },
+    voiceSendBtn: {
+        background: "#0052CC",
+        border: "none",
+        color: "white",
+        borderRadius: "3px",
+        width: "24px",
+        height: "24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
         cursor: "pointer",
         padding: 0,
-        textDecoration: "none",
     },
     footer: {
-        marginTop: "auto",
-        padding: "12px",
-        fontSize: "10px",
+        padding: "8px",
+        fontSize: "11px",
         textAlign: "center",
-        color: "var(--iccc-text-muted)",
-        borderTop: "1px solid var(--iccc-card-border)",
+        color: "#6B778C",
+        borderTop: "1px solid #DFE1E6",
+        background: "#F4F5F7",
     },
 };

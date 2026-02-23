@@ -199,11 +199,18 @@ export async function getCurrentItemToken(): Promise<string> {
     const OfficeAny = await ensureOfficeReady();
     const item = OfficeAny?.context?.mailbox?.item;
     if (!item) return "";
+
+    // "Context Poke": Read a basic property to force some hosts (Outlook Desktop) 
+    // to refresh the internal state of the proxy object.
+    const _id = item.itemId;
+
     const cid = typeof item.conversationId === "string" ? item.conversationId : "";
     const imid = typeof item.internetMessageId === "string" ? item.internetMessageId : "";
     const itemId = typeof item.itemId === "string" ? item.itemId : "";
     const created = item.dateTimeCreated ? String(item.dateTimeCreated) : "";
     const subj = typeof item.subject === "string" ? item.subject : "";
+
+    // Using a more structured token for better comparison
     return [cid, imid, itemId, created, subj].filter(Boolean).join("|");
   } catch {
     return "";
@@ -371,6 +378,34 @@ export async function displayForwardForm(content: string, isHtml = true): Promis
   const finalContent = isHtml ? content.replace(/\n/g, "<br/>") : content;
 
   item.displayForwardForm({ htmlBody: isHtml ? finalContent : undefined, textBody: !isHtml ? finalContent : undefined });
+}
+
+/**
+ * Opens the New Appointment form with pre-filled details.
+ */
+export async function displayNewMeetingForm(params: {
+  subject?: string;
+  body?: string;
+  location?: string;
+  start?: Date;
+  end?: Date;
+  requiredAttendees?: string[];
+}) {
+  const OfficeAny = await ensureOfficeReady();
+  const mailbox = OfficeAny?.context?.mailbox;
+
+  if (!mailbox?.displayNewAppointmentForm) {
+    throw new Error("Calendário não suportado neste ambiente.");
+  }
+
+  mailbox.displayNewAppointmentForm({
+    subject: params.subject,
+    body: params.body,
+    location: params.location,
+    start: params.start,
+    end: params.end,
+    requiredAttendees: params.requiredAttendees,
+  });
 }
 
 /**

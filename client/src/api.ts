@@ -1,6 +1,10 @@
-// client/src/api.ts
-// Inbox CRM Cockpit - client-side API helper (superset + backwards compatible)
 // Goal: keep UI stable even if server endpoints evolve.
+
+let _sessionToken: string | null = null;
+
+export function setApiSessionToken(token: string | null) {
+  _sessionToken = token;
+}
 
 export type OdooMeta = {
   ok: boolean;
@@ -13,6 +17,9 @@ export type OdooMeta = {
 };
 
 export type OdooMetaResponse = { ok: boolean; meta: OdooMeta };
+
+const isMock = () => typeof window !== "undefined" && !!(window as any).__ICCC_MOCK__;
+const getMockData = (type: string, model: string) => (window as any).__ICCC_MOCK_DATA?.[type]?.[model] || null;
 
 export type LinkEntry = {
   id?: string;
@@ -62,6 +69,8 @@ export type AiGenerateResponse =
   | { ok: true; html?: string; text?: string; data?: any }
   | { ok: false; error: string };
 
+export type AuthResponse = { ok: true; token: string; meta: OdooMeta } | { ok: false; message: string };
+
 type Json = any;
 
 async function requestJSON<T = Json>(path: string, init?: RequestInit): Promise<T> {
@@ -74,6 +83,7 @@ async function requestJSON<T = Json>(path: string, init?: RequestInit): Promise<
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
+        ...(_sessionToken ? { "Authorization": `Session ${_sessionToken}` } : {}),
         ...(init?.headers || {}),
       },
     });
@@ -94,10 +104,42 @@ async function requestJSON<T = Json>(path: string, init?: RequestInit): Promise<
   }
 }
 
+// -------- Auth --------
+export async function login(credentials: any): Promise<AuthResponse> {
+  return await requestJSON(`/api/auth/login`, {
+    method: "POST",
+    body: JSON.stringify(credentials),
+  });
+}
+
+export async function checkAuth(): Promise<{ ok: boolean; meta?: OdooMeta }> {
+  return await requestJSON(`/api/auth/check`);
+}
+
 // -------- Odoo meta / ping --------
 export async function getOdooMeta(): Promise<OdooMeta> {
   const r: any = await requestJSON(`/api/odoo/meta`);
-  return (r?.meta ?? r) as OdooMeta;
+  const m = (r?.meta ?? r) as OdooMeta;
+  if (m) {
+    // Standardize URL property
+    m.baseUrl = m.baseUrl || m.webBaseUrl || m.url;
+  }
+  return m;
+}
+
+export function getOdooAutoLoginUrl(token: string | null, redirect: string = "/web", odooBaseUrl?: string): string {
+  const bridgeBaseUrl = (window as any).location.origin;
+
+  // Normalize redirect: Odoo prefers relative paths for the 'redirect' field in form POSTS
+  let targetPath = redirect;
+  if (odooBaseUrl && redirect.startsWith(odooBaseUrl)) {
+    targetPath = redirect.substring(odooBaseUrl.length);
+  }
+  if (!targetPath.startsWith("/")) targetPath = "/" + targetPath;
+
+  const t = token ? `token=${encodeURIComponent(token)}` : "";
+  const r = `redirect=${encodeURIComponent(targetPath)}`;
+  return `${bridgeBaseUrl}/api/odoo/auto-login?${[t, r].filter(Boolean).join("&")}`;
 }
 
 export async function odooPing(): Promise<{ ok: boolean }> {
@@ -131,6 +173,11 @@ export async function linkEmailToRecord(payload: LinkPayload): Promise<{ ok: boo
 // -------- Odoo generic helpers --------
 export async function readOdoo(model: string, ids: number[] | number, fields: string[]): Promise<any[]> {
   const idList = Array.isArray(ids) ? ids : [ids];
+  if (isMock()) {
+    console.log(`[Mock] Reading ${model}`, idList);
+    const mock = getMockData("read", model);
+    return idList.map(id => mock?.[id] || { id, name: `Mock ${model} ${id}` });
+  }
   try {
     const r: any = await requestJSON(`/api/odoo/read`, {
       method: "POST",
@@ -201,7 +248,7 @@ export async function searchOdooDomain(
       ? { model: a, domain: b ?? [], fields: c, limit: d }
       : a;
 
-  const r: any = await requestJSON(`/api/odoo/search-domain`, {
+  const r: any = isMock() ? { records: getMockData("search_domain", payload.model) || [] } : await requestJSON(`/api/odoo/search-domain`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -215,6 +262,11 @@ export async function callOdoo(payload: { model: string; method: string; args: a
 // createOdoo: return number (DialogApp expects number)
 export async function createOdoo(model: string, values: Record<string, any>): Promise<number> {
   // prefer dedicated endpoint
+  if (isMock()) {
+    const id = Math.floor(Math.random() * 10000);
+    console.log(`[Mock] Created ${model} with ID ${id}`, values);
+    return id;
+  }
   try {
     const r: any = await requestJSON(`/api/odoo/create`, { method: "POST", body: JSON.stringify({ model, values }) });
     const id = r?.id ?? r?.result ?? r;
@@ -239,10 +291,27 @@ export async function writeOdoo(model: string, ids: number[] | number, values: R
 }
 
 // -------- AI --------
-export async function aiSelftest(): Promise<{ ok: boolean; text?: string; error?: string }> {
-  return await requestJSON(`/api/ai/selftest`, { method: "POST", body: "{}" });
+export async function aiSelftest(customModels?: any): Promise<{ ok: boolean; openai: boolean; gemini: boolean; error?: string }> {
+  return await requestJSON(`/api/ai/selftest`, { method: "POST", body: JSON.stringify({ customModels }) });
 }
 
-export async function aiGenerate(payload: any): Promise<AiGenerateResponse> {
-  return await requestJSON(`/api/ai/generate`, { method: "POST", body: JSON.stringify(payload) });
+export async function aiGenerate(payload: any, customModels?: any): Promise<AiGenerateResponse> {
+  const mergedPayload = { ...payload, customModels: customModels ?? payload.customModels };
+  return await requestJSON(`/api/ai/generate`, { method: "POST", body: JSON.stringify(mergedPayload) });
+}
+
+export async function aiExtractAnchors(emailBody: string, customModels?: any, emailContext?: any): Promise<{ ok: boolean; anchors: any }> {
+  return await requestJSON(`/api/ai/extract-anchors`, { method: "POST", body: JSON.stringify({ emailBody, emailContext, customModels }) });
+}
+
+export async function aiGenerateBriefing(context: string, history: any[] = [], customModels?: any): Promise<{ ok: boolean; summary: string }> {
+  return await requestJSON(`/api/ai/briefing`, { method: "POST", body: JSON.stringify({ context, history, customModels }) });
+}
+
+export async function aiVoiceCommand(commandText: string, context: any): Promise<{ ok: boolean; actions: string[] }> {
+  return await requestJSON(`/api/ai/voice-command`, { method: "POST", body: JSON.stringify({ commandText, context }) });
+}
+
+export async function aiListModels(): Promise<{ ok: boolean; openai: string[]; gemini: string[] }> {
+  return await requestJSON(`/api/ai/list-models`);
 }

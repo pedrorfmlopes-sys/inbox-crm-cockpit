@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "concurrently -n UI,API -c auto \"npm -w client run dev\" \"npm -w server run dev\"",
     "build": "npm -w client run build && npm -w server run build",
+    "start": "node server/src/index.js",
     "lint": "npm -w client run lint",
     "format": "prettier -w ."
   },

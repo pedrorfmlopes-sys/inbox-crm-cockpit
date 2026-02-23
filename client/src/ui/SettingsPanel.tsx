@@ -14,8 +14,10 @@ import {
 } from "../settings";
 import { applySkin } from "./skins";
 import * as Icons from "./icons";
+import { useCockpit } from "../components/shell/CockpitProvider";
+import { aiListModels } from "../api";
 
-type Section = "general" | "ai" | "signature";
+type Section = "general" | "conns" | "ai" | "persona" | "signature" | "protection";
 
 const LOCALE_LABEL: Record<AppLocale, string> = {
   "pt-PT": "Português (Portugal)",
@@ -74,6 +76,8 @@ export function SettingsPanel(): JSX.Element {
 
   // local-only uploaded signature images (dataURL), per locale
   const [sigImgLocal, setSigImgLocal] = useState<Partial<Record<AppLocale, string>>>({});
+  const [availableModels, setAvailableModels] = useState<{ openai: string[]; gemini: string[] }>({ openai: [], gemini: [] });
+  const [fetchingModels, setFetchingModels] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -107,10 +111,33 @@ export function SettingsPanel(): JSX.Element {
     };
   }, []);
 
+  const fetchModels = async () => {
+    setFetchingModels(true);
+    try {
+      const res = await aiListModels();
+      if (res.ok) {
+        setAvailableModels({ openai: res.openai, gemini: res.gemini });
+      }
+    } catch (e) {
+      console.warn("Failed to fetch models:", e);
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
+  useEffect(() => {
+    if (section === "conns") {
+      fetchModels();
+    }
+  }, [section]);
+
   const title = useMemo(() => {
     if (section === "general") return "Geral";
-    if (section === "ai") return "IA knowledge";
-    return "Assinatura";
+    if (section === "conns") return "Ligações (Odoo & IA)";
+    if (section === "ai") return "IA Knowledge";
+    if (section === "persona") return "Minha Persona";
+    if (section === "signature") return "Assinatura";
+    return "Proteção (O Moat)";
   }, [section]);
 
   async function onSave() {
@@ -211,15 +238,36 @@ export function SettingsPanel(): JSX.Element {
           <button style={section === "general" ? S.sideItemOn : S.sideItem} onClick={() => setSection("general")}>
             Geral
           </button>
+          <button style={section === "conns" ? S.sideItemOn : S.sideItem} onClick={() => setSection("conns")}>
+            Ligações
+          </button>
           <button style={section === "ai" ? S.sideItemOn : S.sideItem} onClick={() => setSection("ai")}>
-            IA knowledge
+            IA Knowledge
+          </button>
+          <button style={section === "persona" ? S.sideItemOn : S.sideItem} onClick={() => setSection("persona")}>
+            Minha Persona
           </button>
           <button style={section === "signature" ? S.sideItemOn : S.sideItem} onClick={() => setSection("signature")}>
             Assinatura
           </button>
+          <button style={section === "protection" ? S.sideItemOn : S.sideItem} onClick={() => setSection("protection")}>
+            Proteção
+          </button>
         </div>
 
         <div style={S.content}>
+          {section === "conns" && (
+            <ConnectionSettings
+              model={model}
+              setModel={setModel}
+              onSave={onSave}
+              setStatus={setStatus}
+              availableModels={availableModels}
+              fetchingModels={fetchingModels}
+              refreshModels={fetchModels}
+            />
+          )}
+
           {section === "general" && (
             <div style={{ display: "grid", gap: 10 }}>
               <Field label="Idioma da app">
@@ -359,13 +407,79 @@ export function SettingsPanel(): JSX.Element {
             <div style={{ display: "grid", gap: 10 }}>
               <div style={S.hint}>Notas permanentes para a IA (ex.: regras da empresa, frases padrão, etc.).</div>
               <textarea
-                style={S.textarea}
+                style={{ ...S.textarea, minHeight: 180 }}
                 value={(model.aiKnowledge || []).join("\n")}
                 onChange={(e) =>
                   setModel({ ...model, aiKnowledge: e.target.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) })
                 }
                 placeholder="Uma nota por linha…"
               />
+            </div>
+          )}
+
+          {section === "persona" && (
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={S.hint}>
+                Define quem és e como escreves para que a IA possa imitar o teu estilo ("Ghost Writer").
+              </div>
+
+              <Field label="A minha função / Empresa">
+                <input
+                  style={S.input}
+                  placeholder="Ex: Gestor de Clientes na Divitek"
+                  value={model.userRole || ""}
+                  onChange={(e) => setModel({ ...model, userRole: e.target.value })}
+                />
+              </Field>
+
+              <Field label="Estilo e Contexto">
+                <textarea
+                  style={{ ...S.textarea, minHeight: 60 }}
+                  placeholder="Ex: Escrevo de forma direta, saúdo sempre com 'Olá', não uso formalismos excessivos."
+                  value={model.styleContext || ""}
+                  onChange={(e) => setModel({ ...model, styleContext: e.target.value })}
+                />
+              </Field>
+
+              <Field label="Exemplos de Escrita (Style Mimic)">
+                <textarea
+                  style={{ ...S.textarea, minHeight: 120 }}
+                  placeholder="Cola aqui 2 ou 3 emails que escreveste no passado para a IA aprender o teu ritmo."
+                  value={model.styleExamples || ""}
+                  onChange={(e) => setModel({ ...model, styleExamples: e.target.value })}
+                />
+              </Field>
+
+              <div style={{ ...S.fieldLabel, marginTop: 10 }}>Links de Reunião (Calendário)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <Field label="Microsoft Teams">
+                  <input
+                    style={S.input}
+                    placeholder="Link da tua sala pessoal"
+                    value={model.meetingLinks?.teams || ""}
+                    onChange={(e) => setModel({ ...model, meetingLinks: { ...(model.meetingLinks || {}), teams: e.target.value } })}
+                  />
+                </Field>
+                <Field label="Zoom">
+                  <input
+                    style={S.input}
+                    placeholder="Link da tua sala pessoal"
+                    value={model.meetingLinks?.zoom || ""}
+                    onChange={(e) => setModel({ ...model, meetingLinks: { ...(model.meetingLinks || {}), zoom: e.target.value } })}
+                  />
+                </Field>
+                <div style={{ gridColumn: "span 2" }}>
+                  <Field label="Google Meet">
+                    <input
+                      style={S.input}
+                      placeholder="Link da tua sala pessoal"
+                      value={model.meetingLinks?.meet || ""}
+                      onChange={(e) => setModel({ ...model, meetingLinks: { ...(model.meetingLinks || {}), meet: e.target.value } })}
+                    />
+                  </Field>
+                </div>
+              </div>
+              <div style={S.hint}>Estes links serão usados automaticamente quando criares um agendamento via Cockpit.</div>
             </div>
           )}
 
@@ -494,6 +608,10 @@ export function SettingsPanel(): JSX.Element {
             </div>
           )}
 
+          {section === ("protection" as any) && (
+            <ProtectionSettings />
+          )}
+
           {status && <div style={status.startsWith("Falha") ? S.errorBox : S.okBox}>{status}</div>}
         </div>
       </div>
@@ -543,21 +661,21 @@ const S: Record<string, React.CSSProperties> = {
   },
 
   sideItem: {
-    borderRadius: 10,
-    padding: "8px 10px",
+    borderRadius: 8,
+    padding: "6px 10px",
     border: "1px solid transparent",
     background: "transparent",
-    fontSize: 12,
+    fontSize: "11px",
     textAlign: "left",
     cursor: "pointer",
     color: "var(--iccc-text-muted)",
   },
   sideItemOn: {
-    borderRadius: 10,
-    padding: "8px 10px",
+    borderRadius: 8,
+    padding: "6px 10px",
     border: "1px solid var(--iccc-card-border)",
     background: "rgba(0,0,0,0.03)",
-    fontSize: 12,
+    fontSize: "11px",
     textAlign: "left",
     cursor: "pointer",
     color: "var(--iccc-pill-active-bg)",
@@ -657,3 +775,315 @@ const S: Record<string, React.CSSProperties> = {
   note: { fontSize: 11, color: "var(--iccc-text-muted)" },
   error: { fontSize: 11, color: "#ef4444" },
 };
+
+function ProtectionSettings() {
+  const [data, setData] = useState<string[][]>([]);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [isMapping, setIsMapping] = useState(false);
+  const [status, setStatus] = useState("");
+
+  async function onFileDrop(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const text = String(reader.result || "");
+      const rows = text.split("\n").map(r => r.split(",").map(c => c.trim()));
+      const headers = rows[0] || [];
+      setData(rows);
+
+      setIsMapping(true);
+      const { mapHeadersAi } = await import("../modules/crm/excelProvider");
+      const m = await mapHeadersAi(headers);
+      setMapping(m);
+      setIsMapping(false);
+    };
+    reader.readAsText(file);
+  }
+
+  async function onSave() {
+    if (data.length < 2) return;
+    setStatus("A guardar...");
+    const { saveProjects } = await import("../modules/crm/excelProvider");
+
+    const headers = data[0];
+    const projects = data.slice(1).map(row => {
+      const p: any = { refArticles: [] };
+      row.forEach((val, idx) => {
+        const key = mapping[headers[idx]];
+        if (key) {
+          if (key === "refArticles") p.refArticles.push(val);
+          else p[key] = val;
+        }
+      });
+      return p;
+    }).filter(p => p.projectName);
+
+    await saveProjects(projects);
+    setStatus("✓ Tabela de proteção atualizada localmente.");
+    setTimeout(() => setStatus(""), 3000);
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={S.hint}>
+        Carrega o teu ficheiro de proteção (CSV). A IA mapeia as colunas automaticamente.
+        Os dados ficam guardados apenas no teu browser (**IndexedDB**).
+      </div>
+
+      <div style={{
+        border: "2px dashed var(--iccc-card-border)",
+        borderRadius: 12,
+        padding: 20,
+        cursor: "pointer"
+      }}>
+        <input type="file" accept=".csv" onChange={onFileDrop} style={{ display: "none" }} id="moat-upload" />
+        <label htmlFor="moat-upload" style={{ cursor: "pointer" }}>
+          <Icons.Upload size={24} style={{ marginBottom: 8, opacity: 0.5 }} />
+          <div style={{ fontSize: 13, fontWeight: 700 }}>Arrasta ou clica para carregar Excel/CSV</div>
+          <div style={{ fontSize: 11, opacity: 0.7 }}>Bypass IT: Local-First Storage</div>
+        </label>
+      </div>
+
+      {data.length > 0 && (
+        <div style={{ padding: 12, background: "rgba(0,0,0,0.02)", borderRadius: 12, border: "1px solid var(--iccc-card-border)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <Icons.Sparkles size={14} color="#2563eb" />
+            <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>Mapeamento IA</div>
+          </div>
+          {isMapping ? <div style={{ fontSize: 11 }}>A analisar colunas...</div> : (
+            <div style={{ display: "grid", gap: 4 }}>
+              {Object.entries(mapping).map(([h, internal]) => (
+                <div key={h} style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+                  <span style={{ opacity: 0.7 }}>{h}</span>
+                  <Icons.ArrowRight size={10} style={{ margin: "0 6px" }} />
+                  <span style={{ fontWeight: 700, color: "#2563eb" }}>{internal}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <button style={{ ...S.btn, width: "100%", marginTop: 12 }} onClick={onSave}>
+            Confirmar e Sincronizar Localmente
+          </button>
+        </div>
+      )}
+
+      {status && <div style={S.okBox}>{status}</div>}
+    </div>
+  );
+}
+
+function ConnectionSettings({ model, setModel, onSave, setStatus, availableModels, fetchingModels, refreshModels }: {
+  model: CockpitSettingsV1,
+  setModel: (s: CockpitSettingsV1) => void,
+  onSave: () => Promise<void>,
+  setStatus: (s: string | null) => void,
+  availableModels: { openai: string[]; gemini: string[] },
+  fetchingModels: boolean,
+  refreshModels: () => Promise<void>
+}) {
+  const { connectionStatus, granularStatus, checkConnectivity, login } = useCockpit();
+  const [isTesting, setIsTesting] = useState(false);
+
+  const handleTest = async () => {
+    setIsTesting(true);
+    try {
+      // 1. Odoo Login/Session test
+      await login({
+        url: model.odooUrl,
+        db: model.odooDb,
+        login: model.odooLogin,
+        password: model.odooPassword
+      });
+
+      // 2. Complete check (Odoo Ping + AI Selftests)
+      const customModels = {
+        openaiModelFast: model.openaiModelFast,
+        openaiModelQuality: model.openaiModelQuality,
+        geminiModel: model.geminiModel,
+        openaiApiKey: model.openaiApiKey,
+        geminiApiKey: model.geminiApiKey,
+      };
+      await checkConnectivity(customModels);
+      setStatus("Ligações testadas com sucesso.");
+    } catch (e: any) {
+      console.error("[Settings] Test failed:", e);
+      if (typeof setStatus === "function") {
+        setStatus(`Erro no teste: ${e.message || String(e)}`);
+      }
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const StatusDot = ({ ok }: { ok: boolean | null }) => {
+    const color = ok === null ? "#ccc" : ok ? "#36b37e" : "#ff5630";
+    const label = ok === null ? "Por testar" : ok ? "Ligação Ativa" : "Falha na Ligação";
+    return (
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: 10,
+        fontWeight: 700,
+        color
+      }}>
+        <div style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background: color
+        }} />
+        {label}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={S.fieldLabel}>Odoo Integration</div>
+        <StatusDot ok={granularStatus.odoo} />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field label="URL da Instância">
+          <input
+            style={S.input}
+            placeholder="https://suaempresa.odoo.com"
+            value={model.odooUrl || ""}
+            onChange={e => setModel({ ...model, odooUrl: e.target.value })}
+          />
+        </Field>
+        <Field label="Base de Dados">
+          <input
+            style={S.input}
+            placeholder="db_name"
+            value={model.odooDb || ""}
+            onChange={e => setModel({ ...model, odooDb: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field label="Utilizador (Login)">
+          <input
+            style={S.input}
+            placeholder="pedro@empresa.com"
+            value={model.odooLogin || ""}
+            onChange={e => setModel({ ...model, odooLogin: e.target.value })}
+          />
+        </Field>
+        <Field label="Password / Token">
+          <input
+            type="password"
+            style={S.input}
+            placeholder="••••••••"
+            value={model.odooPassword || ""}
+            onChange={e => setModel({ ...model, odooPassword: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <hr style={{ border: "none", borderTop: "1px solid var(--iccc-card-border)", margin: "4px 0" }} />
+      <div style={S.fieldLabel}>AI Intelligence (OpenAI)</div>
+      <Field label="OpenAI API Key (Opcional se definida no server)">
+        <input
+          type="password"
+          style={S.input}
+          placeholder="Introduza a sua API Key..."
+          value={model.openaiApiKey || ""}
+          onChange={e => setModel({ ...model, openaiApiKey: e.target.value })}
+        />
+      </Field>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field label="Modelo Rápido (OpenAI)">
+          <select
+            style={S.select}
+            value={model.openaiModelFast || "gpt-4o-mini"}
+            onChange={e => setModel({ ...model, openaiModelFast: e.target.value })}
+          >
+            {availableModels.openai.length > 0 ? (
+              availableModels.openai.map(m => <option key={m} value={m}>{m}</option>)
+            ) : (
+              <option value="gpt-4o-mini">gpt-4o-mini (default)</option>
+            )}
+          </select>
+        </Field>
+        <Field label="Modelo Qualidade (OpenAI)">
+          <select
+            style={S.select}
+            value={model.openaiModelQuality || "gpt-4o-mini"}
+            onChange={e => setModel({ ...model, openaiModelQuality: e.target.value })}
+          >
+            {availableModels.openai.length > 0 ? (
+              availableModels.openai.map(m => <option key={m} value={m}>{m}</option>)
+            ) : (
+              <option value="gpt-4o-mini">gpt-4o-mini (default)</option>
+            )}
+          </select>
+        </Field>
+      </div>
+
+      <hr style={{ border: "none", borderTop: "1px solid var(--iccc-card-border)", margin: "4px 0" }} />
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={S.fieldLabel}>AI Intelligence (Gemini)</div>
+          <StatusDot ok={granularStatus.gemini} />
+        </div>
+        <button
+          style={{ ...S.btnGhost, padding: "2px 8px", fontSize: 9 }}
+          onClick={refreshModels}
+          disabled={fetchingModels}
+        >
+          {fetchingModels ? "A procurar..." : "Localizar Modelos"}
+        </button>
+      </div>
+      <Field label="Gemini API Key">
+        <input
+          type="password"
+          style={S.input}
+          placeholder="Introduza a sua API Key..."
+          value={model.geminiApiKey || ""}
+          onChange={e => setModel({ ...model, geminiApiKey: e.target.value })}
+        />
+      </Field>
+
+      <Field label="Modelo Gemini (3.1 Flash/Pro)">
+        <select
+          style={S.select}
+          value={model.geminiModel || "gemini-1.5-flash"}
+          onChange={e => setModel({ ...model, geminiModel: e.target.value })}
+        >
+          {availableModels.gemini.length > 0 ? (
+            availableModels.gemini.map(m => {
+              const label = m.includes("flash") ? "v3.1 Flash" : m.includes("pro") ? "v3.1 Pro" : m;
+              return <option key={m} value={m}>{m} ({label})</option>
+            })
+          ) : (
+            <>
+              <option value="gemini-1.5-flash">gemini-1.5-flash (v3.1 Flash)</option>
+              <option value="gemini-1.5-pro">gemini-1.5-pro (v3.1 Pro)</option>
+              <option value="gemini-2.0-flash">gemini-2.0-flash (NextGen)</option>
+            </>
+          )}
+        </select>
+      </Field>
+
+      <button
+        style={{ ...S.btn, marginTop: 10, background: "#0f172a", width: "100%" }}
+        onClick={handleTest}
+        disabled={isTesting}
+      >
+        {isTesting ? "A Testar..." : "Testar Ligações"}
+      </button>
+
+      <div style={S.hint}>
+        Nota: Mantém o Odoo aberto no browser para acesso direto sem login. Clique em "Testar Ligações" para validar o acesso ao RPC e health checks do Gemini.
+      </div>
+    </div>
+  );
+}

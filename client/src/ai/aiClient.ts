@@ -1,5 +1,5 @@
 // client/src/ai/aiClient.ts
-export type AiAction = "summarize" | "reply" | "rewrite" | "forward" | "tasks" | "refine";
+export type AiAction = "summarize" | "reply" | "rewrite" | "forward" | "tasks" | "refine" | "intent_proposals";
 export type AiMode = "fast" | "quality";
 export type AiTone = "neutro" | "formal" | "curto" | "direto" | "simpático";
 export type AiLocale = "pt-PT" | "es-ES" | "en-GB" | "it-IT" | "de-DE" | "auto";
@@ -28,6 +28,14 @@ export type AiGenerateRequest = {
   files?: any[]; // optional: raw files
   history?: Array<{ role: "user" | "assistant"; content: string }>; // NEW: Chat history
   filesContext?: string; // optional: pre-extracted text context
+  persona?: any; // NEW: User persona / style
+  customModels?: {
+    openaiModelFast?: string;
+    openaiModelQuality?: string;
+    geminiModel?: string;
+    openaiApiKey?: string;
+    geminiApiKey?: string;
+  };
 };
 
 export type AiGenerateResponse =

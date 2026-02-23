@@ -6,9 +6,11 @@ import React from "react";
  */
 
 interface IconProps extends React.SVGProps<SVGSVGElement> {
-    size?: number | string;
+    size?: number;
     color?: string;
-    strokeWidth?: number;
+    style?: React.CSSProperties;
+    className?: string;
+    title?: string;
 }
 
 const BaseIcon: React.FC<IconProps & { children: React.ReactNode }> = ({
@@ -195,5 +197,89 @@ export const Download: React.FC<IconProps> = (props) => (
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
         <polyline points="7 10 12 15 17 10" />
         <line x1="12" y1="15" x2="12" y2="3" />
+    </BaseIcon>
+);
+
+export const Calendar: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+        <line x1="16" y1="2" x2="16" y2="6" />
+        <line x1="8" y1="2" x2="8" y2="6" />
+        <line x1="3" y1="10" x2="21" y2="10" />
+    </BaseIcon>
+);
+
+export const Lock: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </BaseIcon>
+);
+
+export const Paperclip: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.51a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </BaseIcon>
+);
+export const AlertCircle: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+    </BaseIcon>
+);
+
+export const AlertTriangle: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+        <line x1="12" y1="9" x2="12" y2="13" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
+    </BaseIcon>
+);
+
+export const MessageSquare: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </BaseIcon>
+);
+
+export const Upload: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="17 8 12 3 7 8" />
+        <line x1="12" y1="3" x2="12" y2="15" />
+    </BaseIcon>
+);
+
+export const ArrowRight: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <line x1="5" y1="12" x2="19" y2="12" />
+        <polyline points="12 5 19 12 12 19" />
+    </BaseIcon>
+);
+
+export const ArrowUp: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <polyline points="18 15 12 9 6 15" />
+    </BaseIcon>
+);
+
+export const ArrowDown: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <polyline points="6 9 12 15 18 9" />
+    </BaseIcon>
+);
+export const User: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+        <circle cx="12" cy="7" r="4" />
+    </BaseIcon>
+);
+
+export const Target: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <circle cx="12" cy="12" r="10" />
+        <circle cx="12" cy="12" r="6" />
+        <circle cx="12" cy="12" r="2" />
     </BaseIcon>
 );

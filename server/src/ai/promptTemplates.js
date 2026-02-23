@@ -2,7 +2,7 @@
 // Centralized prompt templates for the "MailMaestro-like" features.
 // Keep these versioned and isolated from Odoo/CRM code.
 
-export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "" }) {
+export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "", persona = {} }) {
   const LOCALE_HUMAN = {
     "pt-PT": "Português (Portugal)",
     "es-ES": "Espanhol",
@@ -44,7 +44,16 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
     ? `\nCONTEÚDO DOS FICHEIROS ANEXOS (Para tua análise):\n${filesContext}\n`
     : "";
 
-  const finalRules = baseRules + knowledgeBlock + filesBlock;
+  // Inject Persona / User Style mimic
+  const personaBlock = (persona.userRole || persona.styleContext || persona.styleExamples)
+    ? `\nCONTEXTO DO UTILIZADOR (GHOST WRITER):\n` +
+    (persona.userRole ? `- Função: ${persona.userRole}\n` : "") +
+    (persona.styleContext ? `- Estilo preferido: ${persona.styleContext}\n` : "") +
+    (persona.styleExamples ? `- Exemplos de escrita passados: """${persona.styleExamples}"""\n` : "") +
+    `Instrução: Imita este estilo de escrita e respeita a função do utilizador nos rascunhos.\n`
+    : "";
+
+  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock;
   const toneLine = `Tom: ${tone}.`;
 
   const emailBlock = email
@@ -122,6 +131,32 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
       finalRules +
       toneLine +
       `\n\nTAREFA: Extrai tarefas/ações do email e anexos (checklist) e identifica responsáveis (se possível) e prazos (se explícitos).\nEstrutura:\n<p><strong>Tarefas</strong></p><ul>...</ul>\n<p><strong>Riscos/Dependências</strong></p><ul>...</ul>` +
+      emailBlock
+    );
+  }
+
+  if (action === "intent_proposals") {
+    return (
+      finalRules +
+      `\n\nTAREFA: Analisa o email e propõe 3 intenções de resposta curta (Smart Replies).\n` +
+      `As propostas devem ser dinâmicas e contextuais (ex: se for convite -> Aceitar, Recusar, Propor nova hora).\n` +
+      `REGRAS:\n` +
+      `- Devolve APENAS as 3 frases curtas separadas por ponto e vírgula.\n` +
+      `- Máximo 4 palavras por frase.\n` +
+      `- Exemplo de output: Aceitar convite;Recusar educadamente;Pedir mais informações\n` +
+      emailBlock
+    );
+  }
+
+  if (action === "summarize_actions") {
+    return (
+      finalRules +
+      `Tom: informativo.\n` +
+      `TAREFA: Analisa o email e os anexos e devolve APENAS um JSON válido.\n` +
+      `REGRAS:\n` +
+      `- "summary": lista de exatamente 3 pontos chave (curtos e diretos). Sem saudações.\n` +
+      `- "actions": lista de tarefas concretas (ex: "Enviar proposta").\n` +
+      `Exemplo de output: {"summary": ["Ponto 1", "Ponto 2", "Ponto 3"], "actions": ["Ligar cliente"]}\n` +
       emailBlock
     );
   }

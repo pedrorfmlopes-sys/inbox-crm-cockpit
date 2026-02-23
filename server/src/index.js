@@ -1,18 +1,19 @@
-import express from "express";
-import cors from "cors";
 import dotenv from "dotenv";
-import { odooClientFromEnv } from "./odoo.js";
-import { addLink, listLinksByConversation } from "./linkStore.js";
-import { createAiRouter } from "./routes/aiRoutes.js";
-import { fileURLToPath } from "url";
 import path from "path";
+import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import fs from "fs";
-
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
+
+import express from "express";
+import cors from "cors";
+import { odooClientFromEnv } from "./odoo.js";
+import { addLink, listLinksByConversation } from "./linkStore.js";
+import { createAiRouter } from "./routes/aiRoutes.js";
+import fs from "fs";
+import { sessionManager } from "./sessionManager.js";
 
 // --- crash visibility (avoid silent exit) ---
 process.on("uncaughtException", (err) => {
@@ -35,7 +36,16 @@ const port = process.env.PORT ? Number(process.env.PORT) : 7071;
 let cachedOdoo = null;
 let odooInitPromise = null;
 
-async function getOdooCached() {
+async function getOdooCached(req) {
+  // 1. Try session token from Authorization header
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Session ")) {
+    const token = authHeader.split(" ")[1];
+    const session = sessionManager.getSession(token);
+    if (session) return session.client || session;
+  }
+
+  // 2. Fallback to global singleton (from .env)
   if (cachedOdoo) return cachedOdoo;
   if (odooInitPromise) return await odooInitPromise;
 
@@ -57,9 +67,31 @@ async function getOdooCached() {
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-app.get("/api/odoo/meta", async (_req, res) => {
+// --- AUTH ---
+app.post("/api/auth/login", async (req, res) => {
   try {
-    const odoo = await getOdooCached();
+    const credentials = req.body;
+    const session = await sessionManager.createSession(credentials);
+    return res.json({ ok: true, ...session });
+  } catch (e) {
+    console.warn("[server] Login failed:", e?.message);
+    return res.status(401).json({ ok: false, message: e?.message || "Login falhou" });
+  }
+});
+
+app.get("/api/auth/check", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Session ")) {
+    const token = authHeader.split(" ")[1];
+    const sessionClient = sessionManager.getSession(token);
+    if (sessionClient) return res.json({ ok: true, meta: sessionClient.meta });
+  }
+  return res.json({ ok: false });
+});
+
+app.get("/api/odoo/meta", async (req, res) => {
+  try {
+    const odoo = await getOdooCached(req);
     return res.json({ ok: true, meta: odoo.meta });
   } catch (e) {
     console.warn("[server] Odoo Meta lookup failed:", e?.message);
@@ -67,13 +99,87 @@ app.get("/api/odoo/meta", async (_req, res) => {
   }
 });
 
-app.get("/api/odoo/ping", async (_req, res) => {
+app.get("/api/odoo/ping", async (req, res) => {
   try {
-    const odoo = await getOdooCached();
+    const odoo = await getOdooCached(req);
     const ok = await odoo.ping();
     return res.json({ ok });
   } catch (e) {
     return res.json({ ok: false, error: e?.message });
+  }
+});
+
+/**
+ * ✅ Odoo Bridge: Seamless Login
+ * Receives a session token, fetches credentials, and renders an auto-submitting form.
+ */
+app.get("/api/odoo/auto-login", async (req, res) => {
+  try {
+    const token = String(req.query.token || "").trim();
+    const redirect = String(req.query.redirect || "/web").trim();
+
+    let credentials = null;
+
+    // 1. Try Session Manager
+    if (token) {
+      const session = sessionManager.getSession(token);
+      if (session?.credentials) {
+        credentials = session.credentials;
+      }
+    }
+
+    // 2. Fallback to Env if no session (only if Odoo is configured in .env)
+    if (!credentials) {
+      credentials = {
+        url: process.env.ODOO_URL,
+        db: process.env.ODOO_DB,
+        login: process.env.ODOO_USERNAME || process.env.ODOO_USER,
+        password: process.env.ODOO_API_KEY || process.env.ODOO_PASS || process.env.ODOO_PASSWORD
+      };
+      // Basic check if it's usable
+      if (!credentials.url || credentials.url.includes("your-odoo-instance.com")) {
+        return res.status(401).send("Sessão expirada ou Odoo não configurado. Por favor, faz login novamente.");
+      }
+    }
+
+    const { url, db, login, password } = credentials;
+    const loginUrl = `${url.replace(/\/+$/, "")}/web/login`;
+
+    // Render Auto-Login Page
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>A entrar no Odoo...</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; color: #666; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #714B67; border-radius: 50%; width: 40px; height: 40px; animation: spin 2s linear infinite; margin-bottom: 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="spinner"></div>
+    <p>A iniciar sessão segura no Odoo...</p>
+    
+    <form id="loginForm" action="${loginUrl}" method="POST" style="display:none;">
+        <input type="hidden" name="db" value="${escapeHtml(db)}">
+        <input type="hidden" name="login" value="${escapeHtml(login)}">
+        <input type="hidden" name="password" value="${escapeHtml(password)}">
+        <input type="hidden" name="redirect" value="${escapeHtml(redirect)}">
+    </form>
+
+    <script>
+        document.getElementById('loginForm').submit();
+    </script>
+</body>
+</html>
+    `;
+
+    res.send(html);
+
+  } catch (e) {
+    console.error("[server] Bridge failed:", e);
+    res.status(500).send("Erro ao iniciar sessão no Odoo.");
   }
 });
 
@@ -99,7 +205,7 @@ app.get("/api/odoo/search", async (req, res) => {
 
     if (!modelAllowed(model)) return res.status(400).send("Model not allowed");
 
-    const odoo = await getOdooCached();
+    const odoo = await getOdooCached(req);
 
     // Quando a pesquisa está vazia: devolve as primeiras N linhas (útil para dropdown aberto)
     const isEmpty = !q;
@@ -209,7 +315,7 @@ app.post("/api/odoo/search", async (req, res) => {
     const q = String(body.query ?? body.q ?? "").trim();
     const limit = Math.min(Number(body.limit ?? 20), 80);
 
-    const odoo = await getOdooCached();
+    const odoo = await getOdooCached(req);
 
     if (Array.isArray(body.domain)) {
       const domain = body.domain;
@@ -240,7 +346,7 @@ app.post("/api/odoo/search-domain", async (req, res) => {
     const f = Array.isArray(fields) ? fields : ["id", "name"];
     const ord = typeof order === "string" ? order : undefined;
 
-    const odoo = await getOdooCached();
+    const odoo = await getOdooCached(req);
     const records = await odoo.searchRead(m, domain, f, lim, ord);
     return res.json({ records: records || [] });
   } catch (e) {
@@ -260,7 +366,7 @@ app.post("/api/odoo/read", async (req, res) => {
 
     const f = Array.isArray(fields) ? fields : ["id", "name", "display_name"];
 
-    const odoo = await getOdooCached();
+    const odoo = await getOdooCached(req);
     const records = await odoo.read(m, idList, f);
     return res.json({ records: records || [] });
   } catch (e) {
@@ -282,7 +388,7 @@ app.post("/api/odoo/write", async (req, res) => {
     const clean = cleanValuesForModel(m, values);
     if (!clean) return res.status(400).send("Missing values");
 
-    const odoo = await getOdooCached();
+    const odoo = await getOdooCached(req);
     // write accepts a list of ids
     const ok = await odoo.call(m, "write", [idList, clean]);
     return res.json({ ok: true, result: ok });
@@ -321,7 +427,7 @@ app.post("/api/odoo/call", async (req, res) => {
       safeArgs = [ids0, clean];
     }
 
-    const odoo = await getOdooCached();
+    const odoo = await getOdooCached(req);
     const result = await odoo.call(m, meth, safeArgs, safeKw);
     return res.json({ ok: true, result });
   } catch (e) {
@@ -366,7 +472,7 @@ app.post("/api/odoo/create", async (req, res) => {
 
     if (!clean.name) return res.status(400).send("Missing name");
 
-    const odoo = await getOdooCached();
+    const odoo = await getOdooCached(req);
     const id = await odoo.create(m, clean);
 
     return res.json({ ok: true, id });
@@ -402,7 +508,7 @@ app.post("/api/odoo/link-email", async (req, res) => {
     if (!conversationId) return res.status(400).send("Missing conversationId");
     if (!rid) return res.status(400).send("Missing recordId");
 
-    const odoo = await getOdooCached();
+    const odoo = await getOdooCached(req);
 
     const safeSubject = subject || "(sem assunto)";
     const safeFrom = `${(fromName || "").trim()}${fromEmail ? ` <${fromEmail}>` : ""}`.trim() || "(desconhecido)";
@@ -433,7 +539,7 @@ app.post("/api/odoo/link-email", async (req, res) => {
       fromName: fromName || "",
     };
 
-    const list = addLink(conversationId, entry);
+    const list = await addLink(conversationId, entry);
 
     return res.json({ ok: true, links: list });
   } catch (e) {
@@ -449,11 +555,11 @@ app.post("/api/links/link", (req, res) => {
   app._router.handle(req, res);
 });
 
-app.get("/api/links", (req, res) => {
+app.get("/api/links", async (req, res) => {
   try {
     const conversationId = String(req.query.conversationId || "").trim();
     if (!conversationId) return res.json({ links: [] });
-    const links = listLinksByConversation(conversationId);
+    const links = await listLinksByConversation(conversationId);
     return res.json({ links });
   } catch (e) {
     console.error(e);
@@ -461,9 +567,9 @@ app.get("/api/links", (req, res) => {
   }
 });
 
-app.get("/api/links/:conversationId", (req, res) => {
+app.get("/api/links/:conversationId", async (req, res) => {
   const conversationId = req.params.conversationId;
-  const links = listLinksByConversation(conversationId);
+  const links = await listLinksByConversation(conversationId);
   return res.json({ links });
 });
 

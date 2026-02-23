@@ -102,3 +102,17 @@ export async function openaiCreateResponse({
     clearTimeout(t);
   }
 }
+
+export async function openaiListModels(apiKey) {
+  if (!apiKey) throw new Error("OPENAI_API_KEY em falta");
+  const res = await fetch("https://api.openai.com/v1/models", {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) throw new Error(`OpenAI Models HTTP ${res.status}`);
+  const data = await res.json();
+  // Filter for chat models
+  return (data.data || [])
+    .filter(m => m.id.startsWith("gpt-") || m.id.startsWith("o1-") || m.id.startsWith("o3-"))
+    .map(m => m.id)
+    .sort();
+}

@@ -16,7 +16,7 @@ export async function geminiCreateResponse({
 }) {
     if (!apiKey) throw Object.assign(new Error("GEMINI_API_KEY em falta"), { status: 400 });
 
-    const url = `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     const logPath = "gemini-debug.log";
     fs.appendFileSync(logPath, `\n[${new Date().toISOString()}] Calling: ${url.replace(apiKey, 'REDACTED')}\n`);
 
@@ -90,4 +90,17 @@ export async function geminiCreateResponse({
         console.error("[ai] Gemini provider error:", e.message);
         throw e;
     }
+}
+
+export async function geminiListModels(apiKey) {
+    if (!apiKey) throw new Error("GEMINI_API_KEY em falta");
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Gemini Models HTTP ${res.status}`);
+    const data = await res.json();
+    // Filter for generative models that support generateContent
+    return (data.models || [])
+        .filter(m => m.supportedGenerationMethods.includes("generateContent"))
+        .map(m => m.name.replace("models/", ""))
+        .sort();
 }
