@@ -41,8 +41,7 @@ export async function aiCreateText({
   // If we have files (PDFs/Images) and a Gemini key, we use Gemini (it's best for this).
   // Otherwise, we use the default provider (usually OpenAI).
   let selectedProvider = cfg.provider;
-
-  if (files.length > 0 && cfg.gemini.apiKey) {
+  if (files.length > 0 && (customModels.geminiApiKey || cfg.gemini.apiKey)) {
     selectedProvider = "gemini";
     console.log(`[ai] Switch to Gemini for multimodal request (found ${files.length} files)`);
   }
@@ -118,13 +117,13 @@ export async function aiSelftest(customModels = {}) {
   const cfg = getAiConfig();
   const status = {
     ok: false,
-    openai: false,
-    gemini: false,
+    openai: { ok: false, error: null },
+    gemini: { ok: false, error: null },
   };
 
   const checkOpenAI = async () => {
     const key = customModels.openaiApiKey || cfg.openai.apiKey;
-    if (!key) return false;
+    if (!key) return { ok: false, error: "Sem API Key" };
     try {
       await openaiCreateResponse({
         apiKey: key,
@@ -134,16 +133,16 @@ export async function aiSelftest(customModels = {}) {
         max_output_tokens: 5,
         temperature: 0,
       });
-      return true;
+      return { ok: true };
     } catch (e) {
       console.warn("[ai] OpenAI selftest failed:", e.message);
-      return false;
+      return { ok: false, error: e.message };
     }
   };
 
   const checkGemini = async () => {
     const key = customModels.geminiApiKey || cfg.gemini.apiKey;
-    if (!key) return false;
+    if (!key) return { ok: false, error: "Sem API Key" };
     try {
       await geminiCreateResponse({
         apiKey: key,
@@ -153,17 +152,17 @@ export async function aiSelftest(customModels = {}) {
         max_output_tokens: 5,
         temperature: 0,
       });
-      return true;
+      return { ok: true };
     } catch (e) {
       console.warn("[ai] Gemini selftest failed:", e.message);
-      return false;
+      return { ok: false, error: e.message };
     }
   };
 
   const [oa, ge] = await Promise.all([checkOpenAI(), checkGemini()]);
   status.openai = oa;
   status.gemini = ge;
-  status.ok = oa || ge; // Overall OK if at least one works
+  status.ok = oa.ok || ge.ok;
 
   return status;
 }
