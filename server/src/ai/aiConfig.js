@@ -9,11 +9,12 @@ export function getAiConfig() {
       apiKey: process.env.OPENAI_API_KEY || "",
       modelFast: process.env.OPENAI_MODEL_FAST || "gpt-4o-mini",
       modelQuality:
-        process.env.OPENAI_MODEL_QUALITY || process.env.OPENAI_MODEL_FAST || "gpt-4o-mini",
+        process.env.OPENAI_MODEL_QUALITY || "gpt-4o",
     },
     gemini: {
       apiKey: process.env.GEMINI_API_KEY || "",
-      model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
+      modelFast: process.env.GEMINI_MODEL_FAST || "gemini-1.5-flash",
+      modelQuality: process.env.GEMINI_MODEL_QUALITY || "gemini-1.5-pro",
     },
   };
 }

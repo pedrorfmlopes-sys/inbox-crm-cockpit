@@ -44,14 +44,22 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
     ? `\nCONTEÚDO DOS FICHEIROS ANEXOS (Para tua análise):\n${filesContext}\n`
     : "";
 
-  // Inject Persona / User Style mimic
-  const personaBlock = (persona.userRole || persona.styleContext || persona.styleExamples)
-    ? `\nCONTEXTO DO UTILIZADOR (GHOST WRITER):\n` +
-    (persona.userRole ? `- Função: ${persona.userRole}\n` : "") +
-    (persona.styleContext ? `- Estilo preferido: ${persona.styleContext}\n` : "") +
-    (persona.styleExamples ? `- Exemplos de escrita passados: """${persona.styleExamples}"""\n` : "") +
-    `Instrução: Imita este estilo de escrita e respeita a função do utilizador nos rascunhos.\n`
-    : "";
+  // Inject Persona / User Style mimic (The "Pedro" Standard)
+  const personaBlock = `
+ESTÁS A ATUAR COMO: Pedro (PT-PT), um profissional altamente pragmático, estruturado e orientado a resultados.
+PERFIL DE COMUNICAÇÃO:
+- Direto, claro e profissional, mas humano (sem formalismo exagerado).
+- Foco absoluto em precisão, completude e utilidade prática.
+- Evita floreados, generalidades ("espero que este email...") e "linguagem de IA" artificial.
+- Mantém o tom cordial e confiante.
+- USA EXCLUSIVAMENTE Português de Portugal (PT-PT), respeitando a terminologia de negócio local.
+
+REGRAS DE OURO:
+1. Nunca respondas de forma vaga quando o pedido exige ação.
+2. Nunca ignores contexto anterior ou detalhes críticos (referências, datas, valores).
+3. Se houver lacuna de informação, assinala-a e propõe a melhor versão possível.
+4. Distingue o que está confirmado do que é proposta/hipótese.
+`;
 
   const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock;
   const toneLine = `Tom: ${tone}.`;
@@ -80,8 +88,11 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
     return (
       finalRules +
       toneLine +
-      `\n\nTAREFA: Resume o email (e os anexos, se houver) em 5–8 bullets e propõe 3–6 próximos passos (bullets).\n` +
-      `Estrutura obrigatória:\n<p><strong>Resumo</strong></p><ul>...</ul>\n<p><strong>Próximos passos</strong></p><ul>...</ul>\n<p><strong>Perguntas (se necessário)</strong></p><ul>...</ul>` +
+      `\n\nTAREFA: Resume o email (e os anexos) com foco executivo.\n` +
+      `Estrutura obrigatória:\n` +
+      `<p><strong>Resumo</strong></p><ul>... (máximo 6 pontos claros)</ul>\n` +
+      `<p><strong>Próximos passos / Ações</strong></p><ul>... (objetivos e acionáveis)</ul>\n` +
+      `<p><strong>Perguntas / Riscos</strong></p><ul>... (se aplicável)</ul>` +
       userInstruction +
       emailBlock
     );
@@ -91,7 +102,15 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
     return (
       finalRules +
       toneLine +
-      `\n\nTAREFA: Cria uma resposta sugerida ao email (considerando anexos se relevante).\nRegras extra:\n- Mantém o assunto implícito (não repitas "Re:").\n- Usa uma saudação adequada.\n- Se for preciso, faz 1–3 perguntas objetivas.\n- Termina com fecho profissional.` +
+      `\n\nTAREFA: Cria uma resposta profissional sugerida ao email.\n` +
+      `ESTRUTURA DA RESPOSTA (Obrigatória):\n` +
+      `1. Reconhecer o tema/receção (breve).\n` +
+      `2. Responder diretamente ao ponto principal/pedido.\n` +
+      `3. Dar o contexto mínimo necessário.\n` +
+      `4. Indicar próximo passo ou pedido concreto.\n` +
+      `5. Fecho cordial e funcional.\n\n` +
+      `- NÃO repitas o assunto (Re:).\n` +
+      `- Garante que é uma resposta "pronta a enviar".` +
       emailBlock
     );
   }

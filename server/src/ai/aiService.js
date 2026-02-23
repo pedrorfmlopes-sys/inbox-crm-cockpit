@@ -16,7 +16,8 @@ export function getAiMeta() {
           : false,
     openaiModelFast: cfg.openai.modelFast,
     openaiModelQuality: cfg.openai.modelQuality,
-    geminiModel: cfg.gemini.model,
+    geminiModelFast: cfg.gemini.modelFast,
+    geminiModelQuality: cfg.gemini.modelQuality,
   };
 }
 
@@ -66,7 +67,7 @@ export async function aiCreateText({
     if (selectedProvider === "gemini") {
       const apiKey = customModels.geminiApiKey || cfg.gemini.apiKey;
       if (!apiKey) throw Object.assign(new Error("GEMINI_API_KEY em falta"), { status: 400 });
-      const model = customModels.geminiModel || cfg.gemini.model || "gemini-1.5-flash";
+      const model = customModels.geminiModel || (mode === "quality" ? cfg.gemini.modelQuality : cfg.gemini.modelFast);
       return await geminiCreateResponse({
         apiKey,
         model,
@@ -146,7 +147,7 @@ export async function aiSelftest(customModels = {}) {
     try {
       await geminiCreateResponse({
         apiKey: key,
-        model: customModels.geminiModel || cfg.gemini.model || "gemini-1.5-flash",
+        model: customModels.geminiModel || cfg.gemini.modelFast,
         instructions: "Responde apenas OK",
         input: "ping",
         max_output_tokens: 5,
