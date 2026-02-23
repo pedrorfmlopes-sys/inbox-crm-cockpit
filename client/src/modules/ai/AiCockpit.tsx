@@ -454,9 +454,26 @@ export const AiCockpit: React.FC = () => {
                         onClick={() => setActiveMenu(activeMenu === "lang" ? null : "lang")}
                         title="Idioma"
                     >
-                        {localeOptions.find(o => o.value === (aiState.locale || "auto"))?.icon}
-                        <span style={{ fontSize: "9px", marginLeft: "2px" }}>{(aiState.locale || "auto").split("-")[0].toUpperCase()}</span>
+                        <div style={{
+                            width: "14px",
+                            height: "14px",
+                            borderRadius: "50%",
+                            overflow: "hidden",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            background: "rgba(0,0,0,0.03)",
+                            fontSize: "10px",
+                            lineHeight: 1,
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.1)"
+                        }}>
+                            {localeOptions.find(o => o.value === (aiState.locale || "auto"))?.icon}
+                        </div>
+                        <span style={{ fontSize: "9px", marginLeft: "2px" }}>
+                            {(aiState.locale || "auto").split("-")[0].toUpperCase()}
+                        </span>
                     </button>
+
 
                     {activeMenu === "lang" && (
                         <div style={S.cascadeMenu}>
@@ -471,8 +488,24 @@ export const AiCockpit: React.FC = () => {
                                         if (output) handleGenerate("rewrite", output);
                                     }}
                                 >
-                                    <span style={{ fontSize: "11px" }}>{opt.icon}</span>
-                                    {opt.value === "auto" ? "AUTO" : opt.value.split("-")[0].toUpperCase()}
+                                    <div style={{
+                                        width: "14px",
+                                        height: "14px",
+                                        borderRadius: "50%",
+                                        overflow: "hidden",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        background: "rgba(0,0,0,0.03)",
+                                        fontSize: "10px",
+                                        lineHeight: 1,
+                                        boxShadow: "0 1px 2px rgba(0,0,0,0.1)"
+                                    }}>
+                                        {opt.icon}
+                                    </div>
+                                    <span style={{ fontSize: "9px" }}>
+                                        {opt.value === "auto" ? "AUTO" : opt.value.split("-")[0].toUpperCase()}
+                                    </span>
                                 </button>
 
                             ))}
