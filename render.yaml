@@ -5,17 +5,21 @@ services:
     plan: free
     region: frankfurt
     buildCommand: npm install && npm run build
-    startCommand: npm -w server run start
+    startCommand: npm start
     envVars:
       - key: NODE_VERSION
         value: 20
       - key: PORT
         value: 10000
+      - key: DATABASE_URL
+        sync: false
       - key: AI_ENABLED
-        value: "0"
+        value: "1"
       - key: AI_PROVIDER
         value: openai
       - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
         sync: false
       - key: ODOO_URL
         sync: false
