@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="pt-PT">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <script>
+    // CRITICAL: Define Office.initialize BEFORE the script loads.
+    // Some environments (Outlook Desktop Classic) require this to be set early.
+    window.Office = window.Office || {};
+    window.Office.initialize = function () {
+      console.log("[Office] Legacy initialize triggered.");
+      if (window.__ICCC_SET_READY__) window.__ICCC_SET_READY__();
+    };
+  </script>
+  <!-- Office.js (necessário no Outlook). -->
+  <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"
+    crossorigin="anonymous"></script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;900&display=swap"
+    rel="stylesheet" />
+
+  <title>Inbox CRM Cockpit</title>
+  <script type="module" crossorigin src="/assets/index-DsZASDue.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BBFg5NNh.css">
+</head>
+
+<body>
+  <!-- PRE-FLIGHT (dev) -->
+  <div id="preflight" style="font-family:system-ui,Segoe UI,Arial; padding:14px; border-bottom:1px solid #eee;">
+    <div style="font-weight:900;">Inbox CRM Cockpit</div>
+    <div id="pf-status" style="margin-top:6px;">A carregar aplicação...</div>
+    <div style="margin-top:6px; color:#666; font-size:12px;">
+      Se isto não desaparecer em 5 segundos, verifica:
+      <ul style="margin:4px 0 0 16px; padding:0;">
+        <li>O servidor está a correr (localhost:5173)?</li>
+        <li>O certificado SSL foi aceite?</li>
+        <li>O manifesto foi atualizado com as novas permissões?</li>
+      </ul>
+    </div>
+    <pre id="pf-error" style="margin-top:10px; white-space:pre-wrap; color:#b00020;"></pre>
+  </div>
+
+  <div id="root"></div>
+
+  <script>
+    (function () {
+      const pre = document.getElementById("preflight");
+      const statusEl = document.getElementById("pf-status");
+      const errEl = document.getElementById("pf-error");
+
+      function setStatus(s) {
+        if (statusEl) statusEl.textContent = s;
+      }
+      function showErr(e) {
+        const msg =
+          e && (e.stack || e.message)
+            ? e.stack || e.message
+            : String(e || "");
+        if (errEl) errEl.textContent = msg;
+      }
+      function isMounted() {
+        return document.documentElement.dataset.icccMounted === "1";
+      }
+      function hidePreflight() {
+        if (pre) pre.style.display = "none";
+      }
+
+      // React will dispatch this event as soon as it mounts.
+      window.addEventListener("iccc:mounted", () => hidePreflight());
+
+      // Safety net (in case event doesn't fire for any reason)
+      setInterval(() => {
+        if (isMounted()) hidePreflight();
+      }, 500);
+
+      setStatus("JS inline OK. A carregar /src/main.tsx …");
+      console.log("[Preflight] Static HTML ready. Loading main.tsx bundle...");
+
+      window.addEventListener("error", function (ev) {
+        const msg = String(ev && (ev.message || ev.error || "")).trim();
+
+        // IMPORTANT:
+        // "Script error." vem quase sempre de scripts externos (ex.: office.js) sem stack por cross-origin.
+        // NÃO é um erro do teu bundle, e a UI pode estar 100% OK.
+        // Por isso: só mostramos aviso leve e escondemos assim que a app montar.
+        if (msg === "Script error.") {
+          setStatus("⚠️ Aviso: Script error (cross-origin).");
+          showErr(
+            "Script error.\n\nIsto costuma vir de office.js (cross-origin) e não dá stack.\n" +
+            "Se a UI abaixo está a funcionar, podes ignorar.\n" +
+            "O Preflight vai desaparecer assim que a app montar."
+          );
+          if (isMounted()) hidePreflight();
+          return;
+        }
+
+        setStatus("❌ Erro JS (window.error)");
+        showErr(ev.error || ev.message || ev);
+      });
+
+      window.addEventListener("unhandledrejection", function (ev) {
+        setStatus("❌ Promessa rejeitada (unhandledrejection)");
+        showErr(ev.reason || ev);
+      });
+    })();
+  </script>
+
+  <!-- Entry do Vite/React -->
+</body>
+
+</html>

@@ -1,5 +1,5 @@
 node_modules/
-dist/
+# dist/ - Removido para permitir deploy sem build no Render (bypass pipeline limits)
 build/
 .vite/
 .env
