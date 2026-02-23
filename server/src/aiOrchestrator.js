@@ -24,8 +24,8 @@ Only return the JSON. No conversational filler.
 
 export async function extractAnchors(emailContext, customModels = {}) {
     const cfg = getAiConfig();
-    const apiKey = cfg.gemini.apiKey || cfg.openai.apiKey;
-    if (!apiKey) throw new Error("Missing AI API Key (Gemini or OpenAI)");
+    const apiKey = customModels.geminiApiKey || customModels.openaiApiKey || cfg.gemini.apiKey || cfg.openai.apiKey;
+    if (!apiKey) throw new Error("Missing AI API Key (Gemini or OpenAI). Please check Settings.");
 
     const result = await aiCreateText({
         mode: "fast",
@@ -48,8 +48,8 @@ export async function extractAnchors(emailContext, customModels = {}) {
 
 export async function generateExecutiveSummary(context, emailHistory = [], customModels = {}) {
     const cfg = getAiConfig();
-    const apiKey = cfg.gemini.apiKey || cfg.openai.apiKey;
-    if (!apiKey) throw new Error("Missing AI API Key (Gemini or OpenAI)");
+    const apiKey = customModels.geminiApiKey || customModels.openaiApiKey || cfg.gemini.apiKey || cfg.openai.apiKey;
+    if (!apiKey) throw new Error("Missing AI API Key (Gemini or OpenAI). Please check Settings.");
 
     const instructions = `
 You are the "Second Brain" assistant for an industrial sales expert.
