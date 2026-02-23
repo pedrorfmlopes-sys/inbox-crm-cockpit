@@ -299,14 +299,59 @@ export const AiCockpit: React.FC = () => {
         { label: "Curto", tone: "curto", icon: <Icons.Receipt size={12} /> },
     ];
 
-    const localeOptions: Array<{ label: string; value: AiLocale; icon: string }> = [
-        { label: "Auto", value: "auto", icon: "🤖" },
-        { label: "Português", value: "pt-PT", icon: "🇵🇹" },
-        { label: "English", value: "en-GB", icon: "🇬🇧" },
-        { label: "Español", value: "es-ES", icon: "🇪🇸" },
-        { label: "Italiano", value: "it-IT", icon: "🇮🇹" },
-        { label: "Deutsch", value: "de-DE", icon: "🇩🇪" },
+    const MiniFlag: React.FC<{ locale: string }> = ({ locale }) => {
+        if (locale === "auto") return <span>🤖</span>;
+        const flags: Record<string, React.ReactNode> = {
+            "pt-PT": (
+                <svg viewBox="0 0 512 512" width="100%" height="100%">
+                    <rect width="204.8" height="512" fill="#006600" />
+                    <rect x="204.8" width="307.2" height="512" fill="#ff0000" />
+                    <circle cx="204.8" cy="256" r="102.4" fill="#ffff00" opacity="0.8" />
+                </svg>
+            ),
+            "en-GB": (
+                <svg viewBox="0 0 512 512" width="100%" height="100%">
+                    <rect width="512" height="512" fill="#00247d" />
+                    <path d="M0 0l512 512M512 0L0 512" stroke="#fff" strokeWidth="60" />
+                    <path d="M0 0l512 512M512 0L0 512" stroke="#cf142b" strokeWidth="40" />
+                    <path d="M256 0v512M0 256h512" stroke="#fff" strokeWidth="100" />
+                    <path d="M256 0v512M0 256h512" stroke="#cf142b" strokeWidth="60" />
+                </svg>
+            ),
+            "es-ES": (
+                <svg viewBox="0 0 512 512" width="100%" height="100%">
+                    <rect width="512" height="128" fill="#c60b1e" />
+                    <rect y="128" width="512" height="256" fill="#ffc400" />
+                    <rect y="384" width="512" height="128" fill="#c60b1e" />
+                </svg>
+            ),
+            "it-IT": (
+                <svg viewBox="0 0 512 512" width="100%" height="100%">
+                    <rect width="170.7" height="512" fill="#009246" />
+                    <rect x="170.7" width="170.7" height="512" fill="#fff" />
+                    <rect x="341.4" width="170.7" height="512" fill="#ce2b37" />
+                </svg>
+            ),
+            "de-DE": (
+                <svg viewBox="0 0 512 512" width="100%" height="100%">
+                    <rect width="512" height="170.7" fill="#000" />
+                    <rect y="170.7" width="512" height="170.7" fill="#d00" />
+                    <rect y="341.4" width="512" height="170.7" fill="#ffce00" />
+                </svg>
+            )
+        };
+        return flags[locale] || <span>🏳️</span>;
+    };
+
+    const localeOptions: Array<{ label: string; value: AiLocale }> = [
+        { label: "Auto", value: "auto" },
+        { label: "Português", value: "pt-PT" },
+        { label: "English", value: "en-GB" },
+        { label: "Español", value: "es-ES" },
+        { label: "Italiano", value: "it-IT" },
+        { label: "Deutsch", value: "de-DE" },
     ];
+
 
     return (
         <div style={S.container}>
@@ -450,29 +495,32 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "50px", minWidth: "50px" }}
+                        style={{ ...S.secondaryBtnLink, width: "68px", minWidth: "68px", justifyContent: "flex-start", padding: "0 6px" }}
                         onClick={() => setActiveMenu(activeMenu === "lang" ? null : "lang")}
                         title="Idioma"
                     >
                         <div style={{
-                            width: "14px",
-                            height: "14px",
+                            width: "16px",
+                            height: "16px",
                             borderRadius: "50%",
                             overflow: "hidden",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
-                            background: "rgba(0,0,0,0.03)",
-                            fontSize: "10px",
+                            background: "rgba(0,0,0,0.05)",
+                            fontSize: "11px",
                             lineHeight: 1,
-                            boxShadow: "0 1px 2px rgba(0,0,0,0.1)"
+                            flexShrink: 0,
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.12)"
                         }}>
-                            {localeOptions.find(o => o.value === (aiState.locale || "auto"))?.icon}
+                            <MiniFlag locale={aiState.locale || "auto"} />
                         </div>
-                        <span style={{ fontSize: "9px", marginLeft: "2px" }}>
+                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>
                             {(aiState.locale || "auto").split("-")[0].toUpperCase()}
                         </span>
                     </button>
+
+
 
 
                     {activeMenu === "lang" && (
@@ -481,7 +529,7 @@ export const AiCockpit: React.FC = () => {
                                 <button
                                     key={opt.value}
                                     className="iccc-glossy-pill iccc-secondary-pill"
-                                    style={S.cascadeItem}
+                                    style={{ ...S.cascadeItem, background: "#ffffff", borderColor: "rgba(0,0,0,0.15)", width: "68px", minWidth: "68px" }}
                                     onClick={() => {
                                         setAiState({ locale: opt.value });
                                         setActiveMenu(null);
@@ -489,24 +537,27 @@ export const AiCockpit: React.FC = () => {
                                     }}
                                 >
                                     <div style={{
-                                        width: "14px",
-                                        height: "14px",
+                                        width: "16px",
+                                        height: "16px",
                                         borderRadius: "50%",
                                         overflow: "hidden",
                                         display: "flex",
                                         alignItems: "center",
                                         justifyContent: "center",
-                                        background: "rgba(0,0,0,0.03)",
-                                        fontSize: "10px",
+                                        background: "rgba(0,0,0,0.05)",
+                                        fontSize: "11px",
                                         lineHeight: 1,
-                                        boxShadow: "0 1px 2px rgba(0,0,0,0.1)"
+                                        flexShrink: 0,
+                                        boxShadow: "0 1px 2px rgba(0,0,0,0.12)"
                                     }}>
-                                        {opt.icon}
+                                        <MiniFlag locale={opt.value} />
                                     </div>
-                                    <span style={{ fontSize: "9px" }}>
+                                    <span style={{ fontSize: "9px", fontWeight: 800 }}>
                                         {opt.value === "auto" ? "AUTO" : opt.value.split("-")[0].toUpperCase()}
                                     </span>
                                 </button>
+
+
 
                             ))}
                         </div>
@@ -519,13 +570,27 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "68px", minWidth: "68px" }}
+                        style={{ ...S.secondaryBtnLink, width: "68px", minWidth: "68px", justifyContent: "flex-start", padding: "0 6px" }}
                         onClick={() => setActiveMenu(activeMenu === "mode" ? null : "mode")}
                     >
-
-                        {toneRefiners.find(t => t.tone === aiState.tone)?.icon || <Icons.Settings size={11} />}
-                        MODO
+                        <div style={{
+                            width: "16px",
+                            height: "16px",
+                            borderRadius: "50%",
+                            overflow: "hidden",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            background: "rgba(0,0,0,0.05)",
+                            lineHeight: 1,
+                            flexShrink: 0,
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.12)"
+                        }}>
+                            {toneRefiners.find(t => t.tone === aiState.tone)?.icon || <Icons.Settings size={11} />}
+                        </div>
+                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>MODO</span>
                     </button>
+
                     {activeMenu === "mode" && (
                         <div style={S.cascadeMenu}>
                             {toneRefiners.map((r) => (
@@ -534,8 +599,9 @@ export const AiCockpit: React.FC = () => {
                                     className="iccc-glossy-pill iccc-secondary-pill"
                                     style={{
                                         ...S.cascadeItem,
-                                        background: aiState.tone === r.tone ? "rgba(37, 99, 235, 0.05)" : "transparent",
-                                        color: aiState.tone === r.tone ? "#2563eb" : "#172B4D"
+                                        background: aiState.tone === r.tone ? "rgba(37, 99, 235, 0.05)" : "#ffffff",
+                                        color: aiState.tone === r.tone ? "#2563eb" : "#172B4D",
+                                        borderColor: aiState.tone === r.tone ? "#2563eb" : "rgba(0,0,0,0.1)"
                                     }}
                                     onClick={() => {
                                         setAiState({ tone: r.tone });
@@ -543,9 +609,10 @@ export const AiCockpit: React.FC = () => {
                                         if (output) handleGenerate("rewrite", output);
                                     }}
                                 >
-                                    {r.icon}
-                                    {r.label.toUpperCase()}
+                                    <div style={{ width: "16px", display: "flex", justifyContent: "center" }}>{r.icon}</div>
+                                    <span style={{ fontWeight: 800 }}>{r.label.toUpperCase()}</span>
                                 </button>
+
 
                             ))}
                         </div>
