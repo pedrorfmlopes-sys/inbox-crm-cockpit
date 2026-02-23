@@ -144,7 +144,7 @@ export function createAiRouter() {
         files,
         history,
         max_output_tokens: action === "summarize" || action === "tasks" || action === "summarize_actions" ? 800 : 700,
-        temperature: 0.25,
+        temperature: 0.1,
         customModels,
       });
 

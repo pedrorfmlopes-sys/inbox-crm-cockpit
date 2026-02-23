@@ -29,10 +29,14 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
       : `Escreve em ${lang}.\n`;
 
   const baseRules = languageLine +
-    `NUNCA inventes factos, números, prazos, preços ou compromissos. Se faltar informação, faz perguntas curtas.\n` +
-    `Devolve HTML simples e seguro: usa apenas <p>, <br>, <ul>, <ol>, <li>, <strong>, <em>, <a>.\n` +
-    `Sem CSS, sem estilos inline, sem classes, sem scripts.\n` +
-    `Evita linhas enormes: parágrafos curtos.\n`;
+    `REGRAS CRÍTICAS (PARA PARECER HUMANO E PROFISSIONAL):\n` +
+    `- PROIBIDO: "Aqui está a sua resposta", "Espero que este email...", "Como assistente de IA...", ou qualquer conversa de introdução.\n` +
+    `- COMEÇA IMEDIATAMENTE com o corpo do email.\n` +
+    `- NUNCA inventes factos, números, prazos, preços ou compromissos. Se faltar informação, faz perguntas curtas e diretas.\n` +
+    `- USA EXCLUSIVAMENTE Português de Portugal (PT-PT). Evita "você" se o contexto for casual, evita construções passivas pesadas.\n` +
+    `- Devolve HTML simples e seguro: usa apenas <p>, <br>, <ul>, <ol>, <li>, <strong>, <em>, <a>.\n` +
+    `- Sem CSS, sem estilos inline, sem classes, sem scripts.\n` +
+    `- Parágrafos curtos e estrutura limpa.\n`;
 
   // Inject user knowledge if present
   const knowledgeBlock = knowledge.length > 0
