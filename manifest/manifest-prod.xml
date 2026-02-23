@@ -5,19 +5,19 @@
   xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
   xsi:type="MailApp">
 
-  <Id>f4c5f9f1-8a75-4a66-a2d6-7b2f0cb1b7e3</Id>
-  <Version>1.0.0.0</Version>
+  <Id>e3b5c1c2-d4e5-4f6a-8b9c-0d1e2f3a4b5c</Id>
+  <Version>1.0.0.1</Version>
   <ProviderName>Divitek</ProviderName>
   <DefaultLocale>pt-PT</DefaultLocale>
 
   <DisplayName DefaultValue="Inbox CRM Cockpit (PROD)"/>
   <Description DefaultValue="Inbox CRM Cockpit — ligar/criar tickets e respostas com IA."/>
-  <IconUrl DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/icon-32.png?v=20260114-iconfix"/>
-  <HighResolutionIconUrl DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/icon-80.png?v=20260114-iconfix"/>
-  <SupportUrl DefaultValue="REPLACE_WITH_YOUR_RENDER_URL"/>
+  <IconUrl DefaultValue="https://inbox-cockpit-staging.onrender.com/icon-32.png?v=20260114-iconfix"/>
+  <HighResolutionIconUrl DefaultValue="https://inbox-cockpit-staging.onrender.com/icon-80.png?v=20260114-iconfix"/>
+  <SupportUrl DefaultValue="https://inbox-cockpit-staging.onrender.com"/>
 
   <AppDomains>
-    <AppDomain>REPLACE_WITH_YOUR_RENDER_URL</AppDomain>
+    <AppDomain>https://inbox-cockpit-staging.onrender.com</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -33,13 +33,13 @@
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/?view=taskpane&amp;v=20260113-step8"/>
+        <SourceLocation DefaultValue="https://inbox-cockpit-staging.onrender.com/?view=taskpane&amp;v=20260113-step8"/>
         <RequestedHeight>450</RequestedHeight>
       </DesktopSettings>
     </Form>
     <Form xsi:type="ItemEdit">
       <DesktopSettings>
-        <SourceLocation DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/?view=taskpane&amp;mode=compose&amp;v=20260113-step8"/>
+        <SourceLocation DefaultValue="https://inbox-cockpit-staging.onrender.com/?view=taskpane&amp;mode=compose&amp;v=20260113-step8"/>
       </DesktopSettings>
     </Form>
   </FormSettings>
@@ -94,14 +94,14 @@
 
     <Resources>
       <bt:Images>
-        <bt:Image id="residIcon16" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/icon-16.png?v=20260114-iconfix"/>
-        <bt:Image id="residIcon32" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/icon-32.png?v=20260114-iconfix"/>
-        <bt:Image id="residIcon80" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/icon-80.png?v=20260114-iconfix"/>
+        <bt:Image id="residIcon16" DefaultValue="https://inbox-cockpit-staging.onrender.com/icon-16.png?v=20260114-iconfix"/>
+        <bt:Image id="residIcon32" DefaultValue="https://inbox-cockpit-staging.onrender.com/icon-32.png?v=20260114-iconfix"/>
+        <bt:Image id="residIcon80" DefaultValue="https://inbox-cockpit-staging.onrender.com/icon-80.png?v=20260114-iconfix"/>
       </bt:Images>
 
       <bt:Urls>
-        <bt:Url id="residFunctionFile" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/?view=functionfile&amp;v=20260113-step8"/>
-        <bt:Url id="residTaskpaneUrlRead" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/?view=taskpane&amp;v=20260113-step8"/>
+        <bt:Url id="residFunctionFile" DefaultValue="https://inbox-cockpit-staging.onrender.com/?view=functionfile&amp;v=20260113-step8"/>
+        <bt:Url id="residTaskpaneUrlRead" DefaultValue="https://inbox-cockpit-staging.onrender.com/?view=taskpane&amp;v=20260113-step8"/>
       </bt:Urls>
 
       <bt:ShortStrings>
@@ -180,15 +180,15 @@
 
       <Resources>
         <bt:Images>
-          <bt:Image id="residIcon16" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/icon-16.png?v=20260114-iconfix"/>
-          <bt:Image id="residIcon32" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/icon-32.png?v=20260114-iconfix"/>
-          <bt:Image id="residIcon80" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/icon-80.png?v=20260114-iconfix"/>
+          <bt:Image id="residIcon16" DefaultValue="https://inbox-cockpit-staging.onrender.com/icon-16.png?v=20260114-iconfix"/>
+          <bt:Image id="residIcon32" DefaultValue="https://inbox-cockpit-staging.onrender.com/icon-32.png?v=20260114-iconfix"/>
+          <bt:Image id="residIcon80" DefaultValue="https://inbox-cockpit-staging.onrender.com/icon-80.png?v=20260114-iconfix"/>
         </bt:Images>
 
         <bt:Urls>
-          <bt:Url id="residFunctionFile" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/?view=functionfile&amp;v=20260113-step8"/>
-          <bt:Url id="residTaskpaneUrlRead" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/?view=taskpane&amp;v=20260113-step8"/>
-          <bt:Url id="residTaskpaneUrlCompose" DefaultValue="REPLACE_WITH_YOUR_RENDER_URL/?view=taskpane&amp;mode=compose&amp;v=20260113-step8"/>
+          <bt:Url id="residFunctionFile" DefaultValue="https://inbox-cockpit-staging.onrender.com/?view=functionfile&amp;v=20260113-step8"/>
+          <bt:Url id="residTaskpaneUrlRead" DefaultValue="https://inbox-cockpit-staging.onrender.com/?view=taskpane&amp;v=20260113-step8"/>
+          <bt:Url id="residTaskpaneUrlCompose" DefaultValue="https://inbox-cockpit-staging.onrender.com/?view=taskpane&amp;mode=compose&amp;v=20260113-step8"/>
         </bt:Urls>
 
         <bt:ShortStrings>
