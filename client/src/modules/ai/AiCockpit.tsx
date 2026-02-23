@@ -310,7 +310,26 @@ export const AiCockpit: React.FC = () => {
 
     return (
         <div style={S.container}>
+            {/* Glossy Pill Hover Styling */}
+            <style>{`
+                .iccc-glossy-pill {
+                    transition: all 0.18s ease !important;
+                }
+                .iccc-glossy-pill:hover {
+                    transform: translateY(-1px);
+                    filter: brightness(1.02);
+                }
+                .iccc-primary-pill:hover {
+                    box-shadow: 0 6px 14px rgba(0,100,210,0.5), inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -1px 0 rgba(0,0,0,0.15) !important;
+                }
+                .iccc-secondary-pill:hover {
+                    background: linear-gradient(180deg, rgba(230,240,255,0.98) 0%, rgba(195,215,248,0.95) 100%) !important;
+                    box-shadow: 0 6px 14px rgba(0,80,200,0.15), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06) !important;
+                }
+            `}</style>
+
             {debugLog && (
+
                 <div style={{ padding: "8px", background: "#fee2e2", color: "#b91c1c", fontSize: "11px", borderRadius: "4px", border: "1px solid #fca5a5" }}>
                     DEBUG: {debugLog}
                 </div>
@@ -363,49 +382,61 @@ export const AiCockpit: React.FC = () => {
                                 color: isRecording ? "#ef4444" : "#172B4D",
                                 background: isRecording ? "rgba(239, 68, 68, 0.1)" : "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
                             }}
+                            className="iccc-glossy-pill iccc-secondary-pill"
                             onClick={toggleRecording}
                             title="Ditado por voz"
                         >
+
                             <Icons.Microphone size={12} />
                         </button>
                         <button
+                            className="iccc-glossy-pill iccc-secondary-pill"
                             style={S.secondaryBtnPill}
                             onClick={() => handleGenerate("summarize")}
                             disabled={isGenerating}
                             title={files.length > 0 ? "Resumir email e anexos identificados" : "Resumir este email"}
                         >
+
                             <Icons.Receipt size={12} />
                         </button>
                         <button
+                            className="iccc-glossy-pill iccc-secondary-pill"
                             style={S.secondaryBtnPill}
                             onClick={() => handleGenerate("tasks")}
                             disabled={isGenerating}
                             title="Extrair tarefas"
                         >
+
                             <Icons.Check size={12} />
                         </button>
                         <button
+                            className="iccc-glossy-pill iccc-secondary-pill"
                             style={S.secondaryBtnPill}
                             onClick={() => handleGenerate("forward")}
                             disabled={isGenerating}
                             title="Reenviar (Rascunho)"
                         >
+
                             <Icons.Send size={12} />
                         </button>
                         <button
+                            className="iccc-glossy-pill iccc-secondary-pill"
                             style={S.secondaryBtnPill}
                             onClick={handleImportAttachments}
                             disabled={isImporting}
                             title="Importar anexos deste email"
                         >
+
                             {isImporting ? <Icons.RotateCcw size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Icons.Paperclip size={12} />}
                         </button>
                     </div>
                     <button
+                        className="iccc-glossy-pill iccc-primary-pill"
                         style={S.primaryBtnPill}
                         onClick={() => handleGenerate("reply")}
                         disabled={isGenerating}
                     >
+
                         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                             {isGenerating ? "A GERAR..." : "GERAR RESPOSTA"}
                             <Icons.Sparkles size={11} />
@@ -418,18 +449,21 @@ export const AiCockpit: React.FC = () => {
                 {/* Language Cascade */}
                 <div style={{ position: "relative" }}>
                     <button
+                        className="iccc-glossy-pill iccc-secondary-pill"
                         style={{ ...S.secondaryBtnLink, width: "50px", minWidth: "50px" }}
                         onClick={() => setActiveMenu(activeMenu === "lang" ? null : "lang")}
                         title="Idioma"
                     >
                         {localeOptions.find(o => o.value === (aiState.locale || "auto"))?.icon}
-                        <span style={{ fontSize: "9px" }}>{(aiState.locale || "auto").split("-")[0].toUpperCase()}</span>
+                        <span style={{ fontSize: "9px", marginLeft: "2px" }}>{(aiState.locale || "auto").split("-")[0].toUpperCase()}</span>
                     </button>
+
                     {activeMenu === "lang" && (
                         <div style={S.cascadeMenu}>
                             {localeOptions.map((opt) => (
                                 <button
                                     key={opt.value}
+                                    className="iccc-glossy-pill iccc-secondary-pill"
                                     style={S.cascadeItem}
                                     onClick={() => {
                                         setAiState({ locale: opt.value });
@@ -438,8 +472,9 @@ export const AiCockpit: React.FC = () => {
                                     }}
                                 >
                                     <span style={{ fontSize: "11px" }}>{opt.icon}</span>
-                                    {opt.label.toUpperCase()}
+                                    {opt.value === "auto" ? "AUTO" : opt.value.split("-")[0].toUpperCase()}
                                 </button>
+
                             ))}
                         </div>
                     )}
@@ -450,9 +485,11 @@ export const AiCockpit: React.FC = () => {
                 {/* Mode Cascade */}
                 <div style={{ position: "relative" }}>
                     <button
+                        className="iccc-glossy-pill iccc-secondary-pill"
                         style={{ ...S.secondaryBtnLink, width: "68px", minWidth: "68px" }}
                         onClick={() => setActiveMenu(activeMenu === "mode" ? null : "mode")}
                     >
+
                         {toneRefiners.find(t => t.tone === aiState.tone)?.icon || <Icons.Settings size={11} />}
                         MODO
                     </button>
@@ -461,6 +498,7 @@ export const AiCockpit: React.FC = () => {
                             {toneRefiners.map((r) => (
                                 <button
                                     key={r.label}
+                                    className="iccc-glossy-pill iccc-secondary-pill"
                                     style={{
                                         ...S.cascadeItem,
                                         background: aiState.tone === r.tone ? "rgba(37, 99, 235, 0.05)" : "transparent",
@@ -475,6 +513,7 @@ export const AiCockpit: React.FC = () => {
                                     {r.icon}
                                     {r.label.toUpperCase()}
                                 </button>
+
                             ))}
                         </div>
                     )}
@@ -817,5 +856,4 @@ const S: Record<string, React.CSSProperties> = {
         fontWeight: 600,
         cursor: "pointer",
     },
-};
 };
