@@ -528,7 +528,7 @@ export const AiCockpit: React.FC = () => {
 
 
                     {activeMenu === "lang" && (
-                        <div style={S.cascadeMenu}>
+                        <div id="FORCE_DOWN_MENU_LANG" style={S.cascadeMenu}>
                             {localeOptions.map((opt) => (
                                 <button
                                     key={opt.value}
@@ -596,7 +596,7 @@ export const AiCockpit: React.FC = () => {
                     </button>
 
                     {activeMenu === "mode" && (
-                        <div style={S.cascadeMenu}>
+                        <div id="FORCE_DOWN_MENU_MODE" style={S.cascadeMenu}>
                             {toneRefiners.map((r) => (
                                 <button
                                     key={r.label}

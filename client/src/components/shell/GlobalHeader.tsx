@@ -11,7 +11,7 @@ export const GlobalHeader: React.FC = () => {
         <div style={S.header}>
             <div style={S.topRow}>
                 <div style={S.subjectBlock}>
-                    <div style={S.label}>Assunto</div>
+                    <div style={S.label}>Assunto [DEPLOY TEST]</div>
                     <div style={S.subject} title={ctx.subject || ""}>
                         {ctx.subject || "Sem assunto"}
                     </div>
