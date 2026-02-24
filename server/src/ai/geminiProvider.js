@@ -77,7 +77,13 @@ export async function geminiCreateResponse({
         const data = await res.json();
 
         if (!res.ok) {
-            const msg = data?.error?.message || `Gemini HTTP ${res.status}`;
+            let msg = data?.error?.message || `Gemini HTTP ${res.status}`;
+
+            // Translate common errors for better UX
+            if (res.status === 429) msg = "Quota Excedida (Gemini). Tenta novamente em breve.";
+            if (res.status === 401 || res.status === 403) msg = "Chave de API Gemini Inválida ou Expirada.";
+            if (res.status === 404) msg = "Modelo Gemini não encontrado ou indisponível.";
+
             const err = new Error(msg);
             err.status = res.status;
             err.details = data;

@@ -1,5 +1,5 @@
 // client/src/ai/aiClient.ts
-export type AiAction = "summarize" | "reply" | "rewrite" | "forward" | "tasks" | "refine" | "intent_proposals";
+export type AiAction = "summarize" | "reply" | "rewrite" | "forward" | "tasks" | "refine" | "intent_proposals" | "extract_contacts" | "extract_tasks_json";
 export type AiMode = "fast" | "quality";
 export type AiTone = "neutro" | "formal" | "curto" | "direto" | "simpático";
 export type AiLocale = "pt-PT" | "es-ES" | "en-GB" | "it-IT" | "de-DE" | "auto";

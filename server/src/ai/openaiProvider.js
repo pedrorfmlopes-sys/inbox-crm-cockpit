@@ -74,10 +74,16 @@ export async function openaiCreateResponse({
     }
 
     if (!res.ok) {
-      const msg =
+      let msg =
         data?.error?.message ||
         (typeof data?.message === "string" ? data.message : "") ||
         `OpenAI HTTP ${res.status}`;
+
+      // Translate common errors for better UX
+      if (res.status === 429) msg = "Quota Excedida (OpenAI). Verifica o teu saldo ou limites.";
+      if (res.status === 401) msg = "Chave de API OpenAI Inválida ou Revogada.";
+      if (res.status === 403) msg = "Acesso Negado (OpenAI). Verifica o teu país ou permissões da chave.";
+
       const err = new Error(msg);
       err.status = res.status;
       err.details = data;

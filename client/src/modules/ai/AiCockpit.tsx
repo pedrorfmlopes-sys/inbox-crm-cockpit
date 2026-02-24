@@ -6,7 +6,7 @@ import { getSettings } from "@/settings";
 import * as Icons from "@/ui/icons";
 
 export const AiCockpit: React.FC = () => {
-    const { ctx, bodyText, setMsg, aiState, setAiState, files, addFile, removeFile, clearFiles } = useCockpit() as any;
+    const { ctx, bodyText, setMsg, aiState, setAiState, files, addFile, removeFile, clearFiles, settings } = useCockpit() as any;
 
     // Local state for immediate typing feel
     // Initialized from context, but NOT synced on every render to avoid loops
@@ -26,10 +26,16 @@ export const AiCockpit: React.FC = () => {
     const [draftSubject, setDraftSubject] = useState("");
     const [suggestedContacts, setSuggestedContacts] = useState<string[]>([]);
     const [showDraftPreview, setShowDraftPreview] = useState(false);
+    const [extractedTasks, setExtractedTasks] = useState<Array<{ title: string; dueDate?: string; owner?: string; completed?: boolean }>>([]);
+    const [showTaskReview, setShowTaskReview] = useState(false);
+    const [isExtractingTasks, setIsExtractingTasks] = useState(false);
 
     // Voice Dictation State
     const [isRecording, setIsRecording] = useState(false);
     const recognitionRef = useRef<any>(null);
+
+    // Presets Search State
+    const [presetSearch, setPresetSearch] = useState("");
 
     // CRITICAL: Only sync local state from context when the conversation (email) changes.
     useEffect(() => {
@@ -37,6 +43,64 @@ export const AiCockpit: React.FC = () => {
         setOutput(aiState.output);
         setDebugLog(""); // Clear debug log on switch
     }, [ctx.conversationId]);
+
+    // Automated Task Extraction in Read Mode (with Persistence)
+    useEffect(() => {
+        // Only clear tasks if the conversation changed
+        // We don't clear when entering Compose if we already have tasks for this email
+        if (!ctx.conversationId || !bodyText) {
+            setExtractedTasks([]);
+            setShowTaskReview(false);
+            return;
+        }
+
+        // If we are already in Compose, we don't trigger a new extraction automatically
+        // but we keep what was found in Read mode.
+        if (ctx.isCompose) return;
+
+        // If we already have tasks and the review is shown, don't re-extract
+        if (extractedTasks.length > 0 && showTaskReview) return;
+
+        // Smart Filter: Skip very short emails (likely unrelated to tasks)
+        if (bodyText.length < 50) return;
+
+        const extractTasks = async () => {
+            setIsExtractingTasks(true);
+            try {
+                const res = await aiGenerate({
+                    action: "extract_tasks_json" as any,
+                    mode: "fast",
+                    locale: "pt-PT",
+                    tone: "neutro",
+                    email: {
+                        subject: ctx.subject || "",
+                        from: ctx.fromEmail || "",
+                        to: (ctx.toRecipients || []).map((r: any) => r.email),
+                        cc: (ctx.ccRecipients || []).map((r: any) => r.email),
+                        bodyText: bodyText || "",
+                    } as any
+                });
+                if (res.ok) {
+                    try {
+                        const json = JSON.parse(res.text.trim());
+                        if (Array.isArray(json) && json.length > 0) {
+                            setExtractedTasks(json.map(t => ({ ...t, completed: false })));
+                            setShowTaskReview(true);
+                        }
+                    } catch (e) {
+                        console.error("Failed to parse tasks JSON:", res.text);
+                    }
+                }
+            } catch (err) {
+                console.error("Erro ao extrair tarefas:", err);
+            } finally {
+                setIsExtractingTasks(false);
+            }
+        };
+
+        const timer = setTimeout(extractTasks, 1500); // Delay to ensure context is ready
+        return () => clearTimeout(timer);
+    }, [ctx.conversationId, ctx.isCompose, bodyText]);
 
     // Automated Intent Proposals
     useEffect(() => {
@@ -234,6 +298,19 @@ export const AiCockpit: React.FC = () => {
         }
     };
 
+    const handleAddToKnowledge = async (text: string) => {
+        if (!text || !settings) return;
+        try {
+            const { saveSettings } = await import("@/settings");
+            const newKnowledge = [...(settings.aiKnowledge || []), text.trim()];
+            await saveSettings({ aiKnowledge: newKnowledge });
+            setMsg("Guardado na Base de Conhecimento!");
+        } catch (err) {
+            console.error("Erro ao guardar conhecimento:", err);
+            setMsg("Erro ao guardar.");
+        }
+    };
+
     async function handleGenerate(action: AiAction = "reply", extraPrompt?: string) {
         if (isGenerating) return;
         setIsGenerating(true);
@@ -357,7 +434,7 @@ export const AiCockpit: React.FC = () => {
         URL.revokeObjectURL(url);
     };
 
-    const [activeMenu, setActiveMenu] = useState<"lang" | "mode" | null>(null);
+    const [activeMenu, setActiveMenu] = useState<"lang" | "mode" | "presets" | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -541,6 +618,111 @@ export const AiCockpit: React.FC = () => {
                 </div>
             )}
 
+            {isExtractingTasks && (
+                <div style={{ ...S.briefingCard, background: "rgba(16, 185, 129, 0.03)", borderStyle: "dashed", borderColor: "rgba(16, 185, 129, 0.2)" }}>
+                    <div style={{ ...S.skeletonText, color: "#059669" }}>
+                        <Icons.RotateCcw size={10} style={{ animation: "spin 1s linear infinite" }} />
+                        A identificar tarefas...
+                    </div>
+                </div>
+            )}
+
+            {/* AI Task Extraction Review */}
+            {showTaskReview && extractedTasks.length > 0 && (
+                <div style={{ ...S.draftCard, border: "1px solid #10b981", background: "#f0fdf4", marginBottom: "8px" }}>
+                    <div style={{ ...S.draftHeader, background: "#dcfce7", color: "#065f46" }} onClick={() => setShowTaskReview(!showTaskReview)}>
+                        <Icons.Clipboard size={12} />
+                        <span style={{ flex: 1 }}>Tarefas Detetadas ({extractedTasks.length})</span>
+                        <Icons.ArrowDown size={14} style={{ transform: showTaskReview ? "rotate(180deg)" : "none" }} />
+                    </div>
+                    {showTaskReview && (
+                        <div style={S.draftBody}>
+                            <div style={{ ...S.hint, marginBottom: "4px", color: "#065f46", fontSize: "10px" }}>Identificámos possíveis acionáveis neste email:</div>
+                            <div style={{ display: "grid", gap: "6px" }}>
+                                {extractedTasks.map((t, i) => (
+                                    <div key={i} style={{ display: "flex", gap: "8px", alignItems: "flex-start" }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={t.completed}
+                                            onChange={() => {
+                                                const next = [...extractedTasks];
+                                                next[i].completed = !next[i].completed;
+                                                setExtractedTasks(next);
+                                            }}
+                                            style={{ marginTop: "3px", cursor: "pointer" }}
+                                        />
+                                        <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                                            <input
+                                                style={{ ...S.draftInput, background: "transparent", border: "none", padding: "0", fontWeight: 700, fontSize: "11px", color: t.completed ? "#94a3b8" : "#1e293b", textDecoration: t.completed ? "line-through" : "none" }}
+                                                value={t.title}
+                                                onChange={(e) => {
+                                                    const next = [...extractedTasks];
+                                                    next[i].title = e.target.value;
+                                                    setExtractedTasks(next);
+                                                }}
+                                            />
+                                            <div style={{ display: "flex", gap: "8px", fontSize: "9px", color: "#64748b", marginTop: "1px" }}>
+                                                {t.dueDate && <span>📅 {t.dueDate}</span>}
+                                                {t.owner && <span>👤 {t.owner}</span>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div style={{ display: "flex", gap: "8px", marginTop: "8px", borderTop: "1px solid rgba(16, 185, 129, 0.1)", paddingTop: "8px" }}>
+                                <button
+                                    style={{ ...S.actionBtnPrimary, color: "#059669", display: "flex", alignItems: "center" }}
+                                    onClick={() => {
+                                        const checklist = extractedTasks
+                                            .filter(t => !t.completed)
+                                            .map(t => `- [ ] ${t.title}${t.dueDate ? ` (${t.dueDate})` : ""}`)
+                                            .join("\n");
+                                        navigator.clipboard.writeText(`Lista de Tarefas:\n${checklist}`);
+                                        setMsg("Checklist copiada!");
+                                    }}
+                                >
+                                    <Icons.Clipboard size={12} style={{ marginRight: "4px" }} />
+                                    Copiar Checklist
+                                </button>
+                                <button
+                                    style={{ ...S.actionBtn, fontSize: "10px", marginLeft: "auto" }}
+                                    onClick={() => setShowTaskReview(false)}
+                                >
+                                    Ignorar
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Quick Knowledge Tools */}
+            {bodyText && (bodyText.match(/\b\d{9}\b/) || bodyText.match(/\bPT50\b|\bIBAN\b/i)) && (
+                <div style={{ ...S.briefingCard, background: "rgba(59, 130, 246, 0.05)", border: "1px dashed rgba(59, 130, 246, 0.3)", marginBottom: "8px" }}>
+                    <div style={{ ...S.briefingHeader, color: "#1e40af" }}>
+                        <Icons.Settings size={10} />
+                        <span>Sugestão de Conhecimento</span>
+                    </div>
+                    <div style={{ ...S.briefingContent, fontSize: "10px", color: "#334155" }}>
+                        Detetamos dados que podem ser úteis para futuras respostas (NIF/IBAN). Desejas guardar?
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
+                        <button
+                            style={{ ...S.actionBtnPrimary, fontSize: "10px" }}
+                            onClick={() => {
+                                // Simple heuristic: extract the first 9-digit number (NIF) or IBAN-like string
+                                const nif = bodyText.match(/\b\d{9}\b/)?.[0];
+                                const iban = bodyText.match(/\b(PT50\s?\d{4}\s?\d{4}\s?\d{4}\s?\d{4}\s?\d{2})\b/i)?.[0] || bodyText.match(/IBAN:\s?(\S+)/i)?.[1];
+                                if (nif) handleAddToKnowledge(`NIF: ${nif}`);
+                                if (iban) handleAddToKnowledge(`IBAN: ${iban}`);
+                            }}
+                        >
+                            Guardar Factos
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <div style={S.inputCard}>
                 {files && files.length > 0 && (
                     <div style={{ display: "flex", alignItems: "center", gap: "4px", marginBottom: "6px", padding: "2px 6px", background: "rgba(59, 130, 246, 0.05)", borderRadius: "4px", width: "fit-content" }}>
@@ -580,6 +762,7 @@ export const AiCockpit: React.FC = () => {
                             onClick={() => handleGenerate("summarize")}
                             disabled={isGenerating}
                             title={files.length > 0 ? "Resumir email e anexos identificados" : "Resumir este email"}
+                            aria-label="Resumir"
                         >
 
                             <Icons.Receipt size={12} />
@@ -590,6 +773,7 @@ export const AiCockpit: React.FC = () => {
                             onClick={() => handleGenerate("tasks")}
                             disabled={isGenerating}
                             title="Extrair tarefas"
+                            aria-label="Extrair"
                         >
 
                             <Icons.Check size={12} />
@@ -700,6 +884,77 @@ export const AiCockpit: React.FC = () => {
 
 
                             ))}
+                        </div>
+                    )}
+                </div>
+
+                <div style={{ width: "1px", height: "16px", background: "rgba(0,0,0,0.06)", margin: "0 2px" }}></div>
+
+                {/* Presets Menu */}
+                <div style={{ position: "relative" }}>
+                    <button
+                        className="iccc-glossy-pill iccc-secondary-pill"
+                        style={{ ...S.secondaryBtnLink, width: "84px", minWidth: "84px", justifyContent: "flex-start", padding: "0 8px" }}
+                        onClick={() => setActiveMenu(activeMenu === "presets" ? null : "presets")}
+                        title="Modelos de Resposta Rápidos"
+                    >
+                        <Icons.Settings size={11} style={{ opacity: 0.6 }} />
+                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>MODELOS</span>
+                    </button>
+
+                    {activeMenu === "presets" && (
+                        <div style={{ ...S.cascadeMenu, width: "160px" }}>
+                            {settings?.responsePresets?.length > 5 && (
+                                <div style={{ padding: "4px 8px" }}>
+                                    <div style={{ ...S.chatInputWrapper, padding: "0 6px", background: "#fff", height: "24px" }}>
+                                        <input
+                                            style={{ ...S.chatInput, fontSize: "10px", padding: 0 }}
+                                            placeholder="Procurar..."
+                                            value={presetSearch}
+                                            onChange={(e) => setPresetSearch(e.target.value)}
+                                            autoFocus
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {(settings?.responsePresets || [])
+                                .filter((p: any) =>
+                                    !presetSearch ||
+                                    p.name.toLowerCase().includes(presetSearch.toLowerCase()) ||
+                                    p.prompt.toLowerCase().includes(presetSearch.toLowerCase())
+                                )
+                                .slice(0, 10) // Limit to avoid massive lists
+                                .map((p: any) => (
+                                    <button
+                                        key={p.id}
+                                        className="iccc-glossy-pill iccc-secondary-pill"
+                                        style={S.cascadeItem}
+                                        onClick={() => {
+                                            setActiveMenu(null);
+                                            setPresetSearch("");
+                                            handleGenerate("reply", p.prompt);
+                                        }}
+                                    >
+                                        <div style={{ width: "16px", display: "flex", justifyContent: "center" }}><Icons.ArrowRight size={10} /></div>
+                                        <span style={{ fontWeight: 800, fontSize: "10px" }}>{p.name.toUpperCase()}</span>
+                                    </button>
+                                ))}
+
+                            {settings?.responsePresets?.length === 0 && (
+                                <div style={{ ...S.hint, padding: "10px", textAlign: "center", fontSize: "10px" }}>
+                                    Cria modelos nas definições para acelerar respostas.
+                                </div>
+                            )}
+
+                            {presetSearch && (settings?.responsePresets || []).filter((p: any) =>
+                                p.name.toLowerCase().includes(presetSearch.toLowerCase()) ||
+                                p.prompt.toLowerCase().includes(presetSearch.toLowerCase())
+                            ).length === 0 && (
+                                    <div style={{ ...S.hint, padding: "10px", textAlign: "center", fontSize: "10px" }}>
+                                        Nenhum modelo encontrado.
+                                    </div>
+                                )}
                         </div>
                     )}
                 </div>

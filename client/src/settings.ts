@@ -8,6 +8,12 @@ export type LangOption = AppLocale | "auto";
 export type ReplyLength = "xs" | "s" | "m" | "l";
 export type SkinId = "classic" | "mailmaestro" | "vibrant";
 
+export type ResponsePreset = {
+  id: string;
+  name: string;
+  prompt: string;
+};
+
 export type CockpitSettingsV1 = {
   version: 1;
 
@@ -77,6 +83,9 @@ export type CockpitSettingsV1 = {
 
   // AI Context Scope
   bodyScope?: "main" | "full";
+
+  // New: Custom Response Presets
+  responsePresets: ResponsePreset[];
 };
 
 const KEY_API_BASE = "apiBaseUrl";
@@ -140,9 +149,13 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   geminiApiKey: "",
   openaiApiKey: "",
   openaiModelFast: "gpt-4o-mini",
-  openaiModelQuality: "gpt-4o-mini",
   geminiModel: "gemini-2.0-flash",
   bodyScope: "main",
+  responsePresets: [
+    { id: "p1", name: "Pedido de Dados", prompt: "Agradece o contacto e solicita os dados de faturação (NIF, Morada) para podermos proceder." },
+    { id: "p2", name: "Agendamento Carga", prompt: "Informa que a mercadoria está pronta e solicita confirmação de data/hora para a recolha no nosso armazém." },
+    { id: "p3", name: "Follow-up Proposta", prompt: "Faz um follow-up cortês sobre a última proposta enviada, perguntando se restam dúvidas técnicas." }
+  ],
 };
 
 function hasOffice(): boolean {

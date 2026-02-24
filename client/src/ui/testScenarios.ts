@@ -89,4 +89,25 @@ export const SCENARIOS: TestScenario[] = [
             queueableActions: true,
         },
     },
+    {
+        id: "D",
+        name: "Scenario D: Phase 31 - Knowledge & Persistence",
+        description: "Email with tasks, NIF, and IBAN. Testing persistence after mode switch.",
+        context: {
+            mode: "new",
+            entity: "crm.lead",
+            conversationId: "conv_Phase31_Test",
+            subject: "Dados para faturação e projeto - Divitek",
+            fromEmail: "cliente@exemplo.pt",
+            fromName: "Carlos Cliente",
+            receivedAtIso: new Date().toISOString(),
+        },
+        bodyText: "Olá Pedro. Para avançarmos, envia-me a planta atualizada hoje pff. Os meus dados são: NIF 123456789. IBAN PT50 0000 0000 0000 0000 00. Obrigado!",
+        attachments: [],
+        expectedResults: {
+            aiTriggers: true,
+            odooMemoryFound: false,
+            queueableActions: true,
+        },
+    },
 ];
