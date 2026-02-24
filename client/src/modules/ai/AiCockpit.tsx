@@ -781,11 +781,12 @@ const S: Record<string, React.CSSProperties> = {
     cascadeMenu: {
         position: "absolute",
         top: "calc(100% + 6px)",
+        bottom: "auto",
         left: 0,
         display: "flex",
         flexDirection: "column",
         gap: "4px",
-        zIndex: 100,
+        zIndex: 500,
         background: "transparent",
         width: "fit-content"
     },
