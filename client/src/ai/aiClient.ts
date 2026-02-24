@@ -30,6 +30,7 @@ export type AiGenerateRequest = {
   filesContext?: string; // optional: pre-extracted text context
   persona?: any; // NEW: User persona / style
   briefing?: string | null; // NEW: Automated contextual briefing
+  contactAliases?: Array<{ id: string; name: string; email: string }>; // NEW: Contact aliases
   customModels?: {
     openaiModelFast?: string;
     openaiModelQuality?: string;

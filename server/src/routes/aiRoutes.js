@@ -110,6 +110,7 @@ export function createAiRouter() {
         files = [],   // NEW: Direct files support
         customModels = {}, // NEW: Custom models from client
         briefing = null,   // NEW: Contextual briefing
+        contactAliases = [], // NEW: Contact Aliases
       } = req.body || {};
 
       const safeEmail = email
@@ -139,6 +140,7 @@ export function createAiRouter() {
         filesContext: clientFilesContext,
         persona,
         briefing,
+        contactAliases: Array.isArray(contactAliases) ? contactAliases : [],
       });
 
       const result = await aiCreateText({

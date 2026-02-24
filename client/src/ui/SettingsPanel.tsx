@@ -229,6 +229,25 @@ export function SettingsPanel(): JSX.Element {
     });
   }
 
+  function addContactAlias() {
+    if (!model) return;
+    const newAlias = { id: `c${Date.now()}`, name: "", email: "" };
+    setModel({ ...model, contactAliases: [...(model.contactAliases || []), newAlias] });
+  }
+
+  function removeContactAlias(id: string) {
+    if (!model) return;
+    setModel({ ...model, contactAliases: (model.contactAliases || []).filter(c => c.id !== id) });
+  }
+
+  function updateContactAlias(id: string, field: "name" | "email", value: string) {
+    if (!model) return;
+    setModel({
+      ...model,
+      contactAliases: (model.contactAliases || []).map(c => c.id === id ? { ...c, [field]: value } : c)
+    });
+  }
+
   if (loading) {
     return <div style={S.note}>A carregar definições…</div>;
   }
@@ -478,6 +497,50 @@ export function SettingsPanel(): JSX.Element {
                   {(!model.responsePresets || model.responsePresets.length === 0) && (
                     <div style={{ ...S.hint, textAlign: "center", padding: 20, border: "1px dashed var(--iccc-card-border)", borderRadius: 12 }}>
                       Nenhum modelo criado. Adiciona um acima para acelerar as tuas respostas.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ borderTop: "1px solid var(--iccc-card-border)", paddingTop: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={S.fieldLabel}>Atalhos de Contactos (Reenvios)</div>
+                  <button style={{ ...S.btnGhost, padding: "4px 10px", height: "auto" }} onClick={addContactAlias}>
+                    <Icons.Settings size={12} style={{ marginRight: 4 }} />
+                    Adicionar
+                  </button>
+                </div>
+                <div style={{ ...S.hint, marginBottom: 12 }}>Mapeia nomes de fábricas ou entidades (ex: Ragno) para os seus emails.</div>
+
+                <div style={{ display: "grid", gap: 10 }}>
+                  {(model.contactAliases || []).map((c) => (
+                    <div key={c.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input
+                        style={{ ...S.input, flex: 2 }}
+                        value={c.name}
+                        onChange={(e) => updateContactAlias(c.id, "name", e.target.value)}
+                        placeholder="Nome (ex: Ragno)"
+                        title="Nome da entidade"
+                      />
+                      <input
+                        style={{ ...S.input, flex: 3 }}
+                        value={c.email}
+                        onChange={(e) => updateContactAlias(c.id, "email", e.target.value)}
+                        placeholder="Email (ex: info@ragno.it)"
+                        title="Email da entidade"
+                      />
+                      <button
+                        style={{ ...S.btnGhost, borderColor: "#fca5a5", color: "#ef4444", width: "32px", flexShrink: 0 }}
+                        onClick={() => removeContactAlias(c.id)}
+                        title="Remover atalho"
+                      >
+                        <Icons.Trash size={12} />
+                      </button>
+                    </div>
+                  ))}
+                  {(!model.contactAliases || model.contactAliases.length === 0) && (
+                    <div style={{ ...S.hint, textAlign: "center", padding: 10, border: "1px dashed var(--iccc-card-border)", borderRadius: 12 }}>
+                      Nenhum atalho criado.
                     </div>
                   )}
                 </div>

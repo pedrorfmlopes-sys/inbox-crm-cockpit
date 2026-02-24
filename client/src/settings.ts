@@ -14,6 +14,12 @@ export type ResponsePreset = {
   prompt: string;
 };
 
+export type ContactAlias = {
+  id: string;
+  name: string;
+  email: string;
+};
+
 export type CockpitSettingsV1 = {
   version: 1;
 
@@ -86,6 +92,9 @@ export type CockpitSettingsV1 = {
 
   // New: Custom Response Presets
   responsePresets: ResponsePreset[];
+
+  // New: Contact Aliases (Forwarding Shortcuts)
+  contactAliases: ContactAlias[];
 };
 
 const KEY_API_BASE = "apiBaseUrl";
@@ -155,6 +164,10 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     { id: "p1", name: "Pedido de Dados", prompt: "Agradece o contacto e solicita os dados de faturação (NIF, Morada) para podermos proceder." },
     { id: "p2", name: "Agendamento Carga", prompt: "Informa que a mercadoria está pronta e solicita confirmação de data/hora para a recolha no nosso armazém." },
     { id: "p3", name: "Follow-up Proposta", prompt: "Faz um follow-up cortês sobre a última proposta enviada, perguntando se restam dúvidas técnicas." }
+  ],
+  contactAliases: [
+    { id: "c1", name: "Ragno", email: "info@ragno.it" },
+    { id: "c2", name: "Marazzi", email: "contact@marazzi.it" }
   ],
 };
 

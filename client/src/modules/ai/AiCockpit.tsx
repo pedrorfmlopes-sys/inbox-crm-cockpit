@@ -348,6 +348,7 @@ export const AiCockpit: React.FC = () => {
                 },
                 history: isRefining ? aiState.history : [],
                 knowledge: settings.aiKnowledge || [],
+                contactAliases: settings.contactAliases || [],
             });
 
             if (res.ok) {

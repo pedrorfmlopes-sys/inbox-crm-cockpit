@@ -2,7 +2,7 @@
 // Centralized prompt templates for the "MailMaestro-like" features.
 // Keep these versioned and isolated from Odoo/CRM code.
 
-export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "", persona = {}, briefing = null }) {
+export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "", persona = {}, briefing = null, contactAliases = [] }) {
   const LOCALE_HUMAN = {
     "pt-PT": "Português (Portugal)",
     "es-ES": "Espanhol",
@@ -58,12 +58,16 @@ PERFIL DE COMUNICAÇÃO:
 - Escreve sempre no idioma solicitado (${lang}), respeitando as normas gramaticais e de negócio locais.
 `;
 
-  // Inject Contextual Briefing (Thread logic)
   const briefingBlock = briefing
     ? `\nCONTEXTO DO THREAD (30-Second Briefing):\n${briefing}\n`
     : "";
 
-  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock + briefingBlock;
+  // Inject Contact Aliases (Forward shortcuts)
+  const contactBlock = contactAliases.length > 0
+    ? `\nTABELA DE ATALHOS DE CONTACTOS (Resolve estes nomes para os respetivos emails se o utilizador os mencionar):\n${contactAliases.map(c => `- ${c.name}: ${c.email}`).join('\n')}\n`
+    : "";
+
+  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock + briefingBlock + contactBlock;
   const toneLine = `Tom: ${tone}.`;
 
   const emailBlock = email
