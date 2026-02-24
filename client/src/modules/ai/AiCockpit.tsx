@@ -355,10 +355,6 @@ export const AiCockpit: React.FC = () => {
 
     return (
         <div style={S.container}>
-            {/* Version Flag for Debugging */}
-            <div style={{ position: 'absolute', top: -12, right: 0, fontSize: '8px', opacity: 0.3, pointerEvents: 'none' }}>
-                vSprint19-Fix
-            </div>
             {/* Glossy Pill Hover Styling */}
             <style>{`
                 .iccc-glossy-pill {
