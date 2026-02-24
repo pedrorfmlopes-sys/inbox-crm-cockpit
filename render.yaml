@@ -4,7 +4,7 @@ services:
     env: node
     plan: free
     region: frankfurt
-    buildCommand: echo "Building server only..." && npm install --workspace=server
+    buildCommand: ./render-build.sh
     startCommand: npm start
     envVars:
       - key: NODE_VERSION
