@@ -1109,6 +1109,27 @@ export const AiCockpit: React.FC = () => {
                                         />
                                     </div>
 
+                                    {settings?.contactAliases?.length > 0 && (
+                                        <div style={{ marginTop: "8px" }}>
+                                            <span style={{ fontSize: "9px", fontWeight: 800, color: "#1e40af", textTransform: "uppercase" }}>Atalhos Rápidos (Contactos):</span>
+                                            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "4px" }}>
+                                                {settings.contactAliases.map((c: any) => (
+                                                    <button
+                                                        key={c.id}
+                                                        style={S.suggestedChip}
+                                                        onClick={() => {
+                                                            if (!draftTo.includes(c.email)) setDraftTo([...draftTo, c.email]);
+                                                        }}
+                                                        title={c.email}
+                                                    >
+                                                        <Icons.User size={10} style={{ marginRight: "3px" }} />
+                                                        {c.name}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {suggestedContacts.length > 0 && (
                                         <div style={{ marginTop: "8px" }}>
                                             <span style={{ fontSize: "9px", fontWeight: 800, color: "#1e40af", textTransform: "uppercase" }}>Contactos Detetados no Email:</span>
