@@ -409,6 +409,51 @@ export async function displayNewMeetingForm(params: {
 }
 
 /**
+ * Sets recipients in a compose item.
+ * @param type 'to' | 'cc' | 'bcc'
+ * @param recipients Array of email strings or Recipient objects
+ */
+export async function setRecipients(type: 'to' | 'cc' | 'bcc', recipients: (string | Recipient)[]): Promise<void> {
+  const OfficeAny = await ensureOfficeReady();
+  const item = OfficeAny?.context?.mailbox?.item;
+  const target = item?.[type];
+
+  if (!target?.setAsync) {
+    clientLog.warn(`[office] setRecipients: target ${type} does not support setAsync`);
+    return;
+  }
+
+  const formatted = recipients.map(r => typeof r === 'string' ? r : r.email);
+
+  return await new Promise<void>((resolve, reject) => {
+    target.setAsync(formatted, (result: any) => {
+      if (result.status === OfficeAny.AsyncResultStatus.Succeeded) resolve();
+      else reject(new Error(result.error?.message || `Erro ao definir destinatários ${type}`));
+    });
+  });
+}
+
+/**
+ * Sets the subject of a compose item.
+ */
+export async function setSubject(subject: string): Promise<void> {
+  const OfficeAny = await ensureOfficeReady();
+  const item = OfficeAny?.context?.mailbox?.item;
+
+  if (!item?.subject?.setAsync) {
+    clientLog.warn("[office] setSubject: item.subject does not support setAsync");
+    return;
+  }
+
+  return await new Promise<void>((resolve, reject) => {
+    item.subject.setAsync(subject, (result: any) => {
+      if (result.status === OfficeAny.AsyncResultStatus.Succeeded) resolve();
+      else reject(new Error(result.error?.message || "Erro ao definir assunto"));
+    });
+  });
+}
+
+/**
  * Fetch attachments from the current item.
  * Returns array of { name, contentType, contentBase64 }
  */

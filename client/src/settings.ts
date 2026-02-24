@@ -74,6 +74,9 @@ export type CockpitSettingsV1 = {
   openaiModelFast?: string;
   openaiModelQuality?: string;
   geminiModel?: string;
+
+  // AI Context Scope
+  bodyScope?: "main" | "full";
 };
 
 const KEY_API_BASE = "apiBaseUrl";
@@ -138,7 +141,8 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   openaiApiKey: "",
   openaiModelFast: "gpt-4o-mini",
   openaiModelQuality: "gpt-4o-mini",
-  geminiModel: "gemini-1.5-flash",
+  geminiModel: "gemini-2.0-flash",
+  bodyScope: "main",
 };
 
 function hasOffice(): boolean {

@@ -2,7 +2,7 @@
 // Centralized prompt templates for the "MailMaestro-like" features.
 // Keep these versioned and isolated from Odoo/CRM code.
 
-export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "", persona = {} }) {
+export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "", persona = {}, briefing = null }) {
   const LOCALE_HUMAN = {
     "pt-PT": "Português (Portugal)",
     "es-ES": "Espanhol",
@@ -33,7 +33,6 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
     `- PROIBIDO: "Aqui está a sua resposta", "Espero que este email...", "Como assistente de IA...", ou qualquer conversa de introdução.\n` +
     `- COMEÇA IMEDIATAMENTE com o corpo do email.\n` +
     `- NUNCA inventes factos, números, prazos, preços ou compromissos. Se faltar informação, faz perguntas curtas e diretas.\n` +
-    `- USA EXCLUSIVAMENTE Português de Portugal (PT-PT). Evita "você" se o contexto for casual, evita construções passivas pesadas.\n` +
     `- Devolve HTML simples e seguro: usa apenas <p>, <br>, <ul>, <ol>, <li>, <strong>, <em>, <a>.\n` +
     `- Sem CSS, sem estilos inline, sem classes, sem scripts.\n` +
     `- Parágrafos curtos e estrutura limpa.\n`;
@@ -50,22 +49,21 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
 
   // Inject Persona / User Style mimic (The "Pedro" Standard)
   const personaBlock = `
-ESTÁS A ATUAR COMO: Pedro (PT-PT), um profissional altamente pragmático, estruturado e orientado a resultados.
+ESTÁS A ATUAR COMO: Pedro, um profissional altamente pragmático, estruturado e orientado a resultados.
 PERFIL DE COMUNICAÇÃO:
 - Direto, claro e profissional, mas humano (sem formalismo exagerado).
 - Foco absoluto em precisão, completude e utilidade prática.
 - Evita floreados, generalidades ("espero que este email...") e "linguagem de IA" artificial.
 - Mantém o tom cordial e confiante.
-- USA EXCLUSIVAMENTE Português de Portugal (PT-PT), respeitando a terminologia de negócio local.
-
-REGRAS DE OURO:
-1. Nunca respondas de forma vaga quando o pedido exige ação.
-2. Nunca ignores contexto anterior ou detalhes críticos (referências, datas, valores).
-3. Se houver lacuna de informação, assinala-a e propõe a melhor versão possível.
-4. Distingue o que está confirmado do que é proposta/hipótese.
+- Escreve sempre no idioma solicitado (${lang}), respeitando as normas gramaticais e de negócio locais.
 `;
 
-  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock;
+  // Inject Contextual Briefing (Thread logic)
+  const briefingBlock = briefing
+    ? `\nCONTEXTO DO THREAD (30-Second Briefing):\n${briefing}\n`
+    : "";
+
+  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock + briefingBlock;
   const toneLine = `Tom: ${tone}.`;
 
   const emailBlock = email
@@ -180,6 +178,19 @@ REGRAS DE OURO:
       `- "summary": lista de exatamente 3 pontos chave (curtos e diretos). Sem saudações.\n` +
       `- "actions": lista de tarefas concretas (ex: "Enviar proposta").\n` +
       `Exemplo de output: {"summary": ["Ponto 1", "Ponto 2", "Ponto 3"], "actions": ["Ligar cliente"]}\n` +
+      emailBlock
+    );
+  }
+
+  if (action === "extract_contacts") {
+    return (
+      finalRules +
+      `TAREFA: Analisa o corpo do email e extrai TODOS os endereços de email mencionados que pareçam ser potenciais destinatários ou pessoas a contactar.\n` +
+      `REGRAS:\n` +
+      `- Devolve APENAS os emails separados por ponto e vírgula.\n` +
+      `- Não incluas o remetente original se for óbvio.\n` +
+      `- Se não houver emails, devolve uma string vazia.\n` +
+      `- Exemplo: joao@exemplo.com;maria@empresa.pt\n` +
       emailBlock
     );
   }

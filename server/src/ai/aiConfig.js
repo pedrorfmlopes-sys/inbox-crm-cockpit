@@ -13,8 +13,8 @@ export function getAiConfig() {
     },
     gemini: {
       apiKey: process.env.GEMINI_API_KEY || "",
-      modelFast: process.env.GEMINI_MODEL_FAST || "gemini-1.5-flash",
-      modelQuality: process.env.GEMINI_MODEL_QUALITY || "gemini-1.5-pro",
+      modelFast: process.env.GEMINI_MODEL_FAST || "gemini-2.0-flash",
+      modelQuality: process.env.GEMINI_MODEL_QUALITY || "gemini-2.0-pro",
     },
   };
 }

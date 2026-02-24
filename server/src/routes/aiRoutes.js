@@ -1,6 +1,7 @@
 import express from "express";
 import { aiCreateText, getAiMeta, listAvailableModels } from "../ai/aiService.js";
 import { buildPrompt } from "../ai/promptTemplates.js";
+import { getBriefing, saveBriefing, initBriefingDb } from "../ai/briefingCache.js";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
@@ -87,6 +88,7 @@ function trimEmailBodyFull(raw) {
 
 export function createAiRouter() {
   const router = express.Router();
+  initBriefingDb(); // Ensure DB table exists
 
   router.get("/meta", (_req, res) => {
     res.json({ ok: true, ...getAiMeta() });
@@ -107,6 +109,7 @@ export function createAiRouter() {
         persona = {}, // NEW: Persona / Style mimic
         files = [],   // NEW: Direct files support
         customModels = {}, // NEW: Custom models from client
+        briefing = null,   // NEW: Contextual briefing
       } = req.body || {};
 
       const safeEmail = email
@@ -135,6 +138,7 @@ export function createAiRouter() {
         knowledge: Array.isArray(knowledge) ? knowledge.map(String) : [],
         filesContext: clientFilesContext,
         persona,
+        briefing,
       });
 
       const result = await aiCreateText({
@@ -185,10 +189,27 @@ export function createAiRouter() {
 
   router.post("/briefing", async (req, res) => {
     try {
-      const { context, history, customModels } = req.body;
+      const { context, history, customModels, conversationId } = req.body;
+
+      // 1. Try cache first
+      if (conversationId) {
+        const cached = await getBriefing(conversationId);
+        if (cached) {
+          console.log(`[ai] Cache HIT for briefing: ${conversationId}`);
+          return res.json({ ok: true, summary: cached, cached: true });
+        }
+      }
+
+      // 2. Generate new
       const { generateExecutiveSummary } = await import("../aiOrchestrator.js");
       const summary = await generateExecutiveSummary(context, history, customModels);
-      res.json({ ok: true, summary });
+
+      // 3. Save to cache
+      if (conversationId && summary) {
+        await saveBriefing(conversationId, summary);
+      }
+
+      res.json({ ok: true, summary, cached: false });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }

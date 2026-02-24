@@ -33,6 +33,7 @@ export interface CockpitContextType {
     files: Array<{ name: string; type: string; content: string }>;
     addFile: (file: { name: string; type: string; content: string }) => void;
     removeFile: (name: string) => void;
+    clearFiles: () => void;
     isAuthenticated: boolean;
     connectionStatus: "none" | "success" | "error";
     granularStatus: { odoo: boolean | null; openai: boolean | null; gemini: boolean | null };
@@ -381,9 +382,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setFiles(prev => prev.filter(f => f.name !== name));
     };
 
+    const clearFiles = () => {
+        setFiles([]);
+    };
+
     // Reset files when conversation changes
     useEffect(() => {
-        setFiles([]);
+        clearFiles();
     }, [ctx.conversationId]);
 
     const login = async (credentials: any) => {
@@ -418,7 +423,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             tab, setTab, ctx, bodyText, attachments, meta, links, msg, setMsg, refreshLinks, isLoading,
             aiState: currentAiState,
             setAiState,
-            files, addFile, removeFile,
+            files, addFile, removeFile, clearFiles,
             isAuthenticated, connectionStatus, granularStatus, granularStatusDetails, granularStatusString, checkConnectivity, login, logout,
             settings
         }}>

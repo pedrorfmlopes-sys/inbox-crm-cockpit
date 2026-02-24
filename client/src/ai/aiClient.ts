@@ -29,6 +29,7 @@ export type AiGenerateRequest = {
   history?: Array<{ role: "user" | "assistant"; content: string }>; // NEW: Chat history
   filesContext?: string; // optional: pre-extracted text context
   persona?: any; // NEW: User persona / style
+  briefing?: string | null; // NEW: Automated contextual briefing
   customModels?: {
     openaiModelFast?: string;
     openaiModelQuality?: string;

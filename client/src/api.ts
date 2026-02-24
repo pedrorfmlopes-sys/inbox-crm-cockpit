@@ -304,8 +304,8 @@ export async function aiExtractAnchors(emailBody: string, customModels?: any, em
   return await requestJSON(`/api/ai/extract-anchors`, { method: "POST", body: JSON.stringify({ emailBody, emailContext, customModels }) });
 }
 
-export async function aiGenerateBriefing(context: string, history: any[] = [], customModels?: any): Promise<{ ok: boolean; summary: string }> {
-  return await requestJSON(`/api/ai/briefing`, { method: "POST", body: JSON.stringify({ context, history, customModels }) });
+export async function aiGenerateBriefing(context: string, history: any[] = [], customModels?: any, conversationId?: string): Promise<{ ok: boolean; summary: string }> {
+  return await requestJSON(`/api/ai/briefing`, { method: "POST", body: JSON.stringify({ context, history, customModels, conversationId }) });
 }
 
 export async function aiVoiceCommand(commandText: string, context: any): Promise<{ ok: boolean; actions: string[] }> {

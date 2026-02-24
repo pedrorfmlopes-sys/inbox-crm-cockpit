@@ -52,8 +52,8 @@ export async function generateExecutiveSummary(context, emailHistory = [], custo
     if (!apiKey) throw new Error("Missing AI API Key (Gemini or OpenAI). Please check Settings.");
 
     const instructions = `
-You are the "Second Brain" assistant for an industrial sales expert.
-Generate a "30-Second Briefing" in 3 bullet points:
+You are the "Second Brain" assistant for an industrial sales expert (Pedro).
+Generate a "30-Second Briefing" in 3 bullet points, EXCLUSIVELY in Portuguese (Portugal):
 1. Last critical steps from Outlook history.
 2. Key notes from Odoo Chatter.
 3. Protection status (Free or Protected).

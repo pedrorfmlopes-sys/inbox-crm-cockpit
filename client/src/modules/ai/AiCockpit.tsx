@@ -1,21 +1,31 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
-import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMeetingForm } from "@/office";
+import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMeetingForm, setRecipients, setSubject } from "@/office";
 import { getSettings } from "@/settings";
 import * as Icons from "@/ui/icons";
 
 export const AiCockpit: React.FC = () => {
-    const { ctx, bodyText, setMsg, aiState, setAiState, files, addFile } = useCockpit();
+    const { ctx, bodyText, setMsg, aiState, setAiState, files, addFile, removeFile, clearFiles } = useCockpit() as any;
 
     // Local state for immediate typing feel
     // Initialized from context, but NOT synced on every render to avoid loops
     const [prompt, setPrompt] = useState(aiState.prompt);
     const [output, setOutput] = useState(aiState.output);
+    const [briefing, setBriefing] = useState<string | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [isFetchingIntents, setIsFetchingIntents] = useState(false);
+    const [isFetchingBriefing, setIsFetchingBriefing] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
+    const [briefingExpanded, setBriefingExpanded] = useState(false);
     const [debugLog, setDebugLog] = useState("");
+
+    // Draft Preview State
+    const [draftTo, setDraftTo] = useState<string[]>([]);
+    const [draftCc, setDraftCc] = useState<string[]>([]);
+    const [draftSubject, setDraftSubject] = useState("");
+    const [suggestedContacts, setSuggestedContacts] = useState<string[]>([]);
+    const [showDraftPreview, setShowDraftPreview] = useState(false);
 
     // Voice Dictation State
     const [isRecording, setIsRecording] = useState(false);
@@ -40,17 +50,22 @@ export const AiCockpit: React.FC = () => {
             try {
                 const settings = await getSettings();
                 const res = await aiGenerate({
-                    action: "intent_proposals",
+                    action: "intent_proposals", // This was explicitly "intent_proposals"
                     mode: "fast",
-                    locale: (settings.replyLanguage || "pt-PT") as any,
-                    tone: settings.tone || "neutro",
+                    locale: (settings.replyLanguage || "pt-PT") as any, // This was from settings
+                    tone: settings.tone || "neutro", // This was from settings
                     email: {
                         subject: ctx.subject || "",
                         from: ctx.fromEmail || "",
                         to: (ctx.toRecipients || []).map((r: any) => r.email),
                         cc: (ctx.ccRecipients || []).map((r: any) => r.email),
-                        bodyText: bodyText || ""
+                        bodyText: bodyText || "",
+                        bodyScope: settings.bodyScope || "main" // Added this line
                     },
+                    // inputText, knowledge, history, files are not used for intent_proposals
+                    // and would require 'action', 'extraPrompt', 'prompt', 'isRefining' to be defined.
+                    // Keeping the original structure for intent_proposals and adding briefing.
+                    briefing: briefing, // Pass the briefing for isolation
                     persona: {
                         userRole: settings.userRole,
                         styleContext: settings.styleContext,
@@ -70,6 +85,65 @@ export const AiCockpit: React.FC = () => {
 
         fetchIntents();
     }, [ctx.conversationId, ctx.isCompose]);
+
+    // Automated Briefing on Conversation Change
+    useEffect(() => {
+        if (!ctx.conversationId || ctx.isCompose) return;
+
+        const fetchBriefing = async () => {
+            try {
+                setIsFetchingBriefing(true);
+                const { aiGenerateBriefing } = await import("@/api");
+                const res = await aiGenerateBriefing(bodyText || "", [], {}, ctx.conversationId);
+                if (res.ok) {
+                    setBriefing(res.summary);
+                }
+            } catch (err) {
+                console.error("Erro ao obter briefing:", err);
+            } finally {
+                setIsFetchingBriefing(false);
+            }
+        };
+
+        fetchBriefing();
+    }, [ctx.conversationId, ctx.isCompose, bodyText]);
+
+    // Extract contacts from body text when it changes
+    useEffect(() => {
+        if (!bodyText || ctx.isCompose) return;
+
+        const extractContacts = async () => {
+            try {
+                const res = await aiGenerate({
+                    action: "extract_contacts" as any,
+                    mode: "fast",
+                    locale: "pt-PT",
+                    tone: "neutro",
+                    email: {
+                        bodyText,
+                        subject: "",
+                        from: "",
+                        to: [],
+                        cc: []
+                    } as any
+                });
+                if (res.ok && res.text) {
+                    const emails = res.text.split(";").map(e => e.trim()).filter(Boolean);
+                    setSuggestedContacts(emails);
+                }
+            } catch (err) {
+                console.error("Erro ao extrair contactos:", err);
+            }
+        };
+        extractContacts();
+    }, [bodyText, ctx.isCompose]);
+
+    // Sync draft defaults from context
+    useEffect(() => {
+        setDraftTo((ctx.toRecipients || []).map((r: any) => r.email));
+        setDraftCc((ctx.ccRecipients || []).map((r: any) => r.email));
+        setDraftSubject(ctx.subject || "");
+    }, [ctx]);
 
     const handlePromptChange = (val: string) => {
         setPrompt(val);
@@ -181,12 +255,14 @@ export const AiCockpit: React.FC = () => {
                 locale: aiState.locale || settings.replyLanguage || "pt-PT",
                 inputText: extraPrompt || prompt,
                 files: files || [],
+                briefing: briefing, // Pass the thread summary for isolation
                 email: {
                     subject: ctx.subject || "",
                     from: ctx.fromEmail || "",
-                    to: (ctx.toRecipients || []).map(r => r.email),
-                    cc: (ctx.ccRecipients || []).map(r => r.email),
-                    bodyText: bodyText || ""
+                    to: (ctx.toRecipients || []).map((r: any) => r.email),
+                    cc: (ctx.ccRecipients || []).map((r: any) => r.email),
+                    bodyText: bodyText || "",
+                    bodyScope: settings.bodyScope || "main"
                 },
                 persona: {
                     userRole: settings.userRole,
@@ -205,7 +281,7 @@ export const AiCockpit: React.FC = () => {
                 for (let i = 0; i < words.length; i++) {
                     current += words[i] + " ";
                     setOutput(current);
-                    await new Promise((r) => setTimeout(r, 20));
+                    await new Promise((resolve) => setTimeout(resolve, 20));
                 }
 
                 const newHistory = [
@@ -215,6 +291,7 @@ export const AiCockpit: React.FC = () => {
                 ].slice(-4);
                 setAiState({ output: fullText, history: newHistory });
                 setPrompt("");
+                setShowDraftPreview(true);
             } else {
                 setMsg(res.error);
             }
@@ -233,11 +310,19 @@ export const AiCockpit: React.FC = () => {
             console.log("[AiCockpit] isComposeMode:", isCompose);
             setDebugLog(`Modo Edição: ${isCompose}`);
 
-            if (isCompose) {
-                setDebugLog("A inserir texto...");
+            if (ctx.isCompose) {
+                setDebugLog("A atualizar rascunho...");
+
+                // Sync metadata first
+                await setRecipients("to", draftTo);
+                await setRecipients("cc", draftCc);
+                await setSubject(draftSubject);
+
+                // Insert body
                 await insertTextToBody(output);
-                setDebugLog("Inserido com sucesso!");
-                setMsg("Texto inserido com sucesso!");
+
+                setDebugLog("Atualizado com sucesso!");
+                setMsg("Draft atualizado com sucesso!");
                 setTimeout(() => setMsg(""), 3000);
                 return;
             }
@@ -284,13 +369,24 @@ export const AiCockpit: React.FC = () => {
     }, []);
 
     const handleKeyDown = (e: React.KeyboardEvent, action: AiAction = "reply") => {
-        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        // Alt + Enter: New Line (allow default)
+        if (e.key === "Enter" && e.altKey) {
+            return;
+        }
+        // Enter: Send
+        if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleGenerate(action);
         }
         if (e.key === "Escape") {
             setPrompt("");
         }
+    };
+
+    const handleResetConversation = () => {
+        setAiState({ history: [], output: "" });
+        setPrompt("");
+        clearFiles(); // Using the new context helper
     };
 
     const toneRefiners: Array<{ label: string; tone: AiTone; icon: React.ReactNode }> = [
@@ -373,12 +469,56 @@ export const AiCockpit: React.FC = () => {
                 }
             `}</style>
 
-            {debugLog && (
+            {/* 30-Second Briefing Card */}
+            {briefing && !isFetchingBriefing && (
+                <div style={S.briefingCard}>
+                    <div style={S.briefingHeader}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <Icons.Sparkles size={12} color="#1e40af" />
+                            <span>30-Second Briefing</span>
+                        </div>
+                        <button
+                            onClick={() => setBriefingExpanded(!briefingExpanded)}
+                            style={{
+                                ...S.actionBtn,
+                                height: "18px",
+                                padding: "0 8px",
+                                background: "rgba(59, 130, 246, 0.1)",
+                                borderRadius: "10px",
+                                color: "#1e40af",
+                                fontSize: "9px"
+                            }}
+                        >
+                            {briefingExpanded ? "Recolher" : "Expandir"}
+                        </button>
+                    </div>
+                    <div
+                        style={{
+                            ...S.briefingContent,
+                            WebkitLineClamp: briefingExpanded ? "unset" : 2,
+                            maxHeight: briefingExpanded ? "300px" : "34px",
+                        } as any}
+                    >
+                        {briefing}
+                    </div>
+                </div>
+            )}
 
+            {isFetchingBriefing && (
+                <div style={{ ...S.briefingCard, background: "rgba(0,0,0,0.02)", borderStyle: "dashed" }}>
+                    <div style={S.skeletonText}>
+                        <Icons.RotateCcw size={10} style={{ animation: "spin 1s linear infinite" }} />
+                        A gerar briefing do thread...
+                    </div>
+                </div>
+            )}
+
+            {debugLog && (
                 <div style={{ padding: "8px", background: "#fee2e2", color: "#b91c1c", fontSize: "11px", borderRadius: "4px", border: "1px solid #fca5a5" }}>
                     DEBUG: {debugLog}
                 </div>
             )}
+
             {/* Intenções Sugeridas (Smart Replies) */}
             {!output && !isGenerating && (aiState.smartReplies.length > 0 || isFetchingIntents) && (
                 <div style={S.intentContainer}>
@@ -620,96 +760,156 @@ export const AiCockpit: React.FC = () => {
                 </div>
             </div>
 
-            {(output || isGenerating || aiState.history.length > 0) && (
-                <div style={S.outputCard}>
-                    <div style={S.outputHeader}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                            <span>Sugestão da IA</span>
-                            {isGenerating && <div style={S.typingDots}><span>.</span><span>.</span><span>.</span></div>}
-                        </div>
-                        <div style={{ display: "flex", gap: "8px" }}>
-                            {aiState.history.length > 0 && (
-                                <button style={S.actionBtn} onClick={() => setAiState({ history: [] })} title="Limpar conversa">
+            {
+                (output || isGenerating || aiState.history.length > 0) && (
+                    <div style={S.outputCard}>
+                        <div style={S.outputHeader}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <span>Sugestão da IA</span>
+                                {isGenerating && <div style={S.typingDots}><span>.</span><span>.</span><span>.</span></div>}
+                            </div>
+                            <div style={{ display: "flex", gap: "8px" }}>
+                                <button style={S.actionBtn} onClick={handleResetConversation} title="Limpar conversa (Reset Total)">
                                     <Icons.Trash size={14} />
                                 </button>
-                            )}
-                            <button style={S.actionBtn} onClick={handleExport} title="Descarregar Texto (.txt)">
-                                <Icons.Download size={14} />
-                            </button>
-                            <button style={S.actionBtn} onClick={() => navigator.clipboard.writeText(output)} title="Copiar texto">
-                                <Icons.Clipboard size={14} />
-                            </button>
-                            <button
-                                style={S.actionBtnPrimary}
-                                onClick={async () => {
-                                    const settings = await getSettings();
-                                    const mLinks = settings.meetingLinks;
-                                    const mLink = mLinks?.teams || mLinks?.zoom || mLinks?.meet || "";
-                                    const finalBody = mLink ? `${output}\n\n---\nLink da Reunião: ${mLink}` : output;
+                                <button style={S.actionBtn} onClick={handleExport} title="Descarregar Texto (.txt)">
+                                    <Icons.Download size={14} />
+                                </button>
+                                <button style={S.actionBtn} onClick={() => navigator.clipboard.writeText(output)} title="Copiar texto">
+                                    <Icons.Clipboard size={14} />
+                                </button>
+                                <button
+                                    style={S.actionBtnPrimary}
+                                    onClick={async () => {
+                                        const settings = await getSettings();
+                                        const mLinks = settings.meetingLinks;
+                                        const mLink = mLinks?.teams || mLinks?.zoom || mLinks?.meet || "";
+                                        const finalBody = mLink ? `${output}\n\n---\nLink da Reunião: ${mLink}` : output;
 
-                                    await displayNewMeetingForm({
-                                        subject: ctx.subject ? `Re: ${ctx.subject}` : "Reunião",
-                                        body: finalBody,
-                                        requiredAttendees: ctx.fromEmail ? [ctx.fromEmail] : []
-                                    });
-                                }}
-                                title="Agendar Reunião"
-                            >
-                                <Icons.Calendar size={14} style={{ marginRight: "4px" }} />
-                                Agendar
-                            </button>
-                            <button
-                                style={S.actionBtnPrimary}
-                                onClick={async () => {
-                                    try {
-                                        await handleInsert();
-                                    } catch (e: any) {
-                                        alert("Erro crítico no botão: " + e.message);
-                                    }
-                                }}
-                                title="Inserir no Email"
-                            >
-                                <Icons.ExternalLink size={14} style={{ marginRight: "4px" }} />
-                                Inserir
-                            </button>
+                                        await displayNewMeetingForm({
+                                            subject: ctx.subject ? `Re: ${ctx.subject}` : "Reunião",
+                                            body: finalBody,
+                                            requiredAttendees: ctx.fromEmail ? [ctx.fromEmail] : []
+                                        });
+                                    }}
+                                    title="Agendar Reunião"
+                                >
+                                    <Icons.Calendar size={14} style={{ marginRight: "4px" }} />
+                                    Agendar
+                                </button>
+                                <button
+                                    style={S.actionBtnPrimary}
+                                    onClick={async () => {
+                                        try {
+                                            await handleInsert();
+                                        } catch (e: any) {
+                                            alert("Erro crítico no botão: " + e.message);
+                                        }
+                                    }}
+                                    title="Inserir no Email"
+                                >
+                                    <Icons.Send size={14} style={{ marginRight: "4px" }} />
+                                    {ctx.isCompose ? "Atualizar" : "Inserir"}
+                                </button>
+                            </div>
                         </div>
-                    </div>
 
-                    {/* Iterative Result Area */}
-                    <div style={{ position: "relative" }}>
-                        <div style={S.outputText}>
-                            {output}
-                        </div>
-                        {isGenerating && !output && (
-                            <div style={{ padding: "20px 0", color: "var(--iccc-text-muted)", fontStyle: "italic" }}>
-                                A pensar...
+                        {showDraftPreview && (
+                            <div style={S.draftCard}>
+                                <div style={S.draftHeader} onClick={() => setShowDraftPreview(!showDraftPreview)}>
+                                    <Icons.Settings size={12} />
+                                    <span>Detalhes do Rascunho</span>
+                                    <Icons.ArrowDown size={14} style={{ marginLeft: "auto", transform: showDraftPreview ? "rotate(180deg)" : "none" }} />
+                                </div>
+                                <div style={S.draftBody}>
+                                    <div style={S.draftRow}>
+                                        <label style={S.draftLabel}>Para:</label>
+                                        <input
+                                            style={S.draftInput}
+                                            value={draftTo.join("; ")}
+                                            onChange={(e) => setDraftTo(e.target.value.split(";").map(v => v.trim()))}
+                                            placeholder="exemplo@mail.com; ..."
+                                            title="Destinatários principais"
+                                        />
+                                    </div>
+                                    <div style={S.draftRow}>
+                                        <label style={S.draftLabel}>CC:</label>
+                                        <input
+                                            style={S.draftInput}
+                                            value={draftCc.join("; ")}
+                                            onChange={(e) => setDraftCc(e.target.value.split(";").map(v => v.trim()))}
+                                            placeholder="cc@mail.com; ..."
+                                            title="Destinatários em cópia"
+                                        />
+                                    </div>
+                                    <div style={S.draftRow}>
+                                        <label style={S.draftLabel}>Assunto:</label>
+                                        <input
+                                            style={S.draftInput}
+                                            value={draftSubject}
+                                            onChange={(e) => setDraftSubject(e.target.value)}
+                                            placeholder="Assunto do email"
+                                            title="Assunto"
+                                        />
+                                    </div>
+
+                                    {suggestedContacts.length > 0 && (
+                                        <div style={{ marginTop: "8px" }}>
+                                            <span style={{ fontSize: "9px", fontWeight: 800, color: "#1e40af", textTransform: "uppercase" }}>Contactos Detetados no Email:</span>
+                                            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "4px" }}>
+                                                {suggestedContacts.map(email => (
+                                                    <button
+                                                        key={email}
+                                                        style={S.suggestedChip}
+                                                        onClick={() => {
+                                                            if (!draftTo.includes(email)) setDraftTo([...draftTo, email]);
+                                                        }}
+                                                    >
+                                                        + {email}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
-                    </div>
 
-                    {/* Quick Refinement Input */}
-                    <div style={S.chatInputWrapper}>
-                        <input
-                            style={S.chatInput}
-                            placeholder="Refinar resposta (ex: faz mais curto)..."
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            onKeyDown={(e) => handleKeyDown(e, "refine")}
-                        />
-                        <button
-                            disabled={isGenerating || !prompt}
-                            onClick={() => handleGenerate("refine")}
-                            style={{
-                                ...S.chatSendBtn,
-                                opacity: !prompt || isGenerating ? 0.5 : 1
-                            }}
-                        >
-                            <Icons.Sparkles size={14} />
-                        </button>
+                        {/* Iterative Result Area */}
+                        <div style={{ position: "relative" }}>
+                            <div style={S.outputText} dangerouslySetInnerHTML={{ __html: output }} />
+                            {isGenerating && !output && (
+                                <div style={{ padding: "20px 0", color: "var(--iccc-text-muted)", fontStyle: "italic" }}>
+                                    A pensar...
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Quick Refinement Input */}
+                        <div style={S.chatInputWrapper}>
+                            <textarea
+                                style={{ ...S.chatInput, height: "unset", minHeight: "32px", maxHeight: "120px", paddingTop: "8px", resize: "none" }}
+                                placeholder="Refinar resposta (ex: faz mais curto)..."
+                                value={prompt}
+                                onChange={(e) => setPrompt(e.target.value)}
+                                onKeyDown={(e) => handleKeyDown(e, "refine")}
+                                rows={1}
+                            />
+                            <button
+                                disabled={isGenerating || !prompt}
+                                onClick={() => handleGenerate("refine")}
+                                style={{
+                                    ...S.chatSendBtn,
+                                    opacity: !prompt || isGenerating ? 0.5 : 1
+                                }}
+                            >
+                                <Icons.Sparkles size={14} />
+                            </button>
+                        </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 };
 
@@ -956,5 +1156,94 @@ const S: Record<string, React.CSSProperties> = {
         fontSize: "11px",
         fontWeight: 600,
         cursor: "pointer",
+    },
+    briefingCard: {
+        background: "rgba(59, 130, 246, 0.05)",
+        border: "1px solid rgba(59, 130, 246, 0.12)",
+        borderRadius: "10px",
+        padding: "8px 10px",
+        marginBottom: "6px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "4px",
+        position: "relative",
+        transition: "all 0.3s ease",
+    },
+    briefingHeader: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        fontSize: "10px",
+        fontWeight: 800,
+        color: "#1e40af",
+        textTransform: "uppercase",
+        letterSpacing: "0.5px",
+    },
+    briefingContent: {
+        fontSize: "11px",
+        lineHeight: "1.4",
+        color: "#334155",
+        overflow: "hidden",
+        display: "-webkit-box",
+        WebkitBoxOrient: "vertical",
+        transition: "all 0.3s ease",
+    },
+    draftCard: {
+        background: "#f8fafc",
+        border: "1px solid #e2e8f0",
+        borderRadius: "8px",
+        margin: "4px 0",
+        overflow: "hidden",
+    },
+    draftHeader: {
+        background: "#f1f5f9",
+        padding: "6px 10px",
+        fontSize: "10px",
+        fontWeight: 800,
+        color: "#64748b",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        cursor: "pointer",
+        textTransform: "uppercase",
+    },
+    draftBody: {
+        padding: "8px 10px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+    },
+    draftRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+    },
+    draftLabel: {
+        fontSize: "10px",
+        fontWeight: 700,
+        color: "#94a3b8",
+        width: "50px",
+        flexShrink: 0,
+    },
+    draftInput: {
+        flex: 1,
+        background: "#fff",
+        border: "1px solid #e2e8f0",
+        borderRadius: "4px",
+        fontSize: "11px",
+        padding: "2px 6px",
+        color: "#1e293b",
+        outline: "none",
+    },
+    suggestedChip: {
+        background: "#dbeafe",
+        color: "#1e40af",
+        border: "1px solid #bfdbfe",
+        borderRadius: "12px",
+        padding: "2px 8px",
+        fontSize: "10px",
+        fontWeight: 600,
+        cursor: "pointer",
+        transition: "all 0.2s ease",
     },
 };
