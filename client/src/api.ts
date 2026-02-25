@@ -315,3 +315,15 @@ export async function aiVoiceCommand(commandText: string, context: any): Promise
 export async function aiListModels(): Promise<{ ok: boolean; openai: string[]; gemini: string[] }> {
   return await requestJSON(`/api/ai/list-models`);
 }
+
+// -------- Learning --------
+export async function logLearningInteraction(log: any): Promise<{ ok: boolean }> {
+  return await requestJSON(`/api/learning/log`, {
+    method: "POST",
+    body: JSON.stringify(log),
+  });
+}
+
+export async function getLearningProfile(userId: string = "global"): Promise<{ ok: boolean; profile: any }> {
+  return await requestJSON(`/api/learning/profile?userId=${encodeURIComponent(userId)}`);
+}

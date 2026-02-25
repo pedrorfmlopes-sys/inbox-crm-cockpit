@@ -14,6 +14,7 @@ export interface AiState {
     locale: AiLocale;
     history: Array<{ role: "user" | "assistant"; content: string }>;
     smartReplies: string[];
+    action?: string;
 }
 
 export interface CockpitContextType {
@@ -92,6 +93,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         locale: "auto",
         history: [],
         smartReplies: [],
+        action: "reply",
     });
 
     const ctxLoadSeqRef = useRef(0);
@@ -171,7 +173,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                         setCurrentAiState(cached);
                     } else {
                         setCurrentAiState({
-                            prompt: "", output: "", tone: "neutro", locale: "auto", history: [], smartReplies: [],
+                            prompt: "", output: "", tone: "neutro", locale: "auto", history: [], smartReplies: [], action: "reply",
                         });
                     }
                     return prev;

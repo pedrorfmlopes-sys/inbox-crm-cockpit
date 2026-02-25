@@ -3,6 +3,7 @@ import { useCockpit } from "@/components/shell/CockpitProvider";
 import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
 import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMeetingForm, setRecipients, setSubject } from "@/office";
 import { getSettings } from "@/settings";
+import { logLearningInteraction } from "@/api";
 import * as Icons from "@/ui/icons";
 
 export const AiCockpit: React.FC = () => {
@@ -388,7 +389,7 @@ export const AiCockpit: React.FC = () => {
             console.log("[AiCockpit] isComposeMode:", isCompose);
             setDebugLog(`Modo Edição: ${isCompose}`);
 
-            if (ctx.isCompose) {
+            if (isCompose) {
                 setDebugLog("A atualizar rascunho...");
 
                 // Sync metadata first
@@ -399,6 +400,16 @@ export const AiCockpit: React.FC = () => {
                 // Insert body
                 await insertTextToBody(output);
 
+                // Silently log for learning
+                logLearningInteraction({
+                    conversationId: ctx.conversationId,
+                    fromEmail: ctx.fromEmail,
+                    toEmails: (ctx.toRecipients || []).map((r: any) => r.email),
+                    originalSubject: ctx.subject,
+                    originalBody: bodyText,
+                    userResponse: output
+                }).catch(e => console.warn("[AiCockpit] Learning log failed:", e));
+
                 setDebugLog("Atualizado com sucesso!");
                 setMsg("Draft atualizado com sucesso!");
                 setTimeout(() => setMsg(""), 3000);
@@ -407,7 +418,9 @@ export const AiCockpit: React.FC = () => {
 
             // If not in compose mode, try to open a Draft based on action
             setDebugLog("A abrir rascunho (não é modo edição)...");
-            if (aiState.action === "reply") {
+            const effectiveAction = aiState.action || "reply";
+
+            if (effectiveAction === "reply") {
                 await displayReplyForm(output);
             } else if (aiState.action === "forward") {
                 await displayForwardForm(output);
@@ -462,9 +475,17 @@ export const AiCockpit: React.FC = () => {
     };
 
     const handleResetConversation = () => {
-        setAiState({ history: [], output: "" });
+        setAiState({ history: [], output: "", smartReplies: [] });
         setPrompt("");
-        clearFiles(); // Using the new context helper
+        setOutput("");
+        setBriefing(null);
+        setExtractedTasks([]);
+        setShowTaskReview(false);
+        setDraftTo([]);
+        setDraftCc([]);
+        setDraftSubject("");
+        setSuggestedContacts([]);
+        clearFiles();
     };
 
     const toneRefiners: Array<{ label: string; tone: AiTone; icon: React.ReactNode }> = [

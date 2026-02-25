@@ -15,6 +15,7 @@ export type OutlookMessageContext = {
 
   toRecipients?: Recipient[];
   ccRecipients?: Recipient[];
+  isCompose?: boolean;
 };
 
 function sleep(ms: number) {
@@ -157,6 +158,7 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
     receivedDateTimeIso,
     toRecipients,
     ccRecipients,
+    isCompose: await isComposeMode(),
   };
 }
 

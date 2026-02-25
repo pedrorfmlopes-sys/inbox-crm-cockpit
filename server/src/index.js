@@ -12,6 +12,7 @@ import cors from "cors";
 import { odooClientFromEnv } from "./odoo.js";
 import { addLink, listLinksByConversation } from "./linkStore.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
+import { createLearningRouter } from "./routes/learningRoutes.js";
 import fs from "fs";
 import { sessionManager } from "./sessionManager.js";
 
@@ -29,6 +30,7 @@ app.use(express.json({ limit: "20mb" }));
 
 // AI (email assistant)
 app.use("/api/ai", createAiRouter());
+app.use("/api/learning", createLearningRouter());
 
 const port = process.env.PORT ? Number(process.env.PORT) : 7071;
 

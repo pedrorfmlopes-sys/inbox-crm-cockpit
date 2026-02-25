@@ -2,6 +2,7 @@ import express from "express";
 import { aiCreateText, getAiMeta, listAvailableModels } from "../ai/aiService.js";
 import { buildPrompt } from "../ai/promptTemplates.js";
 import { getBriefing, saveBriefing, initBriefingDb } from "../ai/briefingCache.js";
+import { getStyleProfile } from "../learningStore.js";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
@@ -130,6 +131,14 @@ export function createAiRouter() {
       // Option 1 (NATIVE): Send files directly to the AI service (Gemini/future OpenAI)
       console.log(`[ai] Request: action=${action}, files=${files?.length}`);
 
+      // NEW: Fetch and merge autonomous style profile
+      let learnedProfile = null;
+      try {
+        learnedProfile = await getStyleProfile("global");
+      } catch (e) {
+        console.warn("[ai] Failed to fetch learning profile:", e.message);
+      }
+
       const instructions = req.body.prompt || buildPrompt({
         action,
         locale,
@@ -138,7 +147,11 @@ export function createAiRouter() {
         inputText: String(inputText || ""),
         knowledge: Array.isArray(knowledge) ? knowledge.map(String) : [],
         filesContext: clientFilesContext,
-        persona,
+        persona: {
+          ...persona,
+          learnedProfile: learnedProfile?.styleData || null,
+          learnedHabits: learnedProfile?.habitsData || null,
+        },
         briefing,
         contactAliases: Array.isArray(contactAliases) ? contactAliases : [],
       });

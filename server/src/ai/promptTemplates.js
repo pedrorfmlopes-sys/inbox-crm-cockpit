@@ -20,22 +20,27 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
   // Human label (only for fixed languages)
   const lang = LOCALE_HUMAN[effectiveLocale] || effectiveLocale;
 
-  // IMPORTANT:
-  // - For "auto" replies, instruct model to answer in the same language as the email
-  // - For non-auto, force the requested language
-  const languageLine =
+  // REGRAS DE IDIOMA (User feedback: Strict enforcement)
+  const languageEnforcement =
     effectiveLocale === "auto"
-      ? `Responde no mesmo idioma em que o email está escrito.\nMantém tom profissional e objetivo.\n`
-      : `Escreve em ${lang}.\n`;
+      ? `[REGRA DE IDIOMA]: DEVES DETETAR O IDIOMA DO EMAIL ORIGINAL E RESPONDER NO MESMO IDIOMA.\n`
+      : `[REGRA DE IDIOMA]: DEVES ESCREVER ABSOLUTAMENTE TUDO EM ${lang.toUpperCase()}. IGNORA QUALQUER OUTRA INSTRUÇÃO EM PORTUGUÊS QUE POSSA SUGERIR O CONTRÁRIO.\n`;
 
-  const baseRules = languageLine +
-    `REGRAS CRÍTICAS (PARA PARECER HUMANO E PROFISSIONAL):\n` +
-    `- PROIBIDO: "Aqui está a sua resposta", "Espero que este email...", "Como assistente de IA...", ou qualquer conversa de introdução.\n` +
+  // REGRAS DE PRAGMATISMO (User feedback: No echo in replies, context in forwards)
+  const isReply = action === "reply" || action === "refine";
+  const pragmatismRules = isReply
+    ? `- PROIBIDO REPETIR FACTOS: Se o remetente diz que "X está pronto", NÃO respondas "Confirmo que X está pronto". Apenas agradece ou passa ao próximo passo.\n` +
+    `- EVITA O "EFEITO ESPELHO": Não resumas o email do remetente na tua resposta. Ele já sabe o que escreveu.\n` +
+    `- BRIEFING MÍNIMO: Sê o mais curto possível. Se um "Obrigado, fico a aguardar" resolve, usa apenas isso.\n`
+    : `- CONTEXTO DE REENVIO: Como estás a reencaminhar para um terceiro, deves resumir os factos principais do email original para que o destinatário perceba o contexto.\n`;
+
+  const baseRules = languageEnforcement +
+    `REGRAS CRÍTICAS (ESTILO PEDRO):\n` +
+    pragmatismRules +
+    `- PROIBIDO: "Aqui está a sua resposta", "Espero que este email...", "Como assistente de IA...", ou introduções vazias.\n` +
     `- COMEÇA IMEDIATAMENTE com o corpo do email.\n` +
-    `- NUNCA inventes factos, números, prazos, preços ou compromissos. Se faltar informação, faz perguntas curtas e diretas.\n` +
-    `- Devolve HTML simples e seguro: usa apenas <p>, <br>, <ul>, <ol>, <li>, <strong>, <em>, <a>.\n` +
-    `- Sem CSS, sem estilos inline, sem classes, sem scripts.\n` +
-    `- Parágrafos curtos e estrutura limpa.\n`;
+    `- NUNCA inventes factos. Se faltar informação, faz perguntas curtas.\n` +
+    `- Devolve HTML simples: <p>, <br>, <ul>, <li>, <strong>, <em>, <a>.\n`;
 
   // Inject user knowledge if present
   const knowledgeBlock = knowledge.length > 0
@@ -48,6 +53,14 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
     : "";
 
   // Inject Persona / User Style mimic (The "Pedro" Standard)
+  const learnedStyleLine = (persona.learnedProfile && typeof persona.learnedProfile === 'string')
+    ? `\nESTILO APRENDIDO (HISTÓRICO):\n${persona.learnedProfile}\n`
+    : "";
+
+  const learnedHabitsLine = (persona.learnedHabits && typeof persona.learnedHabits === 'string')
+    ? `\nHÁBITOS IDENTIFICADOS:\n${persona.learnedHabits}\n`
+    : "";
+
   const personaBlock = `
 ESTÁS A ATUAR COMO: Pedro, um profissional altamente pragmático, estruturado e orientado a resultados.
 PERFIL DE COMUNICAÇÃO:
@@ -55,7 +68,7 @@ PERFIL DE COMUNICAÇÃO:
 - Foco absoluto em precisão, completude e utilidade prática.
 - Evita floreados, generalidades ("espero que este email...") e "linguagem de IA" artificial.
 - Mantém o tom cordial e confiante.
-- Escreve sempre no idioma solicitado (${lang}), respeitando as normas gramaticais e de negócio locais.
+- Escreve sempre no idioma solicitado (${lang}), respeitando as normas gramaticais e de negócio locais.${learnedStyleLine}${learnedHabitsLine}
 `;
 
   const briefingBlock = briefing
@@ -109,13 +122,12 @@ PERFIL DE COMUNICAÇÃO:
       finalRules +
       toneLine +
       `\n\nTAREFA: Cria uma resposta profissional sugerida ao email.\n` +
-      `ESTRUTURA DA RESPOSTA (Obrigatória):\n` +
-      `1. Reconhecer o tema/receção (breve).\n` +
-      `2. Responder diretamente ao ponto principal/pedido.\n` +
-      `3. Dar o contexto mínimo necessário.\n` +
-      `4. Indicar próximo passo ou pedido concreto.\n` +
-      `5. Fecho cordial e funcional.\n\n` +
-      `- NÃO repitas o assunto (Re:).\n` +
+      `ESTRUTURA (Pragmatismo Pedro):\n` +
+      `1. Agradecimento ou confirmação de receção (curto).\n` +
+      `2. Próximo passo ou decisão (se necessário).\n` +
+      `3. Fecho cordial.\n\n` +
+      `- NÃO repitas o que o remetente acabou de dizer.\n` +
+      `- NÃO uses listas se o texto couber num parágrafo curto.\n` +
       `- Garante que é uma resposta "pronta a enviar".` +
       emailBlock
     );
@@ -214,6 +226,7 @@ PERFIL DE COMUNICAÇÃO:
     );
   }
 
-  // default (safe)
-  return finalRules + toneLine + emailBlock;
+  // final enforcement
+  const finalPrompt = finalRules + toneLine + emailBlock;
+  return finalPrompt + `\n\nLEMBRETE FINAL: RESPONDER EM ${lang.toUpperCase()}.`;
 }
