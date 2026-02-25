@@ -40,7 +40,8 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
     `- PROIBIDO: "Aqui está a sua resposta", "Espero que este email...", "Como assistente de IA...", ou introduções vazias.\n` +
     `- COMEÇA IMEDIATAMENTE com o corpo do email.\n` +
     `- NUNCA inventes factos. Se faltar informação, faz perguntas curtas.\n` +
-    `- Devolve HTML simples: <p>, <br>, <ul>, <li>, <strong>, <em>, <a>.\n`;
+    `- Devolve HTML simples: <p>, <br>, <ul>, <li>, <strong>, <em>, <a>.\n` +
+    `- ORDEM DE PRIORIDADE: 1º Instruções explícitas do Utilizador; 2º Contexto do Email.\n`;
 
   // Inject user knowledge if present
   const knowledgeBlock = knowledge.length > 0
@@ -128,7 +129,8 @@ PERFIL DE COMUNICAÇÃO:
       `3. Fecho cordial.\n\n` +
       `- NÃO repitas o que o remetente acabou de dizer.\n` +
       `- NÃO uses listas se o texto couber num parágrafo curto.\n` +
-      `- Garante que é uma resposta "pronta a enviar".` +
+      `- Garante que é uma resposta "pronta a enviar".\n` +
+      (inputText ? `\n\nINSTRUÇÃO CRÍTICA DO UTILIZADOR (OBRIGATÓRIO SEGUIR): "${inputText}"\n` : "") +
       emailBlock
     );
   }
