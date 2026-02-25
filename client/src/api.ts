@@ -66,7 +66,14 @@ export type LinkPayload = {
 };
 
 export type AiGenerateResponse =
-  | { ok: true; html?: string; text?: string; data?: any }
+  | {
+    ok: true;
+    html?: string;
+    text: string;
+    data?: any;
+    suggestedRecipients?: { to: string[]; cc: string[] };
+    suggestedSubject?: string;
+  }
   | { ok: false; error: string };
 
 export type AuthResponse = { ok: true; token: string; meta: OdooMeta } | { ok: false; message: string };

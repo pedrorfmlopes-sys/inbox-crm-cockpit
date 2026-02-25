@@ -203,12 +203,20 @@ export const AiCockpit: React.FC = () => {
         extractContacts();
     }, [bodyText, ctx.isCompose]);
 
-    // Sync draft defaults from context
+    // Sync draft defaults from context OR persistent aiState
     useEffect(() => {
-        setDraftTo((ctx.toRecipients || []).map((r: any) => r.email));
-        setDraftCc((ctx.ccRecipients || []).map((r: any) => r.email));
-        setDraftSubject(ctx.subject || "");
-    }, [ctx]);
+        // If we have AI-suggested metadata, use it
+        if (aiState.suggestedSubject || (aiState.suggestedTo && aiState.suggestedTo.length > 0)) {
+            setDraftTo(aiState.suggestedTo || []);
+            setDraftCc(aiState.suggestedCc || []);
+            setDraftSubject(aiState.suggestedSubject || "");
+        } else {
+            // Fallback to email context defaults
+            setDraftTo((ctx.toRecipients || []).map((r: any) => r.email));
+            setDraftCc((ctx.ccRecipients || []).map((r: any) => r.email));
+            setDraftSubject(ctx.subject || "");
+        }
+    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo]);
 
     const handlePromptChange = (val: string) => {
         setPrompt(val);
@@ -353,7 +361,13 @@ export const AiCockpit: React.FC = () => {
             });
 
             if (res.ok) {
-                setAiState({ action, output: res.text });
+                setAiState({
+                    action,
+                    output: res.text,
+                    suggestedTo: res.suggestedRecipients?.to || [],
+                    suggestedCc: res.suggestedRecipients?.cc || [],
+                    suggestedSubject: res.suggestedSubject || ""
+                });
                 let fullText = res.text;
                 let current = "";
                 const words = fullText.split(" ");
@@ -474,7 +488,14 @@ export const AiCockpit: React.FC = () => {
     };
 
     const handleResetConversation = () => {
-        setAiState({ history: [], output: "", smartReplies: [] });
+        setAiState({
+            history: [],
+            output: "",
+            smartReplies: [],
+            suggestedTo: [],
+            suggestedCc: [],
+            suggestedSubject: ""
+        });
         setPrompt("");
         setOutput("");
         setBriefing(null);

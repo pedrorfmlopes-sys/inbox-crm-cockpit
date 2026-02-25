@@ -15,6 +15,9 @@ export interface AiState {
     history: Array<{ role: "user" | "assistant"; content: string }>;
     smartReplies: string[];
     action?: string;
+    suggestedTo?: string[];
+    suggestedCc?: string[];
+    suggestedSubject?: string;
 }
 
 export interface CockpitContextType {
@@ -94,6 +97,9 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         history: [],
         smartReplies: [],
         action: "reply",
+        suggestedTo: [],
+        suggestedCc: [],
+        suggestedSubject: "",
     });
 
     const ctxLoadSeqRef = useRef(0);
@@ -173,7 +179,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                         setCurrentAiState(cached);
                     } else {
                         setCurrentAiState({
-                            prompt: "", output: "", tone: "neutro", locale: "auto", history: [], smartReplies: [], action: "reply",
+                            prompt: "", output: "", tone: "neutro", locale: "auto", history: [], smartReplies: [], action: "reply", suggestedTo: [], suggestedCc: [], suggestedSubject: "",
                         });
                     }
                     return prev;
