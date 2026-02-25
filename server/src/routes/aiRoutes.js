@@ -134,7 +134,10 @@ export function createAiRouter() {
       // NEW: Fetch and merge autonomous style profile
       let learnedProfile = null;
       try {
-        learnedProfile = await getStyleProfile("global");
+        const fullProfile = await getStyleProfile("global");
+        if (fullProfile && fullProfile.styleData && Object.keys(fullProfile.styleData).length > 0) {
+          learnedProfile = fullProfile;
+        }
       } catch (e) {
         console.warn("[ai] Failed to fetch learning profile:", e.message);
       }
@@ -154,6 +157,7 @@ export function createAiRouter() {
         },
         briefing,
         contactAliases: Array.isArray(contactAliases) ? contactAliases : [],
+        currentTime: new Date().toISOString(), // NEW: Time awareness for greetings
       });
 
       const result = await aiCreateText({

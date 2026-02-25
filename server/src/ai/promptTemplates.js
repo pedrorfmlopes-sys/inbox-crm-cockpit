@@ -2,7 +2,7 @@
 // Centralized prompt templates for the "MailMaestro-like" features.
 // Keep these versioned and isolated from Odoo/CRM code.
 
-export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "", persona = {}, briefing = null, contactAliases = [] }) {
+export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "", persona = {}, briefing = null, contactAliases = [], currentTime = null }) {
   const LOCALE_HUMAN = {
     "pt-PT": "Português (Portugal)",
     "es-ES": "Espanhol",
@@ -34,14 +34,29 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
     `- BRIEFING MÍNIMO: Sê o mais curto possível. Se um "Obrigado, fico a aguardar" resolve, usa apenas isso.\n`
     : `- CONTEXTO DE REENVIO: Como estás a reencaminhar para um terceiro, deves resumir os factos principais do email original para que o destinatário perceba o contexto.\n`;
 
+  // REGRAS DE ESTRUTURA E TRATAMENTO (User feedback: Proper greetings and structure)
+  let greeting = "Deves saudar educadamente.";
+  if (currentTime) {
+    try {
+      const hour = new Date(currentTime).getHours();
+      if (hour >= 5 && hour < 12) greeting = "Deves obrigatoriamente começar com 'Bom dia,'.";
+      else if (hour >= 12 && hour < 19) greeting = "Deves obrigatoriamente começar com 'Boa tarde,'.";
+      else greeting = "Deves obrigatoriamente começar com 'Boa noite,'.";
+    } catch (e) {
+      greeting = "Deves saudar cordialmente (Bom dia/Boa tarde).";
+    }
+  }
+
   const baseRules = languageEnforcement +
-    `REGRAS CRÍTICAS (ESTILO PEDRO):\n` +
+    `REGRAS DE OURO (ESTILO PEDRO - NÃO ABDICAR):\n` +
+    `- SAUDAÇÃO OBRIGATÓRIA: ${greeting}\n` +
+    `- AGRADECIMENTO FINAL: Termina sempre com uma nota de agradecimento empática e cordial (ex: "Muito obrigado pela ajuda.", "Agradeço a vossa disponibilidade."). Evita o "Obrigado" seco.\n` +
+    `- ESTRUTURA PROFISSIONAL: Saudação -> Resposta clara (ao ponto) -> Próximos Passos -> Fecho empático.\n` +
     pragmatismRules +
-    `- PROIBIDO: "Aqui está a sua resposta", "Espero que este email...", "Como assistente de IA...", ou introduções vazias.\n` +
-    `- COMEÇA IMEDIATAMENTE com o corpo do email.\n` +
-    `- NUNCA inventes factos. Se faltar informação, faz perguntas curtas.\n` +
+    `- PROIBIDO: "Aqui está a sua resposta", "Espero que este email...", "Certamente posso ajudar", "Como assistente de IA...", ou introduções redundantes.\n` +
+    `- NUNCA inventes factos. Se faltar informação, faz perguntas curtas e diretas.\n` +
     `- Devolve HTML simples: <p>, <br>, <ul>, <li>, <strong>, <em>, <a>.\n` +
-    `- ORDEM DE PRIORIDADE: 1º Instruções explícitas do Utilizador; 2º Contexto do Email.\n`;
+    `- ORDEM DE PRIORIDADE: 1º Instruções explícitas; 2º Contexto do Email; 3º Estilo Aprendido.\n`;
 
   // Inject user knowledge if present
   const knowledgeBlock = knowledge.length > 0
@@ -150,9 +165,11 @@ PERFIL DE COMUNICAÇÃO:
       `\n\nTAREFA: O utilizador enviou uma instrução para REFINAR a tua resposta anterior.\n` +
       `REGRAS CRÍTICAS:\n` +
       `1. Aplica a instrução do utilizador ao conteúdo da tua última resposta.\n` +
-      `2. Devolve APENAS o conteúdo final alterado. Proibido usar "Aqui está", "Entendido" ou qualquer introdução.\n` +
-      `3. Mantém a estrutura HTML pedida.\n` +
-      `4. Se a instrução for uma tradução, traduz todo o bloco anterior.\n`
+      `2. MANTÉM A ESTRUTURA (Saudação, Parágrafo, Fecho) a menos que te seja pedido explicitamente para remover.\n` +
+      `3. PROIBIDO ENCURTAR por iniciativa própria. Se o utilizador pede para "adicionar" ou "corrigir", não removas o que já estava bem.\n` +
+      `4. Devolve APENAS o conteúdo final alterado. Proibido usar "Aqui está", "Entendido" ou qualquer introdução.\n` +
+      `5. Mantém a estrutura HTML pedida.\n` +
+      `6. Se a instrução for uma tradução, traduz todo o bloco anterior.\n`
     );
   }
 
@@ -160,7 +177,13 @@ PERFIL DE COMUNICAÇÃO:
     return (
       finalRules +
       toneLine +
-      `\n\nTAREFA: Escreve um rascunho de email para REENVIAR a uma terceira entidade (não o remetente original) com base no assunto em contexto.\nRegras extra:\n- O rascunho deve começar com "[Rascunho para Reenvio]".\n- Mantém o tom profissional.\n- Explica o contexto do email original se necessário.\n- Se o utilizador forneceu instruções em 'inputText', segue-as rigorosamente: "${inputText || ""}"\n- Devolve apenas o corpo do email.` +
+      `\n\nTAREFA: Escreve um rascunho de email para REENVIAR a uma terceira entidade.\n` +
+      `REGRAS DE REENVIO (INTELIGÊNCIA SOCIAL):\n` +
+      `- ANALISA OS NOMES: Se o utilizador disser "Reenvia à Nerea", procura no histórico quem é o contacto. Percebe o papel da pessoa no processo.\n` +
+      `- RESUME PARA TERCEIROS: O destinatário pode não ter lido o fio original completo. Sê claro sobre o que estás a pedir/informar.\n` +
+      `- O rascunho deve começar com "[Rascunho para Reenvio]".\n` +
+      `- Se o utilizador forneceu instruções em 'inputText', segue-as rigorosamente: "${inputText || ""}"\n` +
+      `- Devolve apenas o corpo do email.` +
       emailBlock
     );
   }
