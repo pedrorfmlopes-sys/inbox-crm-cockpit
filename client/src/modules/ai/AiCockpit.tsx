@@ -420,12 +420,11 @@ export const AiCockpit: React.FC = () => {
             setDebugLog("A abrir rascunho (não é modo edição)...");
             const effectiveAction = aiState.action || "reply";
 
-            if (effectiveAction === "reply") {
-                await displayReplyForm(output);
-            } else if (aiState.action === "forward") {
+            if (effectiveAction === "forward") {
                 await displayForwardForm(output);
             } else {
-                throw new Error("Para inserir este texto, tens de estar em modo de edição ou abrir uma resposta.");
+                // Default to Reply (including for refine, rewrite, etc.)
+                await displayReplyForm(output);
             }
             setDebugLog("Janela aberta.");
         } catch (e: any) {
