@@ -21,97 +21,111 @@ export function getAiMeta() {
   };
 }
 
-export async function aiCreateText({
-  mode = "fast",
-  instructions,
-  input,
-  files = [], // NEW: Support for raw files (multimodal)
-  history = [], // NEW: Support for conversation history
-  max_output_tokens = 256,
-  temperature = 0.2,
-  isFallback = false, // Internal flag to prevent infinite loops
-  customModels = {}, // NEW: Allow overriding models from client
-}) {
-  const cfg = getAiConfig();
+export async function aiCreateText(args) {
+  const {
+    mode = "fast",
+    instructions,
+    input,
+    files = [],
+    history = [],
+    max_output_tokens = 256,
+    temperature = 0.2,
+    isFallback = false,
+    customModels = {},
+  } = args;
 
+  const cfg = getAiConfig();
   if (!cfg.enabled) {
     throw Object.assign(new Error("AI desativado."), { status: 400 });
   }
 
-  // --- HYBRID PROVIDER SELECTION ---
-  // If we have files (PDFs/Images) and a Gemini key, we use Gemini (it's best for this).
-  // Otherwise, we use the default provider (usually OpenAI).
-  let selectedProvider = cfg.provider;
-  if (files.length > 0 && (customModels.geminiApiKey || cfg.gemini.apiKey)) {
-    selectedProvider = "gemini";
-    console.log(`[ai] Switch to Gemini for multimodal request (found ${files.length} files)`);
+  // --- STRATEGY: Prioritize OpenAI (Pedro prefers GPT empathy) ---
+  // We only fallback to Gemini if OpenAI fails or has no key.
+  const providers = [];
+
+  // 1. Start with the preferred provider from config (usually openai)
+  providers.push(cfg.provider);
+
+  // 2. Add the alternative as failover
+  const alternative = cfg.provider === "openai" ? "gemini" : "openai";
+  providers.push(alternative);
+
+  // Filter out providers without keys
+  const availableProviders = providers.filter(p => {
+    const key = p === "openai"
+      ? (customModels.openaiApiKey || cfg.openai.apiKey)
+      : (customModels.geminiApiKey || cfg.gemini.apiKey);
+    return Boolean(key);
+  });
+
+  if (availableProviders.length === 0) {
+    throw Object.assign(new Error("Nenhuma API Key disponível (OpenAI/Gemini)."), { status: 400 });
   }
 
-  try {
-    if (selectedProvider === "openai") {
-      const apiKey = customModels.openaiApiKey || cfg.openai.apiKey;
-      if (!apiKey) throw Object.assign(new Error("OPENAI_API_KEY em falta"), { status: 400 });
-      const model = customModels.openaiModelFast || (mode === "quality" ? cfg.openai.modelQuality : cfg.openai.modelFast);
-      return await openaiCreateResponse({
-        apiKey,
-        model,
-        instructions,
-        input,
-        files, // Pass files to OpenAI (will handle images if supported)
-        history, // NEW: Pass history
-        max_output_tokens,
-        temperature,
-      });
-    }
+  let lastError = null;
 
-    if (selectedProvider === "gemini") {
-      const apiKey = customModels.geminiApiKey || cfg.gemini.apiKey;
-      if (!apiKey) throw Object.assign(new Error("GEMINI_API_KEY em falta"), { status: 400 });
-      const model = customModels.geminiModel || (mode === "quality" ? cfg.gemini.modelQuality : cfg.gemini.modelFast);
-      return await geminiCreateResponse({
-        apiKey,
-        model,
-        instructions,
-        input,
-        files,
-        history, // NEW: Pass history
-        max_output_tokens,
-        temperature,
-      });
-    }
-  } catch (err) {
-    // --- FALLBACK LOGIC ---
-    // If Gemini fails and we haven't tried OpenAI yet, fallback to OpenAI
-    if (!isFallback && selectedProvider === "gemini" && cfg.openai.apiKey) {
-      console.warn(`[ai] Gemini failed (${err.message}). Falling back to OpenAI with text extraction...`);
-
-      let extraContext = "";
-      for (const f of files) {
-        if (f.type === "application/pdf" && f.content) {
-          const buffer = Buffer.from(f.content, 'base64');
-          const text = await extractTextFromPdfBuffer(buffer);
-          if (text) {
-            extraContext += `\n--- CONTEÚDO EXTRAÍDO DO PDF (${f.name}) ---\n${text}\n---\n`;
-          }
-        }
+  for (const provider of availableProviders) {
+    try {
+      if (provider === "openai") {
+        const apiKey = customModels.openaiApiKey || cfg.openai.apiKey;
+        const model = customModels.openaiModelFast || (mode === "quality" ? cfg.openai.modelQuality : cfg.openai.modelFast);
+        console.log(`[ai] Calling OpenAI (${model})...`);
+        return await openaiCreateResponse({
+          apiKey,
+          model,
+          instructions,
+          input,
+          files,
+          history,
+          max_output_tokens,
+          temperature,
+        });
       }
 
-      return await aiCreateText({
-        mode,
-        instructions: `[NOTA: O motor de análise visual falhou. O texto abaixo foi extraído manualmente do PDF.]\n\n${instructions}${extraContext}`,
-        input,
-        files: [],
-        history, // NEW: Propagate history to fallback
-        max_output_tokens,
-        temperature,
-        isFallback: true,
-        customModels, // Propagate custom models
-      });
+      if (provider === "gemini") {
+        const apiKey = customModels.geminiApiKey || cfg.gemini.apiKey;
+        const model = customModels.geminiModel || (mode === "quality" ? cfg.gemini.modelQuality : cfg.gemini.modelFast);
+        console.log(`[ai] Calling Gemini (${model})...`);
+        return await geminiCreateResponse({
+          apiKey,
+          model,
+          instructions,
+          input,
+          files,
+          history,
+          max_output_tokens,
+          temperature,
+        });
+      }
+    } catch (err) {
+      console.warn(`[ai] Provider ${provider} failed: ${err.message}`);
+      lastError = err;
+
+      // If we are on the first provider and it failed, and it was OpenAI with PDFs,
+      // we might want to "pre-extract" text for the next provider if it's OpenAI too (unlikely)
+      // but if the NEXT is Gemini, it handles PDFs natively.
+      // If the CURRENT was Gemini and failed, and the NEXT is OpenAI, we MUST extract text.
+      if (provider === "gemini" && availableProviders.indexOf(provider) < availableProviders.length - 1) {
+        const nextProvider = availableProviders[availableProviders.indexOf(provider) + 1];
+        if (nextProvider === "openai") {
+          console.log("[ai] Falling back from Gemini to OpenAI, extracting PDF text...");
+          let extraContext = "";
+          for (const f of files) {
+            if (f.type === "application/pdf" && f.content) {
+              const buffer = Buffer.from(f.content, 'base64');
+              const text = await extractTextFromPdfBuffer(buffer);
+              if (text) extraContext += `\n--- CONTEÚDO EXTRAÍDO DO PDF (${f.name}) ---\n${text}\n---\n`;
+            }
+          }
+          // Update instructions for the next attempt
+          args.instructions = `[NOTA: O motor fallback foi ativado.]\n\n${instructions}${extraContext}`;
+          args.files = []; // Clear files since OpenAI handles text now
+        }
+      }
     }
-    throw err;
   }
 
-  throw Object.assign(new Error(`AI_PROVIDER inválido: ${selectedProvider}`), { status: 400 });
+  throw lastError || new Error("Falha ao contactar serviços de IA.");
 }
 
 export async function aiSelftest(customModels = {}) {
