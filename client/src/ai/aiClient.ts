@@ -41,7 +41,13 @@ export type AiGenerateRequest = {
 };
 
 export type AiGenerateResponse =
-  | { ok: true; html: string; text: string }
+  | {
+    ok: true;
+    html: string;
+    text: string;
+    suggestedRecipients?: { to: string[]; cc: string[] };
+    suggestedSubject?: string;
+  }
   | { ok: false; error: string };
 
 async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {

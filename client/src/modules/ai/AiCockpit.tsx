@@ -907,7 +907,7 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "68px", minWidth: "68px", justifyContent: "flex-start", padding: "0 6px" }}
+                        style={{ ...S.secondaryBtnLink, width: "64px", minWidth: "64px", justifyContent: "flex-start", padding: "0 6px" }}
                         onClick={() => setActiveMenu(activeMenu === "lang" ? null : "lang")}
                         title="Idioma"
                     >
@@ -982,12 +982,12 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "84px", minWidth: "84px", justifyContent: "flex-start", padding: "0 8px" }}
+                        style={{ ...S.secondaryBtnLink, width: "78px", minWidth: "78px", justifyContent: "flex-start", padding: "0 8px" }}
                         onClick={() => setActiveMenu(activeMenu === "presets" ? null : "presets")}
                         title="Modelos de Resposta Rápidos"
                     >
                         <Icons.Settings size={11} style={{ opacity: 0.6 }} />
-                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>MODELOS</span>
+                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>MODS</span>
                     </button>
 
                     {activeMenu === "presets" && (
@@ -1051,7 +1051,7 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "88px", minWidth: "88px", justifyContent: "flex-start", padding: "0 8px" }}
+                        style={{ ...S.secondaryBtnLink, width: "72px", minWidth: "72px", justifyContent: "flex-start", padding: "0 8px" }}
                         onClick={() => setActiveMenu(activeMenu === "intents" ? null : "intents")}
                         disabled={isFetchingIntents}
                         title="Sugestões de Resposta da IA"
@@ -1061,7 +1061,7 @@ export const AiCockpit: React.FC = () => {
                         ) : (
                             <Icons.Activity size={11} style={{ opacity: 0.6 }} />
                         )}
-                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>SUGESTÕES</span>
+                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>DICAS</span>
                     </button>
 
                     {activeMenu === "intents" && (
@@ -1112,12 +1112,12 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "88px", minWidth: "88px", justifyContent: "flex-start", padding: "0 8px" }}
+                        style={{ ...S.secondaryBtnLink, width: "72px", minWidth: "72px", justifyContent: "flex-start", padding: "0 8px" }}
                         onClick={() => setActiveMenu(activeMenu === "contacts" ? null : "contacts")}
                         title="Contactos Sugeridos"
                     >
                         <Icons.User size={11} style={{ opacity: 0.6 }} />
-                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>CONTACTOS</span>
+                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>LISTA</span>
                     </button>
 
                     {activeMenu === "contacts" && (
@@ -1185,7 +1185,7 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "68px", minWidth: "68px", justifyContent: "flex-start", padding: "0 6px" }}
+                        style={{ ...S.secondaryBtnLink, width: "64px", minWidth: "64px", justifyContent: "flex-start", padding: "0 6px" }}
                         onClick={() => setActiveMenu(activeMenu === "mode" ? null : "mode")}
                     >
                         <div style={{
@@ -1236,7 +1236,7 @@ export const AiCockpit: React.FC = () => {
             </div>
 
             {
-                (output || isGenerating || aiState.history.length > 0) && (
+                (output || isGenerating || aiState.history.length > 0 || history.length > 0) && (
                     <div style={S.outputCard}>
                         <div style={S.outputHeader}>
                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1244,15 +1244,24 @@ export const AiCockpit: React.FC = () => {
                                 {isGenerating && <div style={S.typingDots}><span>.</span><span>.</span><span>.</span></div>}
                             </div>
                             <div style={{ display: "flex", gap: "8px" }}>
-                                {history.length > 1 && (
+                                {history.length > 0 && (
                                     <div style={{ position: "relative" }}>
                                         <button
-                                            style={{ ...S.actionBtn, color: "#2563eb", display: "flex", alignItems: "center", gap: "4px" }}
+                                            style={{
+                                                ...S.actionBtn,
+                                                color: "#2563eb",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: "4px",
+                                                background: !output ? "rgba(37, 99, 235, 0.08)" : "none",
+                                                padding: !output ? "4px 8px" : "0",
+                                                borderRadius: "4px"
+                                            }}
                                             onClick={() => setActiveMenu(activeMenu === "rollback" as any ? null : "rollback" as any)}
-                                            title="Rollback: Voltar a uma resposta anterior"
+                                            title="Histórico: Voltar a uma resposta anterior"
                                         >
                                             <Icons.RotateCcw size={14} />
-                                            <span style={{ fontSize: "9px" }}>ROLLBACK</span>
+                                            <span style={{ fontSize: "9px" }}>HISTÓRICO</span>
                                         </button>
                                         {activeMenu === "rollback" as any && (
                                             <div style={{ ...S.cascadeMenu, width: "220px", right: 0, left: "auto", top: "24px" }}>
@@ -1364,45 +1373,6 @@ export const AiCockpit: React.FC = () => {
                                         />
                                     </div>
 
-                                    {settings?.contactAliases?.length > 0 && (
-                                        <div style={{ marginTop: "8px" }}>
-                                            <span style={{ fontSize: "9px", fontWeight: 800, color: "#1e40af", textTransform: "uppercase" }}>Atalhos Rápidos (Contactos):</span>
-                                            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "4px" }}>
-                                                {settings.contactAliases.map((c: any) => (
-                                                    <button
-                                                        key={c.id}
-                                                        style={S.suggestedChip}
-                                                        onClick={() => {
-                                                            if (!draftTo.includes(c.email)) setDraftTo([...draftTo, c.email]);
-                                                        }}
-                                                        title={c.email}
-                                                    >
-                                                        <Icons.User size={10} style={{ marginRight: "3px" }} />
-                                                        {c.name}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {suggestedContacts.length > 0 && (
-                                        <div style={{ marginTop: "8px" }}>
-                                            <span style={{ fontSize: "9px", fontWeight: 800, color: "#1e40af", textTransform: "uppercase" }}>Contactos Detetados no Email:</span>
-                                            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "4px" }}>
-                                                {suggestedContacts.map(email => (
-                                                    <button
-                                                        key={email}
-                                                        style={S.suggestedChip}
-                                                        onClick={() => {
-                                                            if (!draftTo.includes(email)) setDraftTo([...draftTo, email]);
-                                                        }}
-                                                    >
-                                                        + {email}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
                                 </div>
                             </div>
                         )}
