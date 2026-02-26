@@ -283,3 +283,23 @@ export const Target: React.FC<IconProps> = (props) => (
         <circle cx="12" cy="12" r="2" />
     </BaseIcon>
 );
+
+export const Activity: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+    </BaseIcon>
+);
+
+export const Clock: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+    </BaseIcon>
+);
+
+export const AtSign: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <circle cx="12" cy="12" r="4" />
+        <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" />
+    </BaseIcon>
+);

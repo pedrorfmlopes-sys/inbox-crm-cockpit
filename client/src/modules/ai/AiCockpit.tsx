@@ -6,6 +6,41 @@ import { getSettings } from "@/settings";
 import { logLearningInteraction } from "@/api";
 import * as Icons from "@/ui/icons";
 
+// --- PERSISTENCE HELPERS ---
+const AI_HISTORY_KEY = "icc.ai_history.v1";
+const HISTORY_KEEP_MS = 5 * 24 * 60 * 60 * 1000; // 5 days
+
+type HistoryEntry = {
+    id: string;
+    emailKey: string;
+    ts: number;
+    output: string;
+    prompt: string;
+    action: string;
+};
+
+function getEmailKey(ctx: any) {
+    return ctx.conversationId || ctx.internetMessageId || "global";
+}
+
+function loadHistory(): HistoryEntry[] {
+    try {
+        const raw = localStorage.getItem(AI_HISTORY_KEY);
+        if (!raw) return [];
+        const arr = JSON.parse(raw);
+        const now = Date.now();
+        return arr.filter((h: any) => now - h.ts < HISTORY_KEEP_MS);
+    } catch { return []; }
+}
+
+function saveHistory(entries: HistoryEntry[]) {
+    try {
+        const now = Date.now();
+        const pruned = entries.filter(h => now - h.ts < HISTORY_KEEP_MS).slice(-100);
+        localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(pruned));
+    } catch { }
+}
+
 export const AiCockpit: React.FC = () => {
     const { ctx, bodyText, setMsg, aiState, setAiState, files, addFile, removeFile, clearFiles, settings } = useCockpit() as any;
 
@@ -37,13 +72,20 @@ export const AiCockpit: React.FC = () => {
 
     // Presets Search State
     const [presetSearch, setPresetSearch] = useState("");
+    const [intentSearch, setIntentSearch] = useState("");
+    const [contactSearch, setContactSearch] = useState("");
+
+    // History / Rollback
+    const [history, setHistory] = useState<HistoryEntry[]>([]);
+    const emailKey = getEmailKey(ctx);
 
     // CRITICAL: Only sync local state from context when the conversation (email) changes.
     useEffect(() => {
         setPrompt(aiState.prompt);
         setOutput(aiState.output);
         setDebugLog(""); // Clear debug log on switch
-    }, [ctx.conversationId]);
+        setHistory(loadHistory().filter(h => h.emailKey === emailKey));
+    }, [ctx.conversationId, emailKey]);
 
     // Automated Task Extraction in Read Mode (with Persistence)
     useEffect(() => {
@@ -385,6 +427,19 @@ export const AiCockpit: React.FC = () => {
                 setAiState({ output: fullText, history: newHistory });
                 setPrompt("");
                 setShowDraftPreview(true);
+
+                // Persist to Local History
+                const entry: HistoryEntry = {
+                    id: Math.random().toString(36).substring(7),
+                    emailKey,
+                    ts: Date.now(),
+                    output: fullText,
+                    prompt: extraPrompt || prompt,
+                    action
+                };
+                const fullHist = [entry, ...loadHistory()];
+                saveHistory(fullHist);
+                setHistory(fullHist.filter(h => h.emailKey === emailKey));
             } else {
                 setMsg(res.error);
             }
@@ -461,7 +516,7 @@ export const AiCockpit: React.FC = () => {
         URL.revokeObjectURL(url);
     };
 
-    const [activeMenu, setActiveMenu] = useState<"lang" | "mode" | "presets" | null>(null);
+    const [activeMenu, setActiveMenu] = useState<"lang" | "mode" | "presets" | "intents" | "contacts" | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -644,18 +699,9 @@ export const AiCockpit: React.FC = () => {
                     {isFetchingIntents ? (
                         <div style={S.skeletonText}>A sugerir respostas...</div>
                     ) : (
-                        aiState.smartReplies.map((intent: string, idx: number) => (
-                            <button
-                                key={idx}
-                                onClick={() => {
-                                    setPrompt(intent);
-                                    handleGenerate("reply", intent);
-                                }}
-                                style={S.intentChip}
-                            >
-                                {intent}
-                            </button>
-                        ))
+                        <div style={{ padding: "4px 8px", fontSize: "10px", color: "var(--iccc-text-muted)" }}>
+                            Usa o menu <strong>SUGESTÕES</strong> acima para respostas rápidas.
+                        </div>
                     )}
                 </div>
             )}
@@ -946,19 +992,17 @@ export const AiCockpit: React.FC = () => {
 
                     {activeMenu === "presets" && (
                         <div style={{ ...S.cascadeMenu, width: "160px" }}>
-                            {settings?.responsePresets?.length > 5 && (
-                                <div style={{ padding: "4px 8px" }}>
-                                    <div style={{ ...S.chatInputWrapper, padding: "0 6px", background: "#fff", height: "24px" }}>
-                                        <input
-                                            style={{ ...S.chatInput, fontSize: "10px", padding: 0 }}
-                                            placeholder="Procurar..."
-                                            value={presetSearch}
-                                            onChange={(e) => setPresetSearch(e.target.value)}
-                                            autoFocus
-                                        />
-                                    </div>
+                            <div style={{ padding: "4px 8px" }}>
+                                <div style={{ ...S.chatInputWrapper, padding: "0 6px", background: "#fff", height: "24px" }}>
+                                    <input
+                                        style={{ ...S.chatInput, fontSize: "10px", padding: 0 }}
+                                        placeholder="Procurar..."
+                                        value={presetSearch}
+                                        onChange={(e) => setPresetSearch(e.target.value)}
+                                        autoFocus
+                                    />
                                 </div>
-                            )}
+                            </div>
 
                             {(settings?.responsePresets || [])
                                 .filter((p: any) =>
@@ -997,6 +1041,140 @@ export const AiCockpit: React.FC = () => {
                                         Nenhum modelo encontrado.
                                     </div>
                                 )}
+                        </div>
+                    )}
+                </div>
+
+                <div style={{ width: "1px", height: "16px", background: "rgba(0,0,0,0.06)", margin: "0 2px" }}></div>
+
+                {/* Intents Menu (Smart Replies) */}
+                <div style={{ position: "relative" }}>
+                    <button
+                        className="iccc-glossy-pill iccc-secondary-pill"
+                        style={{ ...S.secondaryBtnLink, width: "88px", minWidth: "88px", justifyContent: "flex-start", padding: "0 8px" }}
+                        onClick={() => setActiveMenu(activeMenu === "intents" ? null : "intents")}
+                        disabled={isFetchingIntents}
+                        title="Sugestões de Resposta da IA"
+                    >
+                        {isFetchingIntents ? (
+                            <Icons.RotateCcw size={11} style={{ animation: "spin 1s linear infinite", opacity: 0.6 }} />
+                        ) : (
+                            <Icons.Activity size={11} style={{ opacity: 0.6 }} />
+                        )}
+                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>SUGESTÕES</span>
+                    </button>
+
+                    {activeMenu === "intents" && (
+                        <div style={{ ...S.cascadeMenu, width: "160px" }}>
+                            <div style={{ padding: "4px 8px" }}>
+                                <div style={{ ...S.chatInputWrapper, padding: "0 6px", background: "#fff", height: "24px" }}>
+                                    <input
+                                        style={{ ...S.chatInput, fontSize: "10px", padding: 0 }}
+                                        placeholder="Procurar..."
+                                        value={intentSearch}
+                                        onChange={(e) => setIntentSearch(e.target.value)}
+                                        autoFocus
+                                    />
+                                </div>
+                            </div>
+
+                            {aiState.smartReplies
+                                .filter((i: string) => !intentSearch || i.toLowerCase().includes(intentSearch.toLowerCase()))
+                                .map((intent: string, idx: number) => (
+                                    <button
+                                        key={idx}
+                                        className="iccc-glossy-pill iccc-secondary-pill"
+                                        style={S.cascadeItem}
+                                        onClick={() => {
+                                            setActiveMenu(null);
+                                            setIntentSearch("");
+                                            setPrompt(intent);
+                                            handleGenerate("reply", intent);
+                                        }}
+                                    >
+                                        <div style={{ width: "16px", display: "flex", justifyContent: "center" }}><Icons.Sparkles size={10} /></div>
+                                        <span style={{ fontWeight: 800, fontSize: "10px" }}>{intent.toUpperCase()}</span>
+                                    </button>
+                                ))}
+
+                            {aiState.smartReplies.length === 0 && !isFetchingIntents && (
+                                <div style={{ ...S.hint, padding: "10px", textAlign: "center", fontSize: "10px" }}>
+                                    Nenhuma sugestão disponível.
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                <div style={{ width: "1px", height: "16px", background: "rgba(0,0,0,0.06)", margin: "0 2px" }}></div>
+
+                {/* Contacts Menu */}
+                <div style={{ position: "relative" }}>
+                    <button
+                        className="iccc-glossy-pill iccc-secondary-pill"
+                        style={{ ...S.secondaryBtnLink, width: "88px", minWidth: "88px", justifyContent: "flex-start", padding: "0 8px" }}
+                        onClick={() => setActiveMenu(activeMenu === "contacts" ? null : "contacts")}
+                        title="Contactos Sugeridos"
+                    >
+                        <Icons.User size={11} style={{ opacity: 0.6 }} />
+                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>CONTACTOS</span>
+                    </button>
+
+                    {activeMenu === "contacts" && (
+                        <div style={{ ...S.cascadeMenu, width: "180px", left: "0" }}>
+                            <div style={{ padding: "4px 8px" }}>
+                                <div style={{ ...S.chatInputWrapper, padding: "0 6px", background: "#fff", height: "24px" }}>
+                                    <input
+                                        style={{ ...S.chatInput, fontSize: "10px", padding: 0 }}
+                                        placeholder="Procurar..."
+                                        value={contactSearch}
+                                        onChange={(e) => setContactSearch(e.target.value)}
+                                        autoFocus
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Suggested from Email Context */}
+                            {suggestedContacts.length > 0 && suggestedContacts
+                                .filter(e => !contactSearch || e.toLowerCase().includes(contactSearch.toLowerCase()))
+                                .map(email => (
+                                    <button
+                                        key={email}
+                                        className="iccc-glossy-pill iccc-secondary-pill"
+                                        style={S.cascadeItem}
+                                        onClick={() => {
+                                            if (!draftTo.includes(email)) setDraftTo([...draftTo, email]);
+                                            setActiveMenu(null);
+                                        }}
+                                    >
+                                        <div style={{ width: "16px", display: "flex", justifyContent: "center" }}><Icons.AtSign size={10} /></div>
+                                        <span style={{ fontSize: "9px", overflow: "hidden", textOverflow: "ellipsis" }}>{email}</span>
+                                    </button>
+                                ))}
+
+                            {/* Aliases from Settings */}
+                            {settings?.contactAliases?.length > 0 && settings.contactAliases
+                                .filter((c: any) => !contactSearch || c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.email.toLowerCase().includes(contactSearch.toLowerCase()))
+                                .map((c: any) => (
+                                    <button
+                                        key={c.id}
+                                        className="iccc-glossy-pill iccc-secondary-pill"
+                                        style={S.cascadeItem}
+                                        onClick={() => {
+                                            if (!draftTo.includes(c.email)) setDraftTo([...draftTo, c.email]);
+                                            setActiveMenu(null);
+                                        }}
+                                    >
+                                        <div style={{ width: "16px", display: "flex", justifyContent: "center" }}><Icons.User size={10} /></div>
+                                        <span style={{ fontWeight: 800 }}>{c.name.toUpperCase()}</span>
+                                    </button>
+                                ))}
+
+                            {suggestedContacts.length === 0 && (settings?.contactAliases || []).length === 0 && (
+                                <div style={{ ...S.hint, padding: "10px", textAlign: "center", fontSize: "10px" }}>
+                                    Sem contactos detetados.
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -1066,6 +1244,42 @@ export const AiCockpit: React.FC = () => {
                                 {isGenerating && <div style={S.typingDots}><span>.</span><span>.</span><span>.</span></div>}
                             </div>
                             <div style={{ display: "flex", gap: "8px" }}>
+                                {history.length > 1 && (
+                                    <div style={{ position: "relative" }}>
+                                        <button
+                                            style={{ ...S.actionBtn, color: "#2563eb", display: "flex", alignItems: "center", gap: "4px" }}
+                                            onClick={() => setActiveMenu(activeMenu === "rollback" as any ? null : "rollback" as any)}
+                                            title="Rollback: Voltar a uma resposta anterior"
+                                        >
+                                            <Icons.RotateCcw size={14} />
+                                            <span style={{ fontSize: "9px" }}>ROLLBACK</span>
+                                        </button>
+                                        {activeMenu === "rollback" as any && (
+                                            <div style={{ ...S.cascadeMenu, width: "220px", right: 0, left: "auto", top: "24px" }}>
+                                                {history.slice(1).map((h, i) => (
+                                                    <button
+                                                        key={h.id}
+                                                        className="iccc-glossy-pill iccc-secondary-pill"
+                                                        style={{ ...S.cascadeItem, height: "auto", padding: "6px 10px", flexDirection: "column", alignItems: "flex-start", gap: "2px" }}
+                                                        onClick={() => {
+                                                            setOutput(h.output);
+                                                            setActiveMenu(null);
+                                                            setMsg("Versão anterior restaurada.");
+                                                        }}
+                                                    >
+                                                        <div style={{ display: "flex", alignItems: "center", gap: "4px", width: "100%" }}>
+                                                            <Icons.Clock size={10} style={{ opacity: 0.5 }} />
+                                                            <span style={{ fontSize: "8px", color: "#64748b" }}>{new Date(h.ts).toLocaleString()}</span>
+                                                        </div>
+                                                        <div style={{ fontSize: "10px", color: "#1e293b", fontWeight: 700, whiteSpace: "normal", textAlign: "left" }}>
+                                                            {h.prompt.length > 40 ? h.prompt.substring(0, 40) + "..." : h.prompt || "(Sem instrução)"}
+                                                        </div>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                                 <button style={S.actionBtn} onClick={handleResetConversation} title="Limpar conversa (Reset Total)">
                                     <Icons.Trash size={14} />
                                 </button>
@@ -1227,7 +1441,7 @@ export const AiCockpit: React.FC = () => {
                     </div>
                 )
             }
-        </div >
+        </div>
     );
 };
 
