@@ -104,6 +104,7 @@ export function createAiRouter() {
         tone = "neutro",
         email,
         inputText,
+        draftText = "",    // NEW: explicit draft for refine
         knowledge = [],
         history = [], // NEW: Support for chat refinement
         filesContext: clientFilesContext = "",
@@ -142,9 +143,27 @@ export function createAiRouter() {
         console.warn("[ai] Failed to fetch learning profile:", e.message);
       }
 
+      // --- AUTO LOCALE DETECTION ---
+      // If locale==="auto", detect from email text to get a deterministic language.
+      let effectiveLocale = locale;
+      if (locale === "auto" && action !== "refine") {
+        const sampleText = ((email?.subject || "") + "\n" + (email?.bodyText || "")).slice(0, 800).toLowerCase();
+        // Simple heuristic: count characteristic words per language.
+        const scores = {
+          "pt-PT": (sampleText.match(/\b(ol\u00e1|obrigad|por favor|tamb\u00e9m|e-mail|prezado|atenciosamente|bom dia|boa tarde)\b/g) || []).length,
+          "es-ES": (sampleText.match(/\b(hola|gracias|por favor|tambi\u00e9n|correo|estimado|atentamente|buenos d\u00edas)\b/g) || []).length,
+          "en-GB": (sampleText.match(/\b(hello|thanks|thank you|please|also|email|dear|regards|good morning|hi\b)\b/g) || []).length,
+          "it-IT": (sampleText.match(/\b(ciao|grazie|per favore|anche|anche|gentile|cordiali saluti|buongiorno)\b/g) || []).length,
+          "de-DE": (sampleText.match(/\b(hallo|danke|bitte|auch|e-mail|sehr geehrte|mit freundlichen|guten morgen)\b/g) || []).length,
+        };
+        const best = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
+        effectiveLocale = best && best[1] > 0 ? best[0] : "pt-PT";
+        console.log(`[ai] Auto-locale detected: ${effectiveLocale} (scores: ${JSON.stringify(scores)})`);
+      }
+
       const instructions = req.body.prompt || buildPrompt({
         action,
-        locale,
+        locale: effectiveLocale,
         tone,
         email: safeEmail,
         inputText: String(inputText || ""),
@@ -160,10 +179,10 @@ export function createAiRouter() {
         currentTime: new Date().toISOString(), // NEW: Time awareness for greetings
       });
 
-      // For refine: build an explicit input that includes the draft to edit.
-      // This prevents the model from ignoring the existing draft and generating a new email.
+      // For refine: use explicit draftText from client (the current editor content).
+      // Fallback to last assistant message in history if draftText not provided.
       const lastAssistant = [...history].reverse().find(m => m.role === "assistant" && typeof m.content === "string");
-      const currentDraft = lastAssistant?.content || "";
+      const currentDraft = String(draftText || lastAssistant?.content || "");
       const refineInput = action === "refine"
         ? `INSTRUÇÃO DO UTILIZADOR: ${inputText || "Melhora o rascunho"}
 RASCUNHO ATUAL (edita APENAS este texto, não inventar factos/prazos/preços/referências):

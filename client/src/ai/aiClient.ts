@@ -24,6 +24,7 @@ export type AiGenerateRequest = {
   tone: AiTone;
   email?: AiEmailContext;
   inputText?: string;
+  draftText?: string;  // explicit current draft for refine
   knowledge?: string[];
   files?: any[]; // optional: raw files
   history?: Array<{ role: "user" | "assistant"; content: string }>; // NEW: Chat history

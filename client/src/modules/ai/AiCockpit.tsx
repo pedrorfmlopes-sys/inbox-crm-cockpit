@@ -400,6 +400,8 @@ export const AiCockpit: React.FC = () => {
                 history: isRefining ? aiState.history : [],
                 knowledge: settings.aiKnowledge || [],
                 contactAliases: settings.contactAliases || [],
+                // For refine: send the current editor content as explicit draft
+                draftText: action === "refine" ? (output || aiState.output || "") : undefined,
             });
 
             if (res.ok) {

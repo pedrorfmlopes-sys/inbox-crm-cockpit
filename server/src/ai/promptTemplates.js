@@ -34,29 +34,37 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
     `- BRIEFING MÍNIMO: Sê o mais curto possível. Se um "Obrigado, fico a aguardar" resolve, usa apenas isso.\n`
     : `- CONTEXTO DE REENVIO: Como estás a reencaminhar para um terceiro, deves resumir os factos principais do email original para que o destinatário perceba o contexto.\n`;
 
-  // REGRAS DE ESTRUTURA E TRATAMENTO (User feedback: Proper greetings and structure)
-  let greeting = "Deves saudar educadamente.";
+  // REGRAS DE ESTRUTURA E TRATAMENTO: Greetings mapped per locale and time of day
+  const GREETING_MAP = {
+    "pt-PT": { morning: "Bom dia,", afternoon: "Boa tarde,", evening: "Boa noite,", neutral: "Caro/a," },
+    "es-ES": { morning: "Buenos d\u00edas,", afternoon: "Buenas tardes,", evening: "Buenas noches,", neutral: "Estimado/a," },
+    "en-GB": { morning: "Good morning,", afternoon: "Good afternoon,", evening: "Good evening,", neutral: "Dear," },
+    "it-IT": { morning: "Buongiorno,", afternoon: "Buon pomeriggio,", evening: "Buonasera,", neutral: "Gentile," },
+    "de-DE": { morning: "Guten Morgen,", afternoon: "Guten Tag,", evening: "Guten Abend,", neutral: "Sehr geehrte/r," },
+  };
+  const greetMap = GREETING_MAP[effectiveLocale] || GREETING_MAP["pt-PT"];
+  let greeting = `Use the appropriate greeting for ${lang} (e.g. "${greetMap.neutral}").`;
   if (currentTime) {
     try {
       const hour = new Date(currentTime).getHours();
-      if (hour >= 5 && hour < 12) greeting = "Deves obrigatoriamente começar com 'Bom dia,'.";
-      else if (hour >= 12 && hour < 19) greeting = "Deves obrigatoriamente começar com 'Boa tarde,'.";
-      else greeting = "Deves obrigatoriamente começar com 'Boa noite,'.";
+      if (hour >= 5 && hour < 12) greeting = `MUST start with "${greetMap.morning}"`;
+      else if (hour >= 12 && hour < 19) greeting = `MUST start with "${greetMap.afternoon}"`;
+      else greeting = `MUST start with "${greetMap.evening}"`;
     } catch (e) {
-      greeting = "Deves saudar cordialmente (Bom dia/Boa tarde).";
+      greeting = `Use an appropriate greeting in ${lang}.`;
     }
   }
 
   const baseRules = languageEnforcement +
-    `REGRAS DE OURO (ESTILO PEDRO - NÃO ABDICAR):\n` +
-    `- SAUDAÇÃO OBRIGATÓRIA: ${greeting}\n` +
-    `- AGRADECIMENTO FINAL: Termina sempre com uma nota de agradecimento empática e cordial (ex: "Muito obrigado pela ajuda.", "Agradeço a vossa disponibilidade."). Evita o "Obrigado" seco.\n` +
-    `- ESTRUTURA PROFISSIONAL: Saudação -> Resposta clara (ao ponto) -> Próximos Passos -> Fecho empático.\n` +
+    `REGRAS DE OURO (ESTILO PEDRO - N\u00c3O ABDICAR):\n` +
+    `- SAUDA\u00c7\u00c3O OBRIGAT\u00d3RIA: ${greeting}\n` +
+    `- AGRADECIMENTO FINAL: End with a warm, cordial closing appropriate for ${lang} (e.g. in PT: "Muito obrigado pela ajuda."; in EN: "Thank you for your support."; in ES: "Muchas gracias por su ayuda."). Avoid a bare single-word sign-off.\n` +
+    `- ESTRUTURA PROFISSIONAL: Sauda\u00e7\u00e3o -> Resposta clara (ao ponto) -> Pr\u00f3ximos Passos -> Fecho emp\u00e1tico.\n` +
     pragmatismRules +
-    `- PROIBIDO: "Aqui está a sua resposta", "Espero que este email...", "Certamente posso ajudar", "Como assistente de IA...", ou introduções redundantes.\n` +
-    `- NUNCA inventes factos. Se faltar informação, faz perguntas curtas e diretas.\n` +
+    `- PROIBIDO: "Aqui est\u00e1 a sua resposta", "Espero que este email...", "Certamente posso ajudar", "Como assistente de IA...", ou introdu\u00e7\u00f5es redundantes.\n` +
+    `- NUNCA inventes factos. Se faltar informa\u00e7\u00e3o, faz perguntas curtas e diretas.\n` +
     `- Devolve HTML simples: <p>, <br>, <ul>, <li>, <strong>, <em>, <a>.\n` +
-    `- ORDEM DE PRIORIDADE: 1º Instruções explícitas; 2º Contexto do Email; 3º Estilo Aprendido.\n`;
+    `- ORDEM DE PRIORIDADE: 1\u00ba Instru\u00e7\u00f5es expl\u00edcitas; 2\u00ba Contexto do Email; 3\u00ba Estilo Aprendido.\n`;
 
   // Inject user knowledge if present
   const knowledgeBlock = knowledge.length > 0
