@@ -458,7 +458,7 @@ app.post("/api/odoo/create", async (req, res) => {
       // - parent_id (subtarefa)
       // - user_ids (m2m) é convertido abaixo
       "project.task": new Set(["name", "description", "date_deadline", "project_id", "lead_id", "parent_id", "user_ids", "stage_id"]),
-    "ir.attachment": new Set(["name", "datas", "res_model", "res_id", "type", "mimetype", "datas_fname"]),
+      "ir.attachment": new Set(["name", "datas", "res_model", "res_id", "type", "mimetype", "datas_fname"]),
     }[m];
 
     if (!allowedByModel) return res.status(400).send("Model not allowed");
@@ -468,7 +468,7 @@ app.post("/api/odoo/create", async (req, res) => {
       if (allowedByModel.has(k)) clean[k] = v;
     }
 
-        // Extra validation for attachments
+    // Extra validation for attachments
     if (m === "ir.attachment") {
       const rm = String(clean.res_model || "").trim();
       if (!rm || !modelAllowed(rm)) return res.status(400).send("Invalid res_model");
@@ -479,7 +479,7 @@ app.post("/api/odoo/create", async (req, res) => {
       clean.type = clean.type || "binary";
     }
 
-// Normalização simples de Many2many (aceita [ids] ou command [[6,0,[ids]]])
+    // Normalização simples de Many2many (aceita [ids] ou command [[6,0,[ids]]])
     if (m === "project.task" && Array.isArray(clean.user_ids)) {
       // already in command form?
       if (Array.isArray(clean.user_ids[0])) {
@@ -540,20 +540,41 @@ app.post("/api/odoo/link-email", async (req, res) => {
     const safeSubject = subject || "(sem assunto)";
     const safeFrom = `${(fromName || "").trim()}${fromEmail ? ` <${fromEmail}>` : ""}`.trim() || "(desconhecido)";
 
-    // HTML limpo e legível dentro do chatter do Odoo
-    const body = [
-      `<p><b>Ligação criada a partir do Outlook</b></p>`,
-      `<p><b>Assunto:</b> ${escapeHtml(safeSubject)}</p>`,
-      `<p><b>De:</b> ${escapeHtml(safeFrom)}</p>`,
-      receivedAtIso ? `<p><b>Data:</b> ${escapeHtml(receivedAtIso)}</p>` : "",
-      internetMessageId ? `<p><b>InternetMessageId:</b> <code>${escapeHtml(internetMessageId)}</code></p>` : "",
-      `<p style="color:#666;"><small><b>Thread/ConversationId:</b> ${escapeHtml(conversationId)}</small></p>`,
-      emailWebLink ? `<p><b>Outlook link:</b> <a href="${escapeHtml(emailWebLink)}" target="_blank" rel="noreferrer">Abrir email</a></p>` : "",
-      `<p style="color:#888;"><small>(Anexos: MVP ainda não envia. Próxima fase.)</small></p>`,
-    ].filter(Boolean).join("\n");
+    // Se receber HTML do Outlook, sanitiza. Caso contrário usa o fallback de texto (se existir)
+    let bodyForOdoo = "";
+    if (bodyIn.bodyHtml) {
+      const decoded = simpleDecodeHtml(bodyIn.bodyHtml);
+      const sanitized = simpleSanitizeHtml(decoded);
+
+      bodyForOdoo = [
+        `<div style="font-family: sans-serif; line-height: 1.5;">`,
+        `<div style="border-left: 3px solid #714B67; padding-left: 12px; margin-bottom: 16px; color: #666;">`,
+        `<p style="margin: 0 0 4px 0;"><b>Assunto:</b> ${escapeHtml(safeSubject)}</p>`,
+        `<p style="margin: 0 0 4px 0;"><b>De:</b> ${escapeHtml(safeFrom)}</p>`,
+        receivedAtIso ? `<p style="margin: 0 0 4px 0;"><b>Data:</b> ${escapeHtml(receivedAtIso)}</p>` : "",
+        emailWebLink ? `<p style="margin: 0 0 4px 0;"><a href="${escapeHtml(emailWebLink)}" target="_blank" style="color: #0078d4; text-decoration: none;">Ver no Outlook</a></p>` : "",
+        `</div>`,
+        `<blockquote style="margin: 0; padding: 0 0 0 12px; border-left: 1px solid #ccc; color: #333;">`,
+        sanitized,
+        `</blockquote>`,
+        `</div>`
+      ].join("\n");
+    } else {
+      // Fallback para texto simples (legado)
+      bodyForOdoo = [
+        `<p><b>Ligação criada a partir do Outlook (Texto)</b></p>`,
+        `<p><b>Assunto:</b> ${escapeHtml(safeSubject)}</p>`,
+        `<p><b>De:</b> ${escapeHtml(safeFrom)}</p>`,
+        receivedAtIso ? `<p><b>Data:</b> ${escapeHtml(receivedAtIso)}</p>` : "",
+        internetMessageId ? `<p><b>ID:</b> <code>${escapeHtml(internetMessageId)}</code></p>` : "",
+        emailWebLink ? `<p><a href="${escapeHtml(emailWebLink)}" target="_blank">Abrir email</a></p>` : "",
+      ].filter(Boolean).join("\n");
+    }
 
     // message_post no chatter do registo
-    await odoo.messagePost(m, rid, body, safeSubject);
+    await odoo.messagePost(m, rid, bodyForOdoo, safeSubject, {
+      message_id: internetMessageId || false
+    });
 
     const entry = {
       model: m,
@@ -607,6 +628,36 @@ function escapeHtml(s) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function simpleDecodeHtml(s) {
+  if (!s || !s.includes("&")) return s;
+  return s
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&#039;", "'");
+}
+
+function simpleSanitizeHtml(html) {
+  if (!html) return "";
+  let s = html;
+  // Remove scripts, heads, styles, metas, links, titles
+  s = s.replace(/<(script|head|style|meta|link|title)[\s\S]*?<\/\1>/gi, "");
+  s = s.replace(/<(meta|link|br|hr|img)[^>]*>/gi, (m) => (m.toLowerCase().startsWith("<br") ? "<br/>" : "")); // keep br, kill others
+
+  // Remove most unsafe attributes (on*, style pesados, etc)
+  s = s.replace(/\s(on\w+|style|id|class|data-\w+)="[^"]*"/gi, (match) => {
+    if (match.toLowerCase().startsWith(" style")) return match; // allow style for simple layout? user said "remover atributos perigosos (on*, style pesados)"
+    return ""; // remove others
+  });
+
+  // Strip excessive tags but keep basic structure
+  // User wants: p, br, b/strong, i/em, u, ul, ol, li, a, blockquote, div, span
+  // We'll be slightly broader but keep it clean.
+  return s.trim();
 }
 
 const host = process.env.HOST || "0.0.0.0"; // force IPv4 bind

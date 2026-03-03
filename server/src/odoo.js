@@ -186,7 +186,7 @@ export async function odooClientFromEnv(config = null) {
       return await callKw({ model, method, args, kwargs });
     },
 
-    async messagePost(model, id, body, subject) {
+    async messagePost(model, id, body, subject, extraKwargs = {}) {
       return await callKw({
         model,
         method: "message_post",
@@ -196,6 +196,7 @@ export async function odooClientFromEnv(config = null) {
           subject: subject || "",
           message_type: "comment",
           subtype_xmlid: "mail.mt_comment",
+          ...extraKwargs,
         },
       });
     },

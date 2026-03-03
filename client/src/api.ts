@@ -55,6 +55,7 @@ export type LinkPayload = {
   emailWebLink?: string;
   internetMessageId?: string;
   receivedAtIso?: string;
+  bodyHtml?: string;
 
   // compat aliases
   resId?: number;

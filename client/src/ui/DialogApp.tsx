@@ -329,6 +329,7 @@ type Ctx = {
   fromEmail: string;
   fromName: string;
   receivedAtIso: string;
+  bodyHtml?: string;
   emailWebLink?: string;
 
   toR: Recipient[];
@@ -638,11 +639,17 @@ export default function DialogApp() {
       }));
 
       // Fallback: Se o bridge falhou ou está vazio, tenta ler o corpo agora
-      if (!fullBody && item.body?.getAsync) {
+      if (item.body?.getAsync) {
         item.body.getAsync("text", (r: any) => {
           if (r?.status === OfficeAny?.AsyncResultStatus.Succeeded && r.value) {
-            console.log("[Dialog] Body fallback success");
+            console.log("[Dialog] Body text fallback success");
             setFullBody(r.value);
+          }
+        });
+        item.body.getAsync("html", (r: any) => {
+          if (r?.status === OfficeAny?.AsyncResultStatus.Succeeded && r.value) {
+            console.log("[Dialog] Body HTML success");
+            setCtx(c => ({ ...c, bodyHtml: r.value }));
           }
         });
       }
@@ -775,6 +782,7 @@ function AddExistingPanel({ entity, ctx, onStatus }: any) {
         fromName: ctx.fromName,
         receivedAtIso: ctx.receivedAtIso,
         emailWebLink: ctx.emailWebLink,
+        bodyHtml: ctx.bodyHtml,
       });
 
       onStatus("Ligado ✅");
@@ -926,19 +934,19 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
           const att = (emailAtts || []).find((a: any) => a.name === name);
           if (att) {
             try {
-            await createOdoo("ir.attachment", {
-              name: att.name,
-              datas: att.content,
-              datas_fname: att.name,
-              mimetype: att.contentType,
-              res_model: "project.task",
-              res_id: id,
-              type: "binary"
-            });
-          } catch (e) {
-            console.error("Erro ao enviar anexo", att.name, e);
-            // keep going with other attachments
-          }
+              await createOdoo("ir.attachment", {
+                name: att.name,
+                datas: att.content,
+                datas_fname: att.name,
+                mimetype: att.contentType,
+                res_model: "project.task",
+                res_id: id,
+                type: "binary"
+              });
+            } catch (e) {
+              console.error("Erro ao enviar anexo", att.name, e);
+              // keep going with other attachments
+            }
           }
         }
       }
@@ -1097,8 +1105,8 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
   const [description, setDescription] = useState("");
 
   useEffect(() => {
-    if (mode === "new" && fullBody) setDescription(fullBody);
-  }, [mode, fullBody]);
+    if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
+  }, [mode, ctx.bodyHtml, fullBody]);
 
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
 
@@ -1136,6 +1144,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
       if (partnerId) values.partner_id = partnerId;
       if (managerId) values.user_id = managerId;
       if (description) values.description = description;
+      if (ctx.bodyHtml) values.bodyHtml = ctx.bodyHtml; // Server can use this for the first message post too if needed
 
       if (mode === "edit") {
         try {
@@ -1260,8 +1269,8 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   const [description, setDescription] = useState("");
 
   useEffect(() => {
-    if (mode === "new" && fullBody) setDescription(fullBody);
-  }, [mode, fullBody]);
+    if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
+  }, [mode, ctx.bodyHtml, fullBody]);
 
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
 
@@ -1301,6 +1310,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
       if (partnerId) values.partner_id = partnerId;
       if (stageId) values.stage_id = stageId;
       if (description) values.description = description;
+      if (ctx.bodyHtml) values.bodyHtml = ctx.bodyHtml;
 
       if (mode === "edit") {
         try {
