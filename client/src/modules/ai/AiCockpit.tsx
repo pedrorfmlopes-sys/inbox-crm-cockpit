@@ -84,12 +84,14 @@ export const AiCockpit: React.FC = () => {
     // Responsive UI Scale
     const paneRef = useRef<HTMLDivElement>(null);
     const [uiScale, setUiScale] = useState(1);
+    const [paneWidth, setPaneWidth] = useState(0);
 
     useEffect(() => {
         if (!paneRef.current) return;
         const observer = new ResizeObserver((entries) => {
             for (const entry of entries) {
                 const width = entry.contentRect.width;
+                setPaneWidth(width);
                 if (width < 320) setUiScale(0.82);
                 else if (width < 360) setUiScale(0.88);
                 else if (width < 400) setUiScale(0.94);
@@ -100,6 +102,7 @@ export const AiCockpit: React.FC = () => {
         return () => observer.disconnect();
     }, []);
 
+    const isNarrow = paneWidth < 360;
     const px = (n: number) => `${Math.max(20, Math.round(n * uiScale))}px`;
     const fpx = (n: number) => `${Math.max(9, Math.round(n * uiScale))}px`;
 
@@ -788,10 +791,13 @@ export const AiCockpit: React.FC = () => {
         },
         refinerRow: {
             display: "flex",
-            gap: "4px",
+            gap: isNarrow ? "2px" : "4px",
             paddingBottom: "4px",
             alignItems: "center",
-            overflow: "visible"
+            overflow: "visible",
+            maxWidth: "100%",
+            overflowX: "hidden",
+            flexWrap: "nowrap"
         },
         outputCard: {
             background: "var(--iccc-card-bg)",
@@ -1274,9 +1280,16 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "64px", minWidth: "64px", justifyContent: "flex-start", padding: "0 6px" }}
+                        style={{
+                            ...S.secondaryBtnLink,
+                            width: isNarrow ? "auto" : "64px",
+                            minWidth: isNarrow ? "unset" : "64px",
+                            justifyContent: "flex-start",
+                            padding: isNarrow ? "0 6px" : "0 6px"
+                        }}
                         onClick={() => setActiveMenu(activeMenu === "lang" ? null : "lang")}
                         title="Idioma"
+                        aria-label="Idioma"
                     >
                         <div style={{
                             width: "16px",
@@ -1294,9 +1307,11 @@ export const AiCockpit: React.FC = () => {
                         }}>
                             <MiniFlag locale={aiState.locale || "auto"} />
                         </div>
-                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>
-                            {(aiState.locale || "auto").split("-")[0].toUpperCase()}
-                        </span>
+                        {!isNarrow && (
+                            <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>
+                                {(aiState.locale || "auto").split("-")[0].toUpperCase()}
+                            </span>
+                        )}
                     </button>
 
 
@@ -1349,12 +1364,19 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "78px", minWidth: "78px", justifyContent: "flex-start", padding: "0 8px" }}
+                        style={{
+                            ...S.secondaryBtnLink,
+                            width: isNarrow ? "auto" : "78px",
+                            minWidth: isNarrow ? "unset" : "78px",
+                            justifyContent: "flex-start",
+                            padding: isNarrow ? "0 6px" : "0 8px"
+                        }}
                         onClick={() => setActiveMenu(activeMenu === "presets" ? null : "presets")}
-                        title="Modelos de Resposta Rápidos"
+                        title="Modelos de Resposta Rápidos (MODS)"
+                        aria-label="Modelos de Resposta Rápidos (MODS)"
                     >
                         <Icons.Settings size={11} style={{ opacity: 0.6 }} />
-                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>MODS</span>
+                        {!isNarrow && <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>MODS</span>}
                     </button>
 
                     {activeMenu === "presets" && (
@@ -1418,17 +1440,24 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "72px", minWidth: "72px", justifyContent: "flex-start", padding: "0 8px" }}
+                        style={{
+                            ...S.secondaryBtnLink,
+                            width: isNarrow ? "auto" : "72px",
+                            minWidth: isNarrow ? "unset" : "72px",
+                            justifyContent: "flex-start",
+                            padding: isNarrow ? "0 6px" : "0 8px"
+                        }}
                         onClick={() => setActiveMenu(activeMenu === "intents" ? null : "intents")}
                         disabled={isFetchingIntents}
-                        title="Sugestões de Resposta da IA"
+                        title="Sugestões de Resposta da IA (DICAS)"
+                        aria-label="Sugestões de Resposta da IA (DICAS)"
                     >
                         {isFetchingIntents ? (
                             <Icons.RotateCcw size={11} style={{ animation: "spin 1s linear infinite", opacity: 0.6 }} />
                         ) : (
                             <Icons.Activity size={11} style={{ opacity: 0.6 }} />
                         )}
-                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>DICAS</span>
+                        {!isNarrow && <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>DICAS</span>}
                     </button>
 
                     {activeMenu === "intents" && (
@@ -1479,12 +1508,19 @@ export const AiCockpit: React.FC = () => {
                 <div style={{ position: "relative" }}>
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
-                        style={{ ...S.secondaryBtnLink, width: "72px", minWidth: "72px", justifyContent: "flex-start", padding: "0 8px" }}
+                        style={{
+                            ...S.secondaryBtnLink,
+                            width: isNarrow ? "auto" : "72px",
+                            minWidth: isNarrow ? "unset" : "72px",
+                            justifyContent: "flex-start",
+                            padding: isNarrow ? "0 6px" : "0 8px"
+                        }}
                         onClick={() => setActiveMenu(activeMenu === "contacts" ? null : "contacts")}
-                        title="Contactos Sugeridos"
+                        title="Contactos Sugeridos (LISTA)"
+                        aria-label="Contactos Sugeridos (LISTA)"
                     >
                         <Icons.User size={11} style={{ opacity: 0.6 }} />
-                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>LISTA</span>
+                        {!isNarrow && <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>LISTA</span>}
                     </button>
 
                     {activeMenu === "contacts" && (
