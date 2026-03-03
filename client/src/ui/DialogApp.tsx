@@ -70,6 +70,7 @@ function OdooMemoryCheck({ partnerId, projectId, fromEmail }: { partnerId?: numb
 function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction: (title: string, type: string) => void }) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<{ summary: string[], actions: string[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const analyze = async () => {
     console.log("[IA] Analyze triggered. bodyText length:", bodyText?.length);
@@ -78,18 +79,22 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
       return;
     }
     setLoading(true);
-    setData(null); // Reset data when re-analyzing
+    setData(null);
+    setError(null);
     try {
+      const trimmedBody = bodyText.slice(0, 4500);
       const res = await aiGenerate({
         action: "summarize_actions",
-        inputText: bodyText,
-        prompt: `Analisa o seguinte email e devolve APENAS um JSON válido com:
-        - "summary": lista de exatamente 3 pontos chave do email. Remove saudações como "Olá" ou "Bom dia".
-        - "actions": lista de tarefas concretas e curtas detetadas.
-        
-        Exemplo: {"summary": ["Ponto 1", "Ponto 2", "Ponto 3"], "actions": ["Enviar proposta", "Agendar reunião"]}
-        
-        Email: ${bodyText}`
+        mode: "fast",
+        locale: "auto",
+        tone: "neutro",
+        email: {
+          subject: "", // Contexto já disponível no banner
+          from: "",
+          to: [],
+          cc: [],
+          bodyText: trimmedBody
+        }
       });
 
       if (res.ok && res.data) {
@@ -100,13 +105,15 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
           const parsed = JSON.parse(jsonStr);
           setData(parsed);
         } catch {
-          // Fallback robusto: extrair linhas se JSON falhar
           const lines = res.text.split("\n").filter(l => l.trim().length > 10).slice(0, 3);
           setData({ summary: lines, actions: [] });
         }
+      } else {
+        setError("Falha a reanalisar. Verifica ligação/limites.");
       }
     } catch (e) {
       console.error("[IA] Analysis failed", e);
+      setError("Erro na análise. Tenta novamente mais tarde.");
     } finally {
       setLoading(false);
     }
@@ -144,6 +151,7 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
         <div style={{ fontSize: 11, color: bodyText ? "#BF2600" : "#777" }}>
           {bodyText ? "⚠️ Clique em Reanalisar para processar o email." : "ℹ️ O conteúdo do email ainda não foi carregado."}
         </div>
+        {error && <div style={{ fontSize: 10, color: "#BF2600", marginTop: 8 }}><b>ERRO:</b> {error}</div>}
       </div>
     );
   }
@@ -155,11 +163,13 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
           <Icons.Sparkles size={12} color="#2563eb" />
           <div style={{ fontSize: 10, fontWeight: 800, color: "#2563eb", textTransform: "uppercase" }}>Assistente IA</div>
         </div>
-        <button style={S.secondaryBtn} onClick={analyze} title="Reanalisar o conteúdo">
-          <Icons.RefreshCw size={10} />
-          REANALISAR
+        <button style={S.secondaryBtn} onClick={analyze} title="Reanalisar o conteúdo" disabled={loading}>
+          <Icons.RefreshCw size={10} className={loading ? "animate-spin" : ""} />
+          {loading ? "..." : "REANALISAR"}
         </button>
       </div>
+
+      {error && <div style={{ fontSize: 10, color: "#BF2600", marginBottom: 8 }}><b>ERRO:</b> {error}</div>}
 
       <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: "#172B4D", marginBottom: 12 }}>
         {data.summary.map((s: string, i: number) => (
@@ -1707,16 +1717,33 @@ function GenericMiniForm({ mode, ctx, model, editId, onStatus }: any) {
 }
 
 function PickerStatic({ label, pickedId, pickedName, items, onPick, placeholder }: any) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   return (
-    <div style={{ marginTop: 10 }}>
+    <div ref={ref} style={{ marginTop: 10, position: "relative" }}>
       <label style={S.labBlock}>{label}</label>
       <div style={{ display: "flex", gap: 8 }}>
-        <input style={S.input} value={pickedId ? pickedName : ""} readOnly placeholder={placeholder} />
+        <input
+          style={{ ...S.input, cursor: "pointer" }}
+          value={pickedId ? pickedName : ""}
+          readOnly
+          placeholder={placeholder}
+          onClick={() => setOpen(!open)}
+        />
       </div>
-      {items?.length ? (
-        <div style={S.pickList}>
+      {open && items?.length ? (
+        <div style={{ ...S.pickList, maxHeight: "220px" }}>
           {items.map((it: any) => (
-            <button key={it.id} style={S.pickItem} onClick={() => onPick(it)}>
+            <button key={it.id} style={S.pickItem} onClick={() => { onPick(it); setOpen(false); }}>
               <b>{it.display_name || it.name || `#${it.id}`}</b>
               <span style={{ color: "#777" }}>#{it.id}</span>
             </button>
