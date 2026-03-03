@@ -68,6 +68,8 @@ export const AiCockpit: React.FC = () => {
 
     // Voice Dictation State
     const [isRecording, setIsRecording] = useState(false);
+    const [dictationTarget, setDictationTarget] = useState<"main" | "refine">("main");
+    const [refineInput, setRefineInput] = useState("");
     const recognitionRef = useRef<any>(null);
 
     // Presets Search State
@@ -307,11 +309,15 @@ export const AiCockpit: React.FC = () => {
                 }
             }
             if (newFinal) {
-                setPrompt((prev: string) => {
-                    const updated = (prev + " " + newFinal).trim();
-                    setAiState({ prompt: updated });
-                    return updated;
-                });
+                if (dictationTarget === "main") {
+                    setPrompt((prev: string) => {
+                        const updated = (prev + " " + newFinal).trim();
+                        setAiState({ prompt: updated });
+                        return updated;
+                    });
+                } else {
+                    setRefineInput((prev: string) => (prev + " " + newFinal).trim());
+                }
             }
         };
 
@@ -367,6 +373,8 @@ export const AiCockpit: React.FC = () => {
         setIsGenerating(true);
         // If we are starting a NEW task (not refining), clear previous history
         const isRefining = action === "rewrite" || action === "refine";
+        const finalPrompt = extraPrompt || (action === "refine" ? refineInput : prompt);
+
         if (!isRefining && aiState.history.length > 0) {
             setAiState({ history: [] });
         }
@@ -381,7 +389,7 @@ export const AiCockpit: React.FC = () => {
                 mode: "quality",
                 tone: aiState.tone || settings.tone || "neutro",
                 locale: aiState.locale || settings.replyLanguage || "pt-PT",
-                inputText: extraPrompt || prompt,
+                inputText: finalPrompt,
                 files: files || [],
                 briefing: briefing, // Pass the thread summary for isolation
                 email: {
@@ -402,7 +410,7 @@ export const AiCockpit: React.FC = () => {
                 contactAliases: settings.contactAliases || [],
                 // For refine: send the current editor content as explicit draft
                 draftText: action === "refine" ? (output || aiState.output || "") : undefined,
-            });
+            }); //inputText is already extraPrompt || prompt
 
             if (res.ok) {
                 setAiState({
@@ -423,7 +431,7 @@ export const AiCockpit: React.FC = () => {
 
                 const newHistory = [
                     ...(isRefining ? aiState.history : []),
-                    { role: "user" as const, content: extraPrompt || prompt },
+                    { role: "user" as const, content: finalPrompt },
                     { role: "assistant" as const, content: fullText }
                 ].slice(-4);
                 setAiState({ output: fullText, history: newHistory });
@@ -436,7 +444,7 @@ export const AiCockpit: React.FC = () => {
                     emailKey,
                     ts: Date.now(),
                     output: fullText,
-                    prompt: extraPrompt || prompt,
+                    prompt: finalPrompt,
                     action
                 };
                 const fullHist = [entry, ...loadHistory()];
@@ -828,6 +836,7 @@ export const AiCockpit: React.FC = () => {
                     value={prompt}
                     onChange={(e) => handlePromptChange(e.target.value)}
                     onKeyDown={(e) => handleKeyDown(e, "reply")}
+                    onFocus={() => setDictationTarget("main")}
                 />
                 <div style={S.inputFooter}>
                     <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
@@ -1394,17 +1403,35 @@ export const AiCockpit: React.FC = () => {
                             <textarea
                                 style={{ ...S.chatInput, height: "unset", minHeight: "32px", maxHeight: "120px", paddingTop: "8px", resize: "none" }}
                                 placeholder="Refinar resposta (ex: faz mais curto)..."
-                                value={prompt}
-                                onChange={(e) => setPrompt(e.target.value)}
+                                value={refineInput}
+                                onChange={(e) => setRefineInput(e.target.value)}
                                 onKeyDown={(e) => handleKeyDown(e, "refine")}
+                                onFocus={() => setDictationTarget("refine")}
                                 rows={1}
                             />
                             <button
-                                disabled={isGenerating || !prompt}
-                                onClick={() => handleGenerate("refine")}
                                 style={{
                                     ...S.chatSendBtn,
-                                    opacity: !prompt || isGenerating ? 0.5 : 1
+                                    width: "24px",
+                                    height: "22px",
+                                    background: isRecording ? "rgba(239, 68, 68, 0.1)" : "transparent",
+                                    color: isRecording ? "#ef4444" : "var(--iccc-text-muted)",
+                                    border: isRecording ? "1px solid #ef4444" : "none"
+                                }}
+                                onClick={toggleRecording}
+                                title="Ditado por voz"
+                            >
+                                <Icons.Microphone size={12} />
+                            </button>
+                            <button
+                                disabled={isGenerating || !refineInput}
+                                onClick={() => {
+                                    handleGenerate("refine");
+                                    setRefineInput("");
+                                }}
+                                style={{
+                                    ...S.chatSendBtn,
+                                    opacity: !refineInput || isGenerating ? 0.5 : 1
                                 }}
                             >
                                 <Icons.Sparkles size={14} />
@@ -1420,15 +1447,15 @@ export const AiCockpit: React.FC = () => {
 const S: Record<string, React.CSSProperties> = {
     primaryBtnPill: {
         boxSizing: "border-box",
-        height: "26px", minHeight: "26px", maxHeight: "26px",
-        borderRadius: "16px",
+        height: "22px", minHeight: "22px", maxHeight: "22px",
+        borderRadius: "14px",
         border: "1px solid rgba(0, 80, 180, 0.4)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: "4px",
-        padding: "0 10px",
-        fontSize: "10px",
+        padding: "0 8px",
+        fontSize: "9px",
         fontWeight: 800,
         lineHeight: 1,
         textTransform: "uppercase",
@@ -1441,9 +1468,9 @@ const S: Record<string, React.CSSProperties> = {
     },
     secondaryBtnPill: {
         boxSizing: "border-box",
-        width: "28px", minWidth: "28px", maxWidth: "28px",
-        height: "26px", minHeight: "26px", maxHeight: "26px",
-        borderRadius: "16px",
+        width: "24px", minWidth: "24px", maxWidth: "24px",
+        height: "22px", minHeight: "22px", maxHeight: "22px",
+        borderRadius: "14px",
         border: "1px solid rgba(200, 210, 230, 0.6)",
         display: "flex",
         alignItems: "center",
@@ -1463,15 +1490,15 @@ const S: Record<string, React.CSSProperties> = {
     },
     secondaryBtnLink: {
         boxSizing: "border-box",
-        height: "26px", minHeight: "26px", maxHeight: "26px",
+        height: "22px", minHeight: "22px", maxHeight: "22px",
         borderRadius: "16px",
         border: "1px solid rgba(200, 210, 230, 0.6)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: "5px",
-        padding: "0 8px",
-        fontSize: "10px",
+        padding: "0 6px",
+        fontSize: "9px",
         fontWeight: 800,
         lineHeight: 1,
         textTransform: "uppercase",
@@ -1496,8 +1523,8 @@ const S: Record<string, React.CSSProperties> = {
     },
     cascadeItem: {
         boxSizing: "border-box",
-        height: "26px", minHeight: "26px",
-        minWidth: "80px",
+        height: "22px", minHeight: "22px",
+        minWidth: "72px",
         whiteSpace: "nowrap",
         borderRadius: "16px",
         border: "1px solid rgba(200, 210, 230, 0.6)",
@@ -1507,7 +1534,7 @@ const S: Record<string, React.CSSProperties> = {
         alignItems: "center",
         justifyContent: "flex-start",
         gap: "6px",
-        padding: "0 10px",
+        padding: "0 8px",
         fontSize: "9px",
         fontWeight: 800,
         lineHeight: 1,
