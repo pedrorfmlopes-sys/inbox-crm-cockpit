@@ -909,7 +909,7 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
               name: subTitle,
               project_id: projectId || false,
               parent_id: id,
-              user_ids: assigneeId ? [[6, 0, [assigneeId]]] : [],
+              user_ids: assigneeId ? [assigneeId] : [],
             });
           } catch (e) {
             console.error("Erro ao criar subtarefa diferida", e);
@@ -925,13 +925,20 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         for (const name of selectedAtts) {
           const att = (emailAtts || []).find((a: any) => a.name === name);
           if (att) {
+            try {
             await createOdoo("ir.attachment", {
               name: att.name,
               datas: att.content,
+              datas_fname: att.name,
+              mimetype: att.contentType,
               res_model: "project.task",
               res_id: id,
               type: "binary"
             });
+          } catch (e) {
+            console.error("Erro ao enviar anexo", att.name, e);
+            // keep going with other attachments
+          }
           }
         }
       }
@@ -955,7 +962,7 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
       const val: any = {
         name: title,
         project_id: projectId || false,
-        user_ids: assigneeId ? [[6, 0, [assigneeId]]] : [],
+        user_ids: assigneeId ? [assigneeId] : [],
       };
       if (mode === "edit" && editId) val.parent_id = editId;
 

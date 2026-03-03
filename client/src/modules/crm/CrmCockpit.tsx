@@ -4,7 +4,7 @@ import { openCockpitDialog, getEmailBodyText } from "../../office";
 import * as Icons from "../../ui/icons";
 import { ContactInsight } from "./ContactInsight";
 import { OdooCardSkeleton, Skeleton } from "../../ui/SkeletonLoader";
-import { aiExtractAnchors, aiGenerate, getOdooAutoLoginUrl } from "../../api";
+import { aiExtractAnchors, aiGenerate, getOdooAutoLoginUrl, searchOdoo } from "../../api";
 import { scanForProtection, MatchResult } from "./triangulationService";
 import { ProtectionBanner } from "../../ui/ProtectionBanner";
 
@@ -104,6 +104,8 @@ export const CrmCockpit: React.FC = () => {
     const [isLinkedExpanded, setIsLinkedExpanded] = useState(true);
     const [isAnchorsLoading, setIsAnchorsLoading] = useState(false);
     const [anchors, setAnchors] = useState<any>(null);
+    const [contact, setContact] = useState<any>(null);
+    const [isContactLoading, setIsContactLoading] = useState(false);
     const [protection, setProtection] = useState<MatchResult | null>(null);
     const [isDrafting, setIsDrafting] = useState(false);
     const [isBriefingLoading, setIsBriefingLoading] = useState(false);
@@ -154,9 +156,11 @@ export const CrmCockpit: React.FC = () => {
     useEffect(() => {
         setBriefing(null);   // Reset briefing so old email data doesn't linger
         setAnchors(null);    // Reset anchors
+        setContact(null);    // Reset contact
         setProtection(null); // Reset protection
         if (ctx.conversationId) {
             handleScanAnchors();
+            loadContact();
         }
     }, [ctx.conversationId]);
 
@@ -197,7 +201,56 @@ export const CrmCockpit: React.FC = () => {
         }
     }
 
-    async function handleDraftRejection() {
+    
+    async function loadContact() {
+        const email = (ctx.fromEmail || "").trim();
+        if (!email) return;
+        setIsContactLoading(true);
+        try {
+            // Exact match first
+            const recs: any[] = await searchOdoo({
+                model: "res.partner",
+                domain: [["email", "=", email]],
+                fields: ["id", "name", "email", "phone", "mobile", "function", "company_name", "parent_id"],
+                limit: 1
+            });
+            const r = Array.isArray(recs) && recs.length ? recs[0] : null;
+
+            if (r) {
+                const company =
+                    (Array.isArray(r.parent_id) ? r.parent_id[1] : null) ||
+                    r.company_name ||
+                    "";
+                setContact({
+                    id: r.id,
+                    name: r.name || ctx.fromName || "Desconhecido",
+                    email: r.email || email,
+                    phone: r.phone,
+                    mobile: r.mobile,
+                    role: r.function || undefined,
+                    company: company || undefined,
+                });
+            } else {
+                // fallback: keep minimal
+                setContact({
+                    id: null,
+                    name: ctx.fromName || "Desconhecido",
+                    email,
+                });
+            }
+        } catch (e) {
+            console.error("[crm] Failed to load contact from Odoo", e);
+            setContact({
+                id: null,
+                name: ctx.fromName || "Desconhecido",
+                email,
+            });
+        } finally {
+            setIsContactLoading(false);
+        }
+    }
+
+async function handleDraftRejection() {
         if (!protection?.matchedProject) return;
         setIsDrafting(true);
         try {
@@ -255,16 +308,14 @@ export const CrmCockpit: React.FC = () => {
     // - [x] Align Navigation Dot with Odoo Metadata availability
     // - [x] Proactive Metadata refresh in connectivity heartbeat
     // - [x] Synchronize Odoo status footer with actual Odoo metadata availability
-    // Mock contact data - in real app, enrich with Odoo data
-    const mockContact = {
-        name: ctx.fromName || "Desconhecido",
-        email: ctx.fromEmail || "",
-        role: anchors?.stakeholders?.[0] || "Architecture Director",
-        company: anchors?.stakeholders?.[1] || "Studio Arq",
-        partnerLevel: "Gold" as const,
-        salesVolume: "€45,200",
-        health: "Great" as const
+    // Contact data (from Odoo when possible)
+    const displayContact = {
+        name: contact?.name || ctx.fromName || "Desconhecido",
+        email: contact?.email || ctx.fromEmail || "",
+        role: contact?.role || undefined,
+        company: contact?.company || undefined,
     };
+
 
     const isInitialLoading = isContextLoading || (links.length === 0 && !meta);
 
@@ -272,17 +323,13 @@ export const CrmCockpit: React.FC = () => {
         <div style={S.container}>
             {/* HubSpot-style Sticky Header */}
             <ContactInsight
-                contact={mockContact}
+                contact={displayContact}
                 onViewInOdoo={() => {
-                    const db = meta?.db || settings?.odooDb || "divitek";
-                    const target = `/web?db=${encodeURIComponent(db)}#model=res.partner&domain=[["email","=","${ctx.fromEmail}"]]`;
-
-                    if (meta?.baseUrl || settings?.odooUrl) {
-                        const baseUrl = meta?.baseUrl || settings?.odooUrl;
-                        window.open(getOdooAutoLoginUrl(settings?.odooSessionToken || null, target, baseUrl), "_blank");
-                    } else {
-                        setMsg("Odoo não configurado. Por favor, configura as ligações nas Definições.");
-                    }
+                    const baseUrl = meta?.baseUrl || (settings as any)?.odooUrl;
+                    const db = (settings as any)?.odooDb || meta?.db || "divitek";
+                    const id = contact?.id;
+                    const target = id ? `/web?db=${encodeURIComponent(db)}#id=${encodeURIComponent(String(id))}&model=res.partner&view_type=form` : `/web?db=${encodeURIComponent(db)}`;
+                    window.open(getOdooAutoLoginUrl((settings as any)?.odooSessionToken || null, target, baseUrl), "_blank");
                 }}
             />
 
@@ -419,7 +466,7 @@ export const CrmCockpit: React.FC = () => {
 
             {meta ? (
                 <a
-                    href={getOdooAutoLoginUrl(settings?.odooSessionToken || null, `/web?db=divitek`, meta.baseUrl)}
+                    href={getOdooAutoLoginUrl(settings?.odooSessionToken || null, `/web?db=${encodeURIComponent((settings as any)?.odooDb || meta?.db || "divitek")}`, meta.baseUrl)}
                     target="_blank"
                     rel="noreferrer"
                     style={{ ...S.footer, textDecoration: 'none', cursor: 'pointer' }}

@@ -85,6 +85,7 @@ const MODEL_WHITELIST = new Set([
   "project.task",
   "res.users",
   "project.task.type",
+  "ir.attachment",
 ]);
 
 function modelAllowed(model) {
@@ -145,6 +146,7 @@ function cleanValuesForModel(model, values) {
     "crm.lead": new Set(["name", "email_from", "partner_id"]),
     "project.project": new Set(["name", "partner_id", "user_id"]),
     "project.task": new Set(["name", "description", "date_deadline", "project_id", "lead_id", "parent_id", "user_ids", "stage_id"]),
+    "ir.attachment": new Set(["name", "datas", "res_model", "res_id", "type", "mimetype", "datas_fname"]),
   }[model];
 
   if (!allowedByModel) return null;
@@ -348,6 +350,7 @@ app.post("/api/odoo/create", async (req, res) => {
       // - parent_id (subtarefa)
       // - user_ids (m2m) é convertido abaixo
       "project.task": new Set(["name", "description", "date_deadline", "project_id", "lead_id", "parent_id", "user_ids", "stage_id"]),
+    "ir.attachment": new Set(["name", "datas", "res_model", "res_id", "type", "mimetype", "datas_fname"]),
     }[m];
 
     if (!allowedByModel) return res.status(400).send("Model not allowed");
@@ -357,11 +360,33 @@ app.post("/api/odoo/create", async (req, res) => {
       if (allowedByModel.has(k)) clean[k] = v;
     }
 
-    // Normalização simples de Many2many (Dialog envia [id], Odoo quer command)
+        // Extra validation for attachments
+    if (m === "ir.attachment") {
+      const rm = String(clean.res_model || "").trim();
+      if (!rm || !modelAllowed(rm)) return res.status(400).send("Invalid res_model");
+      const rid = Number(clean.res_id);
+      if (!rid) return res.status(400).send("Invalid res_id");
+      if (!clean.datas || typeof clean.datas !== "string") return res.status(400).send("Missing datas");
+      // default
+      clean.type = clean.type || "binary";
+    }
+
+// Normalização simples de Many2many (aceita [ids] ou command [[6,0,[ids]]])
     if (m === "project.task" && Array.isArray(clean.user_ids)) {
-      const ids = clean.user_ids.map((x) => Number(x)).filter(Boolean);
-      if (ids.length) clean.user_ids = [[6, 0, ids]];
-      else delete clean.user_ids;
+      // already in command form?
+      if (Array.isArray(clean.user_ids[0])) {
+        const cmd = clean.user_ids[0];
+        if (cmd && cmd[0] === 6) {
+          // keep as is
+        } else {
+          // unknown command -> drop for safety
+          delete clean.user_ids;
+        }
+      } else {
+        const ids = clean.user_ids.map((x) => Number(x)).filter(Boolean);
+        if (ids.length) clean.user_ids = [[6, 0, ids]];
+        else delete clean.user_ids;
+      }
     }
 
     if (!clean.name) return res.status(400).send("Missing name");
