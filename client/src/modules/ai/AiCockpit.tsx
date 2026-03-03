@@ -668,7 +668,7 @@ export const AiCockpit: React.FC = () => {
             gap: "4px",
             padding: `0 ${px(8)}`,
             fontSize: fpx(9),
-            fontWeight: 800,
+            fontWeight: 400,
             lineHeight: 1,
             textTransform: "uppercase",
             cursor: "pointer",
@@ -690,7 +690,7 @@ export const AiCockpit: React.FC = () => {
             gap: "5px",
             padding: "0",
             fontSize: fpx(10),
-            fontWeight: 800,
+            fontWeight: 400,
             lineHeight: 1,
             textTransform: "uppercase",
             cursor: "pointer",
@@ -711,7 +711,7 @@ export const AiCockpit: React.FC = () => {
             gap: "5px",
             padding: `0 ${px(6)}`,
             fontSize: fpx(9),
-            fontWeight: 800,
+            fontWeight: 400,
             lineHeight: 1,
             textTransform: "uppercase",
             cursor: "pointer",
@@ -735,9 +735,10 @@ export const AiCockpit: React.FC = () => {
         },
         cascadeItem: {
             boxSizing: "border-box",
-            height: px(22), minHeight: px(22),
+            height: "auto",
+            minHeight: px(22),
             minWidth: px(72),
-            whiteSpace: "nowrap",
+            whiteSpace: "normal",
             borderRadius: "16px",
             border: "1px solid rgba(200, 210, 230, 0.6)",
             backdropFilter: "blur(12px)",
@@ -746,16 +747,17 @@ export const AiCockpit: React.FC = () => {
             alignItems: "center",
             justifyContent: "flex-start",
             gap: "6px",
-            padding: `0 ${px(8)}`,
+            padding: `4px ${px(8)}`,
             fontSize: fpx(9),
-            fontWeight: 800,
-            lineHeight: 1,
+            fontWeight: 400,
+            lineHeight: 1.2,
             textTransform: "uppercase",
             cursor: "pointer",
             background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(240,245,255,0.95) 100%)",
             color: "#172B4D",
             boxShadow: "0 4px 12px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,1)",
             transition: "all 0.18s ease",
+            textAlign: "left"
         },
         container: {
             display: "flex",
@@ -922,7 +924,7 @@ export const AiCockpit: React.FC = () => {
             justifyContent: "space-between",
             alignItems: "center",
             fontSize: "10px",
-            fontWeight: 800,
+            fontWeight: 400,
             color: "#1e40af",
             textTransform: "uppercase",
             letterSpacing: "0.5px",
@@ -947,7 +949,7 @@ export const AiCockpit: React.FC = () => {
             background: "#f1f5f9",
             padding: "6px 10px",
             fontSize: "10px",
-            fontWeight: 800,
+            fontWeight: 400,
             color: "#64748b",
             display: "flex",
             alignItems: "center",
@@ -1310,7 +1312,7 @@ export const AiCockpit: React.FC = () => {
                             <MiniFlag locale={aiState.locale || "auto"} />
                         </div>
                         {!isNarrow && (
-                            <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>
+                            <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 400 }}>
                                 {(aiState.locale || "auto").split("-")[0].toUpperCase()}
                             </span>
                         )}
@@ -1348,7 +1350,7 @@ export const AiCockpit: React.FC = () => {
                                     }}>
                                         <MiniFlag locale={opt.value} />
                                     </div>
-                                    <span style={{ fontSize: "9px", fontWeight: 800 }}>
+                                    <span style={{ fontSize: "9px", fontWeight: 400 }}>
                                         {opt.value === "auto" ? "AUTO" : opt.value.split("-")[0].toUpperCase()}
                                     </span>
                                 </button>
@@ -1378,7 +1380,7 @@ export const AiCockpit: React.FC = () => {
                         aria-label="Modelos de Resposta Rápidos (MODS)"
                     >
                         <Icons.Settings size={11} style={{ opacity: 0.6 }} />
-                        {!isNarrow && <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>MODS</span>}
+                        {!isNarrow && <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 400 }}>MODS</span>}
                     </button>
 
                     {activeMenu === "presets" && (
@@ -1414,7 +1416,7 @@ export const AiCockpit: React.FC = () => {
                                         }}
                                     >
                                         <div style={{ width: "16px", display: "flex", justifyContent: "center" }}><Icons.ArrowRight size={10} /></div>
-                                        <span style={{ fontWeight: 800, fontSize: "10px" }}>{p.name.toUpperCase()}</span>
+                                        <span style={{ fontWeight: 400, fontSize: "10px" }}>{p.name.toUpperCase()}</span>
                                     </button>
                                 ))}
 
@@ -1459,7 +1461,7 @@ export const AiCockpit: React.FC = () => {
                         ) : (
                             <Icons.Activity size={11} style={{ opacity: 0.6 }} />
                         )}
-                        {!isNarrow && <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>DICAS</span>}
+                        {!isNarrow && <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 400 }}>DICAS</span>}
                     </button>
 
                     {activeMenu === "intents" && (
@@ -1491,7 +1493,7 @@ export const AiCockpit: React.FC = () => {
                                         }}
                                     >
                                         <div style={{ width: "16px", display: "flex", justifyContent: "center" }}><Icons.Sparkles size={10} /></div>
-                                        <span style={{ fontWeight: 800, fontSize: "10px" }}>{intent.toUpperCase()}</span>
+                                        <span style={{ fontWeight: 400, fontSize: "10px", whiteSpace: "normal", overflowWrap: "anywhere", wordBreak: "break-word", maxWidth: "100%", flex: 1 }}>{intent.toUpperCase()}</span>
                                     </button>
                                 ))}
 
@@ -1522,7 +1524,7 @@ export const AiCockpit: React.FC = () => {
                         aria-label="Contactos Sugeridos (LISTA)"
                     >
                         <Icons.User size={11} style={{ opacity: 0.6 }} />
-                        {!isNarrow && <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>LISTA</span>}
+                        {!isNarrow && <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 400 }}>LISTA</span>}
                     </button>
 
                     {activeMenu === "contacts" && (
@@ -1571,7 +1573,7 @@ export const AiCockpit: React.FC = () => {
                                         }}
                                     >
                                         <div style={{ width: "16px", display: "flex", justifyContent: "center" }}><Icons.User size={10} /></div>
-                                        <span style={{ fontWeight: 800 }}>{c.name.toUpperCase()}</span>
+                                        <span style={{ fontWeight: 400 }}>{c.name.toUpperCase()}</span>
                                     </button>
                                 ))}
 
@@ -1608,7 +1610,7 @@ export const AiCockpit: React.FC = () => {
                         }}>
                             {toneRefiners.find(t => t.tone === aiState.tone)?.icon || <Icons.Settings size={11} />}
                         </div>
-                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 800 }}>MODO</span>
+                        <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 400 }}>MODO</span>
                     </button>
 
                     {activeMenu === "mode" && (
@@ -1630,7 +1632,7 @@ export const AiCockpit: React.FC = () => {
                                     }}
                                 >
                                     <div style={{ width: "16px", display: "flex", justifyContent: "center" }}>{r.icon}</div>
-                                    <span style={{ fontWeight: 800 }}>{r.label.toUpperCase()}</span>
+                                    <span style={{ fontWeight: 400 }}>{r.label.toUpperCase()}</span>
                                 </button>
 
 
