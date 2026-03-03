@@ -729,7 +729,7 @@ export const AiCockpit: React.FC = () => {
             display: "flex",
             flexDirection: "column",
             gap: "4px",
-            zIndex: 500,
+            zIndex: 9999,
             background: "transparent",
             width: "fit-content"
         },
@@ -796,8 +796,10 @@ export const AiCockpit: React.FC = () => {
             alignItems: "center",
             overflow: "visible",
             maxWidth: "100%",
-            overflowX: "hidden",
-            flexWrap: "nowrap"
+            overflowX: "visible",
+            flexWrap: "nowrap",
+            position: "relative",
+            zIndex: 5
         },
         outputCard: {
             background: "var(--iccc-card-bg)",
