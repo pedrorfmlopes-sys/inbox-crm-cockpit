@@ -817,8 +817,10 @@ export const AiCockpit: React.FC = () => {
         outputHeader: {
             display: "flex",
             justifyContent: "space-between",
+            alignItems: "center",
+            padding: "6px 0",
             fontSize: "10px",
-            fontWeight: 700,
+            fontWeight: 400,
             textTransform: "uppercase",
             letterSpacing: "0.5px",
             color: "var(--iccc-text-muted)",
@@ -1646,11 +1648,11 @@ export const AiCockpit: React.FC = () => {
                 (output || isGenerating || aiState.history.length > 0 || history.length > 0) && (
                     <div style={S.outputCard}>
                         <div style={S.outputHeader}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                <span>Sugestão da IA</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }} title="Sugestões da IA">
+                                <Icons.Sparkles size={15} style={{ opacity: 0.6 }} />
                                 {isGenerating && <div style={S.typingDots}><span>.</span><span>.</span><span>.</span></div>}
                             </div>
-                            <div style={{ display: "flex", gap: "8px" }}>
+                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                                 {history.length > 0 && (
                                     <div style={{ position: "relative" }}>
                                         <button
@@ -1659,16 +1661,15 @@ export const AiCockpit: React.FC = () => {
                                                 color: "#2563eb",
                                                 display: "flex",
                                                 alignItems: "center",
-                                                gap: "4px",
                                                 background: !output ? "rgba(37, 99, 235, 0.08)" : "none",
                                                 padding: !output ? "4px 8px" : "0",
                                                 borderRadius: "4px"
                                             }}
                                             onClick={() => setActiveMenu(activeMenu === "rollback" as any ? null : "rollback" as any)}
-                                            title="Histórico: Voltar a uma resposta anterior"
+                                            title="Histórico"
+                                            aria-label="Histórico"
                                         >
-                                            <Icons.RotateCcw size={14} />
-                                            <span style={{ fontSize: "9px" }}>HISTÓRICO</span>
+                                            <Icons.RotateCcw size={15} />
                                         </button>
                                         {activeMenu === "rollback" as any && (
                                             <div style={{ ...S.cascadeMenu, width: "220px", right: 0, left: "auto", top: "24px" }}>
@@ -1696,14 +1697,14 @@ export const AiCockpit: React.FC = () => {
                                         )}
                                     </div>
                                 )}
-                                <button style={S.actionBtn} onClick={handleResetConversation} title="Limpar conversa (Reset Total)">
-                                    <Icons.Trash size={14} />
+                                <button style={S.actionBtn} onClick={handleResetConversation} title="Eliminar" aria-label="Eliminar">
+                                    <Icons.Trash size={15} />
                                 </button>
-                                <button style={S.actionBtn} onClick={handleExport} title="Descarregar Texto (.txt)">
-                                    <Icons.Download size={14} />
+                                <button style={S.actionBtn} onClick={handleExport} title="Download" aria-label="Download">
+                                    <Icons.Download size={15} />
                                 </button>
-                                <button style={S.actionBtn} onClick={() => navigator.clipboard.writeText(output)} title="Copiar texto">
-                                    <Icons.Clipboard size={14} />
+                                <button style={S.actionBtn} onClick={() => navigator.clipboard.writeText(output)} title="Copiar" aria-label="Copiar">
+                                    <Icons.Clipboard size={15} />
                                 </button>
                                 <button
                                     style={S.actionBtnPrimary}
@@ -1719,10 +1720,10 @@ export const AiCockpit: React.FC = () => {
                                             requiredAttendees: ctx.fromEmail ? [ctx.fromEmail] : []
                                         });
                                     }}
-                                    title="Agendar Reunião"
+                                    title="Agendar"
+                                    aria-label="Agendar"
                                 >
-                                    <Icons.Calendar size={14} style={{ marginRight: "4px" }} />
-                                    Agendar
+                                    <Icons.Calendar size={15} />
                                 </button>
                                 <button
                                     style={S.actionBtnPrimary}
@@ -1733,10 +1734,10 @@ export const AiCockpit: React.FC = () => {
                                             alert("Erro crítico no botão: " + e.message);
                                         }
                                     }}
-                                    title="Inserir no Email"
+                                    title="Inserir"
+                                    aria-label="Inserir"
                                 >
-                                    <Icons.Send size={14} style={{ marginRight: "4px" }} />
-                                    {ctx.isCompose ? "Atualizar" : "Inserir"}
+                                    <Icons.Send size={15} />
                                 </button>
                             </div>
                         </div>
