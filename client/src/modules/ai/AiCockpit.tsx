@@ -113,7 +113,7 @@ export const AiCockpit: React.FC = () => {
                 const res = await aiGenerate({
                     action: "extract_tasks_json" as any,
                     mode: "fast",
-                    locale: "pt-PT",
+                    locale: (aiState.locale || "auto") as any,
                     tone: "neutro",
                     email: {
                         subject: ctx.subject || "",
@@ -224,7 +224,7 @@ export const AiCockpit: React.FC = () => {
                 const res = await aiGenerate({
                     action: "extract_contacts" as any,
                     mode: "fast",
-                    locale: "pt-PT",
+                    locale: (aiState.locale || "auto") as any,
                     tone: "neutro",
                     email: {
                         bodyText,

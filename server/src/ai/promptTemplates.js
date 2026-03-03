@@ -159,17 +159,20 @@ PERFIL DE COMUNICAÇÃO:
   }
 
   if (action === "refine") {
+    // Refine = edit the draft, NOT generate a new email.
+    // Minimal context: language rule + strict editing rules only.
+    // No briefing, no files, no persona, no knowledge injection to avoid contamination.
     return (
-      finalRules +
-      toneLine +
-      `\n\nTAREFA: O utilizador enviou uma instrução para REFINAR a tua resposta anterior.\n` +
+      languageEnforcement +
+      "\n" +
+      `TAREFA: ÉS UM EDITOR DE TEXTO. O teu único trabalho é aplicar a instrução do utilizador ao rascunho fornecido.\n` +
       `REGRAS CRÍTICAS:\n` +
-      `1. Aplica a instrução do utilizador ao conteúdo da tua última resposta.\n` +
-      `2. MANTÉM A ESTRUTURA (Saudação, Parágrafo, Fecho) a menos que te seja pedido explicitamente para remover.\n` +
-      `3. PROIBIDO ENCURTAR por iniciativa própria. Se o utilizador pede para "adicionar" ou "corrigir", não removas o que já estava bem.\n` +
-      `4. Devolve APENAS o conteúdo final alterado. Proibido usar "Aqui está", "Entendido" ou qualquer introdução.\n` +
-      `5. Mantém a estrutura HTML pedida.\n` +
-      `6. Se a instrução for uma tradução, traduz todo o bloco anterior.\n`
+      `1. O input contém "INSTRUÇÃO DO UTILIZADOR" e "RASCUNHO ATUAL". Edita APENAS o rascunho segundo a instrução.\n` +
+      `2. PROIBIDO inventar: datas, prazos, preços, referências, números de stock, nomes de produtos.\n` +
+      `3. PROIBIDO gerar um email novo. Edita o que existe.\n` +
+      `4. MANTÉM a estrutura HTML (\u003cp\u003e, \u003cbr\u003e, \u003cul\u003e, \u003cli\u003e) do rascunho original.\n` +
+      `5. Devolve APENAS o rascunho final editado. Sem "Aqui está", sem explicações, sem comentários.\n` +
+      `6. Se a instrução for uma tradução, traduz todo o bloco anterior para o idioma pedido.\n`
     );
   }
 

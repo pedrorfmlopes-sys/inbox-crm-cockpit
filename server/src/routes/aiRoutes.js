@@ -160,14 +160,24 @@ export function createAiRouter() {
         currentTime: new Date().toISOString(), // NEW: Time awareness for greetings
       });
 
+      // For refine: build an explicit input that includes the draft to edit.
+      // This prevents the model from ignoring the existing draft and generating a new email.
+      const lastAssistant = [...history].reverse().find(m => m.role === "assistant" && typeof m.content === "string");
+      const currentDraft = lastAssistant?.content || "";
+      const refineInput = action === "refine"
+        ? `INSTRUÇÃO DO UTILIZADOR: ${inputText || "Melhora o rascunho"}
+RASCUNHO ATUAL (edita APENAS este texto, não inventar factos/prazos/preços/referências):
+${currentDraft}`
+        : "ok";
+
       const result = await aiCreateText({
         mode,
         instructions,
-        input: action === "refine" ? (inputText || "Refinar") : "ok",
-        files,
-        history,
+        input: refineInput,
+        files: action === "refine" ? [] : files,
+        history: action === "refine" ? [] : history,
         max_output_tokens: action === "summarize" || action === "tasks" || action === "summarize_actions" ? 800 : 700,
-        temperature: 0.1,
+        temperature: action === "refine" ? 0 : 0.1,
         customModels,
       });
 
