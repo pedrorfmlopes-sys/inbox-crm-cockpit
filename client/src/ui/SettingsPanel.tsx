@@ -1181,6 +1181,26 @@ function ConnectionSettings({ model, setModel, onSave, setStatus, availableModel
           {fetchingModels ? "A procurar..." : "Localizar Modelos"}
         </button>
       </div>
+      {granularStatusDetails.geminiDetails && (
+        <div style={{
+          fontSize: 10,
+          color: "var(--iccc-text-muted)",
+          marginBottom: 8,
+          padding: 8,
+          background: "rgba(0,0,0,0.02)",
+          borderRadius: 8,
+          border: "1px solid var(--iccc-card-border)"
+        }}>
+          <div><b>Model Request:</b> {granularStatusDetails.geminiDetails.requested}</div>
+          <div><b>Effective Model:</b> {granularStatusDetails.geminiDetails.effective}</div>
+          {granularStatusDetails.geminiDetails.requested !== granularStatusDetails.geminiDetails.effective && (
+            <div style={{ color: "#f59e0b", marginTop: 4 }}>
+              <Icons.AlertTriangle size={10} style={{ marginRight: 4 }} />
+              Fallback ativado (modelo indisponível ou inválido).
+            </div>
+          )}
+        </div>
+      )}
       <Field label="Gemini API Key">
         <input
           type="password"
@@ -1198,10 +1218,9 @@ function ConnectionSettings({ model, setModel, onSave, setStatus, availableModel
           onChange={e => setModel({ ...model, geminiModel: e.target.value })}
         >
           {availableModels.gemini.length > 0 ? (
-            availableModels.gemini.map(m => {
-              const label = m.includes("flash") ? "v3.1 Flash" : m.includes("pro") ? "v3.1 Pro" : m;
-              return <option key={m} value={m}>{m} ({label})</option>
-            })
+            availableModels.gemini.map(m => (
+              <option key={m} value={m}>{m}</option>
+            ))
           ) : (
             <>
               <option value="gemini-1.5-flash">gemini-1.5-flash (v3.1 Flash)</option>

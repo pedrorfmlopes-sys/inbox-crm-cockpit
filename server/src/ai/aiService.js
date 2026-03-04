@@ -159,7 +159,7 @@ export async function aiSelftest(customModels = {}) {
     const key = customModels.geminiApiKey || cfg.gemini.apiKey;
     if (!key) return { ok: false, error: "Sem API Key" };
     try {
-      await geminiCreateResponse({
+      const res = await geminiCreateResponse({
         apiKey: key,
         model: customModels.geminiModel || cfg.gemini.modelFast,
         instructions: "Responde apenas OK",
@@ -167,7 +167,13 @@ export async function aiSelftest(customModels = {}) {
         max_output_tokens: 5,
         temperature: 0,
       });
-      return { ok: true };
+      return {
+        ok: true,
+        requestedModel: res.requestedModel,
+        sanitizedModel: res.sanitizedModel,
+        modelUsed: res.effectiveModel,
+        providerUsed: res.providerUsed
+      };
     } catch (e) {
       console.warn("[ai] Gemini selftest failed:", e.message);
       return { ok: false, error: e.message };

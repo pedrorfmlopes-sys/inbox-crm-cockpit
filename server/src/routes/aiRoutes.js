@@ -281,7 +281,7 @@ ${currentDraft}`
       const result = await aiSelftest(customModels);
       res.json(result); // returns { ok, openai, gemini }
     } catch (e) {
-      res.json({ ok: false, openai: false, gemini: false, error: e.message });
+      res.json({ ok: false, openai: { ok: false, error: e.message }, gemini: { ok: false, error: e.message } });
     }
   });
 

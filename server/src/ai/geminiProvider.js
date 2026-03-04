@@ -4,9 +4,25 @@ import path from "path";
 // Uses native fetch to call Google Generative AI API (Gemini).
 // Supports multimodal inputs (text + files).
 
+const GEMINI_ALLOWLIST = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-2.0-pro-exp"];
+
+function sanitizeGeminiModel(m) {
+    if (!m) return "gemini-1.5-flash";
+    // Remove anything in parentheses (e.g. "gemini-2.0-flash (NextGen)" -> "gemini-2.0-flash")
+    let clean = String(m).split("(")[0].trim();
+    // Also take only first word if spaces exist outside parentheses
+    clean = clean.split(" ")[0].trim();
+
+    if (GEMINI_ALLOWLIST.includes(clean)) return clean;
+    // Basic prefix check if it starts with gemini- but not in allowlist
+    if (clean.startsWith("gemini-")) return clean;
+
+    return "gemini-1.5-flash";
+}
+
 export async function geminiCreateResponse({
     apiKey,
-    model = "gemini-1.5-flash",
+    model: requestedModel = "gemini-1.5-flash",
     instructions,
     input,
     files = [],
@@ -16,9 +32,14 @@ export async function geminiCreateResponse({
 }) {
     if (!apiKey) throw Object.assign(new Error("GEMINI_API_KEY em falta"), { status: 400 });
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const sanitizedModel = sanitizeGeminiModel(requestedModel);
+    let effectiveModel = sanitizedModel;
+
+    const buildUrl = (m) => `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`;
+    let url = buildUrl(effectiveModel);
+
     const logPath = "gemini-debug.log";
-    fs.appendFileSync(logPath, `\n[${new Date().toISOString()}] Calling: ${url.replace(apiKey, 'REDACTED')}\n`);
+    fs.appendFileSync(logPath, `\n[${new Date().toISOString()}] Calling: ${url.replace(apiKey, 'REDACTED')} (Requested: ${requestedModel})\n`);
 
     // Build the prompt parts
     const parts = [];
@@ -68,13 +89,29 @@ export async function geminiCreateResponse({
     };
 
     try {
-        const res = await fetch(url, {
+        let res = await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
         });
 
-        const data = await res.json();
+        let data = await res.json();
+
+        // Specific Fallback for 404 (Model not found)
+        if (res.status === 404 && effectiveModel !== "gemini-1.5-flash") {
+            const oldModel = effectiveModel;
+            effectiveModel = "gemini-1.5-flash";
+            url = buildUrl(effectiveModel);
+            console.log(`[ai] Gemini 404 for ${oldModel}. Falling back to ${effectiveModel}...`);
+            fs.appendFileSync(logPath, `[${new Date().toISOString()}] 404 Fallback triggered. New URL: ${url.replace(apiKey, 'REDACTED')}\n`);
+
+            res = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            data = await res.json();
+        }
 
         if (!res.ok) {
             let msg = data?.error?.message || `Gemini HTTP ${res.status}`;
@@ -91,7 +128,14 @@ export async function geminiCreateResponse({
         }
 
         const outputText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        return { raw: data, text: outputText.trim() };
+        return {
+            raw: data,
+            text: outputText.trim(),
+            requestedModel,
+            sanitizedModel,
+            effectiveModel,
+            providerUsed: "gemini"
+        };
     } catch (e) {
         console.error("[ai] Gemini provider error:", e.message);
         throw e;
