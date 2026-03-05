@@ -72,7 +72,7 @@ export const ProtectionBanner: React.FC<ProtectionBannerProps> = ({
                 }}
             >
                 {isDrafting ? <Icons.RefreshCw size={12} className="animate-spin" /> : <Icons.MessageSquare size={12} />}
-                Gurar Resposta Diplomática
+                Gerar Resposta Diplomática
             </button>
         </div>
     );
