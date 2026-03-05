@@ -194,6 +194,7 @@ const MODEL_WHITELIST = new Set([
   "res.users",
   "project.task.type",
   "ir.attachment",
+  "crm.stage",
 ]);
 
 function modelAllowed(model) {
@@ -231,7 +232,7 @@ app.get("/api/odoo/search", async (req, res) => {
     } else if (model === "res.users") {
       domain = isEmpty ? [] : [["name", "ilike", q]];
       fields = ["name", "display_name", "email"];
-    } else if (model === "project.task.type") {
+    } else if (model === "project.task.type" || model === "crm.stage") {
       domain = isEmpty ? [] : [["name", "ilike", q]];
       fields = ["name", "display_name"];
     } else {
@@ -255,6 +256,7 @@ function cleanValuesForModel(model, values) {
     "project.project": new Set(["name", "partner_id", "user_id"]),
     "project.task": new Set(["name", "description", "date_deadline", "project_id", "lead_id", "parent_id", "user_ids", "stage_id"]),
     "ir.attachment": new Set(["name", "datas", "res_model", "res_id", "type", "mimetype", "datas_fname"]),
+    "crm.stage": new Set(["name"]),
   }[model];
 
   if (!allowedByModel) return null;
@@ -295,7 +297,7 @@ function buildSearchSpec(model, q) {
   } else if (model === "res.users") {
     domain = isEmpty ? [] : [["name", "ilike", q]];
     fields = ["name", "display_name", "email"];
-  } else if (model === "project.task.type") {
+  } else if (model === "project.task.type" || model === "crm.stage") {
     domain = isEmpty ? [] : [["name", "ilike", q]];
     fields = ["name", "display_name"];
   } else {
