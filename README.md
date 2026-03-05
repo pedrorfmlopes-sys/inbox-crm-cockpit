@@ -33,12 +33,12 @@ Cria `.env` na pasta `server` (copia de `server/.env.example`).
 ```bash
 npm run dev
 ```
-- **UI**: https://localhost:5174
+- **UI**: https://localhost:5173
 - **API**: http://localhost:7071
 
 ### 3) Manifestos
 Existem dois manifestos principais na pasta `manifest/`:
-- `manifest.dev.xml`: Aponta para `https://localhost:5174` (para desenvolvimento).
+- `manifest.dev.xml`: Aponta para `https://localhost:5173` (para desenvolvimento).
 - `manifest.staging.xml`: Aponta para o URL do Render (para testes reais).
 
 ## 📥 Instalação (Sideload)
