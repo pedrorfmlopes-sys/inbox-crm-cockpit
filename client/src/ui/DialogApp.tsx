@@ -935,7 +935,7 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         }
       }
 
-      onStatus("Criado + Ligado ✅");
+      onStatus("Criado ✅");
 
       // Handle Attachments
       if (selectedAtts.length > 0) {
@@ -1170,7 +1170,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
       }
 
       let id = await createOdoo("project.project", values);
-      onStatus("Criado + Ligado ✅");
+      onStatus("Criado ✅");
 
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
@@ -1336,7 +1336,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
       }
 
       let id = await createOdoo("crm.lead", values);
-      onStatus("Criado + Ligado ✅");
+      onStatus("Criado ✅");
 
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
@@ -1533,7 +1533,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
         emailWebLink: ctx.emailWebLink,
       });
 
-      onStatus("Criado + Ligado ✅");
+      onStatus("Criado ✅");
       setTimeout(() => closeDialog(), 500);
     } catch (e: any) {
       onStatus(e?.message ?? String(e));
@@ -1687,7 +1687,7 @@ function GenericMiniForm({ mode, ctx, model, editId, onStatus }: any) {
         emailWebLink: ctx.emailWebLink,
       });
 
-      onStatus("Criado + Ligado ✅");
+      onStatus("Criado ✅");
       setTimeout(() => closeDialog(), 500);
     } catch (e: any) {
       onStatus(e?.message ?? String(e));
