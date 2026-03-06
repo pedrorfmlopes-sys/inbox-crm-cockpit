@@ -218,7 +218,7 @@ export async function createOrUpdatePartner(payload: {
 export async function searchCompanies(q: string): Promise<any[]> {
   const query = encodeURIComponent(String(q || "").trim());
   const r: any = await requestJSON(`/api/odoo/companies/search?q=${query}`);
-  return r?.companies ?? [];
+  return r?.results ?? r?.companies ?? [];
 }
 
 // -------- Odoo generic helpers --------

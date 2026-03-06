@@ -204,6 +204,148 @@ function modelAllowed(model) {
   return MODEL_WHITELIST.has(String(model || "").trim());
 }
 
+function normalizeEmail(raw) {
+  return String(raw || "").trim().toLowerCase();
+}
+
+function normalizePartnerPayload(data = {}) {
+  const clean = {};
+  if (typeof data.name === "string" && data.name.trim()) clean.name = data.name.trim();
+
+  const email = normalizeEmail(data.email);
+  if (email) clean.email = email;
+
+  if (data.company_type === "person" || data.company_type === "company") {
+    clean.company_type = data.company_type;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, "parent_id")) {
+    const pid = Number(data.parent_id);
+    clean.parent_id = pid > 0 ? pid : false;
+  }
+
+  if (typeof data.function === "string") clean.function = data.function.trim();
+  if (typeof data.phone === "string") clean.phone = data.phone.trim();
+  if (typeof data.mobile === "string") clean.mobile = data.mobile.trim();
+
+  return clean;
+}
+
+async function findPartnerExactByEmail(odoo, email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return null;
+
+  const rows = await odoo.searchRead(
+    "res.partner",
+    [["email", "=", normalized]],
+    ["id", "name", "email", "company_type", "parent_id", "function", "phone", "mobile"],
+    1
+  );
+
+  return Array.isArray(rows) && rows.length ? rows[0] : null;
+}
+
+app.get("/api/odoo/partners/by-email", async (req, res) => {
+  try {
+    const email = normalizeEmail(req.query.email);
+    if (!email) return res.status(400).json({ ok: false, message: "Missing email", partner: null });
+
+    try {
+      const odoo = await getOdooCached(req);
+      const partner = await findPartnerExactByEmail(odoo, email);
+      return res.json({ ok: true, partner: partner || null });
+    } catch (e) {
+      console.warn("[server] /partners/by-email fallback to null:", e?.message);
+      return res.json({ ok: true, partner: null, warning: "odoo_unavailable" });
+    }
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, message: String(e?.message || e), partner: null });
+  }
+});
+
+app.get("/api/odoo/companies/search", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+
+    try {
+      const odoo = await getOdooCached(req);
+      const domain = [["company_type", "=", "company"], ...(q ? [["name", "ilike", q]] : [])];
+      const companies = await odoo.searchRead("res.partner", domain, ["id", "name", "email", "display_name"], 10);
+      return res.json({ ok: true, results: companies || [] });
+    } catch (e) {
+      console.warn("[server] /companies/search fallback empty:", e?.message);
+      return res.json({ ok: true, results: [], warning: "odoo_unavailable" });
+    }
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, message: String(e?.message || e), results: [] });
+  }
+});
+
+app.post("/api/odoo/partners/create-or-update", async (req, res) => {
+  try {
+    const mode = String(req.body?.mode || "").trim();
+    const targetPartnerId = Number(req.body?.targetPartnerId);
+    const data = normalizePartnerPayload(req.body?.data || {});
+
+    if (mode !== "create" && mode !== "update") {
+      return res.status(400).json({ ok: false, message: "Invalid mode" });
+    }
+
+    if (!data.email) {
+      return res.status(400).json({ ok: false, message: "Missing email" });
+    }
+
+    const odoo = await getOdooCached(req);
+    const existing = await findPartnerExactByEmail(odoo, data.email);
+
+    if (mode === "create") {
+      if (existing) {
+        return res.status(409).json({
+          ok: false,
+          conflict: true,
+          message: "Partner already exists for email; use update",
+          existingPartner: existing,
+        });
+      }
+
+      if (!data.name) data.name = data.email.split("@")[0] || "Contacto";
+      if (!data.company_type) data.company_type = "person";
+
+      const id = await odoo.create("res.partner", data);
+      const partner = await odoo.read("res.partner", [id], ["id", "name", "email", "company_type", "parent_id", "function", "phone", "mobile"]);
+      return res.json({ ok: true, mode: "create", id, partner: Array.isArray(partner) ? partner[0] : null });
+    }
+
+    const targetId = targetPartnerId || Number(existing?.id);
+    if (!targetId) {
+      return res.status(404).json({ ok: false, message: "Partner not found to update" });
+    }
+
+    if (existing && Number(existing.id) !== Number(targetId)) {
+      return res.status(409).json({
+        ok: false,
+        conflict: true,
+        message: "Email already belongs to another partner",
+        existingPartner: existing,
+      });
+    }
+
+    const patch = { ...data };
+    if (!Object.keys(patch).length) {
+      return res.status(400).json({ ok: false, message: "No fields to update" });
+    }
+
+    await odoo.call("res.partner", "write", [[targetId], patch]);
+    const partner = await odoo.read("res.partner", [targetId], ["id", "name", "email", "company_type", "parent_id", "function", "phone", "mobile"]);
+    return res.json({ ok: true, mode: "update", id: targetId, partner: Array.isArray(partner) ? partner[0] : null });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, message: String(e?.message || e) });
+  }
+});
+
 app.get("/api/odoo/search", async (req, res) => {
   try {
     const model = String(req.query.model || "").trim();
