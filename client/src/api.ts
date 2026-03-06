@@ -178,6 +178,50 @@ export async function linkEmailToRecord(payload: LinkPayload): Promise<{ ok: boo
   }
 }
 
+
+export type PartnerLite = {
+  id: number;
+  name?: string;
+  email?: string;
+  company_type?: "person" | "company" | string;
+  parent_id?: [number, string] | number | null;
+  function?: string;
+  phone?: string;
+  mobile?: string;
+};
+
+export async function getPartnerByEmail(email: string): Promise<PartnerLite | null> {
+  const q = encodeURIComponent(String(email || "").trim());
+  const r: any = await requestJSON(`/api/odoo/partners/by-email?email=${q}`);
+  return r?.partner ?? null;
+}
+
+export async function createOrUpdatePartner(payload: {
+  mode: "create" | "update";
+  targetPartnerId?: number;
+  data: {
+    name?: string;
+    email?: string;
+    company_type?: "person" | "company";
+    parent_id?: number | null;
+    function?: string;
+    phone?: string;
+    mobile?: string;
+  };
+}): Promise<any> {
+  return await requestJSON(`/api/odoo/partners/create-or-update`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function searchCompanies(q: string): Promise<any[]> {
+  const query = encodeURIComponent(String(q || "").trim());
+  const r: any = await requestJSON(`/api/odoo/companies/search?q=${query}`);
+  const results = r?.results ?? r?.companies ?? [];
+  return Array.isArray(results) ? results : [];
+}
+
 // -------- Odoo generic helpers --------
 export async function readOdoo(model: string, ids: number[] | number, fields: string[]): Promise<any[]> {
   const idList = Array.isArray(ids) ? ids : [ids];
