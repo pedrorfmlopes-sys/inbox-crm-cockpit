@@ -298,6 +298,7 @@ export function SettingsPanel(): JSX.Element {
             <ConnectionSettings
               model={model}
               setModel={setModel}
+              onSave={onSave}
               setStatus={setStatus}
               availableModels={availableModels}
               fetchingModels={fetchingModels}
@@ -1004,15 +1005,16 @@ function ProtectionSettings() {
   );
 }
 
-function ConnectionSettings({ model, setModel, setStatus, availableModels, fetchingModels, refreshModels }: {
+function ConnectionSettings({ model, setModel, onSave, setStatus, availableModels, fetchingModels, refreshModels }: {
   model: CockpitSettingsV1,
   setModel: (s: CockpitSettingsV1) => void,
+  onSave: () => Promise<void>,
   setStatus: (s: string | null) => void,
   availableModels: { openai: string[]; gemini: string[] },
   fetchingModels: boolean,
   refreshModels: () => Promise<void>
 }) {
-  const { granularStatus, granularStatusDetails, checkConnectivity, login } = useCockpit() as any;
+  const { connectionStatus, granularStatus, granularStatusDetails, checkConnectivity, login } = useCockpit() as any;
   const [isTesting, setIsTesting] = useState(false);
 
   const handleTest = async () => {

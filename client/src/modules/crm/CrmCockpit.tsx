@@ -28,7 +28,6 @@ const VerticalActionCascade: React.FC<{ onSelect: (type: string) => void }> = ({
 
     const items = [
         { label: "Tarefa", type: "project.task", icon: "📝" },
-        { label: "Ticket", type: "helpdesk.ticket", icon: "🎫" },
         { label: "Lead", type: "crm.lead", icon: "🎯" },
         { label: "Projeto", type: "project.project", icon: "🏗️" },
         { label: "Contato", type: "res.partner", icon: "👤" },
@@ -213,8 +212,6 @@ export const CrmCockpit: React.FC = () => {
     const [briefing, setBriefing] = useState<string | null>(null);
     const [voiceCommand, setVoiceCommand] = useState("");
     const [isVoiceLoading, setIsVoiceLoading] = useState(false);
-    const [isEmailInsightsLoading, setIsEmailInsightsLoading] = useState(false);
-    const [emailInsights, setEmailInsights] = useState<Array<{ model: string; recordId: number; recordName: string }>>([]);
     const [isContactsExpanded, setIsContactsExpanded] = useState(false);
     const [contactRows, setContactRows] = useState<ContactPanelRow[]>([]);
     const [emailPhones, setEmailPhones] = useState<string[]>([]);
@@ -375,7 +372,6 @@ export const CrmCockpit: React.FC = () => {
         setAnchors(null);    // Reset anchors
         setContact(null);    // Reset contact
         setProtection(null); // Reset protection
-        setEmailInsights([]);
         const participants = collectParticipants(ctx);
         setContactRows(participants);
         (async () => {
@@ -389,88 +385,8 @@ export const CrmCockpit: React.FC = () => {
         if (ctx.conversationId) {
             handleScanAnchors();
             loadContact();
-            loadEmailInsights();
         }
     }, [ctx.conversationId, ctx.fromEmail, ctx.toRecipients, ctx.ccRecipients]);
-
-    async function loadEmailInsights() {
-        const email = String(ctx.fromEmail || "").trim();
-        if (!email) return;
-
-        setIsEmailInsightsLoading(true);
-        try {
-            const partners: any[] = await searchOdoo({
-                model: "res.partner",
-                domain: [["email", "ilike", email]],
-                fields: ["id", "name", "display_name", "email"],
-                limit: 10,
-            });
-            const partnerIds = partners.map((p: any) => Number(p.id)).filter(Boolean);
-
-            const leadsByEmail: any[] = await searchOdoo({
-                model: "crm.lead",
-                domain: [["email_from", "ilike", email]],
-                fields: ["id", "name", "display_name", "partner_id"],
-                limit: 10,
-            });
-
-            const leadsByPartner: any[] = partnerIds.length
-                ? await searchOdoo({
-                    model: "crm.lead",
-                    domain: [["partner_id", "in", partnerIds]],
-                    fields: ["id", "name", "display_name", "partner_id"],
-                    limit: 20,
-                })
-                : [];
-
-            const allLeads = [...(leadsByEmail || []), ...(leadsByPartner || [])];
-            const leadIds = Array.from(new Set(allLeads.map((l: any) => Number(l.id)).filter(Boolean)));
-
-            const projects: any[] = partnerIds.length
-                ? await searchOdoo({
-                    model: "project.project",
-                    domain: [["partner_id", "in", partnerIds]],
-                    fields: ["id", "name", "display_name", "partner_id"],
-                    limit: 20,
-                })
-                : [];
-
-            const tickets: any[] = partnerIds.length
-                ? await searchOdoo({
-                    model: "helpdesk.ticket",
-                    domain: [["partner_id", "in", partnerIds]],
-                    fields: ["id", "name", "display_name", "partner_id", "stage_id", "priority"],
-                    limit: 20,
-                })
-                : [];
-
-            const tasks: any[] = leadIds.length
-                ? await searchOdoo({
-                    model: "project.task",
-                    domain: [["lead_id", "in", leadIds]],
-                    fields: ["id", "name", "display_name", "lead_id", "project_id", "stage_id"],
-                    limit: 20,
-                })
-                : [];
-
-            const all = [
-                ...(partners || []).map((r: any) => ({ model: "res.partner", recordId: Number(r.id), recordName: r.display_name || r.name || `#${r.id}` })),
-                ...(allLeads || []).map((r: any) => ({ model: "crm.lead", recordId: Number(r.id), recordName: r.display_name || r.name || `#${r.id}` })),
-                ...(projects || []).map((r: any) => ({ model: "project.project", recordId: Number(r.id), recordName: r.display_name || r.name || `#${r.id}` })),
-                ...(tasks || []).map((r: any) => ({ model: "project.task", recordId: Number(r.id), recordName: r.display_name || r.name || `#${r.id}` })),
-                ...(tickets || []).map((r: any) => ({ model: "helpdesk.ticket", recordId: Number(r.id), recordName: r.display_name || r.name || `#${r.id}` })),
-            ].filter((x) => x.recordId);
-
-            const dedup = new Map<string, { model: string; recordId: number; recordName: string }>();
-            for (const row of all) dedup.set(`${row.model}:${row.recordId}`, row);
-            setEmailInsights(Array.from(dedup.values()));
-        } catch (e) {
-            console.error("[crm] Failed to load email insights", e);
-            setEmailInsights([]);
-        } finally {
-            setIsEmailInsightsLoading(false);
-        }
-    }
 
     async function handleScanAnchors() {
         setIsAnchorsLoading(true);
@@ -691,7 +607,6 @@ async function handleDraftRejection() {
                         onSelect={(type) => {
                             if (type === "res.partner") openDialog("new", { model: "res.partner" });
                             else if (type === "project.task") openDialog("new", { model: "project.task" });
-                            else if (type === "helpdesk.ticket") openDialog("new", { model: "helpdesk.ticket" });
                             else if (type === "crm.lead") openDialog("new", { model: "crm.lead" });
                             else if (type === "project.project") openDialog("new", { model: "project.project" });
                             else if (type === "res.partner") openDialog("new", { model: "res.partner" });
@@ -841,36 +756,6 @@ async function handleDraftRejection() {
                             )}
                         </div>
                     )}
-                </div>
-
-                <div style={S.section}>
-                    <div style={S.sectionHeader}>
-                        <h3 style={S.sectionTitle}>Encontrados no Odoo por este email ({emailInsights.length})</h3>
-                    </div>
-                    <div style={S.accordionContent}>
-                        {isEmailInsightsLoading ? (
-                            <>
-                                <OdooCardSkeleton />
-                                <OdooCardSkeleton />
-                            </>
-                        ) : !emailInsights.length ? (
-                            <div style={S.emptyState}>
-                                <p>Nenhum contacto/lead/projeto/tarefa/ticket encontrado por email.</p>
-                            </div>
-                        ) : (
-                            <div style={S.cardList}>
-                                {emailInsights.map((link) => (
-                                    <OdooCard
-                                        key={`insight-${link.model}-${link.recordId}`}
-                                        link={link}
-                                        meta={meta}
-                                        settings={settings}
-                                        onEdit={() => openDialog("edit", { model: link.model, recordId: String(link.recordId) })}
-                                    />
-                                ))}
-                            </div>
-                        )}
-                    </div>
                 </div>
 
                 {/* Jira-style Collapsible Bucket */}
