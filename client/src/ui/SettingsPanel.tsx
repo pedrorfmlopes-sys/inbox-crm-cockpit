@@ -298,7 +298,6 @@ export function SettingsPanel(): JSX.Element {
             <ConnectionSettings
               model={model}
               setModel={setModel}
-              onSave={onSave}
               setStatus={setStatus}
               availableModels={availableModels}
               fetchingModels={fetchingModels}
