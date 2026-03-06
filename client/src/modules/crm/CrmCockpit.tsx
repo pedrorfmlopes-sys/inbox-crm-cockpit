@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { openCockpitDialog, getEmailBodyText } from "../../office";
+import { openCockpitDialog, getEmailBodyText, getOutlookContactSuggestionByEmail, OutlookContactSuggestion } from "../../office";
 import * as Icons from "../../ui/icons";
 import { ContactInsight } from "./ContactInsight";
 import { OdooCardSkeleton, Skeleton } from "../../ui/SkeletonLoader";
-import { aiExtractAnchors, aiGenerate, getOdooAutoLoginUrl, searchOdoo } from "../../api";
+import { aiExtractAnchors, aiGenerate, createOrUpdatePartner, getOdooAutoLoginUrl, getPartnerByEmail, searchCompanies, searchOdoo } from "../../api";
 import { scanForProtection, MatchResult } from "./triangulationService";
 import { ProtectionBanner } from "../../ui/ProtectionBanner";
 
@@ -91,6 +91,106 @@ const VerticalActionCascade: React.FC<{ onSelect: (type: string) => void }> = ({
     );
 };
 
+
+type ContactOrigin = "from" | "to" | "cc";
+type ContactLookupState = "idle" | "loading" | "found" | "not_found" | "error";
+
+type ContactPanelRow = {
+    key: string;
+    email: string;
+    name: string;
+    origin: ContactOrigin[];
+    lookupState: ContactLookupState;
+    partner: any | null;
+    companyType: "person" | "company";
+    parentId: number | null;
+    companyQuery: string;
+    companyOptions: Array<{ id: number; name: string; email?: string }>;
+    functionValue: string;
+    phone: string;
+    mobile: string;
+    isSaving: boolean;
+    error: string | null;
+    outlookSuggestion: OutlookContactSuggestion | null;
+    isOutlookLoading: boolean;
+    applyOutlookOpen: boolean;
+    applyOutlookFields: { name: boolean; company: boolean; jobTitle: boolean; phone: boolean };
+};
+
+function normalizeEmailValue(v: string) {
+    return String(v || "").trim().toLowerCase();
+}
+
+function fallbackNameFromEmail(email: string) {
+    const local = String(email || "").split("@")[0] || "";
+    return local.replace(/[._-]+/g, " ").trim() || "(sem nome)";
+}
+
+function toCompanyType(v: any): "person" | "company" {
+    return v === "company" ? "company" : "person";
+}
+
+function collectParticipants(ctx: any): ContactPanelRow[] {
+    const rows = new Map<string, ContactPanelRow>();
+
+    const upsert = (origin: ContactOrigin, emailRaw?: string, nameRaw?: string) => {
+        const email = normalizeEmailValue(emailRaw || "");
+        if (!email) return;
+
+        if (rows.has(email)) {
+            const existing = rows.get(email)!;
+            if (!existing.origin.includes(origin)) existing.origin.push(origin);
+            if (!existing.name && nameRaw) existing.name = String(nameRaw).trim();
+            return;
+        }
+
+        const fallback = fallbackNameFromEmail(email);
+        rows.set(email, {
+            key: email,
+            email,
+            name: String(nameRaw || "").trim() || fallback,
+            origin: [origin],
+            lookupState: "idle",
+            partner: null,
+            companyType: "person",
+            parentId: null,
+            companyQuery: "",
+            companyOptions: [],
+            functionValue: "",
+            phone: "",
+            mobile: "",
+            isSaving: false,
+            error: null,
+            outlookSuggestion: null,
+            isOutlookLoading: false,
+            applyOutlookOpen: false,
+            applyOutlookFields: { name: true, company: true, jobTitle: true, phone: true },
+        });
+    };
+
+    upsert("from", ctx.fromEmail, ctx.fromName);
+    for (const r of ctx.toRecipients || []) upsert("to", (r as any)?.email, (r as any)?.name);
+    for (const r of ctx.ccRecipients || []) upsert("cc", (r as any)?.email, (r as any)?.name);
+
+    return Array.from(rows.values());
+}
+
+function statusLabel(state: ContactLookupState) {
+    if (state === "loading") return "A carregar";
+    if (state === "found") return "Encontrado";
+    if (state === "not_found") return "Não encontrado";
+    if (state === "error") return "Erro";
+    return "A carregar";
+}
+
+function extractPhonesFromText(text: string): string[] {
+    const raw = String(text || "").replace(/\s+/g, " ");
+    const rx = /(?:\+?351[\s.-]?)?(?:9\d{2}|2\d{2})[\s.-]?\d{3}[\s.-]?\d{3}|\+\d{1,3}[\s.-]?\d{2,4}[\s.-]?\d{3,4}[\s.-]?\d{3,4}/g;
+    const found = raw.match(rx) || [];
+    const norm = found.map((x) => x.trim().replace(/\s+/g, " "));
+    return Array.from(new Set(norm)).slice(0, 20);
+}
+
 export const CrmCockpit: React.FC = () => {
     const { ctx, bodyText, attachments, meta, links, msg, refreshLinks, setMsg, isLoading: isContextLoading, settings } = useCockpit() as any;
 
@@ -113,6 +213,120 @@ export const CrmCockpit: React.FC = () => {
     const [briefing, setBriefing] = useState<string | null>(null);
     const [voiceCommand, setVoiceCommand] = useState("");
     const [isVoiceLoading, setIsVoiceLoading] = useState(false);
+    const [isContactsExpanded, setIsContactsExpanded] = useState(false);
+    const [contactRows, setContactRows] = useState<ContactPanelRow[]>([]);
+    const [emailPhones, setEmailPhones] = useState<string[]>([]);
+
+    function updateContactRow(email: string, patch: Partial<ContactPanelRow>) {
+        const key = normalizeEmailValue(email);
+        setContactRows((prev) => prev.map((row) => (row.email === key ? { ...row, ...patch } : row)));
+    }
+
+    async function runPartnerLookup(email: string) {
+        const key = normalizeEmailValue(email);
+        if (!key) return;
+        updateContactRow(key, { lookupState: "loading", error: null });
+        try {
+            const partner = await getPartnerByEmail(key);
+            if (partner) {
+                updateContactRow(key, {
+                    lookupState: "found",
+                    partner,
+                    name: partner.name || fallbackNameFromEmail(key),
+                    companyType: toCompanyType(partner.company_type),
+                    parentId: Array.isArray(partner.parent_id) ? Number(partner.parent_id[0]) : (partner.parent_id ? Number(partner.parent_id) : null),
+                    functionValue: String(partner.function || ""),
+                    phone: String(partner.phone || ""),
+                    mobile: String(partner.mobile || ""),
+                    error: null,
+                });
+            } else {
+                updateContactRow(key, { lookupState: "not_found", partner: null, error: null });
+            }
+        } catch (e: any) {
+            updateContactRow(key, { lookupState: "error", error: e?.message || "Falha no lookup" });
+        }
+    }
+
+    async function loadOutlookSuggestion(email: string) {
+        const key = normalizeEmailValue(email);
+        updateContactRow(key, { isOutlookLoading: true });
+        try {
+            const suggestion = await getOutlookContactSuggestionByEmail(key);
+            updateContactRow(key, { outlookSuggestion: suggestion || null });
+        } finally {
+            updateContactRow(key, { isOutlookLoading: false });
+        }
+    }
+
+    function toggleOutlookField(row: ContactPanelRow, field: "name" | "company" | "jobTitle" | "phone") {
+        updateContactRow(row.email, {
+            applyOutlookFields: {
+                ...row.applyOutlookFields,
+                [field]: !row.applyOutlookFields[field],
+            },
+        });
+    }
+
+    function applyOutlookSuggestion(row: ContactPanelRow) {
+        const s = row.outlookSuggestion;
+        if (!s) return;
+        const patch: Partial<ContactPanelRow> = { applyOutlookOpen: false };
+        if (row.applyOutlookFields.name && s.name) patch.name = s.name;
+        if (row.applyOutlookFields.jobTitle && s.jobTitle) patch.functionValue = s.jobTitle;
+        if (row.applyOutlookFields.company && s.company) patch.companyQuery = s.company;
+        if (row.applyOutlookFields.phone && Array.isArray(s.phones) && s.phones.length) {
+            patch.phone = row.phone || s.phones[0];
+            if (s.phones[1] && !row.mobile) patch.mobile = s.phones[1];
+        }
+        updateContactRow(row.email, patch);
+    }
+
+    async function handleCompanySearch(email: string, query: string) {
+        const key = normalizeEmailValue(email);
+        updateContactRow(key, { companyQuery: query });
+        if (!query.trim()) {
+            updateContactRow(key, { companyOptions: [] });
+            return;
+        }
+        try {
+            const items = await searchCompanies(query);
+            updateContactRow(key, { companyOptions: (items || []).map((x: any) => ({ id: Number(x.id), name: x.name || x.display_name || `#${x.id}`, email: x.email })) });
+        } catch {
+            updateContactRow(key, { companyOptions: [] });
+        }
+    }
+
+    async function handleSaveContact(row: ContactPanelRow, mode: "create" | "update") {
+        updateContactRow(row.email, { isSaving: true, error: null });
+        try {
+            const payload: any = {
+                mode,
+                targetPartnerId: mode === "update" ? Number(row.partner?.id || 0) : undefined,
+                data: {
+                    name: row.name,
+                    email: row.email,
+                    company_type: row.companyType,
+                    parent_id: row.parentId ?? null,
+                    function: row.functionValue,
+                    phone: row.phone,
+                    mobile: row.mobile,
+                },
+            };
+            await createOrUpdatePartner(payload);
+            await runPartnerLookup(row.email);
+        } catch (e: any) {
+            const msg = String(e?.message || "Erro ao guardar");
+            if (msg.includes("HTTP 409")) {
+                await runPartnerLookup(row.email);
+                updateContactRow(row.email, { error: "Contacto já existe por email. Use Atualizar." });
+            } else {
+                updateContactRow(row.email, { error: msg });
+            }
+        } finally {
+            updateContactRow(row.email, { isSaving: false });
+        }
+    }
     const [isEmailInsightsLoading, setIsEmailInsightsLoading] = useState(false);
     const [emailInsights, setEmailInsights] = useState<Array<{ model: string; recordId: number; recordName: string }>>([]);
 
@@ -161,13 +375,23 @@ export const CrmCockpit: React.FC = () => {
         setAnchors(null);    // Reset anchors
         setContact(null);    // Reset contact
         setProtection(null); // Reset protection
+        const participants = collectParticipants(ctx);
+        setContactRows(participants);
+        (async () => {
+            const body = await getEmailBodyText();
+            setEmailPhones(extractPhonesFromText(body || ""));
+        })();
+        participants.forEach((row) => {
+            runPartnerLookup(row.email);
+            loadOutlookSuggestion(row.email);
+        });
         setEmailInsights([]);
         if (ctx.conversationId) {
             handleScanAnchors();
             loadContact();
             loadEmailInsights();
         }
-    }, [ctx.conversationId]);
+    }, [ctx.conversationId, ctx.fromEmail, ctx.toRecipients, ctx.ccRecipients]);
 
     async function loadEmailInsights() {
         const email = String(ctx.fromEmail || "").trim();
@@ -482,6 +706,141 @@ async function handleDraftRejection() {
                 {msg && <div style={S.alert}>{msg}</div>}
 
                 <div style={S.section}>
+                    <div style={S.sectionHeader} onClick={() => setIsContactsExpanded(!isContactsExpanded)}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <div style={{ transform: isContactsExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                                <Icons.ExternalLink size={12} style={{ transform: 'rotate(-45deg)' }} />
+                            </div>
+                            <h3 style={S.sectionTitle}>Contactos ({contactRows.length})</h3>
+                        </div>
+                    </div>
+                    {isContactsExpanded && (
+                        <div style={S.accordionContent}>
+                            {!!emailPhones.length && (
+                                <div style={S.phoneBucket}>
+                                    <div style={S.phoneBucketTitle}>Telefones encontrados (email)</div>
+                                    <div style={S.phoneBucketList}>
+                                        {emailPhones.map((ph) => (
+                                            <span key={`global-phone-${ph}`} style={S.phoneChip}>{ph}</span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {!contactRows.length ? (
+                                <div style={S.emptyState}><p>Sem contactos no From/To/Cc deste email.</p></div>
+                            ) : (
+                                <div style={S.contactList}>
+                                    {contactRows.map((row) => (
+                                        <div key={row.key} style={S.contactCard}>
+                                            <div style={S.contactTopRow}>
+                                                <div>
+                                                    <div style={S.contactName}>{row.name || fallbackNameFromEmail(row.email)}</div>
+                                                    <div style={S.contactEmail}>{row.email}</div>
+                                                    <div style={S.contactOrigin}>{row.origin.join(", ").toUpperCase()}</div>
+                                                </div>
+                                                <div style={{ ...S.lookupBadge, ...(row.lookupState === 'found' ? S.lookupFound : row.lookupState === 'error' ? S.lookupError : row.lookupState === 'not_found' ? S.lookupMissing : S.lookupLoading) }}>
+                                                    {statusLabel(row.lookupState)}
+                                                </div>
+                                            </div>
+
+                                            {(row.isOutlookLoading || row.outlookSuggestion) && (
+                                                <div style={S.outlookSuggestionBox}>
+                                                    <div style={S.outlookSuggestionTitle}>Sugestão Outlook</div>
+                                                    {row.isOutlookLoading ? (
+                                                        <div style={S.outlookSuggestionText}>A carregar...</div>
+                                                    ) : row.outlookSuggestion ? (
+                                                        <>
+                                                            <div style={S.outlookSuggestionText}>Nome: {row.outlookSuggestion.name || "—"}</div>
+                                                            <div style={S.outlookSuggestionText}>Empresa: {row.outlookSuggestion.company || "—"}</div>
+                                                            <div style={S.outlookSuggestionText}>Cargo: {row.outlookSuggestion.jobTitle || "—"}</div>
+                                                            <div style={S.outlookSuggestionText}>Telefone(s): {(row.outlookSuggestion.phones || []).join(", ") || "—"}</div>
+                                                            <button style={S.outlookApplyBtn} onClick={() => updateContactRow(row.email, { applyOutlookOpen: !row.applyOutlookOpen })}>Aplicar dados do Outlook</button>
+                                                            {row.applyOutlookOpen && (
+                                                                <div style={S.applyChecklist}>
+                                                                    <label style={S.checkLabel}><input type="checkbox" checked={row.applyOutlookFields.name} onChange={() => toggleOutlookField(row, "name")} /> Nome</label>
+                                                                    <label style={S.checkLabel}><input type="checkbox" checked={row.applyOutlookFields.company} onChange={() => toggleOutlookField(row, "company")} /> Empresa</label>
+                                                                    <label style={S.checkLabel}><input type="checkbox" checked={row.applyOutlookFields.jobTitle} onChange={() => toggleOutlookField(row, "jobTitle")} /> Cargo</label>
+                                                                    <label style={S.checkLabel}><input type="checkbox" checked={row.applyOutlookFields.phone} onChange={() => toggleOutlookField(row, "phone")} /> Telefone(s)</label>
+                                                                    <button style={S.outlookApplyBtn} onClick={() => applyOutlookSuggestion(row)}>Aplicar selecionados</button>
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    ) : null}
+                                                </div>
+                                            )}
+
+                                            <div style={S.contactGrid}>
+                                                <input style={S.contactInput} value={row.name} onChange={(e) => updateContactRow(row.email, { name: e.target.value })} placeholder="Nome" />
+                                                <select style={S.contactInput} value={row.companyType} onChange={(e) => updateContactRow(row.email, { companyType: toCompanyType(e.target.value) })}>
+                                                    <option value="person">Pessoa</option>
+                                                    <option value="company">Empresa</option>
+                                                </select>
+                                                <input style={S.contactInput} value={row.functionValue} onChange={(e) => updateContactRow(row.email, { functionValue: e.target.value })} placeholder="Cargo (function)" />
+                                                <input style={S.contactInput} value={row.phone} onChange={(e) => updateContactRow(row.email, { phone: e.target.value })} placeholder="Telefone" />
+                                                <input style={S.contactInput} value={row.mobile} onChange={(e) => updateContactRow(row.email, { mobile: e.target.value })} placeholder="Telemóvel" />
+                                            </div>
+
+                                            <div style={{ marginTop: '6px' }}>
+                                                <input
+                                                    style={S.contactInput}
+                                                    value={row.companyQuery}
+                                                    onChange={(e) => handleCompanySearch(row.email, e.target.value)}
+                                                    placeholder="Empresa (opcional)"
+                                                />
+                                                {!!row.companyOptions.length && (
+                                                    <div style={S.companyOptions}>
+                                                        {row.companyOptions.map((opt) => (
+                                                            <button
+                                                                key={`${row.key}-co-${opt.id}`}
+                                                                style={S.companyOptionBtn}
+                                                                onClick={() => updateContactRow(row.email, { parentId: opt.id, companyQuery: opt.name, companyOptions: [] })}
+                                                            >
+                                                                {opt.name} {opt.email ? `(${opt.email})` : ''}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                {row.parentId ? <div style={S.parentHint}>Empresa selecionada: #{row.parentId}</div> : null}
+                                            </div>
+
+                                            {!!emailPhones.length && (
+                                                <div style={S.inlinePhonesRow}>
+                                                    {emailPhones.slice(0, 4).map((ph) => (
+                                                        <button
+                                                            key={`${row.key}-apply-phone-${ph}`}
+                                                            style={S.inlinePhoneBtn}
+                                                            onClick={() => updateContactRow(row.email, { phone: ph })}
+                                                        >
+                                                            Usar {ph}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            {!!row.error && <div style={S.contactError}>{row.error}</div>}
+
+                                            <div style={S.contactActions}>
+                                                <button
+                                                    style={S.contactBtn}
+                                                    disabled={row.lookupState === 'found' || row.isSaving}
+                                                    onClick={() => handleSaveContact(row, 'create')}
+                                                >
+                                                    {row.isSaving ? 'A guardar...' : 'Criar no Odoo'}
+                                                </button>
+                                                <button
+                                                    style={S.contactBtnSecondary}
+                                                    disabled={row.lookupState !== 'found' || row.isSaving}
+                                                    onClick={() => handleSaveContact(row, 'update')}
+                                                >
+                                                    {row.isSaving ? 'A guardar...' : 'Atualizar no Odoo'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
                     <div style={S.sectionHeader}>
                         <h3 style={S.sectionTitle}>Encontrados no Odoo por este email ({emailInsights.length})</h3>
                     </div>
@@ -846,6 +1205,180 @@ const S: Record<string, React.CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: "4px",
+    },
+    contactList: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+    },
+    contactCard: {
+        border: "1px solid #DFE1E6",
+        borderRadius: "6px",
+        padding: "10px",
+        background: "#fff",
+    },
+    contactTopRow: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start",
+        gap: "8px",
+        marginBottom: "8px",
+    },
+    contactName: { fontSize: "12px", fontWeight: 700, color: "#172B4D" },
+    contactEmail: { fontSize: "12px", color: "#42526E" },
+    contactOrigin: { fontSize: "10px", color: "#6B778C", marginTop: "2px" },
+    lookupBadge: {
+        fontSize: "10px",
+        borderRadius: "999px",
+        padding: "3px 8px",
+        fontWeight: 700,
+        border: "1px solid transparent",
+    },
+    lookupLoading: { background: "#F4F5F7", color: "#42526E", border: "1px solid #DFE1E6" },
+    lookupFound: { background: "#E3FCEF", color: "#006644", border: "1px solid #ABF5D1" },
+    lookupMissing: { background: "#FFF7D6", color: "#7A5D00", border: "1px solid #FFE380" },
+    lookupError: { background: "#FFEBE6", color: "#BF2600", border: "1px solid #FFBDAD" },
+    contactGrid: {
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: "6px",
+    },
+    contactInput: {
+        width: "100%",
+        padding: "6px 8px",
+        border: "1px solid #DFE1E6",
+        borderRadius: "4px",
+        fontSize: "12px",
+        boxSizing: "border-box",
+    },
+    companyOptions: {
+        border: "1px solid #DFE1E6",
+        borderRadius: "4px",
+        marginTop: "4px",
+        overflow: "hidden",
+    },
+    companyOptionBtn: {
+        width: "100%",
+        textAlign: "left",
+        border: "none",
+        background: "#fff",
+        padding: "6px 8px",
+        cursor: "pointer",
+        fontSize: "12px",
+    },
+    parentHint: {
+        marginTop: "4px",
+        fontSize: "11px",
+        color: "#6B778C",
+    },
+    contactActions: {
+        marginTop: "8px",
+        display: "flex",
+        gap: "6px",
+    },
+    contactBtn: {
+        border: "1px solid #0052CC",
+        background: "#0052CC",
+        color: "#fff",
+        borderRadius: "4px",
+        padding: "6px 8px",
+        fontSize: "11px",
+        cursor: "pointer",
+    },
+    contactBtnSecondary: {
+        border: "1px solid #DFE1E6",
+        background: "#fff",
+        color: "#172B4D",
+        borderRadius: "4px",
+        padding: "6px 8px",
+        fontSize: "11px",
+        cursor: "pointer",
+    },
+    contactError: {
+        marginTop: "6px",
+        fontSize: "11px",
+        color: "#BF2600",
+    },
+    phoneBucket: {
+        border: "1px solid #DFE1E6",
+        borderRadius: "6px",
+        padding: "8px",
+        marginBottom: "8px",
+        background: "#FAFBFC",
+    },
+    phoneBucketTitle: {
+        fontSize: "11px",
+        fontWeight: 700,
+        color: "#42526E",
+        marginBottom: "6px",
+    },
+    phoneBucketList: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "6px",
+    },
+    phoneChip: {
+        fontSize: "11px",
+        border: "1px solid #DFE1E6",
+        borderRadius: "999px",
+        padding: "3px 8px",
+        background: "#fff",
+        color: "#172B4D",
+    },
+    outlookSuggestionBox: {
+        marginBottom: "8px",
+        padding: "8px",
+        border: "1px solid #DFE1E6",
+        borderRadius: "4px",
+        background: "#F7F8FA",
+    },
+    outlookSuggestionTitle: {
+        fontSize: "11px",
+        fontWeight: 700,
+        color: "#42526E",
+        marginBottom: "4px",
+    },
+    outlookSuggestionText: {
+        fontSize: "11px",
+        color: "#172B4D",
+        marginBottom: "2px",
+    },
+    outlookApplyBtn: {
+        marginTop: "6px",
+        border: "1px solid #DFE1E6",
+        background: "#fff",
+        color: "#172B4D",
+        borderRadius: "4px",
+        padding: "5px 8px",
+        fontSize: "11px",
+        cursor: "pointer",
+    },
+    applyChecklist: {
+        marginTop: "6px",
+        display: "grid",
+        gap: "4px",
+    },
+    checkLabel: {
+        fontSize: "11px",
+        color: "#172B4D",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+    },
+    inlinePhonesRow: {
+        marginTop: "8px",
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "6px",
+    },
+    inlinePhoneBtn: {
+        border: "1px solid #DFE1E6",
+        background: "#fff",
+        color: "#172B4D",
+        borderRadius: "4px",
+        padding: "4px 6px",
+        fontSize: "11px",
+        cursor: "pointer",
     },
     voiceBar: {
         padding: "12px",
