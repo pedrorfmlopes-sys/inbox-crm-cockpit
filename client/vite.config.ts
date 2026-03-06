@@ -7,14 +7,14 @@ import os from "node:os";
 const certDir = path.join(os.homedir(), ".office-addin-dev-certs");
 
 function attachProxyDebug(proxy, label) {
-  proxy.on("error", (err, _req, _res) => {
+  proxy.on("error", (err) => {
     // This is the #1 cause of "HTTP 500:" with empty body in the UI (proxy ECONNREFUSED).
     console.error(`[proxy:${label}] ERROR`, err?.code || "", err?.message || err);
   });
-  proxy.on("proxyReq", (proxyReq, req, _res) => {
+  proxy.on("proxyReq", (proxyReq, req) => {
     console.log(`[proxy:${label}] -> ${req.method} ${req.url}  (target: ${proxyReq.protocol}//${proxyReq.host})`);
   });
-  proxy.on("proxyRes", (proxyRes, req, _res) => {
+  proxy.on("proxyRes", (proxyRes, req) => {
     console.log(`[proxy:${label}] <- ${proxyRes.statusCode} ${req.method} ${req.url}`);
   });
 }
