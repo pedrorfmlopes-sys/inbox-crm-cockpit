@@ -218,7 +218,10 @@ export async function createOrUpdatePartner(payload: {
 export async function searchCompanies(q: string): Promise<any[]> {
   const query = encodeURIComponent(String(q || "").trim());
   const r: any = await requestJSON(`/api/odoo/companies/search?q=${query}`);
-  return r?.results ?? r?.companies ?? [];
+  // Merge-conflict resolution: keep compatibility with both payload shapes
+  // and always return a safe array.
+  const results = r?.results ?? r?.companies ?? [];
+  return Array.isArray(results) ? results : [];
 }
 
 // -------- Odoo generic helpers --------

@@ -521,7 +521,7 @@ export const CrmCockpit: React.FC = () => {
                 receivedAtIso: ctx.receivedDateTimeIso || "",
                 toR: ctx.toRecipients || [],
                 ccR: ctx.ccRecipients || [],
-                ...(extra || {}),
+                ...(extra ?? {}),
             });
             await refreshLinks();
         } catch (e: any) {
