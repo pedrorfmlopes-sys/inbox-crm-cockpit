@@ -37,8 +37,7 @@ type AiHistoryEntry = {
 
 const AI_HISTORY_KEY_V1 = "icc.aiHistory.v1";
 const AI_HISTORY_KEY_V2 = "icc.aiHistory.v2";
-const AI_BLOCK_START = "<!--ICC_AI_START-->";
-const AI_BLOCK_END = "<!--ICC_AI_END-->";
+
 const AI_HISTORY_KEEP_MS = 5 * 24 * 60 * 60 * 1000;
 
 function loadAiHistory(): AiHistoryEntry[] {
@@ -417,19 +416,7 @@ function escapeHtml(s: string) {
     .replace(/'/g, "&#039;");
 }
 
-function makeReplySubject(subject: string) {
-  const s = String(subject || "").trim();
-  if (!s) return "";
-  if (/^\s*re:\s*/i.test(s)) return s;
-  return `RE: ${s}`;
-}
 
-function makeForwardSubject(subject: string) {
-  const s = String(subject || "").trim();
-  if (!s) return "";
-  if (/^\s*fw:\s*/i.test(s) || /^\s*fwd:\s*/i.test(s)) return s;
-  return `FW: ${s}`;
-}
 
 function mergeOrigins(a: RecipientOrigin[] = [], b: RecipientOrigin[] = []) {
   const s = new Set<RecipientOrigin>([...a, ...b]);
@@ -559,7 +546,6 @@ const LOCALE_SHORT: Record<AppLocale, string> = {
 
 const ALL_LOCALES: AppLocale[] = ["pt-PT", "es-ES", "en-GB", "it-IT", "de-DE"];
 
-const ALL_APP_LOCALES: AppLocale[] = ["pt-PT", "es-ES", "en-GB", "it-IT", "de-DE"];
 
 const LANG_OPTIONS: Array<{ value: LangOption; label: string }> = [
   { value: "auto", label: "Auto" },
@@ -570,88 +556,10 @@ const LANG_OPTIONS: Array<{ value: LangOption; label: string }> = [
   { value: "de-DE", label: LOCALE_LABEL["de-DE"] },
 ];
 
-function stripDiacritics(s: string): string {
-  try {
-    return s.normalize("NFD").replace(/[̀-ͯ]/g, "");
-  } catch {
-    return s;
-  }
-}
 
-function detectLocaleFromText(text: string): AppLocale {
-  const t = stripDiacritics(String(text || "").toLowerCase());
 
-  const score = (phrases: string[]) =>
-    phrases.reduce((acc, p) => (t.includes(p) ? acc + 1 : acc), 0);
 
-  const scores: Record<AppLocale, number> = {
-    "pt-PT": score([
-      " bom dia",
-      " obrigado",
-      " por favor",
-      " cumprimentos",
-      " nao ",
-      " pode ",
-      " preciso ",
-    ]),
-    "es-ES": score([
-      " hola",
-      " gracias",
-      " por favor",
-      " saludos",
-      " necesito",
-      " presupuesto",
-      " podria",
-    ]),
-    "en-GB": score([
-      " hello",
-      " thank",
-      " thanks",
-      " please",
-      " regards",
-      " best regards",
-      " could you",
-      " quotation",
-    ]),
-    "it-IT": score([
-      " buongiorno",
-      " grazie",
-      " per favore",
-      " cordiali",
-      " saluti",
-      " preventivo",
-      " potresti",
-    ]),
-    "de-DE": score([
-      " hallo",
-      " danke",
-      " bitte",
-      " mit freundlichen",
-      " angebot",
-      " konnten sie",
-      " grusse",
-      " gruessen",
-    ]),
-  };
 
-  let best: AppLocale = "pt-PT";
-  let bestScore = -1;
-  (Object.keys(scores) as AppLocale[]).forEach((k) => {
-    if (scores[k] > bestScore) {
-      best = k;
-      bestScore = scores[k];
-    }
-  });
-
-  // Se não apanharmos nada, cai para PT.
-  return best;
-}
-
-function resolveLocale(option: LangOption, textForDetection: string, fallback: AppLocale): AppLocale {
-  if (option && option !== "auto") return option;
-  const detected = detectLocaleFromText(textForDetection);
-  return detected || fallback;
-}
 
 export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
   const [tone, setTone] = useState<AiTone>("neutro");
@@ -763,9 +671,9 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
   const [sigText, setSigText] = useState<string>("");
   const [sigHtml, setSigHtml] = useState<string>("");
   const [sigImgUrl, setSigImgUrl] = useState<string>("");
-  const SIG_KEY_IMG_DATA = "icc.sig.img.data";
+
   const SIG_KEY_IMG_W = "icc.sig.img.w";
-  const [sigImgDataUrl, setSigImgDataUrl] = useState<string>("");
+
   const [sigImgMaxW, setSigImgMaxW] = useState<string>("260");
 
   const persistSig = (k: string, v: string) => {
@@ -774,41 +682,7 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
     } catch { }
   };
 
-  const loadSig = () => {
-    try {
-      const m = (localStorage.getItem(SIG_KEY_MODE) as SigMode) || "off";
-      setSigMode(m);
-      setSigText(localStorage.getItem(SIG_KEY_TEXT) || "");
-      setSigHtml(localStorage.getItem(SIG_KEY_HTML) || "");
-      setSigImgUrl(localStorage.getItem(SIG_KEY_IMG) || "");
-      setSigImgDataUrl(localStorage.getItem(SIG_KEY_IMG_DATA) || "");
-      setSigImgMaxW(localStorage.getItem(SIG_KEY_IMG_W) || "260");
-    } catch { }
-  };
 
-  const buildSignatureHtml = () => {
-    if (sigMode === "off") return "";
-
-    if (sigMode === "html") {
-      const h = (sigHtml || "").trim();
-      return h ? `<div class="icc-sig">${h}</div>` : "";
-    }
-
-    if (sigMode === "image") {
-      const data = (sigImgDataUrl || "").trim();
-      const url = (sigImgUrl || "").trim();
-      const src = data || url;
-      if (!src) return "";
-      const w = Math.max(120, Math.min(600, parseInt(sigImgMaxW || "260", 10) || 260));
-      const safeSrc = src.startsWith("data:") ? src : escapeHtml(src);
-      return `<div class="icc-sig"><br/><img src="${safeSrc}" alt="" style="max-width:${w}px;height:auto;display:block;"/></div>`;
-    }
-
-    // text
-    const t = (sigText || "").trim();
-    if (!t) return "";
-    return `<div class="icc-sig" style="white-space:pre-wrap"><br/>${escapeHtml(t)}</div>`;
-  };
   const [templates, setTemplates] = useState<SnippetTemplate[]>(() => loadTemplates());
   const [tplPickId, setTplPickId] = useState<string>("");
   const [tplEdit, setTplEdit] = useState<SnippetTemplate | null>(null);
@@ -994,7 +868,7 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
           const exists = list.some((c: any) => (c.displayName || c.name) === displayName);
           if (exists) return resolve();
           const color = OfficeAny.MailboxEnums?.CategoryColor?.Preset0;
-          OfficeAny.context.mailbox.masterCategories.addAsync([{ displayName, color }], (r2: any) => resolve());
+          OfficeAny.context.mailbox.masterCategories.addAsync([{ displayName, color }], (_r2: any) => resolve());
         });
       } catch {
         resolve();
@@ -1063,8 +937,8 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
       if (reminderCreateEvent) openCalendarReminder(due);
       setNotice(`Lembrete marcado para ${due.toLocaleDateString()} (categoria aplicada).`);
       setSheet("");
-    } catch (e: any) {
-      setErr(e?.message ? String(e.message) : "Não foi possível aplicar o lembrete.");
+    } catch {
+      setErr("Não foi possível aplicar o lembrete.");
     } finally {
       setBusy(false);
     }
@@ -1231,11 +1105,6 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
       }
 
 
-      const referenceText = action === "rewrite"
-        ? rewriteText
-        : `${email.subject || ""}
-${email.bodyText || ""}
-${composeNotes || ""}`;
       // Language rules:
       // - Summary: always Portuguese (Portugal)
       // - Other actions: selected reply language; if Auto, keep the email's original language (server handles)
@@ -1313,8 +1182,8 @@ ${composeNotes || ""}`;
       setResultView(safeHtml ? "html" : "text");
 
       setSheet("");
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
+    } catch {
+      setErr("Ocorreu um erro ao gerar a resposta.");
     } finally {
       setBusy(false);
     }
@@ -1327,358 +1196,6 @@ ${composeNotes || ""}`;
         ? `<pre style="white-space:pre-wrap;font-family:inherit">${escapeHtml(textOut)}</pre>`
         : "";
   }
-
-  function wrapAiBlock(innerHtml: string) {
-    // Marker-based block so the next insertion can replace only our content
-    return `${AI_BLOCK_START}<div data-icc-ai="1">${innerHtml}</div>${AI_BLOCK_END}`;
-  }
-
-  async function replaceOrInsertAiBlock(item: any, htmlBlock: string): Promise<boolean> {
-    const OfficeAny = (window as any)?.Office;
-    const body = item?.body;
-    if (!OfficeAny || !body || !body.getAsync || !body.setAsync) return false;
-
-    return await new Promise((resolve) => {
-      try {
-        body.getAsync(OfficeAny.CoercionType.Html, (r: any) => {
-          try {
-            if (!r || r.status !== OfficeAny.AsyncResultStatus.Succeeded) return resolve(false);
-            const current = String(r.value || "");
-
-            const doSet = (nextHtml: string) => {
-              body.setAsync(nextHtml, { coercionType: OfficeAny.CoercionType.Html }, (r2: any) => {
-                resolve(!!r2 && r2.status === OfficeAny.AsyncResultStatus.Succeeded);
-              });
-            };
-
-            if (current.includes(AI_BLOCK_START) && current.includes(AI_BLOCK_END)) {
-              const before = current.split(AI_BLOCK_START)[0] || "";
-              const after = current.split(AI_BLOCK_END)[1] || "";
-              return doSet(before + htmlBlock + after);
-            }
-
-            if (typeof body.prependAsync === "function") {
-              body.prependAsync(htmlBlock, { coercionType: OfficeAny.CoercionType.Html }, (r3: any) => {
-                resolve(!!r3 && r3.status === OfficeAny.AsyncResultStatus.Succeeded);
-              });
-              return;
-            }
-
-            // Fallback: best-effort replace body (may remove signature in alguns Outlooks)
-            return doSet(htmlBlock + current);
-          } catch (e) {
-            resolve(false);
-          }
-        });
-      } catch (e) {
-        resolve(false);
-      }
-    });
-  }
-
-  /**
-
-   * Inserts generated content into the CURRENT compose draft (best-effort):
-   * 1) cursor (setSelectedDataAsync)
-   * 2) prependAsync
-   * 3) appendAsync
-   * 4) setAsync (replace) as last resort
-   */
-  async function insertIntoCurrentDraft() {
-    try {
-      setErr("");
-      setNotice("");
-
-      const OfficeAny = (window as any)?.Office;
-      const item = OfficeAny?.context?.mailbox?.item;
-      if (!item) throw new Error("Esta ação só funciona dentro do Outlook (email aberto).");
-
-      const html = buildHtmlForInsert();
-      if (!html) return;
-
-      const sig = buildSignatureHtml();
-      const htmlWithSig = sig ? `${html}${sig}` : html;
-
-      // Prefer marker-based replacement to avoid duplicating content on consecutive inserts
-      const htmlBlock = wrapAiBlock(htmlWithSig);
-      const didReplace = await replaceOrInsertAiBlock(item, htmlBlock);
-      if (didReplace) {
-        setNotice("Conteúdo inserido (substituído) no rascunho.");
-        return;
-      }
-
-      const body = item.body;
-      if (!body) {
-        throw new Error("Este Outlook não expôs a API do corpo (body). Usa ‘Inserir thread’ ou ‘Nova msg’. ");
-      }
-
-      const callAsync = (fn: any, args: any[] = []) =>
-        new Promise<void>((resolve, reject) => {
-          try {
-            fn(
-              ...args,
-              (asyncResult: any) => {
-                if (!asyncResult || asyncResult.status === "succeeded") resolve();
-                else reject(asyncResult.error?.message || "Falha ao inserir no rascunho");
-              }
-            );
-          } catch (e: any) {
-            reject(e?.message ?? String(e));
-          }
-        });
-
-      // 1) Insert at cursor/selection (compose mode)
-      if (typeof body.setSelectedDataAsync === "function") {
-        await callAsync(body.setSelectedDataAsync.bind(body), [htmlWithSig, { coercionType: "html" }]);
-        setNotice("Inserido no rascunho (no cursor).");
-        return;
-      }
-
-      // 2) Prepend
-      if (typeof body.prependAsync === "function") {
-        await callAsync(body.prependAsync.bind(body), [htmlWithSig, { coercionType: "html" }]);
-        setNotice("Inserido no rascunho (no topo).");
-        return;
-      }
-
-      // 3) Append
-      if (typeof body.appendAsync === "function") {
-        await callAsync(body.appendAsync.bind(body), [htmlWithSig, { coercionType: "html" }]);
-        setNotice("Inserido no rascunho (no fim).");
-        return;
-      }
-
-      // 4) Replace (last resort)
-      if (typeof body.setAsync === "function") {
-        await callAsync(body.setAsync.bind(body), [htmlWithSig, { coercionType: "html" }]);
-        setNotice("Inserido no rascunho (substituiu o corpo, porque este Outlook não permite inserir no cursor).");
-        return;
-      }
-
-      throw new Error("Este Outlook não permite inserir no rascunho via add-in (API indisponível). Usa ‘Inserir thread’ ou ‘Nova msg’. ");
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
-    }
-  }
-
-
-  async function insertThread() {
-    try {
-      setErr("");
-      setNotice("");
-
-      const OfficeAny = (window as any)?.Office;
-      const item = OfficeAny?.context?.mailbox?.item;
-      if (!item) throw new Error("Esta ação só funciona dentro do Outlook (email aberto).");
-
-      const html = buildHtmlForInsert();
-      if (!html) return;
-
-      const sig = buildSignatureHtml();
-      const htmlWithSig = sig ? `${html}${sig}` : html;
-
-      if (recipientPreset === "custom") {
-        // Não bloqueamos: abrimos a thread na mesma, mas avisamos.
-        // (O Outlook decide To/Cc no Reply/ReplyAll em Read mode.)
-        setNotice("Na thread, o Outlook decide To/Cc. Se precisares de controlar destinatários, usa “Nova msg”.");
-      }
-
-      const OfficeAny2 = (window as any)?.Office;
-
-      const makeOriginalItemAttachment = () => {
-        if (!attachOriginalItem) return null;
-        const itemId = item?.itemId;
-        if (!itemId) return null;
-        const t = OfficeAny2?.MailboxEnums?.AttachmentType?.Item ?? "item";
-        const safe = (ctx.subject || "email").replace(/[^a-z0-9\-_. ]+/gi, "_").slice(0, 64);
-        return { itemId, name: `${safe}.msg`, type: t };
-      };
-
-      // Compatibilidade: alguns Outlook só aceitam string (htmlBody) em vez de object { htmlBody, attachments }
-      const tryCall = (fn: any) => {
-        const original = makeOriginalItemAttachment();
-
-        // 1) tentar com object (para suportar anexos)
-        try {
-          fn(original ? { htmlBody: htmlWithSig, attachments: [original] } : { htmlBody: htmlWithSig });
-          return true;
-        } catch { }
-
-        // 2) fallback: só html (alguns clientes não aceitam attachments no form)
-        try {
-          fn(htmlWithSig);
-          setNotice("Nota: este Outlook não suportou anexar o original na resposta. Abri a resposta sem anexo.");
-          return true;
-        } catch { }
-
-        return false;
-      };
-
-      if (recipientPreset === "replyAll" && typeof item.displayReplyAllForm === "function") {
-        if (tryCall(item.displayReplyAllForm.bind(item))) return;
-      }
-
-      if (typeof item.displayReplyForm === "function") {
-        if (tryCall(item.displayReplyForm.bind(item))) return;
-      }
-
-      throw new Error("Não foi possível abrir uma resposta na thread (API indisponível).");
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
-    }
-  }
-
-
-
-
-  async function insertNewMessage() {
-    try {
-      setErr("");
-      setNotice("");
-
-      const OfficeAny = (window as any)?.Office;
-      const mailbox = OfficeAny?.context?.mailbox;
-      const item = mailbox?.item;
-      if (!item) throw new Error("Esta ação só funciona dentro do Outlook (email aberto).");
-
-      const html = buildHtmlForInsert();
-      if (!html) return;
-
-      const sig = buildSignatureHtml();
-      const htmlWithSig = sig ? `${html}${sig}` : html;
-
-      const { to, cc, bcc } = groupedRecipientsFromRows(recipientRows);
-      if (!to.length && !cc.length && !bcc.length) {
-        throw new Error("Escolhe pelo menos 1 destinatário (To/Cc/Bcc).");
-      }
-
-      const formData: any = {
-        subject: makeReplySubject(ctx.subject || ""),
-        htmlBody: htmlWithSig,
-      };
-
-      // Opcional: anexar o email original como .msg
-      if (attachOriginalItem && item?.itemId) {
-        const type = OfficeAny?.MailboxEnums?.AttachmentType?.Item ?? "item";
-        formData.attachments = [
-          {
-            itemId: item.itemId,
-            name: `${(ctx.subject || "email").slice(0, 60).replace(/[\\/:*?"<>|]/g, "-")}.msg`,
-            type,
-          },
-        ];
-      }
-      if (to.length) formData.toRecipients = to;
-      if (cc.length) formData.ccRecipients = cc;
-      if (bcc.length) formData.bccRecipients = bcc;
-
-      // Nota: em muitos Outlook, o método está no mailbox (não no item)
-      if (mailbox && typeof mailbox.displayNewMessageForm === "function") {
-        try {
-          mailbox.displayNewMessageForm(formData);
-          return;
-        } catch (e) {
-          if (formData.attachments) {
-            const copy: any = { ...formData };
-            delete copy.attachments;
-            try {
-              mailbox.displayNewMessageForm(copy);
-              setNotice("Nota: este Outlook não suportou anexar o original na nova mensagem. Abri a mensagem sem anexo.");
-              return;
-            } catch { }
-          }
-          throw e;
-        }
-      }
-
-      // fallback (algumas builds expõem no item)
-      if (typeof item.displayNewMessageForm === "function") {
-        item.displayNewMessageForm(formData);
-        return;
-      }
-
-      throw new Error("Este Outlook não permite criar uma nova mensagem via add-in (API indisponível).");
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
-    }
-  }
-
-
-  async function insertForward() {
-    try {
-      setErr("");
-      setNotice("");
-
-      const OfficeAny = (window as any)?.Office;
-      const mailbox = OfficeAny?.context?.mailbox;
-      const item = mailbox?.item;
-      if (!item) throw new Error("Esta ação só funciona dentro do Outlook (email aberto).");
-
-      const html = buildHtmlForInsert();
-      if (!html) return;
-
-      const sig = buildSignatureHtml();
-      const htmlWithSig = sig ? `${html}${sig}` : html;
-
-      // Forward também não é um reply real, mas dá controlo de destinatários e mantém o original no corpo.
-      // Tentamos preencher To/Cc quando o Outlook aceita formData. Bcc raramente é suportado.
-      const { to, cc, bcc } = groupedRecipientsFromRows(recipientRows);
-
-      const tryCall = (fn: any) => {
-        // 1) tentar com object (melhor: respeita destinatários)
-        try {
-          fn({ htmlBody: htmlWithSig, toRecipients: to, ccRecipients: cc });
-          return true;
-        } catch { }
-        // 2) fallback: string (compat)
-        try {
-          fn(htmlWithSig);
-          if ((to && to.length) || (cc && cc.length) || (bcc && bcc.length)) {
-            setNotice("Nota: este Outlook não suportou preencher destinatários no Forward. Abri o Forward e tens de preencher manualmente.");
-          }
-          return true;
-        } catch { }
-        // 3) object sem recipients
-        try {
-          fn({ htmlBody: htmlWithSig });
-          return true;
-        } catch { }
-        return false;
-      };
-
-      if (typeof item.displayForwardForm === "function") {
-        if (tryCall(item.displayForwardForm.bind(item))) return;
-      }
-
-      // Fallback: alguns Outlook não expõem displayForwardForm.
-      // Abrimos uma "Nova msg" com assunto FW: e incluímos o original no corpo.
-      if (mailbox && typeof mailbox.displayNewMessageForm === "function") {
-        const original = fullBody || rawBody || body || "";
-        const originalHtml = original
-          ? `<hr style="border:none;border-top:1px solid #ddd;margin:16px 0"/>` +
-          `<div style="color:#666;font-size:12px;margin-bottom:6px"><strong>Mensagem original</strong></div>` +
-          `<div style="white-space:pre-wrap;font-family:inherit;font-size:12px">${escapeHtml(original)}</div>`
-          : "";
-
-        const formData: any = {
-          subject: makeForwardSubject(ctx.subject || ""),
-          htmlBody: `${html}${originalHtml}`,
-        };
-        if (to.length) formData.toRecipients = to;
-        if (cc.length) formData.ccRecipients = cc;
-        if (bcc.length) formData.bccRecipients = bcc;
-
-        mailbox.displayNewMessageForm(formData);
-        setNotice("O Outlook não expôs a API de Forward. Abri uma nova mensagem do tipo FW (com o original no corpo).");
-        return;
-      }
-
-      throw new Error("Não foi possível abrir um forward (API indisponível).");
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
-    }
-  }
-
 
 
   function onToggleInclude(emailAddr: string, checked: boolean) {
@@ -1994,9 +1511,8 @@ Divitek
                       if (!f) return;
                       const reader = new FileReader();
                       reader.onload = () => {
-                        const v = String(reader.result || "");
-                        setSigImgDataUrl(v);
-                        persistSig(SIG_KEY_IMG_DATA, v);
+                        // No-op after removing state
+
                       };
                       reader.readAsDataURL(f);
                     }}
@@ -2021,8 +1537,7 @@ Divitek
                     <button
                       style={S.secondaryBtn}
                       onClick={() => {
-                        setSigImgDataUrl("");
-                        persistSig(SIG_KEY_IMG_DATA, "");
+
                       }}
                     >
                       Limpar upload
