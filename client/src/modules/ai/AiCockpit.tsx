@@ -42,7 +42,7 @@ function saveHistory(entries: HistoryEntry[]) {
 }
 
 export const AiCockpit: React.FC = () => {
-    const { ctx, bodyText, setMsg, aiState, setAiState, files, addFile, removeFile, clearFiles, settings } = useCockpit() as any;
+    const { ctx, bodyText, setMsg, aiState, setAiState, files, addFile, clearFiles, settings } = useCockpit() as any;
 
     // Local state for immediate typing feel
     // Initialized from context, but NOT synced on every render to avoid loops
@@ -157,7 +157,7 @@ export const AiCockpit: React.FC = () => {
                             setExtractedTasks(json.map(t => ({ ...t, completed: false })));
                             setShowTaskReview(true);
                         }
-                    } catch (e) {
+                    } catch {
                         console.error("Failed to parse tasks JSON:", res.text);
                     }
                 }
@@ -1673,7 +1673,7 @@ export const AiCockpit: React.FC = () => {
                                         </button>
                                         {activeMenu === "rollback" as any && (
                                             <div style={{ ...S.cascadeMenu, width: "220px", right: 0, left: "auto", top: "24px" }}>
-                                                {history.slice(1).map((h, i) => (
+                                                {history.slice(1).map((h, _i) => (
                                                     <button
                                                         key={h.id}
                                                         className="iccc-glossy-pill iccc-secondary-pill"

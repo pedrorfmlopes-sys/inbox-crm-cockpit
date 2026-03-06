@@ -206,7 +206,6 @@ export const CrmCockpit: React.FC = () => {
     const [isAnchorsLoading, setIsAnchorsLoading] = useState(false);
     const [anchors, setAnchors] = useState<any>(null);
     const [contact, setContact] = useState<any>(null);
-    const [isContactLoading, setIsContactLoading] = useState(false);
     const [protection, setProtection] = useState<MatchResult | null>(null);
     const [isDrafting, setIsDrafting] = useState(false);
     const [isBriefingLoading, setIsBriefingLoading] = useState(false);
@@ -509,11 +508,11 @@ export const CrmCockpit: React.FC = () => {
         }
     }
 
-    
+
     async function loadContact() {
         const email = (ctx.fromEmail || "").trim();
         if (!email) return;
-        setIsContactLoading(true);
+        // setIsContactLoading(true);
         try {
             // Exact match first
             const recs: any[] = await searchOdoo({
@@ -554,11 +553,11 @@ export const CrmCockpit: React.FC = () => {
                 email,
             });
         } finally {
-            setIsContactLoading(false);
+            // setIsContactLoading(false);
         }
     }
 
-async function handleDraftRejection() {
+    async function handleDraftRejection() {
         if (!protection?.matchedProject) return;
         setIsDrafting(true);
         try {
@@ -958,7 +957,6 @@ async function handleDraftRejection() {
 };
 
 const OdooCard: React.FC<{ link: any; meta: any; settings: any; onEdit: () => void }> = ({ link, meta, settings, onEdit }) => {
-    const modelPrefix = link.model.split(".")[0]?.toUpperCase() || link.model.toUpperCase();
     const db = "divitek"; // Strictly forced as per Sprint 14 requirements
     const target = `/web?db=${encodeURIComponent(db)}#id=${link.recordId}&model=${encodeURIComponent(link.model)}&view_type=form`;
     const url = getOdooAutoLoginUrl(settings?.odooSessionToken || null, target, meta?.baseUrl);
