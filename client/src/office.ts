@@ -1,6 +1,6 @@
 import { clientLog } from "./logger";
 
-declare const Office: any;
+
 
 export type Recipient = { name: string; email: string };
 
@@ -267,7 +267,7 @@ export async function getCurrentItemToken(): Promise<string> {
 
     // "Context Poke": Read a basic property to force some hosts (Outlook Desktop) 
     // to refresh the internal state of the proxy object.
-    const _id = item.itemId;
+    void item.itemId;
 
     const cid = typeof item.conversationId === "string" ? item.conversationId : "";
     const imid = typeof item.internetMessageId === "string" ? item.internetMessageId : "";
