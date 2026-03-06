@@ -172,7 +172,7 @@ export async function getLinks(conversationId: string): Promise<LinkEntry[]> {
 export async function linkEmailToRecord(payload: LinkPayload): Promise<{ ok: boolean; link?: LinkEntry }> {
   try {
     return await requestJSON(`/api/links/link`, { method: "POST", body: JSON.stringify(payload) });
-  } catch (e1: any) {
+  } catch {
     // fallback for older servers
     return await requestJSON(`/api/odoo/link-email`, { method: "POST", body: JSON.stringify(payload) });
   }
