@@ -166,6 +166,69 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
 // Backwards-compat with older UI code
 export const getSelectedMessageContext = getOutlookContext;
 
+
+export type OutlookContactSuggestion = {
+  name?: string;
+  company?: string;
+  jobTitle?: string;
+  phones?: string[];
+  email?: string;
+};
+
+export async function getOutlookContactSuggestionByEmail(emailRaw: string): Promise<OutlookContactSuggestion | null> {
+  const email = String(emailRaw || "").trim().toLowerCase();
+  if (!email) return null;
+
+  try {
+    const ort: any = (window as any).OfficeRuntime;
+    const auth = ort?.auth;
+    if (!auth?.getAccessToken) return null;
+
+    const token = await auth.getAccessToken({
+      allowSignInPrompt: false,
+      allowConsentPrompt: false,
+      forMSGraphAccess: true,
+    });
+
+    if (!token) return null;
+
+    const q = encodeURIComponent(`"${email}"`);
+    const url = `https://graph.microsoft.com/v1.0/me/people?$search=${q}&$top=10`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ConsistencyLevel: "eventual",
+      },
+    });
+    if (!res.ok) return null;
+
+    const body: any = await res.json();
+    const arr = Array.isArray(body?.value) ? body.value : [];
+
+    const exact = arr.find((p: any) => {
+      const emails = Array.isArray(p?.scoredEmailAddresses) ? p.scoredEmailAddresses.map((x: any) => String(x?.address || "").trim().toLowerCase()) : [];
+      return emails.includes(email);
+    });
+
+    if (!exact) return null;
+
+    const phones = [
+      ...(Array.isArray(exact?.businessPhones) ? exact.businessPhones : []),
+      exact?.mobilePhone,
+    ].map((x: any) => String(x || "").trim()).filter(Boolean);
+
+    return {
+      name: String(exact?.displayName || "").trim() || undefined,
+      company: String(exact?.companyName || "").trim() || undefined,
+      jobTitle: String(exact?.jobTitle || "").trim() || undefined,
+      phones,
+      email,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Ler corpo do email (texto simples) — usado pela IA
 export async function getEmailBodyText(): Promise<string> {
   clientLog.log("[office] getEmailBodyText start");
