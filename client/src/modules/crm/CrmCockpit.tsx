@@ -216,6 +216,12 @@ export const CrmCockpit: React.FC = () => {
     const [contactRows, setContactRows] = useState<ContactPanelRow[]>([]);
     const [emailPhones, setEmailPhones] = useState<string[]>([]);
 
+    // Safety no-op: email-insights feature disabled in this branch;
+    // keep symbol defined to avoid runtime ReferenceError in stale call sites.
+    async function loadEmailInsights() {
+        return;
+    }
+
     function updateContactRow(email: string, patch: Partial<ContactPanelRow>) {
         const key = normalizeEmailValue(email);
         setContactRows((prev) => prev.map((row) => (row.email === key ? { ...row, ...patch } : row)));
