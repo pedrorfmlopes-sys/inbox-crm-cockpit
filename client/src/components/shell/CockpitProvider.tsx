@@ -7,6 +7,19 @@ import { type AiTone, type AiLocale } from "@/ai/aiClient";
 
 export type CockpitTab = "ai" | "crm" | "files" | "settings";
 
+interface GeminiStatusDetails {
+    requested?: string;
+    sanitized?: string;
+    effective?: string;
+    provider?: string;
+}
+
+interface GranularStatusDetails {
+    openai: string | null;
+    gemini: string | null;
+    geminiDetails: GeminiStatusDetails | null;
+}
+
 export interface AiState {
     prompt: string;
     output: string;
@@ -41,7 +54,7 @@ export interface CockpitContextType {
     isAuthenticated: boolean;
     connectionStatus: "none" | "success" | "error";
     granularStatus: { odoo: boolean | null; openai: boolean | null; gemini: boolean | null };
-    granularStatusDetails: { openai: string | null; gemini: string | null; geminiDetails?: any };
+    granularStatusDetails: GranularStatusDetails;
     granularStatusString: string;
     checkConnectivity: (customModels?: any) => Promise<void>;
     login: (credentials: any) => Promise<void>;
@@ -51,13 +64,17 @@ export interface CockpitContextType {
 
 // Export the context so it can be checked or used elsewhere if needed (rare)
 // Using a global singleton pattern to prevent duplication in Outlook/Vite HMR
-const G = (typeof window !== 'undefined' ? window : {}) as any;
+type CockpitContextSingletonHost = typeof globalThis & {
+    __ICCC_COCKPIT_CONTEXT_v1__?: React.Context<CockpitContextType | undefined>;
+};
+
+const G = globalThis as CockpitContextSingletonHost;
 const GK = "__ICCC_COCKPIT_CONTEXT_v1__";
 
 if (!G[GK]) {
     G[GK] = createContext<CockpitContextType | undefined>(undefined);
 }
-export const CockpitContext = G[GK];
+export const CockpitContext = G[GK] as React.Context<CockpitContextType | undefined>;
 
 export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [tab, setTab] = useState<CockpitTab>("ai");
@@ -234,9 +251,10 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         gemini: null
     });
 
-    const [granularStatusDetails, setGranularStatusDetails] = useState<{ openai: string | null; gemini: string | null }>({
+    const [granularStatusDetails, setGranularStatusDetails] = useState<GranularStatusDetails>({
         openai: null,
-        gemini: null
+        gemini: null,
+        geminiDetails: null
     });
 
     const [granularStatusString, setGranularStatusString] = useState<string>("Odoo: -- | OpenAI: -- | Gemini: --");

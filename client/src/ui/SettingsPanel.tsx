@@ -1012,7 +1012,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
   fetchingModels: boolean,
   refreshModels: () => Promise<void>
 }) {
-  const { granularStatus, granularStatusDetails, checkConnectivity, login } = useCockpit() as any;
+  const { granularStatus, granularStatusDetails, checkConnectivity, login } = useCockpit();
   const [isTesting, setIsTesting] = useState(false);
 
   const handleTest = async () => {
