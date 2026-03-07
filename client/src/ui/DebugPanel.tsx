@@ -14,7 +14,7 @@ export default function DebugPanel({
   meta?: OdooMeta | null;
   compact?: boolean;
 }) {
-  const { report, setReport, runSuite } = useTestSuite();
+  const { report } = useTestSuite();
 
   return (
     <div style={S.wrap}>

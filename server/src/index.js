@@ -191,6 +191,9 @@ const MODEL_WHITELIST = new Set([
   "crm.lead",
   "res.partner",
   "project.task",
+  "helpdesk.ticket",
+  "helpdesk.team",
+  "helpdesk.stage",
   "res.users",
   "project.task.type",
   "ir.attachment",
@@ -423,6 +426,15 @@ app.get("/api/odoo/search", async (req, res) => {
     } else if (model === "project.task") {
       domain = isEmpty ? [] : [["name", "ilike", q]];
       fields = ["name", "display_name", "project_id", "parent_id"];
+    } else if (model === "helpdesk.ticket") {
+      domain = isEmpty ? [] : [["name", "ilike", q]];
+      fields = ["name", "display_name", "partner_id", "stage_id", "team_id", "user_id", "priority"];
+    } else if (model === "helpdesk.team") {
+      domain = isEmpty ? [] : [["name", "ilike", q]];
+      fields = ["name", "display_name"];
+    } else if (model === "helpdesk.stage") {
+      domain = isEmpty ? [] : [["name", "ilike", q]];
+      fields = ["name", "display_name", "team_ids"];
     } else if (model === "res.users") {
       domain = isEmpty ? [] : [["name", "ilike", q]];
       fields = ["name", "display_name", "email"];
@@ -446,9 +458,10 @@ app.get("/api/odoo/search", async (req, res) => {
 function cleanValuesForModel(model, values) {
   const allowedByModel = {
     "res.partner": new Set(["name", "email", "phone", "mobile"]),
-    "crm.lead": new Set(["name", "email_from", "partner_id"]),
-    "project.project": new Set(["name", "partner_id", "user_id"]),
+    "crm.lead": new Set(["name", "contact_name", "email_from", "phone", "partner_id", "stage_id", "description"]),
+    "project.project": new Set(["name", "partner_id", "user_id", "description"]),
     "project.task": new Set(["name", "description", "date_deadline", "project_id", "lead_id", "parent_id", "user_ids", "stage_id"]),
+    "helpdesk.ticket": new Set(["name", "description", "partner_id", "team_id", "user_id", "stage_id", "priority"]),
     "ir.attachment": new Set(["name", "datas", "res_model", "res_id", "type", "mimetype", "datas_fname"]),
     "crm.stage": new Set(["name"]),
   }[model];
@@ -488,6 +501,15 @@ function buildSearchSpec(model, q) {
   } else if (model === "project.task") {
     domain = isEmpty ? [] : [["name", "ilike", q]];
     fields = ["name", "display_name", "project_id", "parent_id", "stage_id"];
+  } else if (model === "helpdesk.ticket") {
+    domain = isEmpty ? [] : [["name", "ilike", q]];
+    fields = ["name", "display_name", "partner_id", "stage_id", "team_id", "user_id", "priority"];
+  } else if (model === "helpdesk.team") {
+    domain = isEmpty ? [] : [["name", "ilike", q]];
+    fields = ["name", "display_name"];
+  } else if (model === "helpdesk.stage") {
+    domain = isEmpty ? [] : [["name", "ilike", q]];
+    fields = ["name", "display_name", "team_ids"];
   } else if (model === "res.users") {
     domain = isEmpty ? [] : [["name", "ilike", q]];
     fields = ["name", "display_name", "email"];
@@ -678,6 +700,7 @@ app.post("/api/odoo/create", async (req, res) => {
       "crm.lead": new Set(["name", "email_from", "partner_id"]),
       "project.project": new Set(["name", "partner_id", "user_id"]),
       "project.task": new Set(["name", "description", "date_deadline", "project_id", "lead_id", "parent_id", "user_ids", "stage_id"]),
+      "helpdesk.ticket": new Set(["name", "description", "partner_id", "team_id", "user_id", "stage_id", "priority"]),
       "ir.attachment": new Set(["name", "datas", "res_model", "res_id", "type", "mimetype", "datas_fname"]),
     }[m];
 

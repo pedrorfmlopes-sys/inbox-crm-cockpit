@@ -5,7 +5,7 @@ import * as Icons from "../../ui/icons";
 export const LoginCockpit: React.FC = () => {
     const cockpit = useCockpit();
     if (!cockpit) return null;
-    const { login, isLoading } = cockpit;
+    const { login } = cockpit;
     const [url, setUrl] = useState("https://divitek.thinkopen.solutions");
     const [db, setDb] = useState("divitek_studio");
     const [username, setUsername] = useState("pedrolopes@divitek.pt");
