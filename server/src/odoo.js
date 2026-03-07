@@ -2,6 +2,7 @@ import axios from "axios";
 import { CookieJar } from "tough-cookie";
 import { wrapper } from "axios-cookiejar-support";
 import https from "node:https";
+import { createOdooSchemaCache } from "./odoo_schema_cache.js";
 
 /**
  * Odoo JSON-RPC client with session cookies.
@@ -125,6 +126,32 @@ export async function odooClientFromEnv(config = null) {
     return r?.data?.result;
   }
 
+  const schemaCache = createOdooSchemaCache({
+    fetchFields: async (model) => {
+      return await callKw({
+        model,
+        method: "fields_get",
+        args: [],
+        kwargs: { attributes: ["type", "readonly", "required"] },
+      });
+    },
+  });
+
+  async function rawSearchRead(model, domain, fields, limit = 10, order) {
+    const kwargs = { fields, limit };
+    if (order) kwargs.order = order;
+    return await callKw({ model, method: "search_read", args: [domain], kwargs });
+  }
+
+  async function rawCreate(model, vals) {
+    return await callKw({ model, method: "create", args: [vals] });
+  }
+
+  async function rawWrite(model, ids, vals) {
+    const idList = (Array.isArray(ids) ? ids : [ids]).map((x) => Number(x)).filter(Boolean);
+    return await callKw({ model, method: "write", args: [idList, vals] });
+  }
+
   return {
     meta: {
       baseUrl,
@@ -146,30 +173,34 @@ export async function odooClientFromEnv(config = null) {
     },
 
     async searchRead(model, domain, fields, limit = 10, order) {
-      const kwargs = { fields, limit };
-      if (order) kwargs.order = order;
-      return await callKw({
+      return await rawSearchRead(model, domain, fields, limit, order);
+    },
+
+    async safeSearchRead(model, domain, wantedFields, limit = 10, order) {
+      return await schemaCache.safeSearchRead(
         model,
-        method: "search_read",
-        args: [domain],
-        kwargs,
-      });
+        domain,
+        wantedFields,
+        limit,
+        { order },
+        async (m, d, filteredFields, lim, opts) => rawSearchRead(m, d, filteredFields, lim, opts?.order)
+      );
     },
 
     async create(model, vals) {
-      return await callKw({
-        model,
-        method: "create",
-        args: [vals],
-      });
+      return await rawCreate(model, vals);
+    },
+
+    async safeCreate(model, vals) {
+      return await schemaCache.safeCreate(model, vals, async (m, clean) => rawCreate(m, clean));
     },
 
     async write(model, id, vals) {
-      return await callKw({
-        model,
-        method: "write",
-        args: [[Number(id)], vals],
-      });
+      return await rawWrite(model, [Number(id)], vals);
+    },
+
+    async safeWrite(model, ids, vals) {
+      return await schemaCache.safeWrite(model, ids, vals, async (m, idList, clean) => rawWrite(m, idList, clean));
     },
 
     async read(model, ids, fields) {
@@ -202,10 +233,10 @@ export async function odooClientFromEnv(config = null) {
     },
 
     async findPartnerByEmail(email) {
-      const result = await this.searchRead(
+      const result = await this.safeSearchRead(
         "res.partner",
         [["email", "=", email]],
-        ["name", "email", "phone", "mobile"],
+        ["id", "name", "email", "phone", "mobile", "function", "company_type", "is_company", "parent_id", "vat", "street", "zip", "city", "country_id"],
         1
       );
       const p = Array.isArray(result) ? result[0] : null;
@@ -217,6 +248,14 @@ export async function odooClientFromEnv(config = null) {
         phone: p.phone,
         mobile: p.mobile,
       };
+    },
+
+    schema: {
+      getModelFields: (model, opts) => schemaCache.getModelFields(model, opts),
+      invalidateModel: (model) => schemaCache.invalidateModel(model),
+      invalidateAll: () => schemaCache.invalidateAll(),
+      filterReadFields: (model, wantedFields) => schemaCache.filterReadFields(model, wantedFields),
+      sanitizeWriteData: (model, data) => schemaCache.sanitizeWriteData(model, data),
     },
 
     async createLead({ name, email_from, partner_id }) {

@@ -204,6 +204,57 @@ function modelAllowed(model) {
   return MODEL_WHITELIST.has(String(model || "").trim());
 }
 
+const PARTNER_PREFERRED_READ_FIELDS = [
+  "id", "name", "email", "phone", "mobile", "function", "company_type", "is_company", "parent_id", "vat", "street", "zip", "city", "country_id", "display_name"
+];
+
+async function safeSearchReadCompat(odoo, model, domain, wantedFields, limit = 10, order) {
+  if (typeof odoo.safeSearchRead === "function") {
+    return await odoo.safeSearchRead(model, domain, wantedFields, limit, order);
+  }
+  return await odoo.searchRead(model, domain, wantedFields, limit, order);
+}
+
+async function safeCreateCompat(odoo, model, data) {
+  if (typeof odoo.safeCreate === "function") {
+    return await odoo.safeCreate(model, data);
+  }
+  return await odoo.create(model, data);
+}
+
+async function safeWriteCompat(odoo, model, ids, data) {
+  if (typeof odoo.safeWrite === "function") {
+    return await odoo.safeWrite(model, ids, data);
+  }
+  return await odoo.call(model, "write", [Array.isArray(ids) ? ids : [ids], data]);
+}
+
+async function filterReadFieldsCompat(odoo, model, fields) {
+  if (!Array.isArray(fields)) return [];
+  if (odoo?.schema?.filterReadFields) {
+    return await odoo.schema.filterReadFields(model, fields);
+  }
+  return fields;
+}
+
+async function safeReadCompat(odoo, model, ids, wantedFields) {
+  const filtered = await filterReadFieldsCompat(odoo, model, wantedFields);
+  const fallback = filtered.length ? filtered : ["id"];
+  try {
+    return await odoo.read(model, ids, fallback);
+  } catch (e) {
+    const msg = String(e?.message || "");
+    if (!/invalid field/i.test(msg)) throw e;
+    if (odoo?.schema?.invalidateModel) {
+      odoo.schema.invalidateModel(model);
+      const refreshed = await filterReadFieldsCompat(odoo, model, wantedFields);
+      const fields2 = refreshed.length ? refreshed : ["id"];
+      return await odoo.read(model, ids, fields2);
+    }
+    throw e;
+  }
+}
+
 function normalizeEmail(raw) {
   return String(raw || "").trim().toLowerCase();
 }
@@ -235,10 +286,11 @@ async function findPartnerExactByEmail(odoo, email) {
   const normalized = normalizeEmail(email);
   if (!normalized) return null;
 
-  const rows = await odoo.searchRead(
+  const rows = await safeSearchReadCompat(
+    odoo,
     "res.partner",
     [["email", "=", normalized]],
-    ["id", "name", "email", "company_type", "parent_id", "function", "phone", "mobile"],
+    PARTNER_PREFERRED_READ_FIELDS,
     1
   );
 
@@ -260,7 +312,7 @@ app.get("/api/odoo/partners/by-email", async (req, res) => {
     }
   } catch (e) {
     console.error(e);
-    return res.status(500).json({ ok: false, message: String(e?.message || e), partner: null });
+    return res.status(500).json({ ok: false, error: "partner_lookup_failed", details: String(e?.message || e), partner: null });
   }
 });
 
@@ -271,7 +323,7 @@ app.get("/api/odoo/companies/search", async (req, res) => {
     try {
       const odoo = await getOdooCached(req);
       const domain = [["company_type", "=", "company"], ...(q ? [["name", "ilike", q]] : [])];
-      const companies = await odoo.searchRead("res.partner", domain, ["id", "name", "email", "display_name"], 10);
+      const companies = await safeSearchReadCompat(odoo, "res.partner", domain, PARTNER_PREFERRED_READ_FIELDS, 10);
       return res.json({ ok: true, results: companies || [] });
     } catch (e) {
       console.warn("[server] /companies/search fallback empty:", e?.message);
@@ -279,7 +331,7 @@ app.get("/api/odoo/companies/search", async (req, res) => {
     }
   } catch (e) {
     console.error(e);
-    return res.status(500).json({ ok: false, message: String(e?.message || e), results: [] });
+    return res.status(500).json({ ok: false, error: "company_search_failed", details: String(e?.message || e), results: [] });
   }
 });
 
@@ -313,8 +365,8 @@ app.post("/api/odoo/partners/create-or-update", async (req, res) => {
       if (!data.name) data.name = data.email.split("@")[0] || "Contacto";
       if (!data.company_type) data.company_type = "person";
 
-      const id = await odoo.create("res.partner", data);
-      const partner = await odoo.read("res.partner", [id], ["id", "name", "email", "company_type", "parent_id", "function", "phone", "mobile"]);
+      const id = await safeCreateCompat(odoo, "res.partner", data);
+      const partner = await safeReadCompat(odoo, "res.partner", [id], PARTNER_PREFERRED_READ_FIELDS);
       return res.json({ ok: true, mode: "create", id, partner: Array.isArray(partner) ? partner[0] : null });
     }
 
@@ -337,12 +389,12 @@ app.post("/api/odoo/partners/create-or-update", async (req, res) => {
       return res.status(400).json({ ok: false, message: "No fields to update" });
     }
 
-    await odoo.call("res.partner", "write", [[targetId], patch]);
-    const partner = await odoo.read("res.partner", [targetId], ["id", "name", "email", "company_type", "parent_id", "function", "phone", "mobile"]);
+    await safeWriteCompat(odoo, "res.partner", [targetId], patch);
+    const partner = await safeReadCompat(odoo, "res.partner", [targetId], PARTNER_PREFERRED_READ_FIELDS);
     return res.json({ ok: true, mode: "update", id: targetId, partner: Array.isArray(partner) ? partner[0] : null });
   } catch (e) {
     console.error(e);
-    return res.status(500).json({ ok: false, message: String(e?.message || e) });
+    return res.status(500).json({ ok: false, error: "partner_create_or_update_failed", details: String(e?.message || e) });
   }
 });
 
@@ -352,7 +404,7 @@ app.get("/api/odoo/search", async (req, res) => {
     const q = String(req.query.q || "").trim();
     const limit = Math.min(Number(req.query.limit || 10), 20);
 
-    if (!modelAllowed(model)) return res.status(400).send("Model not allowed");
+    if (!modelAllowed(model)) return res.status(400).json({ ok: false, error: "model_not_allowed" });
 
     const odoo = await getOdooCached(req);
 
@@ -394,11 +446,11 @@ app.get("/api/odoo/search", async (req, res) => {
       fields = ["name", "display_name"];
     }
 
-    const items = await odoo.searchRead(model, domain, fields, limit);
+    const items = await safeSearchReadCompat(odoo, model, domain, fields, limit);
     return res.json({ items: items || [] });
   } catch (e) {
     console.error(e);
-    return res.status(500).send(String(e?.message || e));
+    return res.status(500).json({ ok: false, error: "odoo_endpoint_failed", details: String(e?.message || e) });
   }
 });
 
@@ -477,7 +529,7 @@ app.post("/api/odoo/search", async (req, res) => {
     const body = req.body || {};
     const model = String(body.model || "").trim();
 
-    if (!modelAllowed(model)) return res.status(400).send("Model not allowed");
+    if (!modelAllowed(model)) return res.status(400).json({ ok: false, error: "model_not_allowed" });
 
     // Two supported shapes:
     // 1) { model, query, limit }  (free-text)
@@ -491,16 +543,16 @@ app.post("/api/odoo/search", async (req, res) => {
       const domain = body.domain;
       const fields = Array.isArray(body.fields) ? body.fields : ["id", "name"];
       const order = typeof body.order === "string" ? body.order : undefined;
-      const records = await odoo.searchRead(model, domain, fields, limit, order);
+      const records = await safeSearchReadCompat(odoo, model, domain, fields, limit, order);
       return res.json({ records: records || [] });
     }
 
     const spec = buildSearchSpec(model, q);
-    const records = await odoo.searchRead(model, spec.domain, spec.fields, limit);
+    const records = await safeSearchReadCompat(odoo, model, spec.domain, spec.fields, limit);
     return res.json({ records: records || [] });
   } catch (e) {
     console.error(e);
-    return res.status(500).send(String(e?.message || e));
+    return res.status(500).json({ ok: false, error: "odoo_endpoint_failed", details: String(e?.message || e) });
   }
 });
 
@@ -509,19 +561,19 @@ app.post("/api/odoo/search-domain", async (req, res) => {
     const { model, domain, fields, limit, order } = req.body || {};
     const m = String(model || "").trim();
 
-    if (!modelAllowed(m)) return res.status(400).send("Model not allowed");
-    if (!Array.isArray(domain)) return res.status(400).send("Missing domain");
+    if (!modelAllowed(m)) return res.status(400).json({ ok: false, error: "model_not_allowed" });
+    if (!Array.isArray(domain)) return res.status(400).json({ ok: false, error: "missing_domain" });
 
     const lim = Math.min(Number(limit ?? 20), 80);
     const f = Array.isArray(fields) ? fields : ["id", "name"];
     const ord = typeof order === "string" ? order : undefined;
 
     const odoo = await getOdooCached(req);
-    const records = await odoo.searchRead(m, domain, f, lim, ord);
+    const records = await safeSearchReadCompat(odoo, m, domain, f, lim, ord);
     return res.json({ records: records || [] });
   } catch (e) {
     console.error(e);
-    return res.status(500).send(String(e?.message || e));
+    return res.status(500).json({ ok: false, error: "odoo_endpoint_failed", details: String(e?.message || e) });
   }
 });
 
@@ -531,17 +583,17 @@ app.post("/api/odoo/read", async (req, res) => {
     const m = String(model || "").trim();
     const idList = (Array.isArray(ids) ? ids : [ids]).map((x) => Number(x)).filter(Boolean).slice(0, 80);
 
-    if (!modelAllowed(m)) return res.status(400).send("Model not allowed");
-    if (!idList.length) return res.status(400).send("Missing ids");
+    if (!modelAllowed(m)) return res.status(400).json({ ok: false, error: "model_not_allowed" });
+    if (!idList.length) return res.status(400).json({ ok: false, error: "missing_ids" });
 
     const f = Array.isArray(fields) ? fields : ["id", "name", "display_name"];
 
     const odoo = await getOdooCached(req);
-    const records = await odoo.read(m, idList, f);
+    const records = await safeReadCompat(odoo, m, idList, f);
     return res.json({ records: records || [] });
   } catch (e) {
     console.error(e);
-    return res.status(500).send(String(e?.message || e));
+    return res.status(500).json({ ok: false, error: "odoo_endpoint_failed", details: String(e?.message || e) });
   }
 });
 
@@ -550,21 +602,21 @@ app.post("/api/odoo/write", async (req, res) => {
     const { model, id, ids, values } = req.body || {};
     const m = String(model || "").trim();
 
-    if (!modelAllowed(m)) return res.status(400).send("Model not allowed");
+    if (!modelAllowed(m)) return res.status(400).json({ ok: false, error: "model_not_allowed" });
 
     const idList = (Array.isArray(ids) ? ids : [id]).map((x) => Number(x)).filter(Boolean);
-    if (!idList.length) return res.status(400).send("Missing id(s)");
+    if (!idList.length) return res.status(400).json({ ok: false, error: "missing_ids" });
 
     const clean = cleanValuesForModel(m, values);
-    if (!clean) return res.status(400).send("Missing values");
+    if (!clean) return res.status(400).json({ ok: false, error: "missing_values" });
 
     const odoo = await getOdooCached(req);
     // write accepts a list of ids
-    const ok = await odoo.call(m, "write", [idList, clean]);
+    const ok = await safeWriteCompat(odoo, m, idList, clean);
     return res.json({ ok: true, result: ok });
   } catch (e) {
     console.error(e);
-    return res.status(500).send(String(e?.message || e));
+    return res.status(500).json({ ok: false, error: "odoo_endpoint_failed", details: String(e?.message || e) });
   }
 });
 
@@ -576,8 +628,8 @@ app.post("/api/odoo/call", async (req, res) => {
     const m = String(model || "").trim();
     const meth = String(method || "").trim();
 
-    if (!modelAllowed(m)) return res.status(400).send("Model not allowed");
-    if (!ALLOWED_CALL_METHODS.has(meth)) return res.status(400).send("Method not allowed");
+    if (!modelAllowed(m)) return res.status(400).json({ ok: false, error: "model_not_allowed" });
+    if (!ALLOWED_CALL_METHODS.has(meth)) return res.status(400).json({ ok: false, error: "method_not_allowed" });
 
     let safeArgs = Array.isArray(args) ? args : [];
     const safeKw = (kwargs && typeof kwargs === "object") ? kwargs : {};
@@ -585,50 +637,74 @@ app.post("/api/odoo/call", async (req, res) => {
     // sanitize create/write payloads (defense-in-depth)
     if (meth === "create") {
       const clean = cleanValuesForModel(m, safeArgs[0]);
-      if (!clean) return res.status(400).send("Missing values");
+      if (!clean) return res.status(400).json({ ok: false, error: "missing_values" });
       safeArgs = [clean];
     }
     if (meth === "write") {
       const ids0 = Array.isArray(safeArgs[0]) ? safeArgs[0] : [];
       const vals0 = safeArgs[1];
       const clean = cleanValuesForModel(m, vals0);
-      if (!ids0.length) return res.status(400).send("Missing ids");
-      if (!clean) return res.status(400).send("Missing values");
+      if (!ids0.length) return res.status(400).json({ ok: false, error: "missing_ids" });
+      if (!clean) return res.status(400).json({ ok: false, error: "missing_values" });
       safeArgs = [ids0, clean];
     }
 
     const odoo = await getOdooCached(req);
+
+    if (meth === "search_read") {
+      const domain = Array.isArray(safeArgs?.[0]) ? safeArgs[0] : [];
+      const fields = await filterReadFieldsCompat(odoo, m, Array.isArray(safeKw?.fields) ? safeKw.fields : ["id", "name"]);
+      const limit = Math.min(Number(safeKw?.limit ?? 20), 80);
+      const order = typeof safeKw?.order === "string" ? safeKw.order : undefined;
+      const result = await safeSearchReadCompat(odoo, m, domain, fields, limit, order);
+      return res.json({ ok: true, result });
+    }
+
+    if (meth === "read") {
+      const idsArg = Array.isArray(safeArgs?.[0]) ? safeArgs[0] : [];
+      if (!idsArg.length) return res.status(400).json({ ok: false, error: "missing_ids" });
+      const fields = Array.isArray(safeKw?.fields) ? safeKw.fields : ["id", "name", "display_name"];
+      const result = await safeReadCompat(odoo, m, idsArg, fields);
+      return res.json({ ok: true, result });
+    }
+
+    if (meth === "create") {
+      const result = await safeCreateCompat(odoo, m, safeArgs[0]);
+      return res.json({ ok: true, result });
+    }
+
+    if (meth === "write") {
+      const result = await safeWriteCompat(odoo, m, safeArgs[0], safeArgs[1]);
+      return res.json({ ok: true, result });
+    }
+
     const result = await odoo.call(m, meth, safeArgs, safeKw);
     return res.json({ ok: true, result });
   } catch (e) {
     console.error(e);
-    return res.status(500).send(String(e?.message || e));
+    return res.status(500).json({ ok: false, error: "odoo_call_failed", details: String(e?.message || e) });
   }
 });
+
 
 app.post("/api/odoo/create", async (req, res) => {
   try {
     const { model, values } = req.body || {};
     const m = String(model || "").trim();
 
-    if (!modelAllowed(m)) return res.status(400).send("Model not allowed");
-    if (!values || typeof values !== "object") return res.status(400).send("Missing values");
+    if (!modelAllowed(m)) return res.status(400).json({ ok: false, error: "model_not_allowed" });
+    if (!values || typeof values !== "object") return res.status(400).json({ ok: false, error: "missing_values" });
 
     const allowedByModel = {
-      "res.partner": new Set(["name", "email", "phone", "mobile"]),
-      "crm.lead": new Set(["name", "contact_name", "email_from", "phone", "partner_id", "stage_id", "description"]),
-      "project.project": new Set(["name", "partner_id", "user_id", "description"]),
-      // project.task:
-      // - project_id (opcional)
-      // - lead_id (opcional; só funciona se o módulo criar o campo)
-      // - parent_id (subtarefa)
-      // - user_ids (m2m) é convertido abaixo
+      "res.partner": new Set(["name", "email", "phone", "mobile", "function", "company_type", "parent_id"]),
+      "crm.lead": new Set(["name", "email_from", "partner_id"]),
+      "project.project": new Set(["name", "partner_id", "user_id"]),
       "project.task": new Set(["name", "description", "date_deadline", "project_id", "lead_id", "parent_id", "user_ids", "stage_id"]),
       "helpdesk.ticket": new Set(["name", "description", "partner_id", "team_id", "user_id", "stage_id", "priority"]),
       "ir.attachment": new Set(["name", "datas", "res_model", "res_id", "type", "mimetype", "datas_fname"]),
     }[m];
 
-    if (!allowedByModel) return res.status(400).send("Model not allowed");
+    if (!allowedByModel) return res.status(400).json({ ok: false, error: "model_not_allowed" });
 
     const clean = {};
     for (const [k, v] of Object.entries(values)) {
@@ -638,23 +714,18 @@ app.post("/api/odoo/create", async (req, res) => {
     // Extra validation for attachments
     if (m === "ir.attachment") {
       const rm = String(clean.res_model || "").trim();
-      if (!rm || !modelAllowed(rm)) return res.status(400).send("Invalid res_model");
+      if (!rm || !modelAllowed(rm)) return res.status(400).json({ ok: false, error: "invalid_res_model" });
       const rid = Number(clean.res_id);
-      if (!rid) return res.status(400).send("Invalid res_id");
-      if (!clean.datas || typeof clean.datas !== "string") return res.status(400).send("Missing datas");
-      // default
+      if (!rid) return res.status(400).json({ ok: false, error: "invalid_res_id" });
+      if (!clean.datas || typeof clean.datas !== "string") return res.status(400).json({ ok: false, error: "missing_datas" });
       clean.type = clean.type || "binary";
     }
 
-    // Normalização simples de Many2many (aceita [ids] ou command [[6,0,[ids]]])
+    // Normalização simples de Many2many
     if (m === "project.task" && Array.isArray(clean.user_ids)) {
-      // already in command form?
       if (Array.isArray(clean.user_ids[0])) {
         const cmd = clean.user_ids[0];
-        if (cmd && cmd[0] === 6) {
-          // keep as is
-        } else {
-          // unknown command -> drop for safety
+        if (!(cmd && cmd[0] === 6)) {
           delete clean.user_ids;
         }
       } else {
@@ -664,17 +735,18 @@ app.post("/api/odoo/create", async (req, res) => {
       }
     }
 
-    if (!clean.name) return res.status(400).send("Missing name");
+    if (!clean.name) return res.status(400).json({ ok: false, error: "missing_name" });
 
     const odoo = await getOdooCached(req);
-    const id = await odoo.create(m, clean);
+    const id = await safeCreateCompat(odoo, m, clean);
 
     return res.json({ ok: true, id });
   } catch (e) {
     console.error(e);
-    return res.status(500).send(String(e?.message || e));
+    return res.status(500).json({ ok: false, error: "odoo_create_failed", details: String(e?.message || e) });
   }
 });
+
 
 // ✅ Endpoint "Jira-like": cria ligação oculta email↔entidade no Odoo + guarda link local por conversationId
 app.post("/api/odoo/link-email", async (req, res) => {
@@ -698,9 +770,9 @@ app.post("/api/odoo/link-email", async (req, res) => {
 
     const m = String(model || "").trim();
 
-    if (!modelAllowed(m)) return res.status(400).send("Model not allowed");
-    if (!conversationId) return res.status(400).send("Missing conversationId");
-    if (!rid) return res.status(400).send("Missing recordId");
+    if (!modelAllowed(m)) return res.status(400).json({ ok: false, error: "model_not_allowed" });
+    if (!conversationId) return res.status(400).json({ ok: false, error: "missing_conversation_id" });
+    if (!rid) return res.status(400).json({ ok: false, error: "missing_record_id" });
 
     const odoo = await getOdooCached(req);
 
@@ -759,7 +831,7 @@ app.post("/api/odoo/link-email", async (req, res) => {
     return res.json({ ok: true, links: list });
   } catch (e) {
     console.error(e);
-    return res.status(500).send(String(e?.message || e));
+    return res.status(500).json({ ok: false, error: "odoo_endpoint_failed", details: String(e?.message || e) });
   }
 });
 
@@ -778,7 +850,7 @@ app.get("/api/links", async (req, res) => {
     return res.json({ links });
   } catch (e) {
     console.error(e);
-    return res.status(500).send(String(e?.message || e));
+    return res.status(500).json({ ok: false, error: "odoo_endpoint_failed", details: String(e?.message || e) });
   }
 });
 
