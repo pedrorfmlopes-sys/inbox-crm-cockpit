@@ -333,6 +333,47 @@ export async function callOdoo(payload: { model: string; method: string; args: a
   return await requestJSON(`/api/odoo/call`, { method: "POST", body: JSON.stringify(payload) });
 }
 
+export type OdooFieldMeta = {
+  name: string;
+  string?: string;
+  type?: string;
+  relation?: string;
+  selection?: Array<[string, string]>;
+};
+
+function normalizeFieldLabel(value: string): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+export async function findOdooFieldByLabel(model: string, label: string): Promise<OdooFieldMeta | null> {
+  const target = normalizeFieldLabel(label);
+  if (!target) return null;
+
+  const result: Record<string, any> = await callOdoo({
+    model,
+    method: "fields_get",
+    args: [],
+    kwargs: { attributes: ["string", "type", "relation", "selection"] },
+  });
+
+  for (const [name, meta] of Object.entries(result || {})) {
+    if (normalizeFieldLabel(String(meta?.string || "")) !== target) continue;
+    return {
+      name,
+      string: meta?.string,
+      type: meta?.type,
+      relation: meta?.relation,
+      selection: Array.isArray(meta?.selection) ? meta.selection : [],
+    };
+  }
+
+  return null;
+}
+
 // createOdoo: return number (DialogApp expects number)
 export async function createOdoo(model: string, values: Record<string, any>): Promise<number> {
   // prefer dedicated endpoint

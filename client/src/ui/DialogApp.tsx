@@ -9,6 +9,8 @@ import {
   setApiSessionToken,
   writeOdoo,
   aiGenerate,
+  findOdooFieldByLabel,
+  type OdooFieldMeta,
 } from "@/api";
 
 import DebugPanel from "@/ui/DebugPanel";
@@ -1334,6 +1336,10 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   const [stageId, setStageId] = useState<number | null>(null);
   const [stageName, setStageName] = useState("");
   const [description, setDescription] = useState("");
+  const [leadTypeField, setLeadTypeField] = useState<OdooFieldMeta | null>(null);
+  const [leadTypeValue, setLeadTypeValue] = useState("");
+  const [leadTypeRelationId, setLeadTypeRelationId] = useState<number | null>(null);
+  const [leadTypeRelationName, setLeadTypeRelationName] = useState("");
 
   useEffect(() => {
     if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
@@ -1342,14 +1348,32 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
 
   useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const field = await findOdooFieldByLabel("crm.lead", "Tipo de Lead");
+        if (!alive) return;
+        setLeadTypeField(field);
+      } catch {
+        if (alive) setLeadTypeField(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (mode !== "edit" || !editId) return;
     (async () => {
       try {
         let rows: any[] | null = null;
+        const fieldName = leadTypeField?.name;
+        const baseFields = ["name", "contact_name", "email_from", "phone", "partner_id", "stage_id"];
         try {
-          rows = await readOdoo("crm.lead", [editId], ["name", "contact_name", "email_from", "phone", "partner_id", "stage_id", "description"]);
+          rows = await readOdoo("crm.lead", [editId], fieldName ? [...baseFields, fieldName, "description"] : [...baseFields, "description"]);
         } catch {
-          rows = await readOdoo("crm.lead", [editId], ["name", "contact_name", "email_from", "phone", "partner_id", "stage_id"]);
+          rows = await readOdoo("crm.lead", [editId], fieldName ? [...baseFields, fieldName] : baseFields);
         }
         const r = rows?.[0];
         if (!r) return;
@@ -1360,11 +1384,25 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         if (r.partner_id) { setPartnerId(r.partner_id[0]); setPartnerName(r.partner_id[1]); }
         if (r.stage_id) { setStageId(r.stage_id[0]); setStageName(r.stage_id[1]); }
         if (r.description) setDescription(String(r.description));
+        if (fieldName) {
+          const fieldValue = r[fieldName];
+          if (leadTypeField?.type === "many2one") {
+            if (Array.isArray(fieldValue) && fieldValue[0]) {
+              setLeadTypeRelationId(fieldValue[0]);
+              setLeadTypeRelationName(fieldValue[1] || `#${fieldValue[0]}`);
+            } else {
+              setLeadTypeRelationId(null);
+              setLeadTypeRelationName("");
+            }
+          } else {
+            setLeadTypeValue(String(fieldValue || ""));
+          }
+        }
       } catch (e: any) {
         onStatus(e?.message ?? String(e));
       }
     })();
-  }, [mode, editId]);
+  }, [mode, editId, leadTypeField]);
 
   async function save() {
     try {
@@ -1378,6 +1416,10 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
       if (stageId) values.stage_id = stageId;
       if (description) values.description = description;
       if (ctx.bodyHtml) values.bodyHtml = ctx.bodyHtml;
+      if (leadTypeField?.name) {
+        if (leadTypeField.type === "many2one") values[leadTypeField.name] = leadTypeRelationId || false;
+        else values[leadTypeField.name] = leadTypeValue || false;
+      }
 
       if (mode === "edit") {
         try {
@@ -1472,6 +1514,34 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         <label style={S.lab}>TELEFONE</label>
         <input style={S.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone" />
       </div>
+
+      {leadTypeField?.type === "selection" && (
+        <div style={S.row}>
+          <label style={S.lab}>TIPO DE LEAD</label>
+          <select style={S.sel} value={leadTypeValue} onChange={(e) => setLeadTypeValue(e.target.value)}>
+            <option value="">Selecionar...</option>
+            {(leadTypeField.selection || []).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {leadTypeField?.type === "many2one" && leadTypeField.relation && (
+        <TypeaheadPicker
+          label="TIPO DE LEAD"
+          placeholder="Pesquisar tipo de lead..."
+          model={leadTypeField.relation}
+          fields={["id", "name", "display_name"]}
+          pickedId={leadTypeRelationId}
+          pickedName={leadTypeRelationName}
+          onPick={(it: any) => {
+            const id = it?.id ?? null;
+            setLeadTypeRelationId(id);
+            setLeadTypeRelationName(id ? (it.display_name || it.name || `#${id}`) : "");
+          }}
+        />
+      )}
 
       <TypeaheadPicker
         label="EMPRESA"
