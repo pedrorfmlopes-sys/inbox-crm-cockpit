@@ -136,19 +136,28 @@ export async function getOdooMeta(): Promise<OdooMeta> {
   return m;
 }
 
-export function getOdooAutoLoginUrl(token: string | null, redirect: string = "/web", odooBaseUrl?: string): string {
-  const bridgeBaseUrl = (window as any).location.origin;
-
-  // Normalize redirect: Odoo prefers relative paths for the 'redirect' field in form POSTS
+export function getOdooAutoLoginUrl(_token: string | null, redirect: string = "/web", odooBaseUrl?: string): string {
   let targetPath = redirect;
   if (odooBaseUrl && redirect.startsWith(odooBaseUrl)) {
     targetPath = redirect.substring(odooBaseUrl.length);
   }
   if (!targetPath.startsWith("/")) targetPath = "/" + targetPath;
 
-  const t = token ? `token=${encodeURIComponent(token)}` : "";
-  const r = `redirect=${encodeURIComponent(targetPath)}`;
-  return `${bridgeBaseUrl}/api/odoo/auto-login?${[t, r].filter(Boolean).join("&")}`;
+  if (!odooBaseUrl) {
+    return targetPath;
+  }
+
+  const base = String(odooBaseUrl).replace(/\/+$/, "");
+  const redirectUrl = new URL(targetPath, base + "/");
+  const db = redirectUrl.searchParams.get("db");
+  const loginUrl = new URL(base + "/web/login");
+
+  if (db) {
+    loginUrl.searchParams.set("db", db);
+  }
+  loginUrl.searchParams.set("redirect", redirectUrl.pathname + redirectUrl.search + redirectUrl.hash);
+
+  return loginUrl.toString();
 }
 
 export async function odooPing(): Promise<{ ok: boolean }> {
