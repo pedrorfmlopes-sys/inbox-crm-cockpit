@@ -64,7 +64,7 @@ export default function App() {
   async function refreshLinks() {
     if (!ctx.conversationId) return setLinks([]);
     try {
-      setLinks(await getLinks(ctx.conversationId));
+      setLinks(await getLinks(ctx.conversationId, ctx.internetMessageId));
     } catch (e: any) {
       setMsg(e?.message ?? String(e));
     }
@@ -74,7 +74,7 @@ export default function App() {
   useEffect(() => {
     refreshLinks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx.conversationId]);
+  }, [ctx.conversationId, ctx.internetMessageId]);
 
   const fromLabel = useMemo(() => {
     if (ctx.fromName && ctx.fromEmail) return `${ctx.fromName} <${ctx.fromEmail}>`;

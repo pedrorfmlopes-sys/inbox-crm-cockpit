@@ -54,17 +54,98 @@ function writeAll(obj) {
   fs.writeFileSync(FILE_PATH, JSON.stringify(obj, null, 2), "utf-8");
 }
 
-export async function listLinksByConversation(conversationId) {
-  if (!conversationId) return [];
+function normalizeEntry(entry) {
+  return {
+    model: entry.model,
+    recordId: Number(entry.recordId),
+    recordName: entry.recordName || "",
+    linkedAt: entry.linkedAt,
+    internetMessageId: entry.internetMessageId || "",
+    subject: entry.subject,
+    fromEmail: entry.fromEmail,
+    fromName: entry.fromName
+  };
+}
+
+function splitLookupKey(conversationId, internetMessageId = "") {
+  const rawConversationId = String(conversationId || "").trim();
+  if (!internetMessageId && rawConversationId.includes("||")) {
+    const [cid, imid] = rawConversationId.split("||");
+    return {
+      conversationId: String(cid || "").trim(),
+      internetMessageId: String(imid || "").trim(),
+    };
+  }
+  return {
+    conversationId: rawConversationId,
+    internetMessageId: String(internetMessageId || "").trim(),
+  };
+}
+
+function dedupeLinks(entries) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of entries || []) {
+    const entry = normalizeEntry(raw);
+    const key = `${entry.model}:${entry.recordId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+  }
+  return out.sort((a, b) => String(b.linkedAt || "").localeCompare(String(a.linkedAt || "")));
+}
+
+function listLinksFromFile(conversationId, internetMessageId = "") {
+  if (!conversationId && !internetMessageId) return [];
+  const all = readAll();
+  const direct = conversationId ? (all[`conversationId:${conversationId}`] || []) : [];
+  const byMessageKey = internetMessageId ? (all[`internetMessageId:${internetMessageId}`] || []) : [];
+  const byMessageScan = internetMessageId
+    ? Object.values(all)
+      .flatMap((entries) => Array.isArray(entries) ? entries : [])
+      .filter((entry) => entry?.internetMessageId === internetMessageId)
+    : [];
+  return dedupeLinks([...direct, ...byMessageKey, ...byMessageScan]);
+}
+
+function writeLinkToFile(conversationId, entry) {
+  const all = readAll();
+  const nextEntry = normalizeEntry(entry);
+  const keys = [`conversationId:${conversationId}`];
+  if (nextEntry.internetMessageId) keys.push(`internetMessageId:${nextEntry.internetMessageId}`);
+
+  for (const key of keys) {
+    const arr = Array.isArray(all[key]) ? all[key] : [];
+    all[key] = dedupeLinks([nextEntry, ...arr]).slice(0, 50);
+  }
+
+  writeAll(all);
+}
+
+export async function listLinksByConversation(conversationId, internetMessageId = "") {
+  const lookup = splitLookupKey(conversationId, internetMessageId);
+  const resolvedConversationId = lookup.conversationId;
+  const resolvedInternetMessageId = lookup.internetMessageId;
+
+  if (!resolvedConversationId && !resolvedInternetMessageId) return [];
 
   if (pool) {
     try {
+      const params = [];
+      const where = [];
+      if (resolvedConversationId) {
+        params.push(resolvedConversationId);
+        where.push(`conversation_id = $${params.length}`);
+      }
+      if (resolvedInternetMessageId) {
+        params.push(resolvedInternetMessageId);
+        where.push(`internet_message_id = $${params.length}`);
+      }
       const { rows } = await pool.query(
-        "SELECT * FROM crm_links WHERE conversation_id = $1 ORDER BY linked_at DESC",
-        [conversationId]
+        `SELECT * FROM crm_links WHERE ${where.join(" OR ")} ORDER BY linked_at DESC`,
+        params
       );
-      // Map DB snake_case to JS camelCase for UI compatibility
-      return rows.map(r => ({
+      const dbLinks = rows.map((r) => normalizeEntry({
         model: r.model,
         recordId: r.record_id,
         recordName: r.record_name,
@@ -74,17 +155,20 @@ export async function listLinksByConversation(conversationId) {
         fromEmail: r.from_email,
         fromName: r.from_name
       }));
+      return dedupeLinks([...dbLinks, ...listLinksFromFile(resolvedConversationId, resolvedInternetMessageId)]);
     } catch (e) {
       console.error("[linkStore] DB Query Error, falling back to file store:", e);
     }
   }
 
-  const all = readAll();
-  return all[`conversationId:${conversationId}`] || [];
+  return listLinksFromFile(resolvedConversationId, resolvedInternetMessageId);
 }
 
 export async function addLink(conversationId, entry) {
   if (!conversationId) throw new Error("Missing conversationId");
+  const nextEntry = normalizeEntry(entry);
+
+  writeLinkToFile(conversationId, nextEntry);
 
   if (pool) {
     try {
@@ -95,33 +179,22 @@ export async function addLink(conversationId, entry) {
          ON CONFLICT (conversation_id, model, record_id) DO UPDATE SET linked_at = $5`,
         [
           conversationId,
-          entry.model,
-          entry.recordId,
-          entry.recordName,
-          entry.linkedAt,
-          entry.internetMessageId,
-          entry.subject,
-          entry.fromEmail,
-          entry.fromName
+          nextEntry.model,
+          nextEntry.recordId,
+          nextEntry.recordName,
+          nextEntry.linkedAt,
+          nextEntry.internetMessageId,
+          nextEntry.subject,
+          nextEntry.fromEmail,
+          nextEntry.fromName
         ]
       );
-      return await listLinksByConversation(conversationId);
+      return await listLinksByConversation(conversationId, nextEntry.internetMessageId);
     } catch (e) {
       console.error("[linkStore] DB Insert Error, falling back to file store:", e);
     }
   }
 
-  const all = readAll();
-  const key = `conversationId:${conversationId}`;
-  const arr = all[key] || [];
-
-  // Deduplicate by model+recordId
-  const exists = arr.some((x) => x.model === entry.model && Number(x.recordId) === Number(entry.recordId));
-  if (!exists) arr.unshift(entry);
-
-  // Keep last 50
-  all[key] = arr.slice(0, 50);
-  writeAll(all);
-  return all[key];
+  return await listLinksByConversation(conversationId, nextEntry.internetMessageId);
 }
 

@@ -251,7 +251,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setLinks(readCachedLinks(c.conversationId));
 
             try {
-                const l = await getLinks(c.conversationId).catch(() => []);
+                const l = await getLinks(c.conversationId, c.internetMessageId).catch(() => []);
                 if (reqId !== ctxLoadSeqRef.current) return;
                 setLinks(l || []);
                 writeCachedLinks(c.conversationId, l || []);
@@ -425,7 +425,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const refreshLinks = async () => {
         if (!ctx.conversationId) return;
         try {
-            const l = await getLinks(ctx.conversationId);
+            const l = await getLinks(ctx.conversationId, ctx.internetMessageId);
             setLinks(l);
             writeCachedLinks(ctx.conversationId, l || []);
         } catch (e: any) {
