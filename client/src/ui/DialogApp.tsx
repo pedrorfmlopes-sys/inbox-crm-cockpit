@@ -12,6 +12,7 @@ import {
 } from "@/api";
 
 import DebugPanel from "@/ui/DebugPanel";
+import { prepareReferencedRecordName } from "@/referenceCodes";
 import { getSettings } from "@/settings";
 import { applySkin } from "@/ui/skins";
 import * as Icons from "./icons"; // Import icons symmetrically with CrmCockpit
@@ -390,6 +391,13 @@ async function copyToClipboard(text: string) {
     document.execCommand("copy");
     document.body.removeChild(ta);
   }
+}
+
+async function withReferenceCode(model: string, values: Record<string, any>) {
+  if (typeof values.name !== "string") return values;
+  const prepared = await prepareReferencedRecordName(model, values.name);
+  if (!prepared.referenceCode || prepared.title === values.name) return values;
+  return { ...values, name: prepared.title };
 }
 
 type TypeaheadPickerProps = {
@@ -912,7 +920,7 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
 
   async function save() {
     try {
-      const values: any = {
+      let values: any = {
         name: name || "Nova tarefa",
         description: description || "",
       };
@@ -931,6 +939,7 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         return;
       }
 
+      values = await withReferenceCode("project.task", values);
       id = await createOdoo("project.task", values);
 
       await linkEmailToRecord({
@@ -953,12 +962,13 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         onStatus(`A criar ${pendingSubtasks.length} subtarefas detetadas...`);
         for (const subTitle of pendingSubtasks) {
           try {
-            await createOdoo("project.task", {
+            const subtaskValues = await withReferenceCode("project.task", {
               name: subTitle,
               project_id: projectId || false,
               parent_id: id,
               user_ids: assigneeId ? [assigneeId] : [],
             });
+            await createOdoo("project.task", subtaskValues);
           } catch (e) {
             console.error("Erro ao criar subtarefa diferida", e);
           }
@@ -1007,13 +1017,14 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
 
     onStatus(`A criar tarefa: ${title}...`);
     try {
-      const val: any = {
+      let val: any = {
         name: title,
         project_id: projectId || false,
         user_ids: assigneeId ? [assigneeId] : [],
       };
       if (mode === "edit" && editId) val.parent_id = editId;
 
+      val = await withReferenceCode("project.task", val);
       const newId = await createOdoo("project.task", val);
       onStatus(`Tarefa "${title}" criada (#${newId}) ✅`);
     } catch (e: any) {
@@ -1180,7 +1191,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
 
   async function save() {
     try {
-      const values: any = { name: name || "Novo projeto" };
+      let values: any = { name: name || "Novo projeto" };
       if (partnerId) values.partner_id = partnerId;
       if (managerId) values.user_id = managerId;
       if (description) values.description = description;
@@ -1199,6 +1210,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
         return;
       }
 
+      values = await withReferenceCode("project.project", values);
       let id = await createOdoo("project.project", values);
 
       await linkEmailToRecord({
@@ -1241,11 +1253,12 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
   async function handleAddAiAction(title: string) {
     onStatus(`A criar tarefa IA: ${title}...`);
     try {
-      const val: any = {
+      let val: any = {
         name: title,
         project_id: editId || false,
         partner_id: partnerId || false,
       };
+      val = await withReferenceCode("project.task", val);
       const nId = await createOdoo("project.task", val);
       onStatus(`Tarefa IA detetada e criada (#${nId}) ✅`);
     } catch (e: any) {
@@ -1355,7 +1368,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
 
   async function save() {
     try {
-      const values: any = {
+      let values: any = {
         name: name || `Lead: ${ctx.subject || "sem assunto"}`,
         contact_name: contactName || "",
         email_from: email || "",
@@ -1379,6 +1392,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         return;
       }
 
+      values = await withReferenceCode("crm.lead", values);
       let id = await createOdoo("crm.lead", values);
 
       await linkEmailToRecord({
@@ -1421,10 +1435,11 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   async function handleAddAiAction(title: string) {
     onStatus(`A criar tarefa IA: ${title}...`);
     try {
-      const val: any = {
+      let val: any = {
         name: title,
         partner_id: partnerId || false,
       };
+      val = await withReferenceCode("project.task", val);
       const nId = await createOdoo("project.task", val);
       onStatus(`Tarefa IA detetada e criada (#${nId}) ✅`);
     } catch (e: any) {
@@ -1728,7 +1743,7 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
 
   async function save() {
     try {
-      const values: any = {
+      let values: any = {
         name: name || `Ticket: ${ctx.subject || "sem assunto"}`,
       };
       if (description) values.description = description;
@@ -1746,6 +1761,7 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
         return;
       }
 
+      values = await withReferenceCode("helpdesk.ticket", values);
       id = await createOdoo("helpdesk.ticket", values);
       onStatus("Ticket criado ✅");
 
@@ -1917,12 +1933,13 @@ function GenericMiniForm({ mode, ctx, model, editId, onStatus }: any) {
         return;
       }
 
-      const values: any =
+      let values: any =
         model === "res.partner" ? { name: name || email || "Novo contacto", email } :
           model === "crm.lead" ? { name: name || `Lead: ${ctx.subject || "sem assunto"}`, email_from: email } :
             model === "helpdesk.ticket" ? { name: name || `Ticket: ${ctx.subject || "sem assunto"}` } :
             { name: name || `Novo: ${ctx.subject || ""}` };
 
+      values = await withReferenceCode(model, values);
       const id = await createOdoo(model, values);
 
       await linkEmailToRecord({

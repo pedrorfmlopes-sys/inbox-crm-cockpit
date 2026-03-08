@@ -9,6 +9,7 @@ import {
   type AppLocale,
   type CockpitSettingsV1,
   type LangOption,
+  type ReferenceEntityKey,
   type ReplyLength,
   type SkinId,
 } from "../settings";
@@ -17,8 +18,9 @@ import * as Icons from "./icons";
 import { useCockpit } from "../components/shell/CockpitProvider";
 import { aiListModels } from "../api";
 import { PanelState, type PanelStateTone } from "./PanelState";
+import { previewReferenceCode } from "../referenceCodes";
 
-type Section = "general" | "conns" | "ai" | "persona" | "signature" | "protection";
+type Section = "general" | "conns" | "ai" | "persona" | "signature" | "references" | "protection";
 type StatusNotice = { tone: PanelStateTone; title: string; description?: string };
 type StatusValue = StatusNotice | string | null;
 
@@ -60,6 +62,13 @@ const SKIN_OPTIONS: Array<{ value: SkinId; label: string }> = [
   { value: "mailmaestro", label: "MailMaestro" },
   { value: "vibrant", label: "Vibrant (Cockpit 3.0)" },
 ];
+
+const REFERENCE_ENTITY_LABELS: Record<ReferenceEntityKey, string> = {
+  lead: "Lead",
+  project: "Projeto",
+  task: "Tarefa",
+  ticket: "Ticket",
+};
 
 function localeShort(loc: AppLocale): string {
   if (loc === "pt-PT") return "PT";
@@ -135,6 +144,7 @@ export function SettingsPanel(): JSX.Element {
     if (section === "ai") return "IA Knowledge";
     if (section === "persona") return "Minha Persona";
     if (section === "signature") return "Assinatura";
+    if (section === "references") return "Codigos de Referencia";
     return "Proteção (O Moat)";
   }, [section]);
 
@@ -293,6 +303,9 @@ export function SettingsPanel(): JSX.Element {
           </button>
           <button style={section === "signature" ? S.sideItemOn : S.sideItem} onClick={() => setSection("signature")}>
             Assinatura
+          </button>
+          <button style={section === "references" ? S.sideItemOn : S.sideItem} onClick={() => setSection("references")}>
+            Referencias
           </button>
           <button style={section === "protection" ? S.sideItemOn : S.sideItem} onClick={() => setSection("protection")}>
             Proteção
@@ -744,6 +757,178 @@ export function SettingsPanel(): JSX.Element {
             </div>
           )}
 
+          {section === "references" && (
+            <div style={{ display: "grid", gap: 14 }}>
+              <div style={S.hint}>
+                Gera codigos de referencia para novos leads, projetos, tarefas e tickets criados pelo add-in. Os valores
+                guardados aqui passam a ser a regra para futuros registos.
+              </div>
+
+              <label style={S.toggleRow}>
+                <input
+                  type="checkbox"
+                  checked={model.referenceCodes.enabled}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      referenceCodes: {
+                        ...model.referenceCodes,
+                        enabled: e.target.checked,
+                      },
+                    })
+                  }
+                />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ativar codigos de referencia</div>
+                  <div style={S.hint}>Os registos existentes nao sao alterados.</div>
+                </div>
+              </label>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <Field label="Modo de numeracao">
+                  <select
+                    style={S.select}
+                    value={model.referenceCodes.counterMode}
+                    onChange={(e) =>
+                      setModel({
+                        ...model,
+                        referenceCodes: {
+                          ...model.referenceCodes,
+                          counterMode: e.target.value as CockpitSettingsV1["referenceCodes"]["counterMode"],
+                        },
+                      })
+                    }
+                  >
+                    <option value="per_type">Contador por tipo</option>
+                    <option value="global">Contador global</option>
+                  </select>
+                </Field>
+
+                <Field label="Posicao no titulo">
+                  <select
+                    style={S.select}
+                    value={model.referenceCodes.position}
+                    onChange={(e) =>
+                      setModel({
+                        ...model,
+                        referenceCodes: {
+                          ...model.referenceCodes,
+                          position: e.target.value as CockpitSettingsV1["referenceCodes"]["position"],
+                        },
+                      })
+                    }
+                  >
+                    <option value="prefix">No inicio</option>
+                    <option value="suffix">No fim</option>
+                  </select>
+                </Field>
+              </div>
+
+              <label style={S.toggleRow}>
+                <input
+                  type="checkbox"
+                  checked={model.referenceCodes.includeYear}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      referenceCodes: {
+                        ...model.referenceCodes,
+                        includeYear: e.target.checked,
+                      },
+                    })
+                  }
+                />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Incluir ano no codigo</div>
+                  <div style={S.hint}>O exemplo e o proximo codigo passam a incluir o ano atual.</div>
+                </div>
+              </label>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={S.fieldLabel}>Prefixos por entidade</div>
+                {(Object.keys(REFERENCE_ENTITY_LABELS) as ReferenceEntityKey[]).map((entity) => (
+                  <div key={entity} style={S.referenceCard}>
+                    <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10, alignItems: "center" }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>{REFERENCE_ENTITY_LABELS[entity]}</div>
+                      <input
+                        style={S.input}
+                        value={model.referenceCodes.prefixes[entity] || ""}
+                        onChange={(e) =>
+                          setModel({
+                            ...model,
+                            referenceCodes: {
+                              ...model.referenceCodes,
+                              prefixes: {
+                                ...model.referenceCodes.prefixes,
+                                [entity]: e.target.value,
+                              },
+                            },
+                          })
+                        }
+                        placeholder="Prefixo opcional"
+                      />
+                    </div>
+                    <div style={{ ...S.hint, marginTop: 8 }}>Pre-visualizacao: {previewReferenceCode(model, entity)}</div>
+                    <div style={{ ...S.hint, marginTop: 4 }}>
+                      Contador atual: {model.referenceCodes.counterMode === "global"
+                        ? model.referenceCodes.counters.global
+                        : model.referenceCodes.counters.perType[entity]}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={S.fieldLabel}>Reset de contadores</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <button
+                    type="button"
+                    style={S.btnGhost}
+                    onClick={() =>
+                      setModel({
+                        ...model,
+                        referenceCodes: {
+                          ...model.referenceCodes,
+                          counters: {
+                            ...model.referenceCodes.counters,
+                            global: 0,
+                          },
+                        },
+                      })
+                    }
+                  >
+                    Reset global
+                  </button>
+                  {(Object.keys(REFERENCE_ENTITY_LABELS) as ReferenceEntityKey[]).map((entity) => (
+                    <button
+                      key={entity}
+                      type="button"
+                      style={S.btnGhost}
+                      onClick={() =>
+                        setModel({
+                          ...model,
+                          referenceCodes: {
+                            ...model.referenceCodes,
+                            counters: {
+                              ...model.referenceCodes.counters,
+                              perType: {
+                                ...model.referenceCodes.counters.perType,
+                                [entity]: 0,
+                              },
+                            },
+                          },
+                        })
+                      }
+                    >
+                      Reset {REFERENCE_ENTITY_LABELS[entity]}
+                    </button>
+                  ))}
+                </div>
+                <div style={S.hint}>O reset afeta apenas futuros codigos.</div>
+              </div>
+            </div>
+          )}
+
           {section === ("protection" as any) && (
             <ProtectionSettings />
           )}
@@ -878,6 +1063,21 @@ const S: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: "var(--iccc-text-muted)",
     lineHeight: 1.35,
+  },
+  toggleRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid var(--iccc-card-border)",
+    background: "rgba(255,255,255,0.03)",
+  },
+  referenceCard: {
+    padding: 12,
+    borderRadius: 12,
+    border: "1px solid var(--iccc-card-border)",
+    background: "rgba(255,255,255,0.03)",
   },
 
   btn: {

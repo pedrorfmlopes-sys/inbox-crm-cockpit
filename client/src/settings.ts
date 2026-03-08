@@ -20,6 +20,22 @@ export type ContactAlias = {
   email: string;
 };
 
+export type ReferenceEntityKey = "lead" | "project" | "task" | "ticket";
+export type ReferenceCounterMode = "per_type" | "global";
+export type ReferenceCodePosition = "prefix" | "suffix";
+
+export type ReferenceCodeSettings = {
+  enabled: boolean;
+  prefixes: Record<ReferenceEntityKey, string>;
+  counterMode: ReferenceCounterMode;
+  includeYear: boolean;
+  position: ReferenceCodePosition;
+  counters: {
+    global: number;
+    perType: Record<ReferenceEntityKey, number>;
+  };
+};
+
 export type CockpitSettingsV1 = {
   version: 1;
 
@@ -95,6 +111,9 @@ export type CockpitSettingsV1 = {
 
   // New: Contact Aliases (Forwarding Shortcuts)
   contactAliases: ContactAlias[];
+
+  // Configurable reference codes for Odoo-created records
+  referenceCodes: ReferenceCodeSettings;
 };
 
 const KEY_API_BASE = "apiBaseUrl";
@@ -171,6 +190,27 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     { id: "c1", name: "Ragno", email: "info@ragno.it" },
     { id: "c2", name: "Marazzi", email: "contact@marazzi.it" }
   ],
+  referenceCodes: {
+    enabled: false,
+    prefixes: {
+      lead: "",
+      project: "",
+      task: "",
+      ticket: "",
+    },
+    counterMode: "per_type",
+    includeYear: false,
+    position: "prefix",
+    counters: {
+      global: 0,
+      perType: {
+        lead: 0,
+        project: 0,
+        task: 0,
+        ticket: 0,
+      },
+    },
+  },
 };
 
 function hasOffice(): boolean {
@@ -231,6 +271,22 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
     signatureImageUrl: { ...(base.signatureImageUrl || {}), ...((incoming as any).signatureImageUrl || {}) },
     signatureImageMaxWidth: { ...(base.signatureImageMaxWidth || {}), ...((incoming as any).signatureImageMaxWidth || {}) },
     aiKnowledge: Array.isArray(incoming.aiKnowledge) ? incoming.aiKnowledge : base.aiKnowledge,
+    referenceCodes: {
+      ...base.referenceCodes,
+      ...((incoming as any).referenceCodes || {}),
+      prefixes: {
+        ...base.referenceCodes.prefixes,
+        ...(((incoming as any).referenceCodes || {}).prefixes || {}),
+      },
+      counters: {
+        ...base.referenceCodes.counters,
+        ...(((incoming as any).referenceCodes || {}).counters || {}),
+        perType: {
+          ...base.referenceCodes.counters.perType,
+          ...((((incoming as any).referenceCodes || {}).counters || {}).perType || {}),
+        },
+      },
+    },
   };
 
   // guard against wrong versions
