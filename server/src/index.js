@@ -457,7 +457,7 @@ app.get("/api/odoo/search", async (req, res) => {
 // --- compat endpoints (client expects POST + search-domain/read/write/call) ---
 function cleanValuesForModel(model, values) {
   const allowedByModel = {
-    "res.partner": new Set(["name", "email", "phone", "mobile"]),
+    "res.partner": new Set(["name", "email", "phone", "mobile", "function", "company_type", "parent_id"]),
     "crm.lead": new Set(["name", "contact_name", "email_from", "phone", "partner_id", "stage_id", "description"]),
     "project.project": new Set(["name", "partner_id", "user_id", "description"]),
     "project.task": new Set(["name", "description", "date_deadline", "project_id", "lead_id", "parent_id", "user_ids", "stage_id"]),
@@ -471,7 +471,7 @@ function cleanValuesForModel(model, values) {
 
   const clean = {};
   for (const [k, v] of Object.entries(values)) {
-    if (allowedByModel.has(k)) clean[k] = v;
+    if (allowedByModel.has(k) || (model === "crm.lead" && (/^x_/i.test(k) || /(^|_)(lead_type|tipo_de_lead|tipo_lead)$/.test(k) || /tipo.*lead/i.test(k)))) clean[k] = v;
   }
 
   // Normalize M2M for project.task user_ids
@@ -700,21 +700,8 @@ app.post("/api/odoo/create", async (req, res) => {
     if (!modelAllowed(m)) return res.status(400).json({ ok: false, error: "model_not_allowed" });
     if (!values || typeof values !== "object") return res.status(400).json({ ok: false, error: "missing_values" });
 
-    const allowedByModel = {
-      "res.partner": new Set(["name", "email", "phone", "mobile", "function", "company_type", "parent_id"]),
-      "crm.lead": new Set(["name", "email_from", "partner_id"]),
-      "project.project": new Set(["name", "partner_id", "user_id"]),
-      "project.task": new Set(["name", "description", "date_deadline", "project_id", "lead_id", "parent_id", "user_ids", "stage_id"]),
-      "helpdesk.ticket": new Set(["name", "description", "partner_id", "team_id", "user_id", "stage_id", "priority"]),
-      "ir.attachment": new Set(["name", "datas", "res_model", "res_id", "type", "mimetype", "datas_fname"]),
-    }[m];
-
-    if (!allowedByModel) return res.status(400).json({ ok: false, error: "model_not_allowed" });
-
-    const clean = {};
-    for (const [k, v] of Object.entries(values)) {
-      if (allowedByModel.has(k)) clean[k] = v;
-    }
+    const clean = cleanValuesForModel(m, values);
+    if (!clean) return res.status(400).json({ ok: false, error: "missing_values" });
 
     // Extra validation for attachments
     if (m === "ir.attachment") {
