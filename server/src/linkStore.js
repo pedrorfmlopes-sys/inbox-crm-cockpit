@@ -75,8 +75,7 @@ export async function listLinksByConversation(conversationId) {
         fromName: r.from_name
       }));
     } catch (e) {
-      console.error("[linkStore] DB Query Error:", e);
-      return [];
+      console.error("[linkStore] DB Query Error, falling back to file store:", e);
     }
   }
 
@@ -108,9 +107,7 @@ export async function addLink(conversationId, entry) {
       );
       return await listLinksByConversation(conversationId);
     } catch (e) {
-      console.error("[linkStore] DB Insert Error:", e);
-      // Fallback logic not implemented for error state, returning empty or previous
-      return [];
+      console.error("[linkStore] DB Insert Error, falling back to file store:", e);
     }
   }
 
@@ -127,3 +124,4 @@ export async function addLink(conversationId, entry) {
   writeAll(all);
   return all[key];
 }
+

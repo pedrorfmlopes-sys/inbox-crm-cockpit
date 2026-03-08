@@ -224,6 +224,7 @@ export async function odooClientFromEnv(config = null) {
         args: [[Number(id)]],
         kwargs: {
           body,
+          body_is_html: true,
           subject: subject || "",
           message_type: "comment",
           subtype_xmlid: "mail.mt_comment",
