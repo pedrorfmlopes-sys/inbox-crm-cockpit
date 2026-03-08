@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, type OutlookMessageContext } from "@/office";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, syncOdooLinkedCategory, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, login as apiLogin, checkAuth as apiCheckAuth, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -72,6 +72,7 @@ const G = globalThis as CockpitContextSingletonHost;
 const GK = "__ICCC_COCKPIT_CONTEXT_v1__";
 const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
 const LINKS_CACHE_MESSAGE_PREFIX = "iccc_links_cache_msg_v1:";
+const LINKS_CACHE_ITEM_PREFIX = "iccc_links_cache_item_v1:";
 
 if (!G[GK]) {
     G[GK] = createContext<CockpitContextType | undefined>(undefined);
@@ -101,12 +102,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         });
     }
 
-    function readCachedLinks(conversationId?: string | null, internetMessageId?: string | null): LinkEntry[] {
-        if (!conversationId && !internetMessageId) return [];
+    function readCachedLinks(conversationId?: string | null, internetMessageId?: string | null, itemId?: string | null): LinkEntry[] {
+        if (!conversationId && !internetMessageId && !itemId) return [];
         try {
             const sources = [
                 conversationId ? localStorage.getItem(`${LINKS_CACHE_PREFIX}${conversationId}`) : null,
                 internetMessageId ? localStorage.getItem(`${LINKS_CACHE_MESSAGE_PREFIX}${internetMessageId}`) : null,
+                itemId ? localStorage.getItem(`${LINKS_CACHE_ITEM_PREFIX}${itemId}`) : null,
             ];
             const parsed = sources.flatMap((raw) => {
                 if (!raw) return [];
@@ -123,13 +125,16 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
     }
 
-    function writeCachedLinks(conversationId: string | undefined, internetMessageId: string | undefined, nextLinks: LinkEntry[]) {
+    function writeCachedLinks(conversationId: string | undefined, internetMessageId: string | undefined, itemId: string | undefined, nextLinks: LinkEntry[]) {
         try {
             if (conversationId) {
                 localStorage.setItem(`${LINKS_CACHE_PREFIX}${conversationId}`, JSON.stringify(nextLinks || []));
             }
             if (internetMessageId) {
                 localStorage.setItem(`${LINKS_CACHE_MESSAGE_PREFIX}${internetMessageId}`, JSON.stringify(nextLinks || []));
+            }
+            if (itemId) {
+                localStorage.setItem(`${LINKS_CACHE_ITEM_PREFIX}${itemId}`, JSON.stringify(nextLinks || []));
             }
         } catch {
             // ignore cache failures
@@ -349,7 +354,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
 
             setMsg(null);
-            setLinks(readCachedLinks(c.conversationId, c.internetMessageId));
+            const cachedLinks = readCachedLinks(c.conversationId, c.internetMessageId, c.itemId);
+            setLinks(cachedLinks);
 
             try {
                 const { links: l, resolvedCtx } = await fetchPersistedLinks(c);
@@ -360,11 +366,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 ) {
                     setCtx(resolvedCtx);
                 }
-                setLinks(l || []);
+                const nextLinks = (l && l.length) ? l : cachedLinks;
+                setLinks(nextLinks || []);
                 writeCachedLinks(
                     resolvedCtx.conversationId || c.conversationId,
                     resolvedCtx.internetMessageId || c.internetMessageId,
-                    l || []
+                    resolvedCtx.itemId || c.itemId,
+                    nextLinks || []
                 );
             } catch (e) {
                 clientLog("error", "[Cockpit] Unexpected link load error", e);
@@ -547,12 +555,19 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             writeCachedLinks(
                 resolvedCtx.conversationId || ctx.conversationId,
                 resolvedCtx.internetMessageId || ctx.internetMessageId,
+                resolvedCtx.itemId || ctx.itemId,
                 l || []
             );
         } catch (e: any) {
             setMsg(e?.message ?? String(e));
         }
     };
+
+    useEffect(() => {
+        syncOdooLinkedCategory(links.length > 0).catch(() => {
+            // best-effort host hint only
+        });
+    }, [ctx.itemId, links.length]);
 
     const setAiState = (update: Partial<AiState>) => {
         if (!ctx.conversationId) return;

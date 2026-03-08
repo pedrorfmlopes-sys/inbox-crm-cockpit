@@ -166,6 +166,8 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
 // Backwards-compat with older UI code
 export const getSelectedMessageContext = getOutlookContext;
 
+const ODOO_LINKED_CATEGORY = "Odoo Linked";
+
 
 export type OutlookContactSuggestion = {
   name?: string;
@@ -280,6 +282,61 @@ export async function getCurrentItemToken(): Promise<string> {
   } catch {
     return "";
   }
+}
+
+async function ensureMasterCategory(displayName: string): Promise<void> {
+  const OfficeAny: any = await ensureOfficeReady().catch(() => null);
+  if (!OfficeAny?.context?.mailbox?.masterCategories) return;
+
+  await new Promise<void>((resolve) => {
+    try {
+      OfficeAny.context.mailbox.masterCategories.getAsync((res: any) => {
+        if (res.status !== OfficeAny.AsyncResultStatus.Succeeded) return resolve();
+        const list = Array.isArray(res.value) ? res.value : [];
+        const exists = list.some((c: any) => (c.displayName || c.name) === displayName);
+        if (exists) return resolve();
+        const color = OfficeAny.MailboxEnums?.CategoryColor?.Preset0;
+        OfficeAny.context.mailbox.masterCategories.addAsync([{ displayName, color }], () => resolve());
+      });
+    } catch {
+      resolve();
+    }
+  });
+}
+
+async function addCategoryToCurrentItem(displayName: string): Promise<void> {
+  const OfficeAny: any = await ensureOfficeReady().catch(() => null);
+  if (!OfficeAny?.context?.mailbox?.item?.categories?.addAsync) return;
+
+  await new Promise<void>((resolve) => {
+    try {
+      OfficeAny.context.mailbox.item.categories.addAsync([displayName], () => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
+async function removeCategoryFromCurrentItem(displayName: string): Promise<void> {
+  const OfficeAny: any = await ensureOfficeReady().catch(() => null);
+  if (!OfficeAny?.context?.mailbox?.item?.categories?.removeAsync) return;
+
+  await new Promise<void>((resolve) => {
+    try {
+      OfficeAny.context.mailbox.item.categories.removeAsync([displayName], () => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
+export async function syncOdooLinkedCategory(hasLinks: boolean): Promise<void> {
+  if (hasLinks) {
+    await ensureMasterCategory(ODOO_LINKED_CATEGORY);
+    await addCategoryToCurrentItem(ODOO_LINKED_CATEGORY);
+    return;
+  }
+  await removeCategoryFromCurrentItem(ODOO_LINKED_CATEGORY);
 }
 
 let activeDialog: any = null;
