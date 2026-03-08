@@ -42,6 +42,7 @@ function saveHistory(entries: HistoryEntry[]) {
 }
 
 export const AiCockpit: React.FC = () => {
+    const isDevRuntime = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
     const { ctx, bodyText, setMsg, aiState, setAiState, files, addFile, clearFiles, settings } = useCockpit() as any;
 
     // Local state for immediate typing feel
@@ -1065,7 +1066,7 @@ export const AiCockpit: React.FC = () => {
                 </div>
             )}
 
-            {debugLog && (
+            {isDevRuntime && debugLog && (
                 <div style={{ padding: "8px", background: "#fee2e2", color: "#b91c1c", fontSize: "11px", borderRadius: "4px", border: "1px solid #fca5a5" }}>
                     DEBUG: {debugLog}
                 </div>

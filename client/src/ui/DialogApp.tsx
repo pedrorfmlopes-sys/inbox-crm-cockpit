@@ -536,6 +536,7 @@ function TypeaheadPicker({
 }
 
 export default function DialogApp() {
+  const isDevRuntime = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
   const [mode, setMode] = useState<Mode>(() => getMode());
   const [editId, setEditId] = useState<string | null>(() => qp().get("recordId") || null);
   const [ctx, setCtx] = useState<Ctx>(() => getCtxFromQuery());
@@ -550,6 +551,8 @@ export default function DialogApp() {
   const [emailAtts, setEmailAtts] = useState<any[]>([]);
 
   useEffect(() => {
+    if (!isDevRuntime) return;
+
     const runScenario = (scenario: any) => {
       console.log("[Simulation] Injecting scenario", scenario.id);
       setMode(scenario.context.mode);
@@ -560,13 +563,15 @@ export default function DialogApp() {
       setCtx(scenario.context);
     };
 
-    // Global hook for easier automation
     (window as any).icccRunScenario = runScenario;
 
     const handler = (e: any) => runScenario(e.detail);
     window.addEventListener("iccc:run-scenario", handler);
-    return () => window.removeEventListener("iccc:run-scenario", handler);
-  }, []);
+    return () => {
+      delete (window as any).icccRunScenario;
+      window.removeEventListener("iccc:run-scenario", handler);
+    };
+  }, [isDevRuntime]);
 
   useEffect(() => {
     const b = localStorage.getItem("ic_bridge_body") || "";
@@ -780,7 +785,7 @@ export default function DialogApp() {
         <div style={{ color: "#6B778C", fontSize: 10, fontWeight: 700 }}>v6.2 • SPRINT 18 ULTRA-COMPACT GLOSSY</div>
       </div>
 
-      <DebugPanel ctx={ctx} links={[]} meta={null} compact={true} />
+      {isDevRuntime ? <DebugPanel ctx={ctx} links={[]} meta={null} compact={true} /> : null}
     </div>
   );
 }
