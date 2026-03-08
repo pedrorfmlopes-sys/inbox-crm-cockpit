@@ -3,15 +3,23 @@ import { useCockpit } from "@/components/shell/CockpitProvider";
 
 export const GlobalHeader: React.FC = () => {
     const [isExpanded, setIsExpanded] = useState(false);
-    const { ctx, logout } = useCockpit();
+    const { ctx, links, logout } = useCockpit();
+    const hasActiveLinks = links.length > 0;
 
     return (
         <div style={S.header}>
             <div style={S.topRow}>
                 <div style={S.subjectBlock}>
                     <div style={S.label}>Assunto</div>
-                    <div style={S.subject} title={ctx.subject || ""}>
-                        {ctx.subject || "Sem assunto"}
+                    <div style={S.subjectRow}>
+                        <div style={S.subject} title={ctx.subject || ""}>
+                            {ctx.subject || "Sem assunto"}
+                        </div>
+                        {hasActiveLinks ? (
+                            <div style={S.linkedBadge} title="Este email tem ligacao ativa ao Odoo">
+                                Odoo ligado · {links.length}
+                            </div>
+                        ) : null}
                     </div>
                 </div>
                 <div style={{ display: "flex", gap: "8px" }}>
@@ -26,6 +34,14 @@ export const GlobalHeader: React.FC = () => {
 
             {isExpanded && (
                 <div style={S.details}>
+                    {hasActiveLinks ? (
+                        <div style={S.linkedCard}>
+                            <div style={S.linkedCardTitle}>Ligacao ativa ao Odoo</div>
+                            <div style={S.linkedCardText}>
+                                Este email ja esta ligado a {links.length} registo{links.length > 1 ? "s" : ""}.
+                            </div>
+                        </div>
+                    ) : null}
                     <div style={S.row}>
                         <div style={S.label}>De</div>
                         <div style={S.value}>{ctx.fromName ? `${ctx.fromName} <${ctx.fromEmail}>` : ctx.fromEmail || "—"}</div>
@@ -61,6 +77,13 @@ const S: Record<string, React.CSSProperties> = {
         minWidth: 0,
         flex: 1,
     },
+    subjectRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        minWidth: 0,
+        flexWrap: "wrap",
+    },
     label: {
         fontSize: "9px",
         fontWeight: 600,
@@ -76,6 +99,18 @@ const S: Record<string, React.CSSProperties> = {
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
+        minWidth: 0,
+        flex: 1,
+    },
+    linkedBadge: {
+        fontSize: "10px",
+        fontWeight: 700,
+        color: "#006644",
+        background: "#E3FCEF",
+        border: "1px solid #ABF5D1",
+        borderRadius: "999px",
+        padding: "3px 8px",
+        whiteSpace: "nowrap",
     },
     expandBtn: {
         padding: "4px 8px",
@@ -94,6 +129,22 @@ const S: Record<string, React.CSSProperties> = {
         display: "flex",
         flexDirection: "column",
         gap: "8px",
+    },
+    linkedCard: {
+        border: "1px solid #ABF5D1",
+        background: "#E3FCEF",
+        borderRadius: "8px",
+        padding: "8px 10px",
+    },
+    linkedCardTitle: {
+        fontSize: "11px",
+        fontWeight: 700,
+        color: "#006644",
+        marginBottom: "2px",
+    },
+    linkedCardText: {
+        fontSize: "11px",
+        color: "#006644",
     },
     row: {
         display: "flex",

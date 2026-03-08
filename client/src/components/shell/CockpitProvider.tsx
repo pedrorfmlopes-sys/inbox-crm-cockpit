@@ -71,6 +71,7 @@ type CockpitContextSingletonHost = typeof globalThis & {
 const G = globalThis as CockpitContextSingletonHost;
 const GK = "__ICCC_COCKPIT_CONTEXT_v1__";
 const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
+const LINKS_CACHE_MESSAGE_PREFIX = "iccc_links_cache_msg_v1:";
 
 if (!G[GK]) {
     G[GK] = createContext<CockpitContextType | undefined>(undefined);
@@ -90,20 +91,46 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [connectionStatus, setConnectionStatus] = useState<"none" | "success" | "error">("none");
     const [settings, setSettings] = useState<CockpitSettingsV1 | null>(() => getCachedSettingsSnapshot());
 
-    function readCachedLinks(conversationId?: string | null): LinkEntry[] {
-        if (!conversationId) return [];
+    function dedupeLinks(entries: LinkEntry[]): LinkEntry[] {
+        const seen = new Set<string>();
+        return (entries || []).filter((entry) => {
+            const key = `${entry.model}:${entry.recordId ?? entry.resId}:${entry.recordName ?? entry.name ?? ""}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }
+
+    function readCachedLinks(conversationId?: string | null, internetMessageId?: string | null): LinkEntry[] {
+        if (!conversationId && !internetMessageId) return [];
         try {
-            const raw = localStorage.getItem(`${LINKS_CACHE_PREFIX}${conversationId}`);
-            const parsed = raw ? JSON.parse(raw) : [];
-            return Array.isArray(parsed) ? parsed : [];
+            const sources = [
+                conversationId ? localStorage.getItem(`${LINKS_CACHE_PREFIX}${conversationId}`) : null,
+                internetMessageId ? localStorage.getItem(`${LINKS_CACHE_MESSAGE_PREFIX}${internetMessageId}`) : null,
+            ];
+            const parsed = sources.flatMap((raw) => {
+                if (!raw) return [];
+                try {
+                    const value = JSON.parse(raw);
+                    return Array.isArray(value) ? value : [];
+                } catch {
+                    return [];
+                }
+            });
+            return dedupeLinks(parsed);
         } catch {
             return [];
         }
     }
 
-    function writeCachedLinks(conversationId: string, nextLinks: LinkEntry[]) {
+    function writeCachedLinks(conversationId: string | undefined, internetMessageId: string | undefined, nextLinks: LinkEntry[]) {
         try {
-            localStorage.setItem(`${LINKS_CACHE_PREFIX}${conversationId}`, JSON.stringify(nextLinks || []));
+            if (conversationId) {
+                localStorage.setItem(`${LINKS_CACHE_PREFIX}${conversationId}`, JSON.stringify(nextLinks || []));
+            }
+            if (internetMessageId) {
+                localStorage.setItem(`${LINKS_CACHE_MESSAGE_PREFIX}${internetMessageId}`, JSON.stringify(nextLinks || []));
+            }
         } catch {
             // ignore cache failures
         }
@@ -163,27 +190,67 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         links: LinkEntry[];
         resolvedCtx: OutlookMessageContext;
     }> {
-        const initialConversationId = messageCtx.conversationId || "";
-        if (!initialConversationId) {
+        const initialConversationId = String(messageCtx.conversationId || "").trim();
+        const initialInternetMessageId = String(messageCtx.internetMessageId || "").trim();
+        if (!initialConversationId && !initialInternetMessageId) {
             return { links: [], resolvedCtx: messageCtx };
         }
 
-        const firstPass = await getLinks(initialConversationId, messageCtx.internetMessageId).catch(() => []);
-        if (firstPass.length || messageCtx.internetMessageId) {
-            return { links: firstPass || [], resolvedCtx: messageCtx };
+        const lookupCandidates: OutlookMessageContext[] = [
+            messageCtx,
+            { ...messageCtx, internetMessageId: "" },
+            { ...messageCtx, conversationId: "" },
+        ].filter((candidate, index, arr) => {
+            const key = `${candidate.conversationId || ""}||${candidate.internetMessageId || ""}`;
+            return key !== "||" && arr.findIndex((entry) => `${entry.conversationId || ""}||${entry.internetMessageId || ""}` === key) === index;
+        });
+
+        for (const candidate of lookupCandidates) {
+            const candidateLinks = await getLinks(candidate.conversationId, candidate.internetMessageId).catch(() => []);
+            if (candidateLinks.length) {
+                return { links: candidateLinks, resolvedCtx: messageCtx };
+            }
         }
 
         const refreshedCtx = await getSelectedMessageContext().catch(() => messageCtx);
-        const refreshedConversationId = refreshedCtx?.conversationId || initialConversationId;
-        const refreshedInternetMessageId = refreshedCtx?.internetMessageId || "";
+        const refreshedConversationId = String(refreshedCtx?.conversationId || initialConversationId).trim();
+        const refreshedInternetMessageId = String(refreshedCtx?.internetMessageId || initialInternetMessageId).trim();
+        const refreshedCandidates: OutlookMessageContext[] = [
+            {
+                ...messageCtx,
+                ...refreshedCtx,
+                conversationId: refreshedConversationId,
+                internetMessageId: refreshedInternetMessageId,
+            },
+            {
+                ...messageCtx,
+                ...refreshedCtx,
+                conversationId: refreshedConversationId,
+                internetMessageId: "",
+            },
+            {
+                ...messageCtx,
+                ...refreshedCtx,
+                conversationId: "",
+                internetMessageId: refreshedInternetMessageId,
+            },
+        ].filter((candidate, index, arr) => {
+            const key = `${candidate.conversationId || ""}||${candidate.internetMessageId || ""}`;
+            return key !== "||" && arr.findIndex((entry) => `${entry.conversationId || ""}||${entry.internetMessageId || ""}` === key) === index;
+        });
 
-        if (!refreshedConversationId || !refreshedInternetMessageId) {
-            return { links: firstPass || [], resolvedCtx: messageCtx };
+        for (const candidate of refreshedCandidates) {
+            const candidateLinks = await getLinks(candidate.conversationId, candidate.internetMessageId).catch(() => []);
+            if (candidateLinks.length) {
+                return {
+                    links: candidateLinks,
+                    resolvedCtx: candidate,
+                };
+            }
         }
 
-        const secondPass = await getLinks(refreshedConversationId, refreshedInternetMessageId).catch(() => firstPass || []);
         return {
-            links: secondPass || [],
+            links: [],
             resolvedCtx: {
                 ...messageCtx,
                 ...refreshedCtx,
@@ -275,14 +342,14 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             clientLog("info", `[Cockpit] ctx updated (${reason || 'unknown'}) conversationId=${c.conversationId || ''}`);
 
-            if (!c.conversationId) {
+            if (!c.conversationId && !c.internetMessageId) {
                 setLinks([]);
                 setIsLoading(false);
                 return;
             }
 
             setMsg(null);
-            setLinks(readCachedLinks(c.conversationId));
+            setLinks(readCachedLinks(c.conversationId, c.internetMessageId));
 
             try {
                 const { links: l, resolvedCtx } = await fetchPersistedLinks(c);
@@ -294,8 +361,11 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     setCtx(resolvedCtx);
                 }
                 setLinks(l || []);
-                const cacheKey = resolvedCtx.conversationId || c.conversationId;
-                if (cacheKey) writeCachedLinks(cacheKey, l || []);
+                writeCachedLinks(
+                    resolvedCtx.conversationId || c.conversationId,
+                    resolvedCtx.internetMessageId || c.internetMessageId,
+                    l || []
+                );
             } catch (e) {
                 clientLog("error", "[Cockpit] Unexpected link load error", e);
             }
@@ -464,11 +534,21 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }, [isLoading]);
 
     const refreshLinks = async () => {
-        if (!ctx.conversationId) return;
+        if (!ctx.conversationId && !ctx.internetMessageId) return;
         try {
-            const l = await getLinks(ctx.conversationId, ctx.internetMessageId);
+            const { links: l, resolvedCtx } = await fetchPersistedLinks(ctx);
+            if (
+                resolvedCtx.conversationId !== ctx.conversationId ||
+                resolvedCtx.internetMessageId !== ctx.internetMessageId
+            ) {
+                setCtx(resolvedCtx);
+            }
             setLinks(l);
-            writeCachedLinks(ctx.conversationId, l || []);
+            writeCachedLinks(
+                resolvedCtx.conversationId || ctx.conversationId,
+                resolvedCtx.internetMessageId || ctx.internetMessageId,
+                l || []
+            );
         } catch (e: any) {
             setMsg(e?.message ?? String(e));
         }

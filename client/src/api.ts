@@ -165,11 +165,15 @@ export async function odooPing(): Promise<{ ok: boolean }> {
 }
 
 // -------- Links --------
-export async function getLinks(conversationId: string, internetMessageId?: string): Promise<LinkEntry[]> {
+export async function getLinks(conversationId?: string, internetMessageId?: string): Promise<LinkEntry[]> {
   const params = new URLSearchParams();
-  const lookupKey = [conversationId, internetMessageId].filter(Boolean).join("||");
+  const normalizedConversationId = String(conversationId || "").trim();
+  const normalizedInternetMessageId = String(internetMessageId || "").trim();
+  const lookupKey = normalizedConversationId || normalizedInternetMessageId
+    ? `${normalizedConversationId}||${normalizedInternetMessageId}`
+    : "";
   if (lookupKey) params.set("conversationId", lookupKey);
-  if (internetMessageId) params.set("internetMessageId", internetMessageId);
+  if (normalizedInternetMessageId) params.set("internetMessageId", normalizedInternetMessageId);
   const r: any = await requestJSON(`/api/links?${params.toString()}`);
   const links: LinkEntry[] = r?.links ?? r ?? [];
   return (Array.isArray(links) ? links : []).map((l: any) => ({
