@@ -213,17 +213,21 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             setMsg(null);
 
+            try {
+                const l = await getLinks(c.conversationId).catch(() => []);
+                if (reqId !== ctxLoadSeqRef.current) return;
+                setLinks(l || []);
+            } catch (e) {
+                clientLog("error", "[Cockpit] Unexpected link load error", e);
+            }
+
             // 2. Load Odoo data ONLY if authenticated
             const isDev = (window as any).location.hostname === "localhost" || (window as any).location.hostname === "127.0.0.1";
             if (s.odooSessionToken || (isDev && !isAuthenticated)) {
                 try {
-                    const [l, m] = await Promise.all([
-                        getLinks(c.conversationId).catch(() => []),
-                        !meta ? getOdooMeta().catch(() => null) : Promise.resolve(meta)
-                    ]);
+                    const m = !meta ? await getOdooMeta().catch(() => null) : meta;
 
                     if (reqId !== ctxLoadSeqRef.current) return;
-                    setLinks(l || []);
                     if (m) {
                         setMeta(m);
                         setIsAuthenticated(true);

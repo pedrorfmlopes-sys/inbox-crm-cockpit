@@ -571,8 +571,15 @@ export const CrmCockpit: React.FC = () => {
         company: contact?.company || undefined,
     };
 
+    const odooBaseUrl = (settings as any)?.odooUrl || meta?.baseUrl || meta?.webBaseUrl || meta?.url || "";
+    const odooDb = (settings as any)?.odooDb || meta?.db || "";
+    const odooFooterTarget = odooDb ? `/web?db=${encodeURIComponent(odooDb)}` : "/web";
+    const odooFooterLabel = [
+        String(odooBaseUrl || "").replace(/https?:\/\//, ''),
+        odooDb || ""
+    ].filter(Boolean).join(" | ");
 
-    const isInitialLoading = isContextLoading || (links.length === 0 && !meta);
+    const isInitialLoading = isContextLoading || (links.length === 0 && !odooBaseUrl && !meta);
 
     return (
         <div style={S.container}>
@@ -580,11 +587,11 @@ export const CrmCockpit: React.FC = () => {
             <ContactInsight
                 contact={displayContact}
                 onViewInOdoo={() => {
-                    const baseUrl = meta?.baseUrl || (settings as any)?.odooUrl;
-                    const db = (settings as any)?.odooDb || meta?.db || "divitek";
                     const id = contact?.id;
-                    const target = id ? `/web?db=${encodeURIComponent(db)}#id=${encodeURIComponent(String(id))}&model=res.partner&view_type=form` : `/web?db=${encodeURIComponent(db)}`;
-                    window.open(getOdooAutoLoginUrl((settings as any)?.odooSessionToken || null, target, baseUrl), "_blank");
+                    const target = id
+                        ? `${odooFooterTarget}#id=${encodeURIComponent(String(id))}&model=res.partner&view_type=form`
+                        : odooFooterTarget;
+                    window.open(getOdooAutoLoginUrl((settings as any)?.odooSessionToken || null, target, odooBaseUrl), "_blank");
                 }}
             />
 
@@ -858,15 +865,15 @@ export const CrmCockpit: React.FC = () => {
                 </div>
             </div>
 
-            {meta ? (
+            {odooBaseUrl ? (
                 <a
-                    href={getOdooAutoLoginUrl(settings?.odooSessionToken || null, `/web?db=${encodeURIComponent((settings as any)?.odooDb || meta?.db || "divitek")}`, meta.baseUrl)}
+                    href={getOdooAutoLoginUrl(settings?.odooSessionToken || null, odooFooterTarget, odooBaseUrl)}
                     target="_blank"
                     rel="noreferrer"
                     style={{ ...S.footer, textDecoration: 'none', cursor: 'pointer' }}
-                    title="Abrir Odoo (Forced DB)"
+                    title="Abrir Odoo"
                 >
-                    {String(meta?.baseUrl || "").replace(/https?:\/\//, '')} • DIVITEK
+                    {odooFooterLabel}
                 </a>
             ) : (
                 <div style={S.footer} onClick={() => setMsg("Odoo não configurado.")}>
@@ -878,9 +885,11 @@ export const CrmCockpit: React.FC = () => {
 };
 
 const OdooCard: React.FC<{ link: any; meta: any; settings: any; onEdit: () => void }> = ({ link, meta, settings, onEdit }) => {
-    const db = "divitek"; // Strictly forced as per Sprint 14 requirements
-    const target = `/web?db=${encodeURIComponent(db)}#id=${link.recordId}&model=${encodeURIComponent(link.model)}&view_type=form`;
-    const url = getOdooAutoLoginUrl(settings?.odooSessionToken || null, target, meta?.baseUrl);
+    const baseUrl = settings?.odooUrl || meta?.baseUrl || meta?.webBaseUrl || meta?.url;
+    const db = settings?.odooDb || meta?.db || "";
+    const targetBase = db ? `/web?db=${encodeURIComponent(db)}` : "/web";
+    const target = `${targetBase}#id=${link.recordId}&model=${encodeURIComponent(link.model)}&view_type=form`;
+    const url = getOdooAutoLoginUrl(settings?.odooSessionToken || null, target, baseUrl);
 
     const getStatusInfo = (model: string) => {
         // Jira Lozenge Styles

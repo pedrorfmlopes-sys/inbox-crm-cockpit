@@ -1,17 +1,24 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import * as Icons from "../../ui/icons";
 
 export const LoginCockpit: React.FC = () => {
     const cockpit = useCockpit();
     if (!cockpit) return null;
-    const { login } = cockpit;
-    const [url, setUrl] = useState("https://divitek.thinkopen.solutions");
-    const [db, setDb] = useState("divitek_studio");
-    const [username, setUsername] = useState("pedrolopes@divitek.pt");
-    const [password, setPassword] = useState("1234");
+    const { login, settings } = cockpit;
+    const [url, setUrl] = useState("");
+    const [db, setDb] = useState("");
+    const [username, setUsername] = useState("");
+    const [password, setPassword] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    useEffect(() => {
+        setUrl(settings?.odooUrl || "");
+        setDb(settings?.odooDb || "");
+        setUsername(settings?.odooLogin || "");
+        setPassword(settings?.odooPassword || "");
+    }, [settings?.odooUrl, settings?.odooDb, settings?.odooLogin, settings?.odooPassword]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
