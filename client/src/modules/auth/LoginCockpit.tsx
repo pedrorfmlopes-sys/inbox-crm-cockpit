@@ -3,9 +3,7 @@ import { useCockpit } from "@/components/shell/CockpitProvider";
 import * as Icons from "../../ui/icons";
 
 export const LoginCockpit: React.FC = () => {
-    const cockpit = useCockpit();
-    if (!cockpit) return null;
-    const { login, settings } = cockpit;
+    const { login, settings } = useCockpit();
     const [url, setUrl] = useState("");
     const [db, setDb] = useState("");
     const [username, setUsername] = useState("");

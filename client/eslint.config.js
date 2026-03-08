@@ -12,8 +12,50 @@ try {
   tsParser = require("@typescript-eslint/parser");
   tsPlugin = require("@typescript-eslint/eslint-plugin");
 } catch {
-  // Keep lint runnable in restricted environments where TS ESLint packages cannot be installed.
+  // Keep lint runnable in environments where TS ESLint packages are unavailable.
 }
+
+const baseConfig = {
+  files: ["**/*.{js,jsx,ts,tsx,mjs,cjs}"],
+  languageOptions: {
+    ecmaVersion: 2020,
+    sourceType: "module",
+    parserOptions: {
+      ecmaFeatures: {
+        jsx: true,
+      },
+    },
+    globals: {
+      console: "readonly",
+      process: "readonly",
+      window: "readonly",
+      document: "readonly",
+      navigator: "readonly",
+      localStorage: "readonly",
+      fetch: "readonly",
+      CustomEvent: "readonly",
+      ResizeObserver: "readonly",
+      URL: "readonly",
+      URLSearchParams: "readonly",
+      AbortController: "readonly",
+      setTimeout: "readonly",
+      clearTimeout: "readonly",
+      setInterval: "readonly",
+      clearInterval: "readonly",
+      Office: "readonly",
+      OfficeRuntime: "readonly",
+    },
+  },
+  plugins: {
+    "react-hooks": reactHooks,
+    "react-refresh": reactRefresh,
+  },
+  rules: {
+    ...reactHooks.configs.recommended.rules,
+    "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+    "no-undef": "off",
+  },
+};
 
 const config = [
   {
@@ -24,85 +66,46 @@ const config = [
       "public/**",
       "**/*.min.js",
       "**/*.min.mjs",
-      "**/*.min.css"
+      "**/*.min.css",
     ],
-    ignores: ["dist/**", "node_modules/**", "build/**", "public/**/*.min.mjs"],
   },
   js.configs.recommended,
-  {
-    files: ["**/*.{ts,tsx}"],
-    files: ["**/*.{js,jsx,mjs,cjs}"],
-    languageOptions: {
-      ecmaVersion: 2020,
-      sourceType: "module",
-      globals: {
-        console: "readonly",
-        process: "readonly",
-      },
-    },
-    plugins: {
-      "react-hooks": reactHooks,
-      "react-refresh": reactRefresh,
-    },
-    rules: {
-      ...reactHooks.configs.recommended.rules,
-      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
-    },
-  },
+  baseConfig,
 ];
 
 if (tsParser && tsPlugin) {
   config.push({
     files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
+      ...baseConfig.languageOptions,
       parser: tsParser,
-      ecmaVersion: 2020,
-      sourceType: "module",
     },
     plugins: {
+      ...baseConfig.plugins,
       "@typescript-eslint": tsPlugin,
-      "react-hooks": reactHooks,
-      "react-refresh": reactRefresh,
     },
     rules: {
-      ...reactHooks.configs.recommended.rules,
-      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
-      // Demote common semantic errors to warnings for Phase 1 PASS
+      ...baseConfig.rules,
       "@typescript-eslint/no-unused-vars": ["warn", {
-        "argsIgnorePattern": "^_",
-        "varsIgnorePattern": "^_",
-        "caughtErrorsIgnorePattern": "^_"
+        argsIgnorePattern: "^_",
+        varsIgnorePattern: "^_",
+        caughtErrorsIgnorePattern: "^_",
       }],
       "@typescript-eslint/no-unused-expressions": "warn",
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/ban-ts-comment": "warn",
-      "no-useless-escape": "warn",
-      "no-dupe-else-if": "warn",
-      "react-hooks/rules-of-hooks": "warn",
-      "react-hooks/exhaustive-deps": "warn",
+      "@typescript-eslint/no-empty-function": "warn",
       "@typescript-eslint/no-empty-object-type": "off",
       "@typescript-eslint/no-wrapper-object-types": "off",
       "@typescript-eslint/no-unsafe-function-type": "off",
-      "prefer-const": "warn",
+      "no-redeclare": "off",
       "no-unused-vars": "off",
       "no-unused-expressions": "off",
-    },
-  },
-  // Global override to convert all errors to warnings
-  {
-    rules: {
-      // Convert all error rules to warn
-      "no-unused-vars": "off", // Handled by @typescript-eslint
-      "no-unused-expressions": "off", // Handled by @typescript-eslint
-      "no-undef": "off", // Often handled by TypeScript
       "no-empty": "warn",
       "no-case-declarations": "warn",
-      "@typescript-eslint/no-empty-function": "warn",
-      "@typescript-eslint/ban-ts-comment": "warn",
-      // Add more rules here if needed to convert specific errors to warnings
-    }
-      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
-      "no-undef": "off",
+      "no-useless-escape": "warn",
+      "no-dupe-else-if": "warn",
+      "prefer-const": "warn",
     },
   });
 } else {

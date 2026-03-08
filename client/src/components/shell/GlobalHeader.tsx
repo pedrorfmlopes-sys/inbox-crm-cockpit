@@ -2,10 +2,8 @@ import React, { useState } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 
 export const GlobalHeader: React.FC = () => {
-    const cockpit = useCockpit();
-    if (!cockpit) return null;
-    const { ctx, logout } = cockpit;
     const [isExpanded, setIsExpanded] = useState(false);
+    const { ctx, logout } = useCockpit();
 
     return (
         <div style={S.header}>
