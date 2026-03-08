@@ -4,7 +4,7 @@ import { openCockpitDialog, getEmailBodyText, getOutlookContactSuggestionByEmail
 import * as Icons from "../../ui/icons";
 import { ContactInsight } from "./ContactInsight";
 import { OdooCardSkeleton, Skeleton } from "../../ui/SkeletonLoader";
-import { aiExtractAnchors, aiGenerate, createOrUpdatePartner, getOdooAutoLoginUrl, getPartnerByEmail, searchCompanies, searchOdoo } from "../../api";
+import { aiExtractAnchors, aiGenerate, createOrUpdatePartner, getOdooAutoLoginUrl, getPartnerByEmail, linkEmailToRecord, searchCompanies, searchOdoo } from "../../api";
 import { scanForProtection, MatchResult } from "./triangulationService";
 import { ProtectionBanner } from "../../ui/ProtectionBanner";
 
@@ -318,8 +318,32 @@ export const CrmCockpit: React.FC = () => {
                     mobile: row.mobile,
                 },
             };
-            await createOrUpdatePartner(payload);
+            const result = await createOrUpdatePartner(payload);
+            const partnerId = Number(result?.partner?.id || result?.id || row.partner?.id || 0);
+            const partnerName = result?.partner?.name || row.name || row.email;
+
             await runPartnerLookup(row.email);
+
+            if (ctx.conversationId && partnerId) {
+                await linkEmailToRecord({
+                    conversationId: ctx.conversationId,
+                    model: "res.partner",
+                    recordId: partnerId,
+                    recordName: partnerName,
+                    internetMessageId: ctx.internetMessageId || "",
+                    subject: ctx.subject || "",
+                    fromEmail: ctx.fromEmail || "",
+                    fromName: ctx.fromName || "",
+                    receivedAtIso: ctx.receivedDateTimeIso || "",
+                    bodyText: bodyText || "",
+                });
+                await refreshLinks();
+                setIsLinkedExpanded(true);
+            }
+
+            if (normalizeEmailValue(ctx.fromEmail || "") === row.email) {
+                await loadContact();
+            }
         } catch (e: any) {
             const msg = String(e?.message || "Erro ao guardar");
             if (msg.includes("HTTP 409")) {
@@ -1030,6 +1054,8 @@ const S: Record<string, React.CSSProperties> = {
     },
     accordionContent: {
         padding: "12px",
+        minHeight: 0,
+        overflow: "hidden",
     },
     emptyState: {
         padding: "24px",
@@ -1105,6 +1131,10 @@ const S: Record<string, React.CSSProperties> = {
         display: "flex",
         flexDirection: "column",
         gap: "8px",
+        maxHeight: "52vh",
+        overflowY: "auto",
+        overscrollBehavior: "contain",
+        paddingRight: "4px",
     },
     contactCard: {
         border: "1px solid #DFE1E6",

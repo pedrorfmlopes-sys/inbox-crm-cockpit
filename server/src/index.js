@@ -779,36 +779,21 @@ app.post("/api/odoo/link-email", async (req, res) => {
     const safeSubject = subject || "(sem assunto)";
     const safeFrom = `${(fromName || "").trim()}${fromEmail ? ` <${fromEmail}>` : ""}`.trim() || "(desconhecido)";
 
-    // Se receber HTML do Outlook, sanitiza. Caso contrário usa o fallback de texto (se existir)
-    let bodyForOdoo = "";
-    if (bodyIn.bodyHtml) {
-      const decoded = simpleDecodeHtml(bodyIn.bodyHtml);
-      const sanitized = simpleSanitizeHtml(decoded);
-
-      bodyForOdoo = [
-        `<div style="font-family: sans-serif; line-height: 1.5;">`,
-        `<div style="border-left: 3px solid #714B67; padding-left: 12px; margin-bottom: 16px; color: #666;">`,
-        `<p style="margin: 0 0 4px 0;"><b>Assunto:</b> ${escapeHtml(safeSubject)}</p>`,
-        `<p style="margin: 0 0 4px 0;"><b>De:</b> ${escapeHtml(safeFrom)}</p>`,
-        receivedAtIso ? `<p style="margin: 0 0 4px 0;"><b>Data:</b> ${escapeHtml(receivedAtIso)}</p>` : "",
-        emailWebLink ? `<p style="margin: 0 0 4px 0;"><a href="${escapeHtml(emailWebLink)}" target="_blank" style="color: #0078d4; text-decoration: none;">Ver no Outlook</a></p>` : "",
-        `</div>`,
-        `<blockquote style="margin: 0; padding: 0 0 0 12px; border-left: 1px solid #ccc; color: #333;">`,
-        sanitized,
-        `</blockquote>`,
-        `</div>`
-      ].join("\n");
-    } else {
-      // Fallback para texto simples (legado)
-      bodyForOdoo = [
-        `<p><b>Ligação criada a partir do Outlook (Texto)</b></p>`,
-        `<p><b>Assunto:</b> ${escapeHtml(safeSubject)}</p>`,
-        `<p><b>De:</b> ${escapeHtml(safeFrom)}</p>`,
-        receivedAtIso ? `<p><b>Data:</b> ${escapeHtml(receivedAtIso)}</p>` : "",
-        internetMessageId ? `<p><b>ID:</b> <code>${escapeHtml(internetMessageId)}</code></p>` : "",
-        emailWebLink ? `<p><a href="${escapeHtml(emailWebLink)}" target="_blank">Abrir email</a></p>` : "",
-      ].filter(Boolean).join("\n");
-    }
+    const normalizedEmailBody = normalizeEmailBodyForOdoo(bodyIn.bodyHtml, bodyIn.bodyText);
+    const bodyForOdoo = [
+      `<div style="font-family: sans-serif; line-height: 1.5;">`,
+      `<div style="border-left: 3px solid #714B67; padding-left: 12px; margin-bottom: 16px; color: #666;">`,
+      `<p style="margin: 0 0 4px 0;"><b>Assunto:</b> ${escapeHtml(safeSubject)}</p>`,
+      `<p style="margin: 0 0 4px 0;"><b>De:</b> ${escapeHtml(safeFrom)}</p>`,
+      receivedAtIso ? `<p style="margin: 0 0 4px 0;"><b>Data:</b> ${escapeHtml(receivedAtIso)}</p>` : "",
+      internetMessageId ? `<p style="margin: 0 0 4px 0;"><b>ID:</b> <code>${escapeHtml(internetMessageId)}</code></p>` : "",
+      emailWebLink ? `<p style="margin: 0 0 4px 0;"><a href="${escapeHtml(emailWebLink)}" target="_blank" rel="noreferrer" style="color: #0078d4; text-decoration: none;">Ver no Outlook</a></p>` : "",
+      `</div>`,
+      normalizedEmailBody ? `<blockquote style="margin: 0; padding: 0 0 0 12px; border-left: 1px solid #ccc; color: #333;">` : "",
+      normalizedEmailBody,
+      normalizedEmailBody ? `</blockquote>` : "",
+      `</div>`
+    ].filter(Boolean).join("\n");
 
     // message_post no chatter do registo
     await odoo.messagePost(m, rid, bodyForOdoo, safeSubject, {
@@ -872,31 +857,55 @@ function escapeHtml(s) {
 function simpleDecodeHtml(s) {
   if (!s || !s.includes("&")) return s;
   return s
+    .replaceAll("&nbsp;", " ")
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")
     .replaceAll("&amp;", "&")
     .replaceAll("&quot;", '"')
     .replaceAll("&#39;", "'")
-    .replaceAll("&#039;", "'");
+    .replaceAll("&#039;", "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code) || 0));
 }
 
-function simpleSanitizeHtml(html) {
+function htmlToReadableText(html) {
   if (!html) return "";
-  let s = html;
-  // Remove scripts, heads, styles, metas, links, titles
-  s = s.replace(/<(script|head|style|meta|link|title)[\s\S]*?<\/\1>/gi, "");
-  s = s.replace(/<(meta|link|br|hr|img)[^>]*>/gi, (m) => (m.toLowerCase().startsWith("<br") ? "<br/>" : "")); // keep br, kill others
-
-  // Remove most unsafe attributes (on*, style pesados, etc)
-  s = s.replace(/\s(on\w+|style|id|class|data-\w+)="[^"]*"/gi, (match) => {
-    if (match.toLowerCase().startsWith(" style")) return match; // allow style for simple layout? user said "remover atributos perigosos (on*, style pesados)"
-    return ""; // remove others
-  });
-
-  // Strip excessive tags but keep basic structure
-  // User wants: p, br, b/strong, i/em, u, ul, ol, li, a, blockquote, div, span
-  // We'll be slightly broader but keep it clean.
+  let s = simpleDecodeHtml(String(html || ""));
+  s = s.replace(/<!--[\s\S]*?-->/g, " ");
+  s = s.replace(/<(script|style|head|meta|link|title|xml|o:p|svg|img)[\s\S]*?<\/\1>/gi, " ");
+  s = s.replace(/<(br|hr)\s*\/?>/gi, "\n");
+  s = s.replace(/<\/\s*(p|div|section|article|header|footer|blockquote|tr|table|h[1-6])\s*>/gi, "\n\n");
+  s = s.replace(/<\/\s*li\s*>/gi, "\n");
+  s = s.replace(/<li[^>]*>/gi, "� ");
+  s = s.replace(/<[^>]+>/g, " ");
+  s = simpleDecodeHtml(s);
+  s = s.replace(/\r/g, "");
+  s = s.replace(/\t/g, " ");
+  s = s.replace(/\u00a0/g, " ");
+  s = s.replace(/[ ]{2,}/g, " ");
+  s = s.replace(/\n{3,}/g, "\n\n");
   return s.trim();
+}
+
+function plainTextToHtml(text) {
+  const normalized = String(text || "")
+    .replace(/\r/g, "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\t ]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (!normalized) return "";
+
+  return normalized
+    .split(/\n{2,}/)
+    .map((block) => `<p style="margin: 0 0 10px 0;">${escapeHtml(block).replace(/\n/g, "<br/>")}</p>`)
+    .join("\n");
+}
+
+function normalizeEmailBodyForOdoo(bodyHtml, bodyText) {
+  const fromHtml = htmlToReadableText(bodyHtml);
+  const fromText = String(bodyText || "").trim();
+  return plainTextToHtml(fromHtml || fromText);
 }
 
 const host = process.env.HOST || "0.0.0.0"; // force IPv4 bind
