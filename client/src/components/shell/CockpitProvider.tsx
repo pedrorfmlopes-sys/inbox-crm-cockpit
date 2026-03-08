@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
 import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, login as apiLogin, checkAuth as apiCheckAuth, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
-import { getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
+import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
 
@@ -70,6 +70,7 @@ type CockpitContextSingletonHost = typeof globalThis & {
 
 const G = globalThis as CockpitContextSingletonHost;
 const GK = "__ICCC_COCKPIT_CONTEXT_v1__";
+const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
 
 if (!G[GK]) {
     G[GK] = createContext<CockpitContextType | undefined>(undefined);
@@ -87,7 +88,26 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [isLoading, setIsLoading] = useState(true);
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState<"none" | "success" | "error">("none");
-    const [settings, setSettings] = useState<CockpitSettingsV1 | null>(null);
+    const [settings, setSettings] = useState<CockpitSettingsV1 | null>(() => getCachedSettingsSnapshot());
+
+    function readCachedLinks(conversationId?: string | null): LinkEntry[] {
+        if (!conversationId) return [];
+        try {
+            const raw = localStorage.getItem(`${LINKS_CACHE_PREFIX}${conversationId}`);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function writeCachedLinks(conversationId: string, nextLinks: LinkEntry[]) {
+        try {
+            localStorage.setItem(`${LINKS_CACHE_PREFIX}${conversationId}`, JSON.stringify(nextLinks || []));
+        } catch {
+            // ignore cache failures
+        }
+    }
 
     useEffect(() => {
         const handleSettingsUpdated = (event: Event) => {
@@ -100,6 +120,10 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated as EventListener);
         return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated as EventListener);
     }, []);
+
+    useEffect(() => {
+        setApiSessionToken(settings?.odooSessionToken || null);
+    }, [settings?.odooSessionToken]);
 
     // AI History Persistence
     const [aiCache, setAiCache] = useState<Record<string, AiState>>(() => {
@@ -224,11 +248,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
 
             setMsg(null);
+            setLinks(readCachedLinks(c.conversationId));
 
             try {
                 const l = await getLinks(c.conversationId).catch(() => []);
                 if (reqId !== ctxLoadSeqRef.current) return;
                 setLinks(l || []);
+                writeCachedLinks(c.conversationId, l || []);
             } catch (e) {
                 clientLog("error", "[Cockpit] Unexpected link load error", e);
             }
@@ -401,6 +427,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         try {
             const l = await getLinks(ctx.conversationId);
             setLinks(l);
+            writeCachedLinks(ctx.conversationId, l || []);
         } catch (e: any) {
             setMsg(e?.message ?? String(e));
         }

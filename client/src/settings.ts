@@ -238,6 +238,12 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
   return merged;
 }
 
+export function getCachedSettingsSnapshot(): CockpitSettingsV1 {
+  const raw = globalThis.localStorage?.getItem(KEY_SETTINGS);
+  const parsed = safeJsonParse<Partial<CockpitSettingsV1>>(raw);
+  return mergeSettings(DEFAULT_SETTINGS, parsed);
+}
+
 export async function getSettings(): Promise<CockpitSettingsV1> {
   await officeReady();
 
@@ -245,13 +251,11 @@ export async function getSettings(): Promise<CockpitSettingsV1> {
   if (rs) {
     const raw = rs.get(KEY_SETTINGS);
     const parsed = safeJsonParse<Partial<CockpitSettingsV1>>(raw);
-    return mergeSettings(DEFAULT_SETTINGS, parsed);
+    return mergeSettings(getCachedSettingsSnapshot(), parsed);
   }
 
   // fallback (dev / non-office)
-  const raw = globalThis.localStorage?.getItem(KEY_SETTINGS);
-  const parsed = safeJsonParse<Partial<CockpitSettingsV1>>(raw);
-  return mergeSettings(DEFAULT_SETTINGS, parsed);
+  return getCachedSettingsSnapshot();
 }
 
 export async function saveSettings(patch: Partial<CockpitSettingsV1>): Promise<CockpitSettingsV1> {
@@ -264,6 +268,7 @@ export async function saveSettings(patch: Partial<CockpitSettingsV1>): Promise<C
   if (rs) {
     rs.set(KEY_SETTINGS, json);
     await saveRoamingSettings(rs);
+    globalThis.localStorage?.setItem(KEY_SETTINGS, json);
     emitSettingsUpdated(next);
     return next;
   }
@@ -280,6 +285,7 @@ export async function resetSettings(): Promise<CockpitSettingsV1> {
   if (rs) {
     rs.set(KEY_SETTINGS, json);
     await saveRoamingSettings(rs);
+    globalThis.localStorage?.setItem(KEY_SETTINGS, json);
     emitSettingsUpdated(DEFAULT_SETTINGS);
     return DEFAULT_SETTINGS;
   }
