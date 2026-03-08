@@ -348,7 +348,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             clientLog("info", `[Cockpit] ctx updated (${reason || 'unknown'}) conversationId=${c.conversationId || ''}`);
 
             if (!c.conversationId && !c.internetMessageId) {
-                setLinks([]);
+                const cachedByItem = readCachedLinks(undefined, undefined, c.itemId);
+                setLinks(cachedByItem);
                 setIsLoading(false);
                 return;
             }
@@ -542,8 +543,9 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }, [isLoading]);
 
     const refreshLinks = async () => {
-        if (!ctx.conversationId && !ctx.internetMessageId) return;
+        if (!ctx.conversationId && !ctx.internetMessageId && !ctx.itemId) return;
         try {
+            const cachedLinks = readCachedLinks(ctx.conversationId, ctx.internetMessageId, ctx.itemId);
             const { links: l, resolvedCtx } = await fetchPersistedLinks(ctx);
             if (
                 resolvedCtx.conversationId !== ctx.conversationId ||
@@ -551,12 +553,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             ) {
                 setCtx(resolvedCtx);
             }
-            setLinks(l);
+            const nextLinks = (l && l.length) ? l : cachedLinks;
+            setLinks(nextLinks || []);
             writeCachedLinks(
                 resolvedCtx.conversationId || ctx.conversationId,
                 resolvedCtx.internetMessageId || ctx.internetMessageId,
                 resolvedCtx.itemId || ctx.itemId,
-                l || []
+                nextLinks || []
             );
         } catch (e: any) {
             setMsg(e?.message ?? String(e));
