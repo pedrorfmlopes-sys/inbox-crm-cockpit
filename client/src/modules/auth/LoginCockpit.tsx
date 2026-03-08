@@ -26,7 +26,7 @@ export const LoginCockpit: React.FC = () => {
         setIsSubmitting(true);
 
         try {
-            await login({ url, db, login: username, password });
+            await login({ url: url.trim(), db: db.trim(), login: username.trim(), password });
         } catch (err: any) {
             setError(err.message || "Erro ao fazer login. Verifica as credenciais.");
         } finally {
@@ -50,6 +50,7 @@ export const LoginCockpit: React.FC = () => {
                     <input
                         style={S.input}
                         type="url"
+                        autoComplete="url"
                         placeholder="https://o-teu-odoo.com"
                         value={url}
                         onChange={(e) => setUrl(e.target.value)}
@@ -62,6 +63,7 @@ export const LoginCockpit: React.FC = () => {
                     <input
                         style={S.input}
                         type="text"
+                        autoComplete="organization"
                         placeholder="odoo_db_name"
                         value={db}
                         onChange={(e) => setDb(e.target.value)}
@@ -74,6 +76,7 @@ export const LoginCockpit: React.FC = () => {
                     <input
                         style={S.input}
                         type="email"
+                        autoComplete="username"
                         placeholder="email@exemplo.com"
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}

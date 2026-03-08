@@ -99,6 +99,7 @@ export type CockpitSettingsV1 = {
 
 const KEY_API_BASE = "apiBaseUrl";
 const KEY_SETTINGS = "cockpitSettingsV1";
+export const SETTINGS_UPDATED_EVENT = "iccc:settings-updated";
 
 // Local-only keys for uploaded signature images (dataURL)
 // Stored outside roaming settings to avoid size limits.
@@ -157,8 +158,9 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   odooSessionToken: "",
   geminiApiKey: "",
   openaiApiKey: "",
-  openaiModelFast: "gpt-4o-mini",
-  geminiModel: "gemini-2.0-flash",
+  openaiModelFast: "",
+  openaiModelQuality: "",
+  geminiModel: "",
   bodyScope: "main",
   responsePresets: [
     { id: "p1", name: "Pedido de Dados", prompt: "Agradece o contacto e solicita os dados de faturação (NIF, Morada) para podermos proceder." },
@@ -210,6 +212,14 @@ function safeJsonParse<T>(value: any): T | null {
   }
 }
 
+function emitSettingsUpdated(settings: CockpitSettingsV1): void {
+  try {
+    globalThis.dispatchEvent?.(new CustomEvent(SETTINGS_UPDATED_EVENT, { detail: settings }));
+  } catch {
+    // ignore
+  }
+}
+
 function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSettingsV1> | null): CockpitSettingsV1 {
   if (!incoming) return base;
 
@@ -254,10 +264,12 @@ export async function saveSettings(patch: Partial<CockpitSettingsV1>): Promise<C
   if (rs) {
     rs.set(KEY_SETTINGS, json);
     await saveRoamingSettings(rs);
+    emitSettingsUpdated(next);
     return next;
   }
 
   globalThis.localStorage?.setItem(KEY_SETTINGS, json);
+  emitSettingsUpdated(next);
   return next;
 }
 
@@ -268,9 +280,11 @@ export async function resetSettings(): Promise<CockpitSettingsV1> {
   if (rs) {
     rs.set(KEY_SETTINGS, json);
     await saveRoamingSettings(rs);
+    emitSettingsUpdated(DEFAULT_SETTINGS);
     return DEFAULT_SETTINGS;
   }
   globalThis.localStorage?.setItem(KEY_SETTINGS, json);
+  emitSettingsUpdated(DEFAULT_SETTINGS);
   return DEFAULT_SETTINGS;
 }
 
@@ -320,7 +334,8 @@ export async function getApiBaseUrl(): Promise<string> {
   const rs = getRoamingSettings();
   const v = rs ? rs.get(KEY_API_BASE) : globalThis.localStorage?.getItem(KEY_API_BASE);
   if (typeof v === "string" && v.trim()) return v.trim();
-  return "http://localhost:7071"; // default DEV
+  if (typeof globalThis.location?.origin === "string" && globalThis.location.origin.trim()) return globalThis.location.origin.trim();
+  return "";
 }
 
 export async function setApiBaseUrl(url: string): Promise<void> {

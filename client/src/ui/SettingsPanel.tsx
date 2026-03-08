@@ -93,12 +93,7 @@ export function SettingsPanel(): JSX.Element {
         setSigImgLocal(map);
 
         try {
-          applySkin((s as any).skinId || "classic");
-        } catch {
-          /* ignore */
-        }
-        try {
-          applySkin((s as any).skinId || "classic");
+          if (s.skinId) applySkin(s.skinId);
         } catch {
           /* ignore */
         }
@@ -556,7 +551,7 @@ export function SettingsPanel(): JSX.Element {
               <Field label="A minha função / Empresa">
                 <input
                   style={S.input}
-                  placeholder="Ex: Gestor de Clientes na Divitek"
+                  placeholder="Ex: Gestor de clientes na empresa"
                   value={model.userRole || ""}
                   onChange={(e) => setModel({ ...model, userRole: e.target.value })}
                 />
@@ -713,7 +708,7 @@ export function SettingsPanel(): JSX.Element {
                             signaturesHtml: { ...(model.signaturesHtml || {}), [loc]: e.target.value },
                           })
                         }
-                        placeholder='Ex.: <div>Com os melhores cumprimentos,<br/>Pedro Lopes<br/>DIVITEK</div>'
+                        placeholder='Ex.: <div>Com os melhores cumprimentos,<br/>Nome Apelido<br/>Empresa</div>'
                       />
                     </div>
 
@@ -729,7 +724,7 @@ export function SettingsPanel(): JSX.Element {
                             signatures: { ...model.signatures, [loc]: e.target.value },
                           })
                         }
-                        placeholder={"Ex.:\nCom os melhores cumprimentos,\nPedro Lopes\nDIVITEK"}
+                        placeholder={"Ex.:\nCom os melhores cumprimentos,\nNome Apelido\nEmpresa"}
                       />
                     </div>
                   </div>
@@ -1139,27 +1134,25 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
         <Field label="Modelo Rápido (OpenAI)">
           <select
             style={S.select}
-            value={model.openaiModelFast || "gpt-4o-mini"}
+            value={model.openaiModelFast || ""}
             onChange={e => setModel({ ...model, openaiModelFast: e.target.value })}
           >
             {availableModels.openai.length > 0 ? (
               availableModels.openai.map(m => <option key={m} value={m}>{m}</option>)
-            ) : (
-              <option value="gpt-4o-mini">gpt-4o-mini (default)</option>
-            )}
+            ) : null}
+            <option value="">Usar padrão do servidor</option>
           </select>
         </Field>
         <Field label="Modelo Qualidade (OpenAI)">
           <select
             style={S.select}
-            value={model.openaiModelQuality || "gpt-4o-mini"}
+            value={model.openaiModelQuality || ""}
             onChange={e => setModel({ ...model, openaiModelQuality: e.target.value })}
           >
             {availableModels.openai.length > 0 ? (
               availableModels.openai.map(m => <option key={m} value={m}>{m}</option>)
-            ) : (
-              <option value="gpt-4o-mini">gpt-4o-mini (default)</option>
-            )}
+            ) : null}
+            <option value="">Usar padrão do servidor</option>
           </select>
         </Field>
       </div>
@@ -1212,20 +1205,15 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
       <Field label="Modelo Gemini (3.1 Flash/Pro)">
         <select
           style={S.select}
-          value={model.geminiModel || "gemini-1.5-flash"}
+          value={model.geminiModel || ""}
           onChange={e => setModel({ ...model, geminiModel: e.target.value })}
         >
+          <option value="">Usar padrão do servidor</option>
           {availableModels.gemini.length > 0 ? (
             availableModels.gemini.map(m => (
               <option key={m} value={m}>{m}</option>
             ))
-          ) : (
-            <>
-              <option value="gemini-1.5-flash">gemini-1.5-flash (v3.1 Flash)</option>
-              <option value="gemini-1.5-pro">gemini-1.5-pro (v3.1 Pro)</option>
-              <option value="gemini-2.0-flash">gemini-2.0-flash (NextGen)</option>
-            </>
-          )}
+          ) : null}
         </select>
       </Field>
 

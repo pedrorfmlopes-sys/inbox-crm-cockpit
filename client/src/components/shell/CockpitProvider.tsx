@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
 import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, login as apiLogin, checkAuth as apiCheckAuth, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
-import { getSettings, saveSettings, type CockpitSettingsV1 } from "@/settings";
+import { getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
 
@@ -88,6 +88,18 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState<"none" | "success" | "error">("none");
     const [settings, setSettings] = useState<CockpitSettingsV1 | null>(null);
+
+    useEffect(() => {
+        const handleSettingsUpdated = (event: Event) => {
+            const next = (event as CustomEvent<CockpitSettingsV1>).detail;
+            if (!next) return;
+            setSettings(next);
+            setApiSessionToken(next.odooSessionToken || null);
+        };
+
+        window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated as EventListener);
+        return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated as EventListener);
+    }, []);
 
     // AI History Persistence
     const [aiCache, setAiCache] = useState<Record<string, AiState>>(() => {

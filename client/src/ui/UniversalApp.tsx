@@ -9,9 +9,9 @@ export default function UniversalApp() {
         (async () => {
             try {
                 const st = await getSettings();
-                applySkin(st.skinId || "vibrant"); // Default to vibrant for the new experience
+                if (st.skinId) applySkin(st.skinId);
             } catch {
-                applySkin("vibrant");
+                // ignore
             }
         })();
     }, []);
