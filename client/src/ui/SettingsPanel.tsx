@@ -16,8 +16,11 @@ import { applySkin } from "./skins";
 import * as Icons from "./icons";
 import { useCockpit } from "../components/shell/CockpitProvider";
 import { aiListModels } from "../api";
+import { PanelState, type PanelStateTone } from "./PanelState";
 
 type Section = "general" | "conns" | "ai" | "persona" | "signature" | "protection";
+type StatusNotice = { tone: PanelStateTone; title: string; description?: string };
+type StatusValue = StatusNotice | string | null;
 
 const LOCALE_LABEL: Record<AppLocale, string> = {
   "pt-PT": "Português (Portugal)",
@@ -70,7 +73,7 @@ function localeShort(loc: AppLocale): string {
 export function SettingsPanel(): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<StatusValue>(null);
   const [section, setSection] = useState<Section>("general");
   const [model, setModel] = useState<CockpitSettingsV1 | null>(null);
 
@@ -141,10 +144,10 @@ export function SettingsPanel(): JSX.Element {
     setStatus(null);
     try {
       await saveSettings(model);
-      setStatus("Guardado.");
+      setStatus({ tone: "success", title: "Definições guardadas", description: "As alterações já estão disponíveis no cockpit." });
       setTimeout(() => setStatus(null), 1800);
     } catch (e: any) {
-      setStatus(e?.message || "Falha ao guardar");
+      setStatus({ tone: "error", title: "Falha ao guardar", description: e?.message || "Não foi possível guardar as definições." });
     } finally {
       setSaving(false);
     }
@@ -163,10 +166,10 @@ export function SettingsPanel(): JSX.Element {
       for (const loc of PICKER_LANGS) map[loc] = getSignatureImageDataUrl(loc) || "";
       setSigImgLocal(map);
 
-      setStatus("Reposto para os valores por defeito.");
+      setStatus({ tone: "success", title: "Definições repostas", description: "Os valores guardados voltaram ao estado por defeito." });
       setTimeout(() => setStatus(null), 2200);
     } catch (e: any) {
-      setStatus(e?.message || "Falha ao repor");
+      setStatus({ tone: "error", title: "Falha ao repor", description: e?.message || "Não foi possível repor as definições." });
     } finally {
       setSaving(false);
     }
@@ -241,6 +244,14 @@ export function SettingsPanel(): JSX.Element {
       ...model,
       contactAliases: (model.contactAliases || []).map(c => c.id === id ? { ...c, [field]: value } : c)
     });
+  }
+
+  if (loading) {
+    return <PanelState tone="loading" title="A carregar definições" description="Estamos a preparar as preferências guardadas deste utilizador." />;
+  }
+
+  if (!model) {
+    return <PanelState tone="error" title="Não foi possível carregar as definições" description="Volta a abrir o painel ou tenta novamente dentro de instantes." />;
   }
 
   if (loading) {
@@ -737,7 +748,14 @@ export function SettingsPanel(): JSX.Element {
             <ProtectionSettings />
           )}
 
-          {status && <div style={status.startsWith("Falha") ? S.errorBox : S.okBox}>{status}</div>}
+          {normalizeStatus(status) && (
+            <PanelState
+              tone={normalizeStatus(status)!.tone}
+              title={normalizeStatus(status)!.title}
+              description={normalizeStatus(status)!.description}
+              compact
+            />
+          )}
         </div>
       </div>
     </div>
@@ -751,6 +769,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </div>
   );
+}
+
+function normalizeStatus(status: StatusValue): StatusNotice | null {
+  if (!status) return null;
+  if (typeof status !== "string") return status;
+  if (/falha|erro/i.test(status)) {
+    return { tone: "error", title: "Falha nas definições", description: status };
+  }
+  return { tone: "success", title: status, description: undefined };
 }
 
 const S: Record<string, React.CSSProperties> = {
@@ -1002,7 +1029,7 @@ function ProtectionSettings() {
 function ConnectionSettings({ model, setModel, setStatus, availableModels, fetchingModels, refreshModels }: {
   model: CockpitSettingsV1,
   setModel: (s: CockpitSettingsV1) => void,
-  setStatus: (s: string | null) => void,
+  setStatus: (s: StatusValue) => void,
   availableModels: { openai: string[]; gemini: string[] },
   fetchingModels: boolean,
   refreshModels: () => Promise<void>
@@ -1012,6 +1039,11 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
 
   const handleTest = async () => {
     setIsTesting(true);
+    setStatus({
+      tone: "loading",
+      title: "A testar ligações",
+      description: "Estamos a validar o acesso ao Odoo e aos fornecedores de IA.",
+    });
     try {
       // 1. Odoo Login/Session test
       await login({

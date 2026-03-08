@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
+import { PanelState } from "../../ui/PanelState";
 import * as Icons from "../../ui/icons";
 
 export const LoginCockpit: React.FC = () => {
@@ -10,6 +11,7 @@ export const LoginCockpit: React.FC = () => {
     const [password, setPassword] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const hasSavedSettings = Boolean(settings?.odooUrl || settings?.odooDb || settings?.odooLogin);
 
     useEffect(() => {
         setUrl(settings?.odooUrl || "");
@@ -43,6 +45,15 @@ export const LoginCockpit: React.FC = () => {
             </div>
 
             <form style={S.form} onSubmit={handleSubmit}>
+                {hasSavedSettings && !isSubmitting && !error && (
+                    <PanelState
+                        tone="info"
+                        compact
+                        title="Definições carregadas"
+                        description="Os campos foram pré-preenchidos com os últimos dados guardados."
+                    />
+                )}
+
                 <div style={S.inputGroup}>
                     <label style={S.label}>URL do Odoo</label>
                     <input
@@ -94,7 +105,23 @@ export const LoginCockpit: React.FC = () => {
                     />
                 </div>
 
-                {error && <div style={S.error}>{error}</div>}
+                {isSubmitting && (
+                    <PanelState
+                        tone="loading"
+                        compact
+                        title="A ligar ao Odoo"
+                        description="Estamos a validar as credenciais e a sessão."
+                    />
+                )}
+
+                {error && (
+                    <PanelState
+                        tone="error"
+                        compact
+                        title="Não foi possível entrar"
+                        description={error}
+                    />
+                )}
 
                 <button style={S.loginBtn} type="submit" disabled={isSubmitting}>
                     {isSubmitting ? (
@@ -188,15 +215,6 @@ const S: Record<string, React.CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         height: "40px",
-    },
-    error: {
-        padding: "12px",
-        background: "#fee2e2",
-        color: "#991b1b",
-        borderRadius: "8px",
-        fontSize: "12px",
-        fontWeight: 600,
-        textAlign: "center",
     },
     footer: {
         marginTop: "40px",

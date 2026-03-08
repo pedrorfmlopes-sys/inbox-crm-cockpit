@@ -2,11 +2,13 @@ import React, { useState, useRef } from "react";
 import * as Icons from "../../ui/icons";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { getAttachments } from "@/office"; // We'll assume this is exported now
+import { PanelState, type PanelStateTone } from "../../ui/PanelState";
 
 export const FileCockpit: React.FC = () => {
     const { files, addFile, removeFile, setMsg, setTab, setAiState } = useCockpit();
     const [isDragging, setIsDragging] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
+    const [status, setStatus] = useState<{ tone: PanelStateTone; title: string; description?: string } | null>(null);
     const hiddenFileInput = useRef<HTMLInputElement>(null);
 
     const handleDragOver = (e: React.DragEvent) => {
@@ -31,18 +33,34 @@ export const FileCockpit: React.FC = () => {
             };
             reader.readAsDataURL(file);
         }
+        return fileList.length;
     };
 
     const handleDrop = async (e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(false);
         const droppedFiles = Array.from(e.dataTransfer.files);
-        await processFiles(droppedFiles);
+        const added = await processFiles(droppedFiles);
+        if (added > 0) {
+            setStatus({
+                tone: "success",
+                title: "Ficheiros adicionados",
+                description: `${added} ficheiro(s) prontos para análise pela IA.`,
+            });
+        }
     };
 
     const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFiles = Array.from(e.target.files || []);
-        await processFiles(selectedFiles);
+        const added = await processFiles(selectedFiles);
+        if (added > 0) {
+            setStatus({
+                tone: "success",
+                title: "Ficheiros carregados",
+                description: `${added} ficheiro(s) adicionados a esta conversa.`,
+            });
+        }
+        e.target.value = "";
     };
 
     const triggerFileSummary = (fileName: string) => {
@@ -53,9 +71,19 @@ export const FileCockpit: React.FC = () => {
     const handleImportAttachments = async () => {
         try {
             setIsImporting(true);
+            setStatus({
+                tone: "loading",
+                title: "A importar anexos",
+                description: "Estamos a ler os anexos disponíveis no email atual.",
+            });
             const atts = await getAttachments();
             if (atts.length === 0) {
                 setMsg("Nenhum anexo encontrado neste email.");
+                setStatus({
+                    tone: "empty",
+                    title: "Sem anexos no email",
+                    description: "Podes importar ficheiros do computador ou selecionar outro email com anexos.",
+                });
             } else {
                 let counts = 0;
                 // We need to fetch content. The getAttachments in office.ts assumes it fetches content.
@@ -80,10 +108,20 @@ export const FileCockpit: React.FC = () => {
                     counts++;
                 }
                 setMsg(`${counts} anexos importados com sucesso!`);
+                setStatus({
+                    tone: "success",
+                    title: "Anexos importados",
+                    description: `${counts} anexo(s) disponíveis para leitura e resumo.`,
+                });
             }
         } catch (e: any) {
             console.error("Import error", e);
             setMsg("Erro ao importar anexos: " + e.message);
+            setStatus({
+                tone: "error",
+                title: "Falha ao importar anexos",
+                description: e?.message || "Não foi possível ler os anexos deste email.",
+            });
         } finally {
             setIsImporting(false);
         }
@@ -95,6 +133,15 @@ export const FileCockpit: React.FC = () => {
                 <h3 style={S.title}>Documentos & Anexos</h3>
                 <p style={S.subtitle}>Ficheiros carregados serão lidos pela AI</p>
             </div>
+
+            {status && (
+                <PanelState
+                    tone={status.tone}
+                    title={status.title}
+                    description={status.description}
+                    compact
+                />
+            )}
 
             {/* ACTION BUTTONS */}
             <div style={{ display: "flex", gap: "10px" }}>
@@ -145,9 +192,11 @@ export const FileCockpit: React.FC = () => {
             {/* FILE LIST */}
             <div style={S.fileList}>
                 {files.length === 0 && (
-                    <div style={S.emptyState}>
-                        Nenhum ficheiro carregado.
-                    </div>
+                    <PanelState
+                        tone="empty"
+                        title="Nenhum ficheiro carregado"
+                        description="Importa anexos do email ou adiciona ficheiros do computador para os analisar."
+                    />
                 )}
 
                 {files.map((f, idx) => (
@@ -311,13 +360,6 @@ const S: Record<string, React.CSSProperties> = {
         display: "flex",
         alignItems: "center",
         marginRight: "4px",
-    },
-    emptyState: {
-        fontSize: "12px",
-        color: "var(--iccc-text-muted)",
-        textAlign: "center",
-        padding: "20px",
-        fontStyle: "italic",
     },
     statsCard: {
         background: "var(--iccc-card-bg)",

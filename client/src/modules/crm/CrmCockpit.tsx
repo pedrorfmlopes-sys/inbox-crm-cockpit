@@ -4,6 +4,7 @@ import { openCockpitDialog, getEmailBodyText, getOutlookContactSuggestionByEmail
 import * as Icons from "../../ui/icons";
 import { ContactInsight } from "./ContactInsight";
 import { OdooCardSkeleton, Skeleton } from "../../ui/SkeletonLoader";
+import { PanelState } from "../../ui/PanelState";
 import { aiExtractAnchors, aiGenerate, createOrUpdatePartner, getOdooAutoLoginUrl, getPartnerByEmail, linkEmailToRecord, searchCompanies, searchOdoo } from "../../api";
 import { scanForProtection, MatchResult } from "./triangulationService";
 import { ProtectionBanner } from "../../ui/ProtectionBanner";
@@ -180,7 +181,7 @@ function statusLabel(state: ContactLookupState) {
     if (state === "found") return "Encontrado";
     if (state === "not_found") return "Não encontrado";
     if (state === "error") return "Erro";
-    return "A carregar";
+    return "Por verificar";
 }
 
 function extractPhonesFromText(text: string): string[] {
@@ -580,6 +581,7 @@ export const CrmCockpit: React.FC = () => {
     ].filter(Boolean).join(" | ");
 
     const isInitialLoading = isContextLoading || (links.length === 0 && !odooBaseUrl && !meta);
+    const crmMessageTone = msg && /erro|falha|nÃ£o foi possÃ­vel|nÃ£o configurado/i.test(msg) ? "error" : "info";
 
     return (
         <div style={S.container}>
@@ -657,7 +659,14 @@ export const CrmCockpit: React.FC = () => {
                     </button>
                 </div>
 
-                {msg && <div style={S.alert}>{msg}</div>}
+                {msg && (
+                    <PanelState
+                        tone={crmMessageTone}
+                        compact
+                        title={crmMessageTone === "error" ? "CRM indisponível" : "Ação necessária"}
+                        description={msg}
+                    />
+                )}
 
                 <div style={S.section}>
                     <div style={S.sectionHeader} onClick={() => setIsContactsExpanded(!isContactsExpanded)}>
@@ -681,7 +690,11 @@ export const CrmCockpit: React.FC = () => {
                                 </div>
                             )}
                             {!contactRows.length ? (
-                                <div style={S.emptyState}><p>Sem contactos no From/To/Cc deste email.</p></div>
+                                <PanelState
+                                    tone="empty"
+                                    title="Sem contactos nesta conversa"
+                                    description="Não encontrámos participantes em From, To ou Cc para criar ou atualizar no Odoo."
+                                />
                             ) : (
                                 <div style={S.contactList}>
                                     {contactRows.map((row) => (
@@ -814,10 +827,16 @@ export const CrmCockpit: React.FC = () => {
                     {isLinkedExpanded && (
                         <div style={S.accordionContent}>
                             {isInitialLoading ? (
-                                <>
+                                <div style={S.loadingState}>
+                                    <PanelState
+                                        tone="loading"
+                                        title="A carregar registos ligados"
+                                        description="Estamos a pedir os links guardados para esta conversa."
+                                        compact
+                                    />
                                     <OdooCardSkeleton />
                                     <OdooCardSkeleton />
-                                </>
+                                </div>
                             ) : !links.length ? (
                                 <div style={S.emptyState}>
                                     <p>{!meta ? "Odoo não configurado." : "Nenhum registo associado."}</p>
@@ -1071,6 +1090,10 @@ const S: Record<string, React.CSSProperties> = {
         textAlign: "center",
         color: "#6B778C",
         fontSize: "12px",
+    },
+    loadingState: {
+        display: "grid",
+        gap: "8px",
     },
     cardList: {
         display: "flex",
