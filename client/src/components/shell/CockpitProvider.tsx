@@ -159,6 +159,40 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const lastItemTokenRef = useRef<string>("");
     const isLoadingInProgressRef = useRef(false);
 
+    async function fetchPersistedLinks(messageCtx: OutlookMessageContext): Promise<{
+        links: LinkEntry[];
+        resolvedCtx: OutlookMessageContext;
+    }> {
+        const initialConversationId = messageCtx.conversationId || "";
+        if (!initialConversationId) {
+            return { links: [], resolvedCtx: messageCtx };
+        }
+
+        const firstPass = await getLinks(initialConversationId, messageCtx.internetMessageId).catch(() => []);
+        if (firstPass.length || messageCtx.internetMessageId) {
+            return { links: firstPass || [], resolvedCtx: messageCtx };
+        }
+
+        const refreshedCtx = await getSelectedMessageContext().catch(() => messageCtx);
+        const refreshedConversationId = refreshedCtx?.conversationId || initialConversationId;
+        const refreshedInternetMessageId = refreshedCtx?.internetMessageId || "";
+
+        if (!refreshedConversationId || !refreshedInternetMessageId) {
+            return { links: firstPass || [], resolvedCtx: messageCtx };
+        }
+
+        const secondPass = await getLinks(refreshedConversationId, refreshedInternetMessageId).catch(() => firstPass || []);
+        return {
+            links: secondPass || [],
+            resolvedCtx: {
+                ...messageCtx,
+                ...refreshedCtx,
+                conversationId: refreshedConversationId,
+                internetMessageId: refreshedInternetMessageId,
+            },
+        };
+    }
+
     async function loadContextAndLinks(reason?: string) {
         if (isLoadingInProgressRef.current) return;
         isLoadingInProgressRef.current = true;
@@ -251,10 +285,17 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setLinks(readCachedLinks(c.conversationId));
 
             try {
-                const l = await getLinks(c.conversationId, c.internetMessageId).catch(() => []);
+                const { links: l, resolvedCtx } = await fetchPersistedLinks(c);
                 if (reqId !== ctxLoadSeqRef.current) return;
+                if (
+                    resolvedCtx.conversationId !== c.conversationId ||
+                    resolvedCtx.internetMessageId !== c.internetMessageId
+                ) {
+                    setCtx(resolvedCtx);
+                }
                 setLinks(l || []);
-                writeCachedLinks(c.conversationId, l || []);
+                const cacheKey = resolvedCtx.conversationId || c.conversationId;
+                if (cacheKey) writeCachedLinks(cacheKey, l || []);
             } catch (e) {
                 clientLog("error", "[Cockpit] Unexpected link load error", e);
             }
