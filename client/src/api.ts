@@ -378,6 +378,7 @@ export async function findOdooField(
   model: string,
   options: {
     labels?: string[];
+    nameCandidates?: string[];
     namePatterns?: RegExp[];
     preferredTypes?: string[];
   }
@@ -390,6 +391,7 @@ export async function findOdooField(
   });
 
   const labelTargets = (options.labels || []).map(normalizeFieldLabel).filter(Boolean);
+  const candidateNames = new Set((options.nameCandidates || []).map((name) => String(name || "").trim()).filter(Boolean));
   const preferredTypes = new Set(options.preferredTypes || []);
   let best: { score: number; field: OdooFieldMeta } | null = null;
 
@@ -398,7 +400,8 @@ export async function findOdooField(
     const normalizedName = normalizeFieldLabel(name);
     let score = -1;
 
-    if (labelTargets.includes(normalizedLabel)) score = 100;
+    if (candidateNames.has(name)) score = 110;
+    else if (labelTargets.includes(normalizedLabel)) score = 100;
     else if (labelTargets.some((target) => normalizedLabel.includes(target) || target.includes(normalizedLabel))) score = 80;
     else if (labelTargets.some((target) => target.split(/\s+/).every((token) => normalizedLabel.includes(token)))) score = 70;
     else if ((options.namePatterns || []).some((pattern) => pattern.test(name))) score = 60;

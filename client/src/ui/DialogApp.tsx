@@ -1342,6 +1342,26 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   const [leadTypeRelationId, setLeadTypeRelationId] = useState<number | null>(null);
   const [leadTypeRelationName, setLeadTypeRelationName] = useState("");
 
+  async function resolveLeadTypeField(): Promise<OdooFieldMeta | null> {
+    const field = await findOdooField("crm.lead", {
+      labels: ["Tipo de Lead", "Lead Type", "Tipo Lead", "Tipo da Lead"],
+      nameCandidates: [
+        "x_studio_tipo_de_lead",
+        "x_studio_tipo_lead",
+        "x_tipo_de_lead",
+        "x_tipo_lead",
+        "lead_type",
+        "x_lead_type",
+        "tipo_de_lead",
+        "tipo_lead",
+      ],
+      namePatterns: [/tipo.*lead/i, /lead.*tipo/i, /lead_type/i, /x_studio.*tipo/i, /x_studio.*lead.*type/i],
+      preferredTypes: ["selection", "many2one"],
+    });
+    setLeadTypeField(field);
+    return field;
+  }
+
   useEffect(() => {
     if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
   }, [mode, ctx.bodyHtml, fullBody]);
@@ -1352,11 +1372,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
     let alive = true;
     (async () => {
       try {
-        const field = await findOdooField("crm.lead", {
-          labels: ["Tipo de Lead", "Lead Type", "Tipo Lead"],
-          namePatterns: [/tipo.*lead/i, /lead.*tipo/i, /lead_type/i, /x_studio.*tipo/i, /x_studio.*lead.*type/i],
-          preferredTypes: ["selection", "many2one"],
-        });
+        const field = await resolveLeadTypeField();
         if (!alive) return;
         setLeadTypeField(field);
       } catch {
@@ -1417,6 +1433,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
 
   async function save() {
     try {
+      const effectiveLeadTypeField = leadTypeField || await resolveLeadTypeField();
       let values: any = {
         name: name || `Lead: ${ctx.subject || "sem assunto"}`,
         contact_name: contactName || "",
@@ -1427,9 +1444,9 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
       if (stageId) values.stage_id = stageId;
       if (description) values.description = description;
       if (ctx.bodyHtml) values.bodyHtml = ctx.bodyHtml;
-      if (leadTypeField?.name) {
-        if (leadTypeField.type === "many2one") values[leadTypeField.name] = leadTypeRelationId || false;
-        else values[leadTypeField.name] = leadTypeValue || false;
+      if (effectiveLeadTypeField?.name) {
+        if (effectiveLeadTypeField.type === "many2one") values[effectiveLeadTypeField.name] = leadTypeRelationId || false;
+        else values[effectiveLeadTypeField.name] = leadTypeValue || false;
       }
 
       if (mode === "edit") {
@@ -1529,7 +1546,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
       {leadTypeLoading && (
         <div style={S.row}>
           <label style={S.lab}>TIPO DE LEAD</label>
-          <input style={S.input} value="A carregar..." readOnly />
+          <input style={S.input} value={leadTypeValue} onChange={(e) => setLeadTypeValue(e.target.value)} placeholder="A carregar tipo de lead..." />
         </div>
       )}
 
@@ -1564,6 +1581,18 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
       {!leadTypeLoading && leadTypeField && leadTypeField.type !== "selection" && leadTypeField.type !== "many2one" && (
         <div style={S.row}>
           <label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label>
+          <input
+            style={S.input}
+            value={leadTypeValue}
+            onChange={(e) => setLeadTypeValue(e.target.value)}
+            placeholder="Tipo de lead"
+          />
+        </div>
+      )}
+
+      {!leadTypeLoading && !leadTypeField && (
+        <div style={S.row}>
+          <label style={S.lab}>TIPO DE LEAD</label>
           <input
             style={S.input}
             value={leadTypeValue}
