@@ -60,11 +60,18 @@ function normalizeEntry(entry) {
     recordId: Number(entry.recordId),
     recordName: entry.recordName || "",
     linkedAt: entry.linkedAt,
-    internetMessageId: entry.internetMessageId || "",
+    internetMessageId: normalizeMessageId(entry.internetMessageId),
     subject: entry.subject,
     fromEmail: entry.fromEmail,
     fromName: entry.fromName
   };
+}
+
+function normalizeMessageId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[<>\s]/g, "");
 }
 
 function splitLookupKey(conversationId, internetMessageId = "") {
@@ -78,7 +85,7 @@ function splitLookupKey(conversationId, internetMessageId = "") {
   }
   return {
     conversationId: rawConversationId,
-    internetMessageId: String(internetMessageId || "").trim(),
+    internetMessageId: normalizeMessageId(internetMessageId),
   };
 }
 
@@ -103,7 +110,7 @@ function listLinksFromFile(conversationId, internetMessageId = "") {
   const byMessageScan = internetMessageId
     ? Object.values(all)
       .flatMap((entries) => Array.isArray(entries) ? entries : [])
-      .filter((entry) => entry?.internetMessageId === internetMessageId)
+      .filter((entry) => normalizeMessageId(entry?.internetMessageId) === internetMessageId)
     : [];
   return dedupeLinks([...direct, ...byMessageKey, ...byMessageScan]);
 }
@@ -139,7 +146,7 @@ export async function listLinksByConversation(conversationId, internetMessageId 
       }
       if (resolvedInternetMessageId) {
         params.push(resolvedInternetMessageId);
-        where.push(`internet_message_id = $${params.length}`);
+        where.push(`LOWER(REGEXP_REPLACE(COALESCE(internet_message_id, ''), '[<>[:space:]]', '', 'g')) = $${params.length}`);
       }
       const { rows } = await pool.query(
         `SELECT * FROM crm_links WHERE ${where.join(" OR ")} ORDER BY linked_at DESC`,

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, syncOdooLinkedCategory, type OutlookMessageContext } from "@/office";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, login as apiLogin, checkAuth as apiCheckAuth, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -565,6 +565,9 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     useEffect(() => {
         syncOdooLinkedCategory(links.length > 0).catch(() => {
+            // best-effort host hint only
+        });
+        syncOdooLinkedNotification(links.length > 0, links.length).catch(() => {
             // best-effort host hint only
         });
     }, [ctx.itemId, links.length]);

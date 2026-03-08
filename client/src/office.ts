@@ -167,6 +167,7 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
 export const getSelectedMessageContext = getOutlookContext;
 
 const ODOO_LINKED_CATEGORY = "Odoo Linked";
+const ODOO_LINKED_NOTICE = "iccc-odoo-linked";
 
 
 export type OutlookContactSuggestion = {
@@ -337,6 +338,36 @@ export async function syncOdooLinkedCategory(hasLinks: boolean): Promise<void> {
     return;
   }
   await removeCategoryFromCurrentItem(ODOO_LINKED_CATEGORY);
+}
+
+export async function syncOdooLinkedNotification(hasLinks: boolean, count = 0): Promise<void> {
+  const OfficeAny: any = await ensureOfficeReady().catch(() => null);
+  const notifications = OfficeAny?.context?.mailbox?.item?.notificationMessages;
+  if (!notifications?.replaceAsync || !notifications?.removeAsync) return;
+
+  await new Promise<void>((resolve) => {
+    try {
+      if (!hasLinks) {
+        notifications.removeAsync(ODOO_LINKED_NOTICE, () => resolve());
+        return;
+      }
+
+      notifications.replaceAsync(
+        ODOO_LINKED_NOTICE,
+        {
+          type: OfficeAny.MailboxEnums?.ItemNotificationMessageType?.InformationalMessage,
+          message: count > 0
+            ? `Este email tem ${count} ligacao(oes) ativa(s) ao Odoo.`
+            : "Este email tem ligacoes ativas ao Odoo.",
+          icon: "Icon.80x80",
+          persistent: false,
+        },
+        () => resolve()
+      );
+    } catch {
+      resolve();
+    }
+  });
 }
 
 let activeDialog: any = null;

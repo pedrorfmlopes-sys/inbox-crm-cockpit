@@ -168,7 +168,10 @@ export async function odooPing(): Promise<{ ok: boolean }> {
 export async function getLinks(conversationId?: string, internetMessageId?: string): Promise<LinkEntry[]> {
   const params = new URLSearchParams();
   const normalizedConversationId = String(conversationId || "").trim();
-  const normalizedInternetMessageId = String(internetMessageId || "").trim();
+  const normalizedInternetMessageId = String(internetMessageId || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[<>\s]/g, "");
   const lookupKey = normalizedConversationId || normalizedInternetMessageId
     ? `${normalizedConversationId}||${normalizedInternetMessageId}`
     : "";
