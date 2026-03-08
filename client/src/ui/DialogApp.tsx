@@ -1546,7 +1546,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
       {leadTypeLoading && (
         <div style={S.row}>
           <label style={S.lab}>TIPO DE LEAD</label>
-          <input style={S.input} value={leadTypeValue} onChange={(e) => setLeadTypeValue(e.target.value)} placeholder="A carregar tipo de lead..." />
+          <input style={S.input} value="" readOnly placeholder="A carregar tipo de lead..." />
         </div>
       )}
 
@@ -1595,9 +1595,9 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
           <label style={S.lab}>TIPO DE LEAD</label>
           <input
             style={S.input}
-            value={leadTypeValue}
-            onChange={(e) => setLeadTypeValue(e.target.value)}
-            placeholder="Tipo de lead"
+            value=""
+            readOnly
+            placeholder="Campo existente no Odoo nao encontrado"
           />
         </div>
       )}

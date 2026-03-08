@@ -80,7 +80,7 @@ function splitLookupKey(conversationId, internetMessageId = "") {
     const [cid, imid] = rawConversationId.split("||");
     return {
       conversationId: String(cid || "").trim(),
-      internetMessageId: String(imid || "").trim(),
+      internetMessageId: normalizeMessageId(imid),
     };
   }
   return {
@@ -183,7 +183,13 @@ export async function addLink(conversationId, entry) {
         `INSERT INTO crm_links 
          (conversation_id, model, record_id, record_name, linked_at, internet_message_id, subject, from_email, from_name)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (conversation_id, model, record_id) DO UPDATE SET linked_at = $5`,
+         ON CONFLICT (conversation_id, model, record_id) DO UPDATE SET
+           record_name = EXCLUDED.record_name,
+           linked_at = EXCLUDED.linked_at,
+           internet_message_id = EXCLUDED.internet_message_id,
+           subject = EXCLUDED.subject,
+           from_email = EXCLUDED.from_email,
+           from_name = EXCLUDED.from_name`,
         [
           conversationId,
           nextEntry.model,
