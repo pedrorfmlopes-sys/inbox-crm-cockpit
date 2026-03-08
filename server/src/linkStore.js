@@ -76,11 +76,11 @@ function normalizeMessageId(value) {
 
 function splitLookupKey(conversationId, internetMessageId = "") {
   const rawConversationId = String(conversationId || "").trim();
-  if (!internetMessageId && rawConversationId.includes("||")) {
+  if (rawConversationId.includes("||")) {
     const [cid, imid] = rawConversationId.split("||");
     return {
       conversationId: String(cid || "").trim(),
-      internetMessageId: normalizeMessageId(imid),
+      internetMessageId: normalizeMessageId(internetMessageId || imid),
     };
   }
   return {

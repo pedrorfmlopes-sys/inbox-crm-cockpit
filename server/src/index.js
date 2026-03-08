@@ -620,7 +620,7 @@ app.post("/api/odoo/write", async (req, res) => {
   }
 });
 
-const ALLOWED_CALL_METHODS = new Set(["search_read", "read", "create", "write", "name_get"]);
+const ALLOWED_CALL_METHODS = new Set(["search_read", "read", "create", "write", "name_get", "fields_get"]);
 
 app.post("/api/odoo/call", async (req, res) => {
   try {
@@ -665,6 +665,11 @@ app.post("/api/odoo/call", async (req, res) => {
       if (!idsArg.length) return res.status(400).json({ ok: false, error: "missing_ids" });
       const fields = Array.isArray(safeKw?.fields) ? safeKw.fields : ["id", "name", "display_name"];
       const result = await safeReadCompat(odoo, m, idsArg, fields);
+      return res.json({ ok: true, result });
+    }
+
+    if (meth === "fields_get") {
+      const result = await odoo.call(m, "fields_get", [], safeKw);
       return res.json({ ok: true, result });
     }
 
@@ -830,8 +835,9 @@ app.post("/api/links/link", (req, res) => {
 app.get("/api/links", async (req, res) => {
   try {
     const conversationId = String(req.query.conversationId || "").trim();
-    if (!conversationId) return res.json({ links: [] });
-    const links = await listLinksByConversation(conversationId);
+    const internetMessageId = String(req.query.internetMessageId || "").trim();
+    if (!conversationId && !internetMessageId) return res.json({ links: [] });
+    const links = await listLinksByConversation(conversationId, internetMessageId);
     return res.json({ links });
   } catch (e) {
     console.error(e);
