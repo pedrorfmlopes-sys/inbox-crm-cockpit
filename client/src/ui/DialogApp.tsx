@@ -9,7 +9,7 @@ import {
   setApiSessionToken,
   writeOdoo,
   aiGenerate,
-  findOdooFieldByLabel,
+  findOdooField,
   type OdooFieldMeta,
 } from "@/api";
 
@@ -1337,6 +1337,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   const [stageName, setStageName] = useState("");
   const [description, setDescription] = useState("");
   const [leadTypeField, setLeadTypeField] = useState<OdooFieldMeta | null>(null);
+  const [leadTypeLoading, setLeadTypeLoading] = useState(true);
   const [leadTypeValue, setLeadTypeValue] = useState("");
   const [leadTypeRelationId, setLeadTypeRelationId] = useState<number | null>(null);
   const [leadTypeRelationName, setLeadTypeRelationName] = useState("");
@@ -1351,11 +1352,17 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
     let alive = true;
     (async () => {
       try {
-        const field = await findOdooFieldByLabel("crm.lead", "Tipo de Lead");
+        const field = await findOdooField("crm.lead", {
+          labels: ["Tipo de Lead", "Lead Type", "Tipo Lead"],
+          namePatterns: [/tipo.*lead/i, /lead.*tipo/i, /lead_type/i, /x_studio.*tipo/i, /x_studio.*lead.*type/i],
+          preferredTypes: ["selection", "many2one"],
+        });
         if (!alive) return;
         setLeadTypeField(field);
       } catch {
         if (alive) setLeadTypeField(null);
+      } finally {
+        if (alive) setLeadTypeLoading(false);
       }
     })();
     return () => {
@@ -1397,6 +1404,10 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
           } else {
             setLeadTypeValue(String(fieldValue || ""));
           }
+        } else {
+          setLeadTypeValue("");
+          setLeadTypeRelationId(null);
+          setLeadTypeRelationName("");
         }
       } catch (e: any) {
         onStatus(e?.message ?? String(e));
@@ -1515,9 +1526,16 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         <input style={S.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone" />
       </div>
 
-      {leadTypeField?.type === "selection" && (
+      {leadTypeLoading && (
         <div style={S.row}>
           <label style={S.lab}>TIPO DE LEAD</label>
+          <input style={S.input} value="A carregar..." readOnly />
+        </div>
+      )}
+
+      {!leadTypeLoading && leadTypeField?.type === "selection" && (
+        <div style={S.row}>
+          <label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label>
           <select style={S.sel} value={leadTypeValue} onChange={(e) => setLeadTypeValue(e.target.value)}>
             <option value="">Selecionar...</option>
             {(leadTypeField.selection || []).map(([value, label]) => (
@@ -1527,9 +1545,9 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         </div>
       )}
 
-      {leadTypeField?.type === "many2one" && leadTypeField.relation && (
+      {!leadTypeLoading && leadTypeField?.type === "many2one" && leadTypeField.relation && (
         <TypeaheadPicker
-          label="TIPO DE LEAD"
+          label={(leadTypeField.string || "Tipo de Lead").toUpperCase()}
           placeholder="Pesquisar tipo de lead..."
           model={leadTypeField.relation}
           fields={["id", "name", "display_name"]}
@@ -1541,6 +1559,18 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
             setLeadTypeRelationName(id ? (it.display_name || it.name || `#${id}`) : "");
           }}
         />
+      )}
+
+      {!leadTypeLoading && leadTypeField && leadTypeField.type !== "selection" && leadTypeField.type !== "many2one" && (
+        <div style={S.row}>
+          <label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label>
+          <input
+            style={S.input}
+            value={leadTypeValue}
+            onChange={(e) => setLeadTypeValue(e.target.value)}
+            placeholder="Tipo de lead"
+          />
+        </div>
       )}
 
       <TypeaheadPicker

@@ -374,6 +374,55 @@ export async function findOdooFieldByLabel(model: string, label: string): Promis
   return null;
 }
 
+export async function findOdooField(
+  model: string,
+  options: {
+    labels?: string[];
+    namePatterns?: RegExp[];
+    preferredTypes?: string[];
+  }
+): Promise<OdooFieldMeta | null> {
+  const result: Record<string, any> = await callOdoo({
+    model,
+    method: "fields_get",
+    args: [],
+    kwargs: { attributes: ["string", "type", "relation", "selection"] },
+  });
+
+  const labelTargets = (options.labels || []).map(normalizeFieldLabel).filter(Boolean);
+  const preferredTypes = new Set(options.preferredTypes || []);
+  let best: { score: number; field: OdooFieldMeta } | null = null;
+
+  for (const [name, meta] of Object.entries(result || {})) {
+    const normalizedLabel = normalizeFieldLabel(String(meta?.string || ""));
+    const normalizedName = normalizeFieldLabel(name);
+    let score = -1;
+
+    if (labelTargets.includes(normalizedLabel)) score = 100;
+    else if (labelTargets.some((target) => normalizedLabel.includes(target) || target.includes(normalizedLabel))) score = 80;
+    else if (labelTargets.some((target) => target.split(/\s+/).every((token) => normalizedLabel.includes(token)))) score = 70;
+    else if ((options.namePatterns || []).some((pattern) => pattern.test(name))) score = 60;
+
+    if (score < 0) continue;
+    if (preferredTypes.has(String(meta?.type || ""))) score += 5;
+    if (labelTargets.some((target) => target.split(/\s+/).every((token) => normalizedName.includes(token)))) score += 2;
+
+    const field: OdooFieldMeta = {
+      name,
+      string: meta?.string,
+      type: meta?.type,
+      relation: meta?.relation,
+      selection: Array.isArray(meta?.selection) ? meta.selection : [],
+    };
+
+    if (!best || score > best.score) {
+      best = { score, field };
+    }
+  }
+
+  return best?.field || null;
+}
+
 // createOdoo: return number (DialogApp expects number)
 export async function createOdoo(model: string, values: Record<string, any>): Promise<number> {
   // prefer dedicated endpoint
