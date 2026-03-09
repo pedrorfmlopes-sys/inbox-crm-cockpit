@@ -1350,6 +1350,10 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   const leadTypeIsSelection = !!(leadTypeField?.selection && leadTypeField.selection.length > 0) || leadTypeField?.type === "selection";
   const leadTypeIsMany2one = !!leadTypeField?.relation && leadTypeField?.type === "many2one";
 
+  function wait(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   async function resolveLeadTypeField(): Promise<OdooFieldMeta | null> {
     const exactField = await getOdooFieldMeta("crm.lead", "x_studio_tipo_de_lead");
     if (exactField) {
@@ -1388,7 +1392,20 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
     (async () => {
       try {
         setLeadTypeLoading(true);
-        const field = await resolveLeadTypeField();
+        let field: OdooFieldMeta | null = null;
+        for (let attempt = 0; attempt < 3 && !field; attempt += 1) {
+          try {
+            field = await Promise.race([
+              resolveLeadTypeField(),
+              new Promise<null>((_, reject) => setTimeout(() => reject(new Error("lead_type_timeout")), 8000)),
+            ]);
+          } catch {
+            field = null;
+          }
+          if (!field && attempt < 2) {
+            await wait(1200);
+          }
+        }
         if (!alive) return;
         setLeadTypeField(field);
       } catch {
