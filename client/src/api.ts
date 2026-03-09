@@ -1,9 +1,70 @@
 // Goal: keep UI stable even if server endpoints evolve.
+import { getSettings, saveSettings } from "./settings";
 
 let _sessionToken: string | null = null;
+let _sessionBootstrapPromise: Promise<string | null> | null = null;
 
 export function setApiSessionToken(token: string | null) {
   _sessionToken = token;
+}
+
+function isOdooApiPath(path: string): boolean {
+  return String(path || "").startsWith("/api/odoo");
+}
+
+function shouldRetryOdooWithSavedSettings(message: string): boolean {
+  return /ODOO_CONFIG_MISSING|Odoo configuration incomplete|Sess[aã]o expirada|Session expired|HTTP 401/i.test(message);
+}
+
+async function bootstrapSessionFromSavedSettings(forceRefresh = false): Promise<string | null> {
+  if (!forceRefresh && _sessionToken) return _sessionToken;
+  if (_sessionBootstrapPromise) return _sessionBootstrapPromise;
+
+  _sessionBootstrapPromise = (async () => {
+    const settings = await getSettings();
+    const savedToken = String(settings.odooSessionToken || "").trim();
+    const url = String(settings.odooUrl || "").trim();
+    const db = String(settings.odooDb || "").trim();
+    const login = String(settings.odooLogin || "").trim();
+    const password = String(settings.odooPassword || "").trim();
+
+    if (!forceRefresh && savedToken) {
+      _sessionToken = savedToken;
+      return savedToken;
+    }
+
+    if (!url || !db || !login || !password) {
+      return savedToken || null;
+    }
+
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, db, login, password }),
+    });
+
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    const body = ct.includes("application/json") ? await res.json() : await res.text();
+
+    if (!res.ok || !body?.ok || !body?.token) {
+      const msg =
+        typeof body === "string"
+          ? body
+          : body?.message || body?.error || JSON.stringify(body);
+      throw new Error(`HTTP ${res.status}: ${msg}`);
+    }
+
+    const token = String(body.token || "").trim();
+    _sessionToken = token || null;
+    if (token && token !== savedToken) {
+      await saveSettings({ odooSessionToken: token });
+    }
+    return token || null;
+  })().finally(() => {
+    _sessionBootstrapPromise = null;
+  });
+
+  return _sessionBootstrapPromise;
 }
 
 export type OdooMeta = {
@@ -82,7 +143,15 @@ export type AuthResponse = { ok: true; token: string; meta: OdooMeta } | { ok: f
 
 type Json = any;
 
-async function requestJSON<T = Json>(path: string, init?: RequestInit): Promise<T> {
+async function requestJSON<T = Json>(path: string, init?: RequestInit, allowOdooRetry = true): Promise<T> {
+  if (isOdooApiPath(path) && !_sessionToken) {
+    try {
+      await bootstrapSessionFromSavedSettings(false);
+    } catch {
+      // Surface the original backend/auth error from the real request.
+    }
+  }
+
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
@@ -105,6 +174,13 @@ async function requestJSON<T = Json>(path: string, init?: RequestInit): Promise<
         typeof body === "string"
           ? body
           : body?.error || body?.message || JSON.stringify(body);
+
+      if (allowOdooRetry && isOdooApiPath(path) && shouldRetryOdooWithSavedSettings(msg)) {
+        const renewedToken = await bootstrapSessionFromSavedSettings(true).catch(() => null);
+        if (renewedToken) {
+          return await requestJSON<T>(path, init, false);
+        }
+      }
       throw new Error(`HTTP ${res.status}: ${msg}`);
     }
     return body as T;
