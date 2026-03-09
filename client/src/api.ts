@@ -397,6 +397,19 @@ export async function findOdooField(
     (options.nameCandidates || []).map((name) => normalizeFieldLabel(String(name || ""))).filter(Boolean)
   );
   const preferredTypes = new Set(options.preferredTypes || []);
+
+  for (const [name, meta] of Object.entries(result || {})) {
+    const normalizedName = normalizeFieldLabel(name);
+    if (!candidateNames.has(name) && !normalizedCandidateNames.has(normalizedName)) continue;
+    return {
+      name,
+      string: meta?.string,
+      type: meta?.type,
+      relation: meta?.relation,
+      selection: Array.isArray(meta?.selection) ? meta.selection : [],
+    };
+  }
+
   let best: { score: number; field: OdooFieldMeta } | null = null;
 
   for (const [name, meta] of Object.entries(result || {})) {
