@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import pg from "pg";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
+import { createOptionalPgStore } from "../optionalPg.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,15 +11,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
 const DATA_DIR = path.join(process.cwd(), "server", "data");
 const FILE_PATH = path.join(DATA_DIR, "briefings.json");
-const DATABASE_URL = process.env.DATABASE_URL;
-
-let pool = null;
-if (DATABASE_URL) {
-    pool = new pg.Pool({
-        connectionString: DATABASE_URL,
-        ssl: DATABASE_URL.includes("supabase.co") ? { rejectUnauthorized: false } : false
-    });
-}
+const db = createOptionalPgStore("briefingCache");
 
 function ensureFile() {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -49,12 +41,13 @@ function writeAll(obj) {
 export async function getBriefing(conversationId) {
     if (!conversationId) return null;
 
-    if (pool) {
+    if (db.isEnabled()) {
         try {
-            const { rows } = await pool.query(
+            const result = await db.query(
                 "SELECT summary FROM crm_briefings WHERE conversation_id = $1 AND expires_at > CURRENT_TIMESTAMP",
                 [conversationId]
             );
+            const rows = result?.rows || [];
             return rows.length > 0 ? rows[0].summary : null;
         } catch (e) {
             console.warn("[briefingCache] DB read error (may need table creation):", e.message);
@@ -81,9 +74,9 @@ export async function saveBriefing(conversationId, summary) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 5);
 
-    if (pool) {
+    if (db.isEnabled()) {
         try {
-            await pool.query(
+            await db.query(
                 `INSERT INTO crm_briefings (conversation_id, summary, expires_at)
          VALUES ($1, $2, $3)
          ON CONFLICT (conversation_id) DO UPDATE SET summary = $2, expires_at = $3, created_at = CURRENT_TIMESTAMP`,
@@ -107,9 +100,9 @@ export async function saveBriefing(conversationId, summary) {
  * Ensures the briefings table exists in the database.
  */
 export async function initBriefingDb() {
-    if (!pool) return;
+    if (!db.isEnabled()) return;
     try {
-        await pool.query(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS crm_briefings (
                 conversation_id TEXT PRIMARY KEY,
                 summary TEXT NOT NULL,

@@ -13,12 +13,6 @@ import { createOdooSchemaCache } from "./odoo_schema_cache.js";
  *   ODOO_INSECURE_TLS=true
  */
 
-function requireEnv(name) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env var: ${name}`);
-  return v;
-}
-
 function sanitizeBaseUrl(url) {
   return String(url || "").replace(/\/+$/, "");
 }
@@ -38,27 +32,46 @@ function buildHttpsAgentIfNeeded(baseUrl) {
   return new https.Agent({ rejectUnauthorized: false });
 }
 
+function getEnvValue(...values) {
+  for (const value of values) {
+    const normalized = String(value || "").trim();
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+export function getOdooRuntimeConfig(config = null) {
+  const baseUrl = sanitizeBaseUrl(getEnvValue(config?.url, process.env.ODOO_URL));
+  const db = getEnvValue(config?.db, process.env.ODOO_DB);
+  const login = getEnvValue(config?.login, process.env.ODOO_USERNAME, process.env.ODOO_USER);
+  const password = getEnvValue(config?.password, process.env.ODOO_API_KEY, process.env.ODOO_PASSWORD, process.env.ODOO_PASS);
+  return { baseUrl, db, login, password };
+}
+
+export function getMissingOdooConfigKeys(config = null) {
+  const runtime = getOdooRuntimeConfig(config);
+  const missing = [];
+  if (!runtime.baseUrl || runtime.baseUrl.includes("your-odoo-instance.com")) missing.push("ODOO_URL");
+  if (!runtime.db || runtime.db === "your_db_name") missing.push("ODOO_DB");
+  if (!runtime.login || runtime.login === "your_username") missing.push("ODOO_USERNAME");
+  if (!runtime.password || runtime.password === "your_password") missing.push("ODOO_API_KEY");
+  return missing;
+}
+
+export function hasOdooRuntimeConfig(config = null) {
+  return getMissingOdooConfigKeys(config).length === 0;
+}
+
 export async function odooClientFromEnv(config = null) {
-  const baseUrl = sanitizeBaseUrl(config?.url || process.env.ODOO_URL || "");
-  if (!baseUrl || baseUrl.includes("your-odoo-instance.com")) {
-    throw new Error("ODOO_URL não configurado.");
+  const missing = getMissingOdooConfigKeys(config);
+  if (missing.length) {
+    throw Object.assign(
+      new Error(`Odoo configuration incomplete: missing ${missing.join(", ")}`),
+      { status: 503, code: "ODOO_CONFIG_MISSING", missing }
+    );
   }
 
-  const db = config?.db || process.env.ODOO_DB;
-  if (!db || db === "your_db_name") {
-    throw new Error("ODOO_DB não configurado.");
-  }
-
-  const login = config?.login || process.env.ODOO_USERNAME || process.env.ODOO_USER;
-  if (!login || login === "your_username") {
-    throw new Error("ODOO_USERNAME não configurado.");
-  }
-
-  const password = config?.password || process.env.ODOO_API_KEY || process.env.ODOO_PASS || process.env.ODOO_PASSWORD;
-  if (!password || password === "your_password") {
-    throw new Error("ODOO_API_KEY não configurada.");
-  }
-
+  const { baseUrl, db, login, password } = getOdooRuntimeConfig(config);
   const jar = new CookieJar();
   const httpsAgent = buildHttpsAgentIfNeeded(baseUrl);
 

@@ -1,17 +1,11 @@
-import { geminiCreateResponse } from "./ai/geminiProvider.js";
-import { getAiConfig } from "./ai/aiConfig.js";
+import { aiCreateText } from "./ai/aiService.js";
 
 /**
  * VoiceActionEngine.js
  * Parses complex voice intents and orchestrates chained workflows.
  */
 
-const MODEL_PRO = "gemini-1.5-pro";
-
 export async function processVoiceCommand(commandText, context) {
-    const cfg = getAiConfig();
-    if (!cfg.gemini.apiKey) throw new Error("Missing Gemini API Key");
-
     const instructions = `
 You are the Orchestrator for Cockpit V2. Parse the user's intent and return a sequence of actions.
 The available actions are:
@@ -27,12 +21,12 @@ Return the sequence as a valid JSON array of action keys.
 Example: ["EXTRACT_ANCHORS", "SCAN_PROTECTION", "DRAFT_REJECTION"]
 `;
 
-    const result = await geminiCreateResponse({
-        apiKey: cfg.gemini.apiKey,
-        model: MODEL_PRO,
+    const result = await aiCreateText({
+        mode: "quality",
         instructions,
         input: `Context: ${JSON.stringify(context)}`,
         temperature: 0,
+        max_output_tokens: 256,
     });
 
     try {

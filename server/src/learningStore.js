@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import pg from "pg";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
+import { createOptionalPgStore } from "./optionalPg.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,19 +13,7 @@ const DATA_DIR = path.join(process.cwd(), "server", "data");
 const LOG_FILE_PATH = path.join(DATA_DIR, "learning_logs.json");
 const PROFILE_FILE_PATH = path.join(DATA_DIR, "style_profiles.json");
 
-// Database configuration
-const DATABASE_URL = process.env.DATABASE_URL;
-let pool = null;
-
-if (DATABASE_URL) {
-    console.log("[learningStore] Using PostgreSQL/Supabase persistence.");
-    pool = new pg.Pool({
-        connectionString: DATABASE_URL,
-        ssl: DATABASE_URL.includes("supabase.co") ? { rejectUnauthorized: false } : false
-    });
-} else {
-    console.log("[learningStore] Using local JSON file persistence.");
-}
+const db = createOptionalPgStore("learningStore");
 
 function ensureFile(filePath) {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -61,9 +49,9 @@ export async function logInteraction(log) {
         createdAt: new Date().toISOString()
     };
 
-    if (pool) {
+    if (db.isEnabled()) {
         try {
-            await pool.query(
+            await db.query(
                 `INSERT INTO learning_logs 
          (conversation_id, from_email, to_emails, original_subject, original_body, user_response, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -79,7 +67,8 @@ export async function logInteraction(log) {
             );
             return { ok: true };
         } catch (e) {
-            console.error("[learningStore] DB Insert Error (learning_logs):", e);
+            if (e?.optionalDbFallback) console.warn("[learningStore] DB Insert Error (learning_logs):", e.message);
+            else console.error("[learningStore] DB Insert Error (learning_logs):", e);
             // Fallback below
         }
     }
@@ -96,12 +85,13 @@ export async function logInteraction(log) {
  * Gets recent interaction logs
  */
 export async function getLogs(limit = 50) {
-    if (pool) {
+    if (db.isEnabled()) {
         try {
-            const { rows } = await pool.query(
+            const result = await db.query(
                 "SELECT * FROM learning_logs ORDER BY created_at DESC LIMIT $1",
                 [limit]
             );
+            const rows = result?.rows || [];
             return rows.map(r => ({
                 conversationId: r.conversation_id,
                 fromEmail: r.from_email,
@@ -112,7 +102,8 @@ export async function getLogs(limit = 50) {
                 createdAt: r.created_at
             }));
         } catch (e) {
-            console.error("[learningStore] DB Query Error (learning_logs):", e);
+            if (e?.optionalDbFallback) console.warn("[learningStore] DB Query Error (learning_logs):", e.message);
+            else console.error("[learningStore] DB Query Error (learning_logs):", e);
         }
     }
 
@@ -124,12 +115,13 @@ export async function getLogs(limit = 50) {
  * Gets or sets the style profile
  */
 export async function getStyleProfile(userId = "global") {
-    if (pool) {
+    if (db.isEnabled()) {
         try {
-            const { rows } = await pool.query(
+            const result = await db.query(
                 "SELECT * FROM style_profiles WHERE user_id = $1",
                 [userId]
             );
+            const rows = result?.rows || [];
             if (rows.length > 0) {
                 return {
                     styleData: rows[0].style_data,
@@ -138,7 +130,8 @@ export async function getStyleProfile(userId = "global") {
                 };
             }
         } catch (e) {
-            console.error("[learningStore] DB Query Error (style_profiles):", e);
+            if (e?.optionalDbFallback) console.warn("[learningStore] DB Query Error (style_profiles):", e.message);
+            else console.error("[learningStore] DB Query Error (style_profiles):", e);
         }
     }
 
@@ -149,9 +142,9 @@ export async function getStyleProfile(userId = "global") {
 export async function updateStyleProfile(userId = "global", profile) {
     const lastUpdated = new Date().toISOString();
 
-    if (pool) {
+    if (db.isEnabled()) {
         try {
-            await pool.query(
+            await db.query(
                 `INSERT INTO style_profiles (user_id, style_data, habits_data, last_updated)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (user_id) DO UPDATE SET 
@@ -162,7 +155,8 @@ export async function updateStyleProfile(userId = "global", profile) {
             );
             return { ok: true };
         } catch (e) {
-            console.error("[learningStore] DB Update Error (style_profiles):", e);
+            if (e?.optionalDbFallback) console.warn("[learningStore] DB Update Error (style_profiles):", e.message);
+            else console.error("[learningStore] DB Update Error (style_profiles):", e);
         }
     }
 

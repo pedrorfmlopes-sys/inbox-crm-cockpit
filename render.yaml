@@ -19,13 +19,27 @@ services:
         value: openai
       - key: OPENAI_API_KEY
         sync: false
+      - key: OPENAI_MODEL_FAST
+        value: gpt-4o-mini
+      - key: OPENAI_MODEL_QUALITY
+        value: gpt-4o
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_MODEL_FAST
+        value: gemini-1.5-flash
+      - key: GEMINI_MODEL_QUALITY
+        value: gemini-1.5-pro
       - key: ODOO_URL
         sync: false
       - key: ODOO_DB
         sync: false
+      - key: ODOO_USERNAME
+        sync: false
+      - key: ODOO_API_KEY
+        sync: false
       - key: ODOO_USER
+        sync: false
+      - key: ODOO_PASSWORD
         sync: false
       - key: ODOO_PASS
         sync: false

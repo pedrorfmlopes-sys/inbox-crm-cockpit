@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import pg from "pg";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
+import { createOptionalPgStore } from "./optionalPg.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,19 +12,7 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 const DATA_DIR = path.join(process.cwd(), "server", "data");
 const FILE_PATH = path.join(DATA_DIR, "links.json");
 
-// Database configuration
-const DATABASE_URL = process.env.DATABASE_URL;
-let pool = null;
-
-if (DATABASE_URL) {
-  console.log("[linkStore] Using PostgreSQL/Supabase persistence.");
-  pool = new pg.Pool({
-    connectionString: DATABASE_URL,
-    ssl: DATABASE_URL.includes("supabase.co") ? { rejectUnauthorized: false } : false
-  });
-} else {
-  console.log("[linkStore] Using local JSON file persistence.");
-}
+const db = createOptionalPgStore("linkStore");
 
 /**
  * Simple file store:
@@ -136,7 +124,7 @@ export async function listLinksByConversation(conversationId, internetMessageId 
 
   if (!resolvedConversationId && !resolvedInternetMessageId) return [];
 
-  if (pool) {
+  if (db.isEnabled()) {
     try {
       const params = [];
       const where = [];
@@ -148,10 +136,11 @@ export async function listLinksByConversation(conversationId, internetMessageId 
         params.push(resolvedInternetMessageId);
         where.push(`LOWER(REGEXP_REPLACE(COALESCE(internet_message_id, ''), '[<>[:space:]]', '', 'g')) = $${params.length}`);
       }
-      const { rows } = await pool.query(
+      const result = await db.query(
         `SELECT * FROM crm_links WHERE ${where.join(" OR ")} ORDER BY linked_at DESC`,
         params
       );
+      const rows = result?.rows || [];
       const dbLinks = rows.map((r) => normalizeEntry({
         model: r.model,
         recordId: r.record_id,
@@ -164,7 +153,8 @@ export async function listLinksByConversation(conversationId, internetMessageId 
       }));
       return dedupeLinks([...dbLinks, ...listLinksFromFile(resolvedConversationId, resolvedInternetMessageId)]);
     } catch (e) {
-      console.error("[linkStore] DB Query Error, falling back to file store:", e);
+      if (e?.optionalDbFallback) console.warn("[linkStore] DB Query Error, falling back to file store:", e.message);
+      else console.error("[linkStore] DB Query Error, falling back to file store:", e);
     }
   }
 
@@ -177,9 +167,9 @@ export async function addLink(conversationId, entry) {
 
   writeLinkToFile(conversationId, nextEntry);
 
-  if (pool) {
+  if (db.isEnabled()) {
     try {
-      await pool.query(
+      await db.query(
         `INSERT INTO crm_links 
          (conversation_id, model, record_id, record_name, linked_at, internet_message_id, subject, from_email, from_name)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -204,7 +194,8 @@ export async function addLink(conversationId, entry) {
       );
       return await listLinksByConversation(conversationId, nextEntry.internetMessageId);
     } catch (e) {
-      console.error("[linkStore] DB Insert Error, falling back to file store:", e);
+      if (e?.optionalDbFallback) console.warn("[linkStore] DB Insert Error, falling back to file store:", e.message);
+      else console.error("[linkStore] DB Insert Error, falling back to file store:", e);
     }
   }
 
