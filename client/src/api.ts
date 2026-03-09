@@ -375,6 +375,29 @@ export async function findOdooFieldByLabel(model: string, label: string): Promis
   return null;
 }
 
+export async function getOdooFieldMeta(model: string, fieldName: string): Promise<OdooFieldMeta | null> {
+  const normalizedFieldName = String(fieldName || "").trim();
+  if (!normalizedFieldName) return null;
+
+  const result: Record<string, any> = await callOdoo({
+    model,
+    method: "fields_get",
+    args: [],
+    kwargs: { attributes: ["string", "type", "relation", "selection"] },
+  });
+
+  const meta = result?.[normalizedFieldName];
+  if (!meta) return null;
+
+  return {
+    name: normalizedFieldName,
+    string: meta?.string,
+    type: meta?.type,
+    relation: meta?.relation,
+    selection: Array.isArray(meta?.selection) ? meta.selection : [],
+  };
+}
+
 export async function findOdooField(
   model: string,
   options: {

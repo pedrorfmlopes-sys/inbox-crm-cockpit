@@ -10,6 +10,7 @@ import {
   writeOdoo,
   aiGenerate,
   findOdooField,
+  getOdooFieldMeta,
   type OdooFieldMeta,
 } from "@/api";
 
@@ -749,7 +750,7 @@ export default function DialogApp() {
               fromEmail={ctx.fromEmail}
             />
           )}
-          {entity === "project.project" && (
+          {mode !== "add" && entity === "project.project" && (
             <ProjectForm
               mode={mode}
               ctx={ctx}
@@ -760,7 +761,7 @@ export default function DialogApp() {
               fromEmail={ctx.fromEmail}
             />
           )}
-          {entity === "crm.lead" && (
+          {mode !== "add" && entity === "crm.lead" && (
             <LeadForm
               mode={mode}
               ctx={ctx}
@@ -771,8 +772,8 @@ export default function DialogApp() {
               fromEmail={ctx.fromEmail}
             />
           )}
-          {entity === "res.partner" && <ContactHubForm mode={mode} ctx={ctx} editId={editId} onStatus={setStatus} />}
-          {entity === "helpdesk.ticket" && (
+          {mode !== "add" && entity === "res.partner" && <ContactHubForm mode={mode} ctx={ctx} editId={editId} onStatus={setStatus} />}
+          {mode !== "add" && entity === "helpdesk.ticket" && (
             <HelpdeskTicketForm
               mode={mode}
               ctx={ctx}
@@ -1345,6 +1346,12 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   const leadTypeIsMany2one = !!leadTypeField?.relation && leadTypeField?.type === "many2one";
 
   async function resolveLeadTypeField(): Promise<OdooFieldMeta | null> {
+    const exactField = await getOdooFieldMeta("crm.lead", "x_studio_tipo_de_lead");
+    if (exactField) {
+      setLeadTypeField(exactField);
+      return exactField;
+    }
+
     const field = await findOdooField("crm.lead", {
       labels: ["Tipo de Lead", "Lead Type", "Tipo Lead", "Tipo da Lead"],
       nameCandidates: [
