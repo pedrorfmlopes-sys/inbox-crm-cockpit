@@ -330,7 +330,8 @@ export async function searchOdooDomain(
 }
 
 export async function callOdoo(payload: { model: string; method: string; args: any[]; kwargs?: Record<string, any> }): Promise<any> {
-  return await requestJSON(`/api/odoo/call`, { method: "POST", body: JSON.stringify(payload) });
+  const response: any = await requestJSON(`/api/odoo/call`, { method: "POST", body: JSON.stringify(payload) });
+  return response?.result ?? response;
 }
 
 export type OdooFieldMeta = {
