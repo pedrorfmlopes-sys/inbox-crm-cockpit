@@ -9,7 +9,6 @@ import {
   setApiSessionToken,
   writeOdoo,
   aiGenerate,
-  findOdooField,
   getOdooFieldMeta,
   type OdooFieldMeta,
 } from "@/api";
@@ -1333,6 +1332,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
 }
 
 function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail, apiReady }: any) {
+  const LEAD_TYPE_FIELD_NAME = "x_studio_tipo_de_lead";
   const [name, setName] = useState(ctx.subject || "");
   const [contactName, setContactName] = useState(ctx.fromName || "");
   const [email, setEmail] = useState(ctx.fromEmail || "");
@@ -1345,39 +1345,20 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   const [leadTypeField, setLeadTypeField] = useState<OdooFieldMeta | null>(null);
   const [leadTypeLoading, setLeadTypeLoading] = useState(true);
   const [leadTypeValue, setLeadTypeValue] = useState("");
-  const [leadTypeRelationId, setLeadTypeRelationId] = useState<number | null>(null);
-  const [leadTypeRelationName, setLeadTypeRelationName] = useState("");
-  const leadTypeIsSelection = !!(leadTypeField?.selection && leadTypeField.selection.length > 0) || leadTypeField?.type === "selection";
-  const leadTypeIsMany2one = !!leadTypeField?.relation && leadTypeField?.type === "many2one";
+  const leadTypeIsSelection = !!(leadTypeField?.selection && leadTypeField.selection.length > 0) && leadTypeField?.type === "selection";
 
   function wait(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async function resolveLeadTypeField(): Promise<OdooFieldMeta | null> {
-    const exactField = await getOdooFieldMeta("crm.lead", "x_studio_tipo_de_lead");
-    if (exactField) {
+    const exactField = await getOdooFieldMeta("crm.lead", LEAD_TYPE_FIELD_NAME);
+    if (exactField?.type === "selection" && Array.isArray(exactField.selection)) {
       setLeadTypeField(exactField);
       return exactField;
     }
-
-    const field = await findOdooField("crm.lead", {
-      labels: ["Tipo de Lead", "Lead Type", "Tipo Lead", "Tipo da Lead"],
-      nameCandidates: [
-        "x_studio_tipo_de_lead",
-        "x_studio_tipo_lead",
-        "x_tipo_de_lead",
-        "x_tipo_lead",
-        "lead_type",
-        "x_lead_type",
-        "tipo_de_lead",
-        "tipo_lead",
-      ],
-      namePatterns: [/tipo.*lead/i, /lead.*tipo/i, /lead_type/i, /x_studio.*tipo/i, /x_studio.*lead.*type/i],
-      preferredTypes: ["selection", "many2one"],
-    });
-    setLeadTypeField(field);
-    return field;
+    setLeadTypeField(null);
+    return null;
   }
 
   useEffect(() => {
@@ -1443,21 +1424,9 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         if (r.description) setDescription(String(r.description));
         if (fieldName) {
           const fieldValue = r[fieldName];
-          if (leadTypeField?.type === "many2one") {
-            if (Array.isArray(fieldValue) && fieldValue[0]) {
-              setLeadTypeRelationId(fieldValue[0]);
-              setLeadTypeRelationName(fieldValue[1] || `#${fieldValue[0]}`);
-            } else {
-              setLeadTypeRelationId(null);
-              setLeadTypeRelationName("");
-            }
-          } else {
-            setLeadTypeValue(String(fieldValue || ""));
-          }
+          setLeadTypeValue(String(fieldValue || ""));
         } else {
           setLeadTypeValue("");
-          setLeadTypeRelationId(null);
-          setLeadTypeRelationName("");
         }
       } catch (e: any) {
         onStatus(e?.message ?? String(e));
@@ -1479,8 +1448,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       if (description) values.description = description;
       if (ctx.bodyHtml) values.bodyHtml = ctx.bodyHtml;
       if (effectiveLeadTypeField?.name) {
-        if (effectiveLeadTypeField.type === "many2one") values[effectiveLeadTypeField.name] = leadTypeRelationId || false;
-        else values[effectiveLeadTypeField.name] = leadTypeValue || false;
+        values[effectiveLeadTypeField.name] = leadTypeValue || false;
       }
 
       if (mode === "edit") {
@@ -1596,34 +1564,6 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         </div>
       )}
 
-      {!leadTypeLoading && leadTypeIsMany2one && leadTypeField.relation && (
-        <TypeaheadPicker
-          label={(leadTypeField.string || "Tipo de Lead").toUpperCase()}
-          placeholder="Pesquisar tipo de lead..."
-          model={leadTypeField.relation}
-          fields={["id", "name", "display_name"]}
-          pickedId={leadTypeRelationId}
-          pickedName={leadTypeRelationName}
-          onPick={(it: any) => {
-            const id = it?.id ?? null;
-            setLeadTypeRelationId(id);
-            setLeadTypeRelationName(id ? (it.display_name || it.name || `#${id}`) : "");
-          }}
-        />
-      )}
-
-      {!leadTypeLoading && leadTypeField && !leadTypeIsSelection && !leadTypeIsMany2one && (
-        <div style={S.row}>
-          <label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label>
-          <input
-            style={S.input}
-            value={leadTypeValue}
-            onChange={(e) => setLeadTypeValue(e.target.value)}
-            placeholder="Tipo de lead"
-          />
-        </div>
-      )}
-
       {!leadTypeLoading && !leadTypeField && (
         <div style={S.row}>
           <label style={S.lab}>TIPO DE LEAD</label>
@@ -1631,7 +1571,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
             style={S.input}
             value=""
             readOnly
-            placeholder="Campo existente no Odoo nao encontrado"
+            placeholder="Campo Tipo de Lead indisponivel"
           />
         </div>
       )}
