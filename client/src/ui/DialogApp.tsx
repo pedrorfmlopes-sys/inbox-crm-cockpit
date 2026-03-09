@@ -9,7 +9,7 @@ import {
   setApiSessionToken,
   writeOdoo,
   aiGenerate,
-  getOdooFieldMeta,
+  getLeadTypeFieldMeta,
   type OdooFieldMeta,
 } from "@/api";
 
@@ -1345,21 +1345,9 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   const [leadTypeField, setLeadTypeField] = useState<OdooFieldMeta | null>(null);
   const [leadTypeLoading, setLeadTypeLoading] = useState(true);
   const [leadTypeValue, setLeadTypeValue] = useState("");
-  const leadTypeIsSelection = !!(leadTypeField?.selection && leadTypeField.selection.length > 0) && leadTypeField?.type === "selection";
-
-  function wait(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  async function resolveLeadTypeField(): Promise<OdooFieldMeta | null> {
-    const exactField = await getOdooFieldMeta("crm.lead", LEAD_TYPE_FIELD_NAME);
-    if (exactField?.type === "selection" && Array.isArray(exactField.selection)) {
-      setLeadTypeField(exactField);
-      return exactField;
-    }
-    setLeadTypeField(null);
-    return null;
-  }
+  const leadTypeOptions = useMemo(() => {
+    return Array.isArray(leadTypeField?.selection) ? leadTypeField.selection : [];
+  }, [leadTypeField]);
 
   useEffect(() => {
     if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
@@ -1373,20 +1361,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
     (async () => {
       try {
         setLeadTypeLoading(true);
-        let field: OdooFieldMeta | null = null;
-        for (let attempt = 0; attempt < 3 && !field; attempt += 1) {
-          try {
-            field = await Promise.race([
-              resolveLeadTypeField(),
-              new Promise<null>((_, reject) => setTimeout(() => reject(new Error("lead_type_timeout")), 8000)),
-            ]);
-          } catch {
-            field = null;
-          }
-          if (!field && attempt < 2) {
-            await wait(1200);
-          }
-        }
+        const field = await getLeadTypeFieldMeta();
         if (!alive) return;
         setLeadTypeField(field);
       } catch {
@@ -1406,12 +1381,11 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
     (async () => {
       try {
         let rows: any[] | null = null;
-        const fieldName = leadTypeField?.name;
-        const baseFields = ["name", "contact_name", "email_from", "phone", "partner_id", "stage_id"];
+        const baseFields = ["name", "contact_name", "email_from", "phone", "partner_id", "stage_id", LEAD_TYPE_FIELD_NAME];
         try {
-          rows = await readOdoo("crm.lead", [editId], fieldName ? [...baseFields, fieldName, "description"] : [...baseFields, "description"]);
+          rows = await readOdoo("crm.lead", [editId], [...baseFields, "description"]);
         } catch {
-          rows = await readOdoo("crm.lead", [editId], fieldName ? [...baseFields, fieldName] : baseFields);
+          rows = await readOdoo("crm.lead", [editId], baseFields);
         }
         const r = rows?.[0];
         if (!r) return;
@@ -1422,21 +1396,15 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         if (r.partner_id) { setPartnerId(r.partner_id[0]); setPartnerName(r.partner_id[1]); }
         if (r.stage_id) { setStageId(r.stage_id[0]); setStageName(r.stage_id[1]); }
         if (r.description) setDescription(String(r.description));
-        if (fieldName) {
-          const fieldValue = r[fieldName];
-          setLeadTypeValue(String(fieldValue || ""));
-        } else {
-          setLeadTypeValue("");
-        }
+        setLeadTypeValue(String(r[LEAD_TYPE_FIELD_NAME] || ""));
       } catch (e: any) {
         onStatus(e?.message ?? String(e));
       }
     })();
-  }, [apiReady, mode, editId, leadTypeField]);
+  }, [apiReady, mode, editId]);
 
   async function save() {
     try {
-      const effectiveLeadTypeField = leadTypeField || await resolveLeadTypeField();
       let values: any = {
         name: name || `Lead: ${ctx.subject || "sem assunto"}`,
         contact_name: contactName || "",
@@ -1447,9 +1415,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       if (stageId) values.stage_id = stageId;
       if (description) values.description = description;
       if (ctx.bodyHtml) values.bodyHtml = ctx.bodyHtml;
-      if (effectiveLeadTypeField?.name) {
-        values[effectiveLeadTypeField.name] = leadTypeValue || false;
-      }
+      values[LEAD_TYPE_FIELD_NAME] = leadTypeValue || false;
 
       if (mode === "edit") {
         try {
@@ -1548,16 +1514,18 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       {leadTypeLoading && (
         <div style={S.row}>
           <label style={S.lab}>TIPO DE LEAD</label>
-          <input style={S.input} value="" readOnly placeholder="A carregar tipo de lead..." />
+          <select style={S.sel} value="" disabled>
+            <option value="">A carregar tipo de lead...</option>
+          </select>
         </div>
       )}
 
-      {!leadTypeLoading && leadTypeIsSelection && (
+      {!leadTypeLoading && !!leadTypeField && (
         <div style={S.row}>
           <label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label>
           <select style={S.sel} value={leadTypeValue} onChange={(e) => setLeadTypeValue(e.target.value)}>
             <option value="">Selecionar...</option>
-            {(leadTypeField.selection || []).map(([value, label]) => (
+            {leadTypeOptions.map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
             ))}
           </select>
@@ -1567,12 +1535,9 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       {!leadTypeLoading && !leadTypeField && (
         <div style={S.row}>
           <label style={S.lab}>TIPO DE LEAD</label>
-          <input
-            style={S.input}
-            value=""
-            readOnly
-            placeholder="Campo Tipo de Lead indisponivel"
-          />
+          <select style={S.sel} value="" disabled>
+            <option value="">Tipo de Lead indisponível</option>
+          </select>
         </div>
       )}
 

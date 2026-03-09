@@ -382,7 +382,7 @@ export async function getOdooFieldMeta(model: string, fieldName: string): Promis
   const result: Record<string, any> = await callOdoo({
     model,
     method: "fields_get",
-    args: [],
+    args: [[normalizedFieldName]],
     kwargs: { attributes: ["string", "type", "relation", "selection"] },
   });
 
@@ -395,6 +395,15 @@ export async function getOdooFieldMeta(model: string, fieldName: string): Promis
     type: meta?.type,
     relation: meta?.relation,
     selection: Array.isArray(meta?.selection) ? meta.selection : [],
+  };
+}
+
+export async function getLeadTypeFieldMeta(): Promise<OdooFieldMeta | null> {
+  const meta = await getOdooFieldMeta("crm.lead", "x_studio_tipo_de_lead");
+  if (!meta || meta.type !== "selection") return null;
+  return {
+    ...meta,
+    selection: Array.isArray(meta.selection) ? meta.selection : [],
   };
 }
 
