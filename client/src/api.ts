@@ -101,6 +101,14 @@ export type LinkEntry = {
   id?: string;
   conversationId: string;
   model: string;
+  itemId?: string;
+  emailWebLink?: string;
+  receivedAtIso?: string;
+  subject?: string;
+  fromEmail?: string;
+  fromName?: string;
+  linkedAt?: string;
+  internetMessageId?: string;
 
   // preferred
   recordId?: number;
@@ -130,6 +138,7 @@ export type LinkPayload = {
   emailFrom?: string;
   emailWebLink?: string;
   internetMessageId?: string;
+  itemId?: string;
   receivedAtIso?: string;
   bodyHtml?: string;
   bodyText?: string;
@@ -276,6 +285,22 @@ export async function getLinks(conversationId?: string, internetMessageId?: stri
     recordId: l.recordId ?? l.resId,
     name: l.name ?? l.recordName ?? l.title,
     title: l.title ?? l.recordName ?? l.name ?? l.model,
+    url: l.url ?? l.emailWebLink,
+  }));
+}
+
+export async function getLinksByRecord(model: string, recordId: number): Promise<LinkEntry[]> {
+  const params = new URLSearchParams();
+  params.set("model", String(model || "").trim());
+  params.set("recordId", String(Number(recordId || 0)));
+  const r: any = await requestJSON(`/api/links/by-record?${params.toString()}`);
+  const links: LinkEntry[] = r?.links ?? r ?? [];
+  return (Array.isArray(links) ? links : []).map((l: any) => ({
+    ...l,
+    resId: l.resId ?? l.recordId,
+    recordId: l.recordId ?? l.resId,
+    name: l.name ?? l.recordName ?? l.title,
+    title: l.title ?? l.recordName ?? l.name ?? l.subject ?? l.model,
     url: l.url ?? l.emailWebLink,
   }));
 }

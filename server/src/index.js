@@ -10,7 +10,7 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 import express from "express";
 import cors from "cors";
 import { odooClientFromEnv } from "./odoo.js";
-import { addLink, listLinksByConversation } from "./linkStore.js";
+import { addLink, listLinksByConversation, listLinksByRecord } from "./linkStore.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
 import { createLearningRouter } from "./routes/learningRoutes.js";
 import fs from "fs";
@@ -759,6 +759,7 @@ app.post("/api/odoo/link-email", async (req, res) => {
     const receivedAtIso = bodyIn.receivedAtIso ?? bodyIn.emailReceivedAtIso;
     const emailWebLink = bodyIn.emailWebLink ?? bodyIn.url;
     const internetMessageId = bodyIn.internetMessageId ?? bodyIn.internet_message_id;
+    const itemId = bodyIn.itemId ?? bodyIn.item_id;
 
     const m = String(model || "").trim();
 
@@ -798,6 +799,9 @@ app.post("/api/odoo/link-email", async (req, res) => {
       recordName: recordName || "",
       linkedAt: new Date().toISOString(),
       internetMessageId: internetMessageId || "",
+      itemId: itemId || "",
+      emailWebLink: emailWebLink || "",
+      receivedAtIso: receivedAtIso || "",
       subject: safeSubject,
       fromEmail: fromEmail || "",
       fromName: fromName || "",
@@ -825,6 +829,20 @@ app.get("/api/links", async (req, res) => {
     const internetMessageId = String(req.query.internetMessageId || "").trim();
     if (!conversationId && !internetMessageId) return res.json({ links: [] });
     const links = await listLinksByConversation(conversationId, internetMessageId);
+    return res.json({ links });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "odoo_endpoint_failed", details: String(e?.message || e) });
+  }
+});
+
+app.get("/api/links/by-record", async (req, res) => {
+  try {
+    const model = String(req.query.model || "").trim();
+    const recordId = Number(req.query.recordId || 0);
+    if (!modelAllowed(model)) return res.status(400).json({ ok: false, error: "model_not_allowed" });
+    if (!recordId) return res.status(400).json({ ok: false, error: "missing_record_id" });
+    const links = await listLinksByRecord(model, recordId);
     return res.json({ links });
   } catch (e) {
     console.error(e);
@@ -868,7 +886,7 @@ function htmlToReadableText(html) {
   s = s.replace(/<(br|hr)\s*\/?>/gi, "\n");
   s = s.replace(/<\/\s*(p|div|section|article|header|footer|blockquote|tr|table|h[1-6])\s*>/gi, "\n\n");
   s = s.replace(/<\/\s*li\s*>/gi, "\n");
-  s = s.replace(/<li[^>]*>/gi, "� ");
+  s = s.replace(/<li[^>]*>/gi, "* ");
   s = s.replace(/<[^>]+>/g, " ");
   s = simpleDecodeHtml(s);
   s = s.replace(/\r/g, "");
@@ -908,15 +926,15 @@ const distPath = path.join(__dirname, "../../client/dist");
 console.log(`[server] initial distPath: ${distPath}`);
 
 if (fs.existsSync(distPath)) {
-  console.log(`[server] ✅ distPath exists: ${distPath}`);
+  console.log(`[server] OK distPath exists: ${distPath}`);
   const indexPath = path.join(distPath, "index.html");
   if (fs.existsSync(indexPath)) {
-    console.log(`[server] ✅ index.html found at: ${indexPath}`);
+    console.log(`[server] OK index.html found at: ${indexPath}`);
   } else {
-    console.error(`[server] ❌ index.html NOT found at: ${indexPath}`);
+    console.error(`[server] ERROR index.html NOT found at: ${indexPath}`);
   }
 } else {
-  console.error(`[server] ❌ distPath does NOT exist: ${distPath}`);
+  console.error(`[server] ERROR distPath does NOT exist: ${distPath}`);
 }
 
 app.use(express.static(distPath));
@@ -929,7 +947,7 @@ app.get("*", (req, res, next) => {
   const indexPath = path.join(distPath, "index.html");
   res.sendFile(indexPath, (err) => {
     if (err) {
-      console.error(`[server] ❌ res.sendFile error: ${err.message}`);
+      console.error(`[server] ERROR res.sendFile error: ${err.message}`);
       if (!res.headersSent) {
         res.status(404).send("SPA index.html not found");
       }

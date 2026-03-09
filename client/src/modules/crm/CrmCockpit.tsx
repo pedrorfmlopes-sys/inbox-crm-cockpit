@@ -3,6 +3,7 @@ import { useCockpit } from "@/components/shell/CockpitProvider";
 import { openCockpitDialog, getEmailBodyText, getOutlookContactSuggestionByEmail, OutlookContactSuggestion } from "../../office";
 import * as Icons from "../../ui/icons";
 import { ContactInsight } from "./ContactInsight";
+import { RelatedEmailsPanel } from "./RelatedEmailsPanel";
 import { OdooCardSkeleton, Skeleton } from "../../ui/SkeletonLoader";
 import { PanelState } from "../../ui/PanelState";
 import { aiExtractAnchors, aiGenerate, createOrUpdatePartner, getOdooAutoLoginUrl, getPartnerByEmail, linkEmailToRecord, searchCompanies, searchOdoo } from "../../api";
@@ -332,6 +333,7 @@ export const CrmCockpit: React.FC = () => {
                     recordId: partnerId,
                     recordName: partnerName,
                     internetMessageId: ctx.internetMessageId || "",
+                    itemId: ctx.itemId || "",
                     subject: ctx.subject || "",
                     fromEmail: ctx.fromEmail || "",
                     fromName: ctx.fromName || "",
@@ -546,6 +548,7 @@ export const CrmCockpit: React.FC = () => {
                 mode: targetMode,
                 conversationId: ctx.conversationId || "",
                 internetMessageId: ctx.internetMessageId || "",
+                itemId: ctx.itemId || "",
                 subject: ctx.subject || "",
                 fromEmail: ctx.fromEmail || "",
                 fromName: ctx.fromName || "",
@@ -857,6 +860,15 @@ export const CrmCockpit: React.FC = () => {
                         </div>
                     )}
                 </div>
+
+                <RelatedEmailsPanel
+                    currentCtx={ctx}
+                    currentLinks={links}
+                    meta={meta}
+                    settings={settings}
+                    onEditRecord={(model, recordId) => openDialog("edit", { model, recordId: String(recordId) })}
+                    onStatus={(message) => setMsg(message)}
+                />
             </div>
 
             <div style={S.voiceBar}>

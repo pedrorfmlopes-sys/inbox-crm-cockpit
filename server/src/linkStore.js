@@ -44,11 +44,15 @@ function writeAll(obj) {
 
 function normalizeEntry(entry) {
   return {
+    conversationId: String(entry.conversationId || "").trim(),
     model: entry.model,
     recordId: Number(entry.recordId),
     recordName: entry.recordName || "",
     linkedAt: entry.linkedAt,
     internetMessageId: normalizeMessageId(entry.internetMessageId),
+    itemId: String(entry.itemId || "").trim(),
+    emailWebLink: String(entry.emailWebLink || "").trim(),
+    receivedAtIso: String(entry.receivedAtIso || "").trim(),
     subject: entry.subject,
     fromEmail: entry.fromEmail,
     fromName: entry.fromName
@@ -77,17 +81,67 @@ function splitLookupKey(conversationId, internetMessageId = "") {
   };
 }
 
-function dedupeLinks(entries) {
-  const out = [];
-  const seen = new Set();
+function mergeEntryData(current, incoming) {
+  const next = { ...current };
+  for (const [key, value] of Object.entries(incoming || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    if (!next[key]) next[key] = value;
+  }
+  if (String(incoming?.linkedAt || "") > String(current?.linkedAt || "")) {
+    next.linkedAt = incoming.linkedAt;
+  }
+  if (String(incoming?.receivedAtIso || "") > String(current?.receivedAtIso || "")) {
+    next.receivedAtIso = incoming.receivedAtIso;
+  }
+  return next;
+}
+
+function dedupeRecordLinks(entries) {
+  const seen = new Map();
   for (const raw of entries || []) {
     const entry = normalizeEntry(raw);
     const key = `${entry.model}:${entry.recordId}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(entry);
+    const current = seen.get(key);
+    seen.set(key, current ? mergeEntryData(current, entry) : entry);
   }
-  return out.sort((a, b) => String(b.linkedAt || "").localeCompare(String(a.linkedAt || "")));
+  return Array.from(seen.values()).sort((a, b) => String(b.linkedAt || "").localeCompare(String(a.linkedAt || "")));
+}
+
+function makeEmailLookupKey(entry) {
+  const normalized = normalizeEntry(entry);
+  return normalized.itemId
+    || normalized.internetMessageId
+    || normalized.conversationId
+    || [
+      String(normalized.subject || "").trim().toLowerCase(),
+      String(normalized.fromEmail || "").trim().toLowerCase(),
+      String(normalized.receivedAtIso || normalized.linkedAt || "").trim(),
+    ].join("|");
+}
+
+function dedupeEmailLinks(entries) {
+  const seen = new Map();
+  for (const raw of entries || []) {
+    const entry = normalizeEntry(raw);
+    const key = makeEmailLookupKey(entry);
+    if (!key) continue;
+    const current = seen.get(key);
+    seen.set(key, current ? mergeEntryData(current, entry) : entry);
+  }
+  return Array.from(seen.values()).sort((a, b) =>
+    String(b.receivedAtIso || b.linkedAt || "").localeCompare(String(a.receivedAtIso || a.linkedAt || ""))
+  );
+}
+
+function parseStorageKey(key) {
+  const raw = String(key || "").trim();
+  if (raw.startsWith("conversationId:")) {
+    return { conversationId: raw.slice("conversationId:".length).trim(), internetMessageId: "" };
+  }
+  if (raw.startsWith("internetMessageId:")) {
+    return { conversationId: "", internetMessageId: normalizeMessageId(raw.slice("internetMessageId:".length)) };
+  }
+  return { conversationId: "", internetMessageId: "" };
 }
 
 function listLinksFromFile(conversationId, internetMessageId = "") {
@@ -100,18 +154,39 @@ function listLinksFromFile(conversationId, internetMessageId = "") {
       .flatMap((entries) => Array.isArray(entries) ? entries : [])
       .filter((entry) => normalizeMessageId(entry?.internetMessageId) === internetMessageId)
     : [];
-  return dedupeLinks([...direct, ...byMessageKey, ...byMessageScan]);
+  return dedupeRecordLinks([...direct, ...byMessageKey, ...byMessageScan]);
+}
+
+function listLinksByRecordFromFile(model, recordId) {
+  const normalizedModel = String(model || "").trim();
+  const normalizedRecordId = Number(recordId || 0);
+  if (!normalizedModel || !normalizedRecordId) return [];
+
+  const all = readAll();
+  const entries = Object.entries(all).flatMap(([key, value]) => {
+    const keyMeta = parseStorageKey(key);
+    const items = Array.isArray(value) ? value : [];
+    return items
+      .filter((entry) => String(entry?.model || "").trim() === normalizedModel && Number(entry?.recordId || 0) === normalizedRecordId)
+      .map((entry) => normalizeEntry({
+        ...entry,
+        conversationId: entry?.conversationId || keyMeta.conversationId,
+        internetMessageId: entry?.internetMessageId || keyMeta.internetMessageId,
+      }));
+  });
+
+  return dedupeEmailLinks(entries);
 }
 
 function writeLinkToFile(conversationId, entry) {
   const all = readAll();
-  const nextEntry = normalizeEntry(entry);
+  const nextEntry = normalizeEntry({ ...entry, conversationId });
   const keys = [`conversationId:${conversationId}`];
   if (nextEntry.internetMessageId) keys.push(`internetMessageId:${nextEntry.internetMessageId}`);
 
   for (const key of keys) {
     const arr = Array.isArray(all[key]) ? all[key] : [];
-    all[key] = dedupeLinks([nextEntry, ...arr]).slice(0, 50);
+    all[key] = dedupeRecordLinks([nextEntry, ...arr]).slice(0, 50);
   }
 
   writeAll(all);
@@ -142,6 +217,7 @@ export async function listLinksByConversation(conversationId, internetMessageId 
       );
       const rows = result?.rows || [];
       const dbLinks = rows.map((r) => normalizeEntry({
+        conversationId: r.conversation_id,
         model: r.model,
         recordId: r.record_id,
         recordName: r.record_name,
@@ -151,7 +227,7 @@ export async function listLinksByConversation(conversationId, internetMessageId 
         fromEmail: r.from_email,
         fromName: r.from_name
       }));
-      return dedupeLinks([...dbLinks, ...listLinksFromFile(resolvedConversationId, resolvedInternetMessageId)]);
+      return dedupeRecordLinks([...dbLinks, ...listLinksFromFile(resolvedConversationId, resolvedInternetMessageId)]);
     } catch (e) {
       if (e?.optionalDbFallback) console.warn("[linkStore] DB Query Error, falling back to file store:", e.message);
       else console.error("[linkStore] DB Query Error, falling back to file store:", e);
@@ -159,6 +235,39 @@ export async function listLinksByConversation(conversationId, internetMessageId 
   }
 
   return listLinksFromFile(resolvedConversationId, resolvedInternetMessageId);
+}
+
+export async function listLinksByRecord(model, recordId) {
+  const normalizedModel = String(model || "").trim();
+  const normalizedRecordId = Number(recordId || 0);
+  if (!normalizedModel || !normalizedRecordId) return [];
+
+  if (db.isEnabled()) {
+    try {
+      const result = await db.query(
+        `SELECT * FROM crm_links WHERE model = $1 AND record_id = $2 ORDER BY linked_at DESC`,
+        [normalizedModel, normalizedRecordId]
+      );
+      const rows = result?.rows || [];
+      const dbLinks = rows.map((r) => normalizeEntry({
+        conversationId: r.conversation_id,
+        model: r.model,
+        recordId: r.record_id,
+        recordName: r.record_name,
+        linkedAt: r.linked_at,
+        internetMessageId: r.internet_message_id,
+        subject: r.subject,
+        fromEmail: r.from_email,
+        fromName: r.from_name,
+      }));
+      return dedupeEmailLinks([...dbLinks, ...listLinksByRecordFromFile(normalizedModel, normalizedRecordId)]);
+    } catch (e) {
+      if (e?.optionalDbFallback) console.warn("[linkStore] DB Record Query Error, falling back to file store:", e.message);
+      else console.error("[linkStore] DB Record Query Error, falling back to file store:", e);
+    }
+  }
+
+  return listLinksByRecordFromFile(normalizedModel, normalizedRecordId);
 }
 
 export async function addLink(conversationId, entry) {

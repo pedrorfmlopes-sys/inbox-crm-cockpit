@@ -339,6 +339,7 @@ function getMode(): Mode {
 type Ctx = {
   conversationId: string;
   internetMessageId: string;
+  itemId?: string;
   subject: string;
   fromEmail: string;
   fromName: string;
@@ -355,6 +356,7 @@ function getCtxFromQuery(): Ctx {
   return {
     conversationId: p.get("conversationId") || "",
     internetMessageId: p.get("internetMessageId") || "",
+    itemId: p.get("itemId") || "",
     subject: p.get("subject") || "",
     fromEmail: p.get("fromEmail") || "",
     fromName: p.get("fromName") || "",
@@ -818,6 +820,7 @@ function AddExistingPanel({ entity, ctx, onStatus }: any) {
         recordId: pickedId,
         recordName: pickedName,
         internetMessageId: ctx.internetMessageId,
+        itemId: ctx.itemId,
         subject: ctx.subject,
         fromEmail: ctx.fromEmail,
         fromName: ctx.fromName,
@@ -955,6 +958,7 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         recordId: id,
         recordName: values.name,
         internetMessageId: ctx.internetMessageId,
+        itemId: ctx.itemId,
         subject: ctx.subject,
         fromEmail: ctx.fromEmail,
         fromName: ctx.fromName,
@@ -1226,6 +1230,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
         recordId: id,
         recordName: values.name,
         internetMessageId: ctx.internetMessageId,
+        itemId: ctx.itemId,
         subject: ctx.subject,
         fromEmail: ctx.fromEmail,
         fromName: ctx.fromName,
@@ -1445,6 +1450,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         recordId: id,
         recordName: values.name,
         internetMessageId: ctx.internetMessageId,
+        itemId: ctx.itemId,
         subject: ctx.subject,
         fromEmail: ctx.fromEmail,
         fromName: ctx.fromName,
@@ -1673,6 +1679,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
         recordId: id,
         recordName: name || email,
         internetMessageId: ctx.internetMessageId,
+        itemId: ctx.itemId,
         subject: ctx.subject,
         fromEmail: ctx.fromEmail,
         fromName: ctx.fromName,
@@ -1695,6 +1702,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
         recordId: id,
         recordName: display,
         internetMessageId: ctx.internetMessageId,
+        itemId: ctx.itemId,
         subject: ctx.subject,
         fromEmail: ctx.fromEmail,
         fromName: ctx.fromName,
@@ -1845,6 +1853,7 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
         recordId: id,
         recordName: values.name,
         internetMessageId: ctx.internetMessageId,
+        itemId: ctx.itemId,
         subject: ctx.subject,
         fromEmail: ctx.fromEmail,
         fromName: ctx.fromName,
@@ -2022,6 +2031,7 @@ function GenericMiniForm({ mode, ctx, model, editId, onStatus }: any) {
         recordId: id,
         recordName: values.name,
         internetMessageId: ctx.internetMessageId,
+        itemId: ctx.itemId,
         subject: ctx.subject,
         fromEmail: ctx.fromEmail,
         fromName: ctx.fromName,

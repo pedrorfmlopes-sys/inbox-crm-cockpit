@@ -648,3 +648,23 @@ export async function getAttachments(): Promise<Array<{ name: string; contentTyp
 
   return results;
 }
+
+export async function openLinkedOutlookEmail(target: { itemId?: string; emailWebLink?: string }): Promise<boolean> {
+  const itemId = String(target?.itemId || "").trim();
+  if (itemId) {
+    const OfficeAny: any = await ensureOfficeReady().catch(() => null);
+    const mailbox = OfficeAny?.context?.mailbox;
+    if (typeof mailbox?.displayMessageForm === "function") {
+      mailbox.displayMessageForm(itemId);
+      return true;
+    }
+  }
+
+  const emailWebLink = String(target?.emailWebLink || "").trim();
+  if (emailWebLink) {
+    window.open(emailWebLink, "_blank", "noopener,noreferrer");
+    return true;
+  }
+
+  return false;
+}
