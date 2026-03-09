@@ -1341,6 +1341,8 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   const [leadTypeValue, setLeadTypeValue] = useState("");
   const [leadTypeRelationId, setLeadTypeRelationId] = useState<number | null>(null);
   const [leadTypeRelationName, setLeadTypeRelationName] = useState("");
+  const leadTypeIsSelection = !!(leadTypeField?.selection && leadTypeField.selection.length > 0) || leadTypeField?.type === "selection";
+  const leadTypeIsMany2one = !!leadTypeField?.relation && leadTypeField?.type === "many2one";
 
   async function resolveLeadTypeField(): Promise<OdooFieldMeta | null> {
     const field = await findOdooField("crm.lead", {
@@ -1550,7 +1552,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         </div>
       )}
 
-      {!leadTypeLoading && leadTypeField?.type === "selection" && (
+      {!leadTypeLoading && leadTypeIsSelection && (
         <div style={S.row}>
           <label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label>
           <select style={S.sel} value={leadTypeValue} onChange={(e) => setLeadTypeValue(e.target.value)}>
@@ -1562,7 +1564,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         </div>
       )}
 
-      {!leadTypeLoading && leadTypeField?.type === "many2one" && leadTypeField.relation && (
+      {!leadTypeLoading && leadTypeIsMany2one && leadTypeField.relation && (
         <TypeaheadPicker
           label={(leadTypeField.string || "Tipo de Lead").toUpperCase()}
           placeholder="Pesquisar tipo de lead..."
@@ -1578,7 +1580,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         />
       )}
 
-      {!leadTypeLoading && leadTypeField && leadTypeField.type !== "selection" && leadTypeField.type !== "many2one" && (
+      {!leadTypeLoading && leadTypeField && !leadTypeIsSelection && !leadTypeIsMany2one && (
         <div style={S.row}>
           <label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label>
           <input

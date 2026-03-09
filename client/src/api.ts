@@ -393,6 +393,9 @@ export async function findOdooField(
 
   const labelTargets = (options.labels || []).map(normalizeFieldLabel).filter(Boolean);
   const candidateNames = new Set((options.nameCandidates || []).map((name) => String(name || "").trim()).filter(Boolean));
+  const normalizedCandidateNames = new Set(
+    (options.nameCandidates || []).map((name) => normalizeFieldLabel(String(name || ""))).filter(Boolean)
+  );
   const preferredTypes = new Set(options.preferredTypes || []);
   let best: { score: number; field: OdooFieldMeta } | null = null;
 
@@ -401,7 +404,7 @@ export async function findOdooField(
     const normalizedName = normalizeFieldLabel(name);
     let score = -1;
 
-    if (candidateNames.has(name)) score = 110;
+    if (candidateNames.has(name) || normalizedCandidateNames.has(normalizedName)) score = 110;
     else if (labelTargets.includes(normalizedLabel)) score = 100;
     else if (labelTargets.some((target) => normalizedLabel.includes(target) || target.includes(normalizedLabel))) score = 80;
     else if (labelTargets.some((target) => target.split(/\s+/).every((token) => normalizedLabel.includes(token)))) score = 70;
@@ -410,6 +413,8 @@ export async function findOdooField(
     if (score < 0) continue;
     if (preferredTypes.has(String(meta?.type || ""))) score += 5;
     if (labelTargets.some((target) => target.split(/\s+/).every((token) => normalizedName.includes(token)))) score += 2;
+    if (String(meta?.type || "") === "selection" && Array.isArray(meta?.selection) && meta.selection.length) score += 20;
+    if (String(meta?.type || "") === "many2one" && meta?.relation) score += 10;
 
     const field: OdooFieldMeta = {
       name,
