@@ -147,7 +147,7 @@ const styles: Record<string, React.CSSProperties> = {
     },
     metricRow: {
         display: "grid",
-        gridTemplateColumns: "minmax(120px, 160px) minmax(0, 1fr)",
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))",
         gap: "10px",
         alignItems: "stretch",
     },
@@ -207,8 +207,9 @@ const styles: Record<string, React.CSSProperties> = {
         padding: "8px 10px",
         display: "flex",
         gap: "8px",
-        alignItems: "center",
+        alignItems: "flex-start",
         background: "#FAFBFC",
+        flexWrap: "wrap",
     },
     recordType: {
         fontSize: "10px",
@@ -222,9 +223,8 @@ const styles: Record<string, React.CSSProperties> = {
         color: "#172B4D",
         fontWeight: 600,
         minWidth: 0,
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
+        whiteSpace: "normal",
+        wordBreak: "break-word",
     },
     moreHint: {
         fontSize: "11px",

@@ -91,9 +91,13 @@ function isCurrentEmail(link: LinkEntry, currentCtx: OutlookMessageContext): boo
   const currentItemId = String(currentCtx.itemId || "").trim();
   const currentConversationId = String(currentCtx.conversationId || "").trim();
   const currentMessageId = normalizeMessageId(currentCtx.internetMessageId);
+  const linkItemId = String(link.itemId || "").trim();
+  const linkMessageId = normalizeMessageId(link.internetMessageId);
+  const hasPreciseCurrentIdentity = Boolean(currentItemId || currentMessageId);
 
-  if (currentItemId && currentItemId === String(link.itemId || "").trim()) return true;
-  if (currentMessageId && currentMessageId === normalizeMessageId(link.internetMessageId)) return true;
+  if (currentItemId && linkItemId && currentItemId === linkItemId) return true;
+  if (currentMessageId && linkMessageId && currentMessageId === linkMessageId) return true;
+  if (hasPreciseCurrentIdentity) return false;
   if (currentConversationId && currentConversationId === String(link.conversationId || "").trim()) return true;
   return false;
 }
@@ -617,6 +621,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     gap: "12px",
+    flexWrap: "wrap",
     padding: "8px 12px",
     background: "#F4F5F7",
     borderBottom: "1px solid #DFE1E6",
@@ -630,6 +635,7 @@ const styles: Record<string, React.CSSProperties> = {
   viewSwitch: {
     display: "flex",
     gap: "6px",
+    flexWrap: "wrap",
   },
   switchBtn: {
     border: "1px solid #C1C7D0",
@@ -655,6 +661,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "12px",
     display: "grid",
     gap: "12px",
+    minWidth: 0,
   },
   manualShell: {
     display: "grid",
@@ -679,6 +686,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     gap: "8px",
     alignItems: "center",
+    flexWrap: "wrap",
   },
   pickerInput: {
     flex: 1,
@@ -748,6 +756,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "11px",
     fontWeight: 700,
     cursor: "pointer",
+    flexShrink: 0,
   },
   inlineGhostBtn: {
     border: "1px solid #C1C7D0",
@@ -761,6 +770,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     gap: "4px",
+    flexShrink: 0,
   },
   inlineLinkBtn: {
     border: "1px solid #DFE1E6",
@@ -774,6 +784,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     gap: "4px",
+    flexShrink: 0,
   },
   selectedHint: {
     fontSize: "11px",
@@ -789,9 +800,10 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "10px",
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: "12px",
     background: "#FAFBFC",
+    flexWrap: "wrap",
   },
   selectedRecordLabel: {
     fontSize: "10px",
@@ -804,6 +816,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "13px",
     fontWeight: 700,
     color: "#172B4D",
+    lineHeight: 1.4,
+    wordBreak: "break-word",
   },
   selectedRecordActions: {
     display: "flex",
@@ -834,12 +848,16 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     gap: "10px",
     alignItems: "flex-start",
+    flexWrap: "wrap",
   },
   emailCardTitle: {
     fontSize: "13px",
     fontWeight: 700,
     color: "#172B4D",
     lineHeight: 1.4,
+    minWidth: 0,
+    flex: "1 1 220px",
+    wordBreak: "break-word",
   },
   emailMetaRow: {
     display: "flex",

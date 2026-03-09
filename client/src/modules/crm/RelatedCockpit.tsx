@@ -126,7 +126,7 @@ const styles: Record<string, React.CSSProperties> = {
     },
     hero: {
         display: "grid",
-        gridTemplateColumns: "minmax(0, 1.6fr) minmax(220px, 0.9fr)",
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
         gap: "12px",
         alignItems: "stretch",
     },
@@ -137,6 +137,7 @@ const styles: Record<string, React.CSSProperties> = {
         padding: "14px",
         display: "grid",
         gap: "8px",
+        minWidth: 0,
     },
     kicker: {
         fontSize: "10px",
@@ -165,6 +166,7 @@ const styles: Record<string, React.CSSProperties> = {
         display: "grid",
         gap: "6px",
         alignContent: "start",
+        minWidth: 0,
     },
     heroLabel: {
         fontSize: "10px",
@@ -225,8 +227,7 @@ const styles: Record<string, React.CSSProperties> = {
     recordName: {
         fontSize: "12px",
         color: "#172B4D",
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
+        whiteSpace: "normal",
+        wordBreak: "break-word",
     },
 };
