@@ -5,7 +5,7 @@ import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
 
-export type CockpitTab = "ai" | "crm" | "files" | "settings";
+export type CockpitTab = "ai" | "crm" | "related" | "files" | "settings";
 
 interface GeminiStatusDetails {
     requested?: string;

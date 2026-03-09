@@ -6,6 +6,7 @@ import { GlobalHeader } from "./GlobalHeader";
 // Modules
 import { AiCockpit } from "../../modules/ai/AiCockpit";
 import { CrmCockpit } from "../../modules/crm/CrmCockpit";
+import { RelatedCockpit } from "../../modules/crm/RelatedCockpit";
 import { FileCockpit } from "../../modules/files/FileCockpit";
 import { SettingsPanel } from "../../ui/SettingsPanel";
 
@@ -49,6 +50,7 @@ function ShellContent() {
             }}>
                 {tab === "ai" && <AiCockpit />}
                 {tab === "crm" && <CrmCockpit />}
+                {tab === "related" && <RelatedCockpit />}
                 {tab === "files" && <FileCockpit />}
                 {tab === "settings" && <SettingsPanel />}
             </main>

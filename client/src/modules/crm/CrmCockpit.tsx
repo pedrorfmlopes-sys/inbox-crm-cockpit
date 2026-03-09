@@ -3,7 +3,7 @@ import { useCockpit } from "@/components/shell/CockpitProvider";
 import { openCockpitDialog, getEmailBodyText, getOutlookContactSuggestionByEmail, OutlookContactSuggestion } from "../../office";
 import * as Icons from "../../ui/icons";
 import { ContactInsight } from "./ContactInsight";
-import { RelatedEmailsPanel } from "./RelatedEmailsPanel";
+import { RelatedEmailsSummaryCard } from "./RelatedEmailsSummaryCard";
 import { OdooCardSkeleton, Skeleton } from "../../ui/SkeletonLoader";
 import { PanelState } from "../../ui/PanelState";
 import { aiExtractAnchors, aiGenerate, createOrUpdatePartner, getOdooAutoLoginUrl, getPartnerByEmail, linkEmailToRecord, searchCompanies, searchOdoo } from "../../api";
@@ -194,7 +194,7 @@ function extractPhonesFromText(text: string): string[] {
 }
 
 export const CrmCockpit: React.FC = () => {
-    const { ctx, bodyText, attachments, meta, links, msg, refreshLinks, setMsg, isLoading: isContextLoading, settings } = useCockpit() as any;
+    const { ctx, bodyText, attachments, meta, links, msg, refreshLinks, setMsg, isLoading: isContextLoading, settings, setTab } = useCockpit() as any;
 
     const customModels = settings ? {
         openaiModelFast: settings.openaiModelFast,
@@ -861,13 +861,10 @@ export const CrmCockpit: React.FC = () => {
                     )}
                 </div>
 
-                <RelatedEmailsPanel
+                <RelatedEmailsSummaryCard
                     currentCtx={ctx}
                     currentLinks={links}
-                    meta={meta}
-                    settings={settings}
-                    onEditRecord={(model, recordId) => openDialog("edit", { model, recordId: String(recordId) })}
-                    onStatus={(message) => setMsg(message)}
+                    onOpenExplorer={() => setTab("related")}
                 />
             </div>
 
