@@ -557,6 +557,7 @@ export default function DialogApp() {
     return (m as Entity) || "project.task";
   });
   const [status, setStatus] = useState<string | null>(null);
+  const [apiReady, setApiReady] = useState(false);
 
   const [fullBody, setFullBody] = useState("");
   const [emailAtts, setEmailAtts] = useState<any[]>([]);
@@ -632,6 +633,8 @@ export default function DialogApp() {
         }
       } catch (e: any) {
         setStatus(`API/Proxy falhou: ${e?.message || e}`);
+      } finally {
+        setApiReady(true);
       }
 
       if (ctx.subject || ctx.fromEmail || ctx.conversationId) return;
@@ -748,6 +751,7 @@ export default function DialogApp() {
               emailAtts={emailAtts}
               onStatus={setStatus}
               fromEmail={ctx.fromEmail}
+              apiReady={apiReady}
             />
           )}
           {mode !== "add" && entity === "project.project" && (
@@ -759,6 +763,7 @@ export default function DialogApp() {
               emailAtts={emailAtts}
               onStatus={setStatus}
               fromEmail={ctx.fromEmail}
+              apiReady={apiReady}
             />
           )}
           {mode !== "add" && entity === "crm.lead" && (
@@ -1327,7 +1332,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
   );
 }
 
-function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail }: any) {
+function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail, apiReady }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [contactName, setContactName] = useState(ctx.fromName || "");
   const [email, setEmail] = useState(ctx.fromEmail || "");
@@ -1378,9 +1383,11 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
 
   useEffect(() => {
+    if (!apiReady) return;
     let alive = true;
     (async () => {
       try {
+        setLeadTypeLoading(true);
         const field = await resolveLeadTypeField();
         if (!alive) return;
         setLeadTypeField(field);
@@ -1393,9 +1400,10 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
     return () => {
       alive = false;
     };
-  }, []);
+  }, [apiReady]);
 
   useEffect(() => {
+    if (!apiReady) return;
     if (mode !== "edit" || !editId) return;
     (async () => {
       try {
@@ -1438,7 +1446,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
         onStatus(e?.message ?? String(e));
       }
     })();
-  }, [mode, editId, leadTypeField]);
+  }, [apiReady, mode, editId, leadTypeField]);
 
   async function save() {
     try {
