@@ -1344,6 +1344,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   const [description, setDescription] = useState("");
   const [leadTypeField, setLeadTypeField] = useState<OdooFieldMeta | null>(null);
   const [leadTypeLoading, setLeadTypeLoading] = useState(true);
+  const [leadTypeError, setLeadTypeError] = useState<string | null>(null);
   const [leadTypeValue, setLeadTypeValue] = useState("");
   const leadTypeOptions = useMemo(() => {
     return Array.isArray(leadTypeField?.selection) ? leadTypeField.selection : [];
@@ -1361,11 +1362,16 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
     (async () => {
       try {
         setLeadTypeLoading(true);
+        setLeadTypeError(null);
+        setLeadTypeField(null);
         const field = await getLeadTypeFieldMeta();
         if (!alive) return;
         setLeadTypeField(field);
-      } catch {
-        if (alive) setLeadTypeField(null);
+      } catch (error: any) {
+        if (alive) {
+          setLeadTypeField(null);
+          setLeadTypeError(error?.message || "Tipo de Lead indisponivel");
+        }
       } finally {
         if (alive) setLeadTypeLoading(false);
       }
@@ -1536,7 +1542,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         <div style={S.row}>
           <label style={S.lab}>TIPO DE LEAD</label>
           <select style={S.sel} value="" disabled>
-            <option value="">Tipo de Lead indisponível</option>
+            <option value="">{leadTypeError || "Tipo de Lead indisponível"}</option>
           </select>
         </div>
       )}
