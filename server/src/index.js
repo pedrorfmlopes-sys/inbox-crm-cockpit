@@ -10,7 +10,17 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 import express from "express";
 import cors from "cors";
 import { odooClientFromEnv } from "./odoo.js";
-import { addLink, listLinksByConversation, listLinksByRecord } from "./linkStore.js";
+import {
+  addEmailToGroup,
+  addLink,
+  createCustomGroup,
+  getRelatedEmails,
+  listCustomGroups,
+  listEmailsByGroup,
+  listLinksByConversation,
+  listLinksByRecord,
+  registerRelevantEmail,
+} from "./linkStore.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
 import { createLearningRouter } from "./routes/learningRoutes.js";
 import fs from "fs";
@@ -827,8 +837,9 @@ app.get("/api/links", async (req, res) => {
   try {
     const conversationId = String(req.query.conversationId || "").trim();
     const internetMessageId = String(req.query.internetMessageId || "").trim();
-    if (!conversationId && !internetMessageId) return res.json({ links: [] });
-    const links = await listLinksByConversation(conversationId, internetMessageId);
+    const itemId = String(req.query.itemId || "").trim();
+    if (!conversationId && !internetMessageId && !itemId) return res.json({ links: [] });
+    const links = await listLinksByConversation(conversationId, internetMessageId, itemId);
     return res.json({ links });
   } catch (e) {
     console.error(e);
@@ -847,6 +858,73 @@ app.get("/api/links/by-record", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "odoo_endpoint_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/email", async (req, res) => {
+  try {
+    const email = await registerRelevantEmail(req.body || {});
+    return res.json({ ok: true, email });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "email_registration_failed", details: String(e?.message || e) });
+  }
+});
+
+app.get("/api/links/related", async (req, res) => {
+  try {
+    const related = await getRelatedEmails({
+      conversationId: req.query.conversationId,
+      internetMessageId: req.query.internetMessageId,
+      itemId: req.query.itemId,
+      subject: req.query.subject,
+      fromEmail: req.query.fromEmail,
+      receivedAtIso: req.query.receivedAtIso,
+    });
+    return res.json({ ok: true, ...related });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "related_lookup_failed", details: String(e?.message || e) });
+  }
+});
+
+app.get("/api/links/groups", async (req, res) => {
+  try {
+    const groups = await listCustomGroups(String(req.query.q || ""));
+    return res.json({ ok: true, groups });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_lookup_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups", async (req, res) => {
+  try {
+    const group = await createCustomGroup(req.body || {});
+    return res.json({ ok: true, group });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_create_failed", details: String(e?.message || e) });
+  }
+});
+
+app.get("/api/links/groups/:groupId/emails", async (req, res) => {
+  try {
+    const emails = await listEmailsByGroup(req.params.groupId);
+    return res.json({ ok: true, emails });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_emails_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/:groupId/emails", async (req, res) => {
+  try {
+    const result = await addEmailToGroup(req.params.groupId, req.body || {});
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_link_failed", details: String(e?.message || e) });
   }
 });
 

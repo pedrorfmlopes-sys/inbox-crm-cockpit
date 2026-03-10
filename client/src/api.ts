@@ -103,6 +103,8 @@ export type LinkEntry = {
   model: string;
   itemId?: string;
   emailWebLink?: string;
+  messageDateIso?: string;
+  sentAtIso?: string;
   receivedAtIso?: string;
   subject?: string;
   fromEmail?: string;
@@ -124,6 +126,52 @@ export type LinkEntry = {
 
   createdAt?: string;
   updatedAt?: string;
+};
+
+export type RelevantEmailPayload = {
+  itemId?: string;
+  internetMessageId?: string;
+  conversationId?: string;
+  subject?: string;
+  fromEmail?: string;
+  fromName?: string;
+  emailWebLink?: string;
+  messageDateIso?: string;
+  sentAtIso?: string;
+  receivedAtIso?: string;
+};
+
+export type LinkGroupEntry = {
+  id: string;
+  kind: "custom" | "conversation" | string;
+  name: string;
+  description?: string;
+  conversationId?: string;
+  memberCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type RelatedReason =
+  | {
+    kind: "entity";
+    model: string;
+    recordId: number;
+    recordName?: string;
+  }
+  | {
+    kind: "group" | "conversation";
+    groupId: string;
+    groupName?: string;
+    conversationId?: string;
+  };
+
+export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordName" | "resId" | "name" | "title"> & {
+  relatedRecords?: Array<{ model: string; recordId: number; recordName: string }>;
+  relatedGroups?: Array<{ id: string; name?: string; kind?: string }>;
+  relatedReasons?: RelatedReason[];
+  groupId?: string;
+  groupName?: string;
 };
 
 export type LinkPayload = {
@@ -265,28 +313,55 @@ export async function odooPing(): Promise<{ ok: boolean }> {
 }
 
 // -------- Links --------
-export async function getLinks(conversationId?: string, internetMessageId?: string): Promise<LinkEntry[]> {
+function normalizeLinkEntry(link: any): LinkEntry {
+  return {
+    ...link,
+    resId: link?.resId ?? link?.recordId,
+    recordId: link?.recordId ?? link?.resId,
+    name: link?.name ?? link?.recordName ?? link?.title,
+    title: link?.title ?? link?.recordName ?? link?.name ?? link?.subject ?? link?.model,
+    url: link?.url ?? link?.emailWebLink,
+  };
+}
+
+function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
+  return {
+    ...normalizeLinkEntry(entry),
+    relatedRecords: Array.isArray(entry?.relatedRecords)
+      ? entry.relatedRecords.map((record: any) => ({
+        model: String(record?.model || "").trim(),
+        recordId: Number(record?.recordId || 0),
+        recordName: String(record?.recordName || "").trim(),
+      })).filter((record: any) => record.model && record.recordId)
+      : [],
+    relatedGroups: Array.isArray(entry?.relatedGroups)
+      ? entry.relatedGroups.map((group: any) => ({
+        id: String(group?.id || "").trim(),
+        name: String(group?.name || "").trim(),
+        kind: String(group?.kind || "").trim(),
+      })).filter((group: any) => group.id)
+      : [],
+    relatedReasons: Array.isArray(entry?.relatedReasons) ? entry.relatedReasons : [],
+  };
+}
+
+export async function getLinks(conversationId?: string, internetMessageId?: string, itemId?: string): Promise<LinkEntry[]> {
   const params = new URLSearchParams();
   const normalizedConversationId = String(conversationId || "").trim();
   const normalizedInternetMessageId = String(internetMessageId || "")
     .trim()
     .toLowerCase()
     .replace(/[<>\s]/g, "");
+  const normalizedItemId = String(itemId || "").trim();
   const lookupKey = normalizedConversationId || normalizedInternetMessageId
     ? `${normalizedConversationId}||${normalizedInternetMessageId}`
     : "";
   if (lookupKey) params.set("conversationId", lookupKey);
   if (normalizedInternetMessageId) params.set("internetMessageId", normalizedInternetMessageId);
+  if (normalizedItemId) params.set("itemId", normalizedItemId);
   const r: any = await requestJSON(`/api/links?${params.toString()}`);
   const links: LinkEntry[] = r?.links ?? r ?? [];
-  return (Array.isArray(links) ? links : []).map((l: any) => ({
-    ...l,
-    resId: l.resId ?? l.recordId,
-    recordId: l.recordId ?? l.resId,
-    name: l.name ?? l.recordName ?? l.title,
-    title: l.title ?? l.recordName ?? l.name ?? l.model,
-    url: l.url ?? l.emailWebLink,
-  }));
+  return (Array.isArray(links) ? links : []).map(normalizeLinkEntry);
 }
 
 export async function getLinksByRecord(model: string, recordId: number): Promise<LinkEntry[]> {
@@ -295,14 +370,7 @@ export async function getLinksByRecord(model: string, recordId: number): Promise
   params.set("recordId", String(Number(recordId || 0)));
   const r: any = await requestJSON(`/api/links/by-record?${params.toString()}`);
   const links: LinkEntry[] = r?.links ?? r ?? [];
-  return (Array.isArray(links) ? links : []).map((l: any) => ({
-    ...l,
-    resId: l.resId ?? l.recordId,
-    recordId: l.recordId ?? l.resId,
-    name: l.name ?? l.recordName ?? l.title,
-    title: l.title ?? l.recordName ?? l.name ?? l.subject ?? l.model,
-    url: l.url ?? l.emailWebLink,
-  }));
+  return (Array.isArray(links) ? links : []).map(normalizeLinkEntry);
 }
 
 export async function linkEmailToRecord(payload: LinkPayload): Promise<{ ok: boolean; link?: LinkEntry }> {
@@ -312,6 +380,65 @@ export async function linkEmailToRecord(payload: LinkPayload): Promise<{ ok: boo
     // fallback for older servers
     return await requestJSON(`/api/odoo/link-email`, { method: "POST", body: JSON.stringify(payload) });
   }
+}
+
+export async function registerRelevantEmail(payload: RelevantEmailPayload): Promise<RelevantEmailPayload & { id?: string; groups?: LinkGroupEntry[] }> {
+  const response: any = await requestJSON(`/api/links/email`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return response?.email ?? response ?? {};
+}
+
+export async function getRelatedEmailContext(payload: RelevantEmailPayload): Promise<{
+  email: RelatedEmailEntry | null;
+  emails: RelatedEmailEntry[];
+  groups: LinkGroupEntry[];
+}> {
+  const params = new URLSearchParams();
+  if (payload.conversationId) params.set("conversationId", String(payload.conversationId).trim());
+  if (payload.internetMessageId) params.set("internetMessageId", String(payload.internetMessageId).trim());
+  if (payload.itemId) params.set("itemId", String(payload.itemId).trim());
+  if (payload.subject) params.set("subject", String(payload.subject).trim());
+  if (payload.fromEmail) params.set("fromEmail", String(payload.fromEmail).trim());
+  if (payload.receivedAtIso) params.set("receivedAtIso", String(payload.receivedAtIso).trim());
+  const response: any = await requestJSON(`/api/links/related?${params.toString()}`);
+  return {
+    email: response?.email ? normalizeRelatedEmailEntry(response.email) : null,
+    emails: Array.isArray(response?.emails) ? response.emails.map(normalizeRelatedEmailEntry) : [],
+    groups: Array.isArray(response?.groups) ? response.groups : [],
+  };
+}
+
+export async function listLinkGroups(query = ""): Promise<LinkGroupEntry[]> {
+  const params = new URLSearchParams();
+  if (String(query || "").trim()) params.set("q", String(query || "").trim());
+  const response: any = await requestJSON(`/api/links/groups?${params.toString()}`);
+  return Array.isArray(response?.groups) ? response.groups : [];
+}
+
+export async function createLinkGroup(payload: { name: string; description?: string }): Promise<LinkGroupEntry> {
+  const response: any = await requestJSON(`/api/links/groups`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return response?.group ?? response;
+}
+
+export async function addEmailToLinkGroup(groupId: string, payload: RelevantEmailPayload): Promise<{ group: LinkGroupEntry; email: RelatedEmailEntry | null }> {
+  const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/emails`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return {
+    group: response?.group ?? response,
+    email: response?.email ? normalizeRelatedEmailEntry(response.email) : null,
+  };
+}
+
+export async function getGroupEmails(groupId: string): Promise<RelatedEmailEntry[]> {
+  const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/emails`);
+  return Array.isArray(response?.emails) ? response.emails.map(normalizeRelatedEmailEntry) : [];
 }
 
 

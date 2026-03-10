@@ -66,18 +66,18 @@ export const RelatedCockpit: React.FC = () => {
                     <div style={styles.kicker}>Contexto</div>
                     <h2 style={styles.title}>Emails relacionados</h2>
                     <p style={styles.description}>
-                        Explora conversas ligadas ao mesmo processo Odoo a partir do email atual
-                        ou pesquisando manualmente por contacto, lead, tarefa, projeto ou ticket.
+                        Explora contexto Outlook, grupos manuais e processos Odoo num painel unico e compacto.
                     </p>
                 </div>
 
-                <div style={styles.heroCard}>
-                    <div style={styles.heroLabel}>Email atual</div>
-                    <div style={styles.heroSubject}>{ctx.subject || "Nenhum email selecionado"}</div>
-                    <div style={styles.heroMeta}>
-                        {linkedRecords.length
-                            ? `${linkedRecords.length} registo${linkedRecords.length === 1 ? "" : "s"} ligado${linkedRecords.length === 1 ? "" : "s"} agora`
-                            : "Podes usar o modo Explorar mesmo sem contexto atual."}
+                <div style={styles.heroStats}>
+                    <div style={styles.metricChip}>
+                        <span style={styles.metricValue}>{linkedRecords.length}</span>
+                        <span style={styles.metricLabel}>registos</span>
+                    </div>
+                    <div style={styles.subjectChip}>
+                        <div style={styles.heroLabel}>Email atual</div>
+                        <div style={styles.heroSubject}>{ctx.subject || "Nenhum email selecionado"}</div>
                     </div>
                 </div>
             </section>
@@ -126,17 +126,15 @@ const styles: Record<string, React.CSSProperties> = {
     },
     hero: {
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
-        gap: "12px",
-        alignItems: "stretch",
-    },
-    heroCopy: {
+        gap: "10px",
         border: "1px solid #DFE1E6",
         borderRadius: "8px",
         background: "#FFFFFF",
-        padding: "14px",
+        padding: "12px",
+    },
+    heroCopy: {
         display: "grid",
-        gap: "8px",
+        gap: "6px",
         minWidth: 0,
     },
     kicker: {
@@ -148,24 +146,50 @@ const styles: Record<string, React.CSSProperties> = {
     },
     title: {
         margin: 0,
-        fontSize: "18px",
+        fontSize: "17px",
         lineHeight: 1.2,
         color: "#172B4D",
     },
     description: {
         margin: 0,
-        fontSize: "13px",
+        fontSize: "12px",
         lineHeight: 1.5,
         color: "#42526E",
     },
-    heroCard: {
+    heroStats: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 140px), 1fr))",
+        gap: "8px",
+        minWidth: 0,
+    },
+    metricChip: {
+        border: "1px solid #DFE1E6",
+        borderRadius: "999px",
+        background: "#FAFBFC",
+        padding: "6px 10px",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        width: "fit-content",
+        maxWidth: "100%",
+    },
+    metricValue: {
+        fontSize: "14px",
+        fontWeight: 800,
+        color: "#172B4D",
+    },
+    metricLabel: {
+        fontSize: "10px",
+        color: "#6B778C",
+        textTransform: "uppercase",
+    },
+    subjectChip: {
         border: "1px solid #DFE1E6",
         borderRadius: "8px",
         background: "#FAFBFC",
-        padding: "14px",
+        padding: "8px 10px",
         display: "grid",
-        gap: "6px",
-        alignContent: "start",
+        gap: "4px",
         minWidth: 0,
     },
     heroLabel: {
@@ -176,24 +200,19 @@ const styles: Record<string, React.CSSProperties> = {
         letterSpacing: "0.06em",
     },
     heroSubject: {
-        fontSize: "14px",
+        fontSize: "12px",
         fontWeight: 700,
         color: "#172B4D",
         lineHeight: 1.4,
         wordBreak: "break-word",
     },
-    heroMeta: {
-        fontSize: "12px",
-        color: "#42526E",
-        lineHeight: 1.5,
-    },
     contextSummary: {
         border: "1px solid #DFE1E6",
         borderRadius: "8px",
         background: "#FFFFFF",
-        padding: "12px",
+        padding: "10px",
         display: "grid",
-        gap: "10px",
+        gap: "8px",
     },
     summaryTitle: {
         fontSize: "11px",

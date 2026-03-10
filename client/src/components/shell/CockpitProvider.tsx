@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
 import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookMessageContext } from "@/office";
-import { getLinks, getOdooMeta, login as apiLogin, checkAuth as apiCheckAuth, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
+import { getLinks, getOdooMeta, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
@@ -211,7 +211,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         });
 
         for (const candidate of lookupCandidates) {
-            const candidateLinks = await getLinks(candidate.conversationId, candidate.internetMessageId).catch(() => []);
+            const candidateLinks = await getLinks(candidate.conversationId, candidate.internetMessageId, candidate.itemId).catch(() => []);
             if (candidateLinks.length) {
                 return { links: candidateLinks, resolvedCtx: messageCtx };
             }
@@ -245,7 +245,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         });
 
         for (const candidate of refreshedCandidates) {
-            const candidateLinks = await getLinks(candidate.conversationId, candidate.internetMessageId).catch(() => []);
+            const candidateLinks = await getLinks(candidate.conversationId, candidate.internetMessageId, candidate.itemId).catch(() => []);
             if (candidateLinks.length) {
                 return {
                     links: candidateLinks,
@@ -330,6 +330,18 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setCtx(c);
             setBodyText(b);
             setAttachments(atts || []);
+            void registerRelevantEmail({
+                itemId: c.itemId || "",
+                internetMessageId: c.internetMessageId || "",
+                conversationId: c.conversationId || "",
+                subject: c.subject || "",
+                fromEmail: c.fromEmail || "",
+                fromName: c.fromName || "",
+                receivedAtIso: c.receivedDateTimeIso || "",
+                messageDateIso: c.receivedDateTimeIso || "",
+            }).catch(() => {
+                // best-effort central registry only
+            });
 
             if (c.conversationId) {
                 setAiCache(prev => {
