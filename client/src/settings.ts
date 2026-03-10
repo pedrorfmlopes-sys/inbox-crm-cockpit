@@ -217,12 +217,55 @@ function hasOffice(): boolean {
   return typeof (globalThis as any).Office !== "undefined";
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForOffice(maxWaitMs = 5000): Promise<any | null> {
+  const startedAt = Date.now();
+  while (true) {
+    const OfficeAny = (globalThis as any).Office;
+    if (OfficeAny) return OfficeAny;
+    if (Date.now() - startedAt >= maxWaitMs) return null;
+    await sleep(50);
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  const result = await Promise.race([promise, timeoutPromise]);
+  if (timer) clearTimeout(timer);
+  return result;
+}
+
 async function officeReady(): Promise<void> {
   if (!hasOffice()) return;
-  await new Promise<void>((resolve) => {
-    // @ts-ignore Office é global (office.js)
-    Office.onReady(() => resolve());
+  const OfficeAny = await waitForOffice(5000);
+  if (!OfficeAny) return;
+  if (OfficeAny.context?.roamingSettings) return;
+
+  const readyPromise = new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    try {
+      const maybePromise = OfficeAny.onReady?.(() => finish());
+      if (maybePromise?.then) {
+        maybePromise.then(() => finish()).catch(() => finish());
+      }
+    } catch {
+      finish();
+    }
   });
+
+  await withTimeout(readyPromise, 5000, undefined);
 }
 
 function getRoamingSettings(): any | null {
