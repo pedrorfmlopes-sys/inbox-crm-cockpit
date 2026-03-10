@@ -18,6 +18,14 @@ function shouldRetryOdooWithSavedSettings(message: string): boolean {
   return /ODOO_CONFIG_MISSING|Odoo configuration incomplete|Sess[aã]o expirada|Session expired|HTTP 401/i.test(message);
 }
 
+function getJsonErrorMessage(body: any): string | null {
+  if (body == null || typeof body !== "object") return null;
+  if (body.ok === false || body.error || body.message || body.details) {
+    return String(body.details || body.message || body.error || "Unknown Odoo error");
+  }
+  return null;
+}
+
 async function bootstrapSessionFromSavedSettings(forceRefresh = false): Promise<string | null> {
   if (!forceRefresh && _sessionToken) return _sessionToken;
   if (_sessionBootstrapPromise) return _sessionBootstrapPromise;
@@ -240,6 +248,7 @@ async function requestJSON<T = Json>(path: string, init?: RequestInit, allowOdoo
 
     const ct = (res.headers.get("content-type") || "").toLowerCase();
     const body = ct.includes("application/json") ? await res.json() : await res.text();
+    const bodyErrorMessage = typeof body === "string" ? null : getJsonErrorMessage(body);
 
     if (!res.ok) {
       const msg =
@@ -255,6 +264,17 @@ async function requestJSON<T = Json>(path: string, init?: RequestInit, allowOdoo
       }
       throw new Error(`HTTP ${res.status}: ${msg}`);
     }
+
+    if (bodyErrorMessage) {
+      if (allowOdooRetry && isOdooApiPath(path) && shouldRetryOdooWithSavedSettings(bodyErrorMessage)) {
+        const renewedToken = await bootstrapSessionFromSavedSettings(true).catch(() => null);
+        if (renewedToken) {
+          return await requestJSON<T>(path, init, false);
+        }
+      }
+      throw new Error(bodyErrorMessage);
+    }
+
     return body as T;
   } finally {
     clearTimeout(id);
