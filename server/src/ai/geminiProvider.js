@@ -4,10 +4,17 @@ import path from "path";
 // Uses native fetch to call Google Generative AI API (Gemini).
 // Supports multimodal inputs (text + files).
 
-const GEMINI_ALLOWLIST = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-exp", "gemini-2.0-pro-exp"];
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_ALLOWLIST = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-exp",
+    "gemini-2.0-pro-exp",
+];
 
 function sanitizeGeminiModel(m) {
-    if (!m) return "gemini-1.5-flash";
+    if (!m) return DEFAULT_GEMINI_MODEL;
     // Remove anything in parentheses (e.g. "gemini-2.0-flash (NextGen)" -> "gemini-2.0-flash")
     let clean = String(m).split("(")[0].trim();
     // Also take only first word if spaces exist outside parentheses
@@ -17,12 +24,12 @@ function sanitizeGeminiModel(m) {
     // Basic prefix check if it starts with gemini- but not in allowlist
     if (clean.startsWith("gemini-")) return clean;
 
-    return "gemini-1.5-flash";
+    return DEFAULT_GEMINI_MODEL;
 }
 
 export async function geminiCreateResponse({
     apiKey,
-    model: requestedModel = "gemini-1.5-flash",
+    model: requestedModel = DEFAULT_GEMINI_MODEL,
     instructions,
     input,
     files = [],
@@ -98,9 +105,9 @@ export async function geminiCreateResponse({
         let data = await res.json();
 
         // Specific Fallback for 404 (Model not found)
-        if (res.status === 404 && effectiveModel !== "gemini-1.5-flash") {
+        if (res.status === 404 && effectiveModel !== DEFAULT_GEMINI_MODEL) {
             const oldModel = effectiveModel;
-            effectiveModel = "gemini-1.5-flash";
+            effectiveModel = DEFAULT_GEMINI_MODEL;
             url = buildUrl(effectiveModel);
             console.log(`[ai] Gemini 404 for ${oldModel}. Falling back to ${effectiveModel}...`);
             fs.appendFileSync(logPath, `[${new Date().toISOString()}] 404 Fallback triggered. New URL: ${url.replace(apiKey, 'REDACTED')}\n`);

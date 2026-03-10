@@ -26,9 +26,9 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL_FAST
-        value: gemini-1.5-flash
+        value: gemini-2.5-flash
       - key: GEMINI_MODEL_QUALITY
-        value: gemini-1.5-pro
+        value: gemini-2.5-pro
       - key: ODOO_URL
         sync: false
       - key: ODOO_DB

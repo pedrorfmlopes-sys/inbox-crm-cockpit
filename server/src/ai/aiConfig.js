@@ -1,8 +1,8 @@
 // server/src/ai/aiConfig.js
 export function getAiConfig() {
   const provider = (process.env.AI_PROVIDER || "openai").toLowerCase();
-  const geminiModelFast = process.env.GEMINI_MODEL_FAST || "gemini-1.5-flash";
-  const geminiModelQuality = process.env.GEMINI_MODEL_QUALITY || "gemini-1.5-pro";
+  const geminiModelFast = process.env.GEMINI_MODEL_FAST || "gemini-2.5-flash";
+  const geminiModelQuality = process.env.GEMINI_MODEL_QUALITY || "gemini-2.5-pro";
 
   return {
     enabled: String(process.env.AI_ENABLED || "").trim() === "1",
