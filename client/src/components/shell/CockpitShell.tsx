@@ -2,6 +2,8 @@ import React from "react";
 import { CockpitProvider, useCockpit } from "./CockpitProvider";
 import { Navigation } from "./Navigation";
 import { GlobalHeader } from "./GlobalHeader";
+import { StartupSplash } from "./StartupSplash";
+import { PanelState } from "@/ui/PanelState";
 
 // Modules
 import { AiCockpit } from "../../modules/ai/AiCockpit";
@@ -15,18 +17,19 @@ import { LoginCockpit } from "../../modules/auth/LoginCockpit";
 function ShellContent() {
     const cockpit = useCockpit();
     if (!cockpit) return null;
-    const { tab, isAuthenticated, isLoading } = cockpit as any;
+    const { tab, isAuthenticated, isLoading, startupChecks, startupNotice, dismissStartupNotice } = cockpit as any;
 
     if (isLoading) {
-        return (
-            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100%" }}>
-                <div style={{ color: "var(--iccc-text-muted)" }}>A carregar...</div>
-            </div>
-        );
+        return <StartupSplash checks={startupChecks} />;
     }
 
     if (!isAuthenticated) {
-        return <LoginCockpit />;
+        return (
+            <div style={S.gateRoot}>
+                {startupNotice ? <StartupNoticeBanner notice={startupNotice} onDismiss={dismissStartupNotice} /> : null}
+                <LoginCockpit />
+            </div>
+        );
     }
 
     return (
@@ -48,6 +51,7 @@ function ShellContent() {
                 flex: "1 1 0%",
                 minHeight: 0
             }}>
+                {startupNotice ? <StartupNoticeBanner notice={startupNotice} onDismiss={dismissStartupNotice} /> : null}
                 {tab === "ai" && <AiCockpit />}
                 {tab === "crm" && <CrmCockpit />}
                 {tab === "related" && <RelatedCockpit />}
@@ -71,3 +75,50 @@ export function CockpitShell() {
         </CockpitProvider>
     );
 }
+
+function StartupNoticeBanner({
+    notice,
+    onDismiss,
+}: {
+    notice: { tone: "info" | "error"; title: string; details: string[] };
+    onDismiss: () => void;
+}) {
+    return (
+        <div style={S.noticeWrap}>
+            <PanelState
+                tone={notice.tone === "error" ? "error" : "info"}
+                compact
+                title={notice.title}
+                description={notice.details.join(" ")}
+            />
+            <button type="button" style={S.noticeDismiss} onClick={onDismiss}>
+                Fechar
+            </button>
+        </div>
+    );
+}
+
+const S: Record<string, React.CSSProperties> = {
+    gateRoot: {
+        display: "grid",
+        alignContent: "start",
+        minHeight: "100%",
+        paddingTop: 12,
+        background: "var(--iccc-bg)",
+    },
+    noticeWrap: {
+        display: "grid",
+        gap: 8,
+        marginBottom: 10,
+    },
+    noticeDismiss: {
+        justifySelf: "end",
+        border: "none",
+        background: "transparent",
+        color: "var(--iccc-text-muted)",
+        fontSize: 11,
+        fontWeight: 700,
+        cursor: "pointer",
+        padding: "0 4px",
+    },
+};

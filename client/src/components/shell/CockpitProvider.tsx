@@ -6,6 +6,30 @@ import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
 
 export type CockpitTab = "ai" | "crm" | "related" | "files" | "settings";
+export type StartupCheckStatus = "pending" | "running" | "success" | "warning" | "error";
+
+type StartupCheckId = "settings" | "session" | "email" | "links" | "services";
+
+export interface StartupCheck {
+    id: StartupCheckId;
+    label: string;
+    detail: string;
+    status: StartupCheckStatus;
+}
+
+export interface StartupNotice {
+    tone: "info" | "error";
+    title: string;
+    details: string[];
+}
+
+export interface ConnectivityCheckResult {
+    odooOk: boolean;
+    openaiOk: boolean;
+    geminiOk: boolean;
+    summary: string;
+    failures: string[];
+}
 
 interface GeminiStatusDetails {
     requested?: string;
@@ -56,10 +80,13 @@ export interface CockpitContextType {
     granularStatus: { odoo: boolean | null; openai: boolean | null; gemini: boolean | null };
     granularStatusDetails: GranularStatusDetails;
     granularStatusString: string;
-    checkConnectivity: (customModels?: any) => Promise<void>;
+    checkConnectivity: (customModels?: any) => Promise<ConnectivityCheckResult>;
     login: (credentials: any) => Promise<void>;
     logout: () => void;
     settings: CockpitSettingsV1 | null;
+    startupChecks: StartupCheck[];
+    startupNotice: StartupNotice | null;
+    dismissStartupNotice: () => void;
 }
 
 // Export the context so it can be checked or used elsewhere if needed (rare)
@@ -73,6 +100,17 @@ const GK = "__ICCC_COCKPIT_CONTEXT_v1__";
 const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
 const LINKS_CACHE_MESSAGE_PREFIX = "iccc_links_cache_msg_v1:";
 const LINKS_CACHE_ITEM_PREFIX = "iccc_links_cache_item_v1:";
+const STARTUP_CHECK_BLUEPRINT: Array<{ id: StartupCheckId; label: string; detail: string }> = [
+    { id: "settings", label: "Definições", detail: "A carregar preferências e sessão guardada..." },
+    { id: "session", label: "Odoo", detail: "A validar ligação e sessão Odoo..." },
+    { id: "email", label: "Email atual", detail: "A ler contexto, corpo e anexos..." },
+    { id: "links", label: "Ligações", detail: "A sincronizar ligações e histórico relevante..." },
+    { id: "services", label: "Serviços", detail: "A testar Odoo e motores de IA..." },
+];
+
+function createStartupChecks(): StartupCheck[] {
+    return STARTUP_CHECK_BLUEPRINT.map((check) => ({ ...check, status: "pending" as StartupCheckStatus }));
+}
 
 if (!G[GK]) {
     G[GK] = createContext<CockpitContextType | undefined>(undefined);
@@ -91,6 +129,24 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState<"none" | "success" | "error">("none");
     const [settings, setSettings] = useState<CockpitSettingsV1 | null>(() => getCachedSettingsSnapshot());
+    const [startupChecks, setStartupChecks] = useState<StartupCheck[]>(() => createStartupChecks());
+    const [startupNoticeState, setStartupNoticeState] = useState<StartupNotice | null>(null);
+    const [startupNoticeDismissed, setStartupNoticeDismissed] = useState(false);
+
+    function resetStartupPreflight() {
+        setStartupChecks(createStartupChecks());
+        setStartupNoticeState(null);
+        setStartupNoticeDismissed(false);
+    }
+
+    function updateStartupCheck(id: StartupCheckId, patch: Partial<StartupCheck>) {
+        setStartupChecks((prev) => prev.map((check) => (check.id === id ? { ...check, ...patch, id } : check)));
+    }
+
+    function setStartupNotice(next: StartupNotice | null) {
+        setStartupNoticeState(next);
+        setStartupNoticeDismissed(false);
+    }
 
     function dedupeLinks(entries: LinkEntry[]): LinkEntry[] {
         const seen = new Set<string>();
@@ -269,14 +325,37 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (isLoadingInProgressRef.current) return;
         isLoadingInProgressRef.current = true;
         const reqId = ++ctxLoadSeqRef.current;
+        const startupIssues: Array<{ detail: string; severity: "warning" | "error" }> = [];
+        let startupNoticeHandled = false;
+        const noteStartupIssue = (detail: string, severity: "warning" | "error" = "warning") => {
+            startupIssues.push({ detail, severity });
+        };
         try {
             // Only show the full-screen loading spinner on the initial load.
             // Background refreshes (poll/item-changed) update silently.
-            if (reason === 'init') setIsLoading(true);
+            if (reason === "init") {
+                resetStartupPreflight();
+                setIsLoading(true);
+                updateStartupCheck("settings", { status: "running" });
+            }
 
             // 1. Check Auth first
             const s = await getSettings();
             setSettings(s);
+            if (reason === "init") {
+                updateStartupCheck("settings", {
+                    status: "success",
+                    detail: s?.odooUrl || s?.odooDb || s?.odooLogin
+                        ? "Definições guardadas carregadas."
+                        : "Sem definições guardadas. O arranque continua normalmente.",
+                });
+                updateStartupCheck("session", {
+                    status: "running",
+                    detail: s.odooSessionToken
+                        ? "A validar sessão Odoo guardada..."
+                        : "Sem sessão ativa. Vamos continuar e pedir login se for preciso.",
+                });
+            }
             let currentToken = s.odooSessionToken;
 
             if (currentToken) {
@@ -285,6 +364,12 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 if (authCheck.ok) {
                     setIsAuthenticated(true);
                     if (authCheck.meta) setMeta(authCheck.meta);
+                    if (reason === "init") {
+                        updateStartupCheck("session", {
+                            status: "success",
+                            detail: "Sessão Odoo restaurada com sucesso.",
+                        });
+                    }
                 } else {
                     // Session expired on server? Try auto-login if we have saved password
                     if (s.odooUrl && s.odooLogin && s.odooPassword) {
@@ -301,21 +386,59 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                                 setIsAuthenticated(true);
                                 setMeta(resp.meta);
                                 await saveSettings({ odooSessionToken: currentToken });
+                                if (reason === "init") {
+                                    updateStartupCheck("session", {
+                                        status: "success",
+                                        detail: "Sessão Odoo reaberta automaticamente.",
+                                    });
+                                }
                             } else {
                                 setIsAuthenticated(false);
                                 setApiSessionToken(null);
+                                if (reason === "init") {
+                                    noteStartupIssue("A sessão Odoo guardada expirou. A app abriu, mas vai pedir novo login.");
+                                    updateStartupCheck("session", {
+                                        status: "warning",
+                                        detail: "Sessão expirada. Login manual necessário.",
+                                    });
+                                }
                             }
                         } catch {
                             setIsAuthenticated(false);
                             setApiSessionToken(null);
+                            if (reason === "init") {
+                                noteStartupIssue("Não foi possível restaurar a sessão Odoo automaticamente.");
+                                updateStartupCheck("session", {
+                                    status: "warning",
+                                    detail: "Auto-login falhou. A app continua com acesso limitado.",
+                                });
+                            }
                         }
                     } else {
                         setIsAuthenticated(false);
                         setApiSessionToken(null);
+                        if (reason === "init") {
+                            noteStartupIssue("A sessão Odoo guardada já não é válida e não existem credenciais para auto-login.");
+                            updateStartupCheck("session", {
+                                status: "warning",
+                                detail: "Sessão inválida. Login manual necessário.",
+                            });
+                        }
                     }
                 }
+            } else if (reason === "init") {
+                updateStartupCheck("session", {
+                    status: "success",
+                    detail: "Sem sessão ativa. Podes autenticar-te manualmente quando quiseres.",
+                });
             }
 
+            if (reason === "init") {
+                updateStartupCheck("email", {
+                    status: "running",
+                    detail: "A ler o email atual e os anexos disponíveis...",
+                });
+            }
             const [c, b, atts] = await Promise.all([
                 getSelectedMessageContext(),
                 getEmailBodyText(),
@@ -330,6 +453,27 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setCtx(c);
             setBodyText(b);
             setAttachments(atts || []);
+            if (reason === "init") {
+                const hasEmailContext = Boolean(c.itemId || c.internetMessageId || c.conversationId || c.subject);
+                if (hasEmailContext) {
+                    updateStartupCheck("email", {
+                        status: "success",
+                        detail: c.subject
+                            ? `Email pronto: ${c.subject}`
+                            : "Contexto do email atual carregado.",
+                    });
+                } else {
+                    noteStartupIssue("Não foi possível identificar um email aberto. Algumas áreas podem abrir vazias.");
+                    updateStartupCheck("email", {
+                        status: "warning",
+                        detail: "Sem email aberto ou contexto Outlook incompleto.",
+                    });
+                }
+                updateStartupCheck("links", {
+                    status: "running",
+                    detail: "A sincronizar ligações persistidas e cache local...",
+                });
+            }
             void registerRelevantEmail({
                 itemId: c.itemId || "",
                 internetMessageId: c.internetMessageId || "",
@@ -362,33 +506,54 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (!c.conversationId && !c.internetMessageId) {
                 const cachedByItem = readCachedLinks(undefined, undefined, c.itemId);
                 setLinks(cachedByItem);
-                setIsLoading(false);
-                return;
-            }
-
-            setMsg(null);
-            const cachedLinks = readCachedLinks(c.conversationId, c.internetMessageId, c.itemId);
-            setLinks(cachedLinks);
-
-            try {
-                const { links: l, resolvedCtx } = await fetchPersistedLinks(c);
-                if (reqId !== ctxLoadSeqRef.current) return;
-                if (
-                    resolvedCtx.conversationId !== c.conversationId ||
-                    resolvedCtx.internetMessageId !== c.internetMessageId
-                ) {
-                    setCtx(resolvedCtx);
+                if (reason === "init") {
+                    updateStartupCheck("links", {
+                        status: "success",
+                        detail: cachedByItem.length
+                            ? `${cachedByItem.length} ligação(ões) locais prontas para o email atual.`
+                            : "Sem ligações persistidas para este email.",
+                    });
                 }
-                const nextLinks = (l && l.length) ? l : cachedLinks;
-                setLinks(nextLinks || []);
-                writeCachedLinks(
-                    resolvedCtx.conversationId || c.conversationId,
-                    resolvedCtx.internetMessageId || c.internetMessageId,
-                    resolvedCtx.itemId || c.itemId,
-                    nextLinks || []
-                );
-            } catch (e) {
-                clientLog("error", "[Cockpit] Unexpected link load error", e);
+            } else {
+                setMsg(null);
+                const cachedLinks = readCachedLinks(c.conversationId, c.internetMessageId, c.itemId);
+                setLinks(cachedLinks);
+
+                try {
+                    const { links: l, resolvedCtx } = await fetchPersistedLinks(c);
+                    if (reqId !== ctxLoadSeqRef.current) return;
+                    if (
+                        resolvedCtx.conversationId !== c.conversationId ||
+                        resolvedCtx.internetMessageId !== c.internetMessageId
+                    ) {
+                        setCtx(resolvedCtx);
+                    }
+                    const nextLinks = (l && l.length) ? l : cachedLinks;
+                    setLinks(nextLinks || []);
+                    writeCachedLinks(
+                        resolvedCtx.conversationId || c.conversationId,
+                        resolvedCtx.internetMessageId || c.internetMessageId,
+                        resolvedCtx.itemId || c.itemId,
+                        nextLinks || []
+                    );
+                    if (reason === "init") {
+                        updateStartupCheck("links", {
+                            status: "success",
+                            detail: nextLinks.length
+                                ? `${nextLinks.length} ligação(ões) sincronizadas com o servidor.`
+                                : "Sem ligações persistidas para a conversa atual.",
+                        });
+                    }
+                } catch (e) {
+                    clientLog("error", "[Cockpit] Unexpected link load error", e);
+                    if (reason === "init") {
+                        noteStartupIssue("As ligações persistidas não responderam a tempo. A app abriu com o que estava em cache.");
+                        updateStartupCheck("links", {
+                            status: "warning",
+                            detail: "Falha a sincronizar ligações. Continuamos com cache local.",
+                        });
+                    }
+                }
             }
 
             // 2. Load Odoo data ONLY if authenticated
@@ -406,15 +571,56 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     clientLog("error", "[Cockpit] Unexpected Odoo load error", e);
                 }
             }
+
+            if (reason === "init") {
+                updateStartupCheck("services", {
+                    status: "running",
+                    detail: "A validar Odoo e os motores de IA...",
+                });
+                const connectivity = await checkConnectivity();
+                const failures = connectivity.failures;
+                if (failures.length) {
+                    failures.forEach((failure) => noteStartupIssue(failure, "warning"));
+                    updateStartupCheck("services", {
+                        status: failures.length === 3 ? "error" : "warning",
+                        detail: connectivity.summary,
+                    });
+                } else {
+                    updateStartupCheck("services", {
+                        status: "success",
+                        detail: connectivity.summary,
+                    });
+                }
+            }
         } catch (e: any) {
             if (reqId !== ctxLoadSeqRef.current) return;
             clientLog("error", "[Cockpit] Fatal initialization error", e);
+            if (reason === "init") {
+                noteStartupIssue("O arranque não terminou limpo. A app vai abrir com o que conseguiu carregar.", "error");
+                setStartupNotice({
+                    tone: "error",
+                    title: "Arranque concluído com falhas",
+                    details: ["O carregamento inicial teve um erro inesperado.", "Algumas áreas podem abrir com dados parciais."],
+                });
+                startupNoticeHandled = true;
+            }
         } finally {
             isLoadingInProgressRef.current = false;
-            if (reqId === ctxLoadSeqRef.current) setIsLoading(false);
-            // Run connectivity check silently on start
-            if (reqId === ctxLoadSeqRef.current && reason === 'init') {
-                checkConnectivity();
+            if (reqId === ctxLoadSeqRef.current) {
+                if (reason === "init" && !startupNoticeHandled) {
+                    setStartupNotice(
+                        startupIssues.length
+                            ? {
+                                tone: startupIssues.some((issue) => issue.severity === "error") ? "error" : "info",
+                                title: startupIssues.some((issue) => issue.severity === "error")
+                                    ? "Arranque concluído com alertas"
+                                    : "Arranque concluído com avisos",
+                                details: startupIssues.map((issue) => issue.detail),
+                            }
+                            : null
+                    );
+                }
+                setIsLoading(false);
             }
         }
     }
@@ -433,7 +639,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const [granularStatusString, setGranularStatusString] = useState<string>("Odoo: -- | OpenAI: -- | Gemini: --");
 
-    async function checkConnectivity(customModels?: any) {
+    async function checkConnectivity(customModels?: any): Promise<ConnectivityCheckResult> {
         const { odooPing, aiSelftest, getOdooMeta } = await import("@/api");
         try {
             const [o, a] = await Promise.all([
@@ -479,19 +685,35 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     provider: a.gemini.providerUsed
                 } : null
             });
-            setGranularStatusString(`Odoo: ${finalOdooOk ? 'OK' : 'Error'} | OpenAI: ${a.openai?.ok ? 'OK' : 'Error'} | Gemini: ${a.gemini?.ok ? 'OK' : 'Error'}`);
+            const summary = `Odoo: ${finalOdooOk ? 'OK' : 'Erro'} | OpenAI: ${a.openai?.ok ? 'OK' : 'Erro'} | Gemini: ${a.gemini?.ok ? 'OK' : 'Erro'}`;
+            setGranularStatusString(summary);
             setConnectionStatus(finalOdooOk && a.ok ? "success" : "error");
+            const failures: string[] = [];
+            if (!finalOdooOk) failures.push("A verificação ao Odoo falhou ou devolveu metadata incompleta.");
+            if (!a.openai?.ok) failures.push(a.openai?.error || "A verificação OpenAI falhou.");
+            if (!a.gemini?.ok) failures.push(a.gemini?.error || "A verificação Gemini falhou.");
+            return {
+                odooOk: finalOdooOk,
+                openaiOk: Boolean(a.openai?.ok),
+                geminiOk: Boolean(a.gemini?.ok),
+                summary,
+                failures,
+            };
         } catch {
             setConnectionStatus("error");
             setGranularStatusString("Odoo: Error | AI: Error");
+            return {
+                odooOk: false,
+                openaiOk: false,
+                geminiOk: false,
+                summary: "Odoo: Erro | OpenAI: Erro | Gemini: Erro",
+                failures: ["Não foi possível concluir as verificações de conectividade."],
+            };
         }
     }
 
     // Heartbeat logic
     useEffect(() => {
-        // Initial run
-        checkConnectivity();
-
         const interval = setInterval(() => {
             console.log("[Cockpit] Heartbeat: Checking connectivity...");
             // Use current settings if available in state or just fallback to server config
@@ -634,6 +856,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 odooSessionToken: resp.token
             });
             await loadContextAndLinks('login-success');
+            await checkConnectivity();
         } else {
             throw new Error(resp.message);
         }
@@ -654,7 +877,10 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setAiState,
             files, addFile, removeFile, clearFiles,
             isAuthenticated, connectionStatus, granularStatus, granularStatusDetails, granularStatusString, checkConnectivity, login, logout,
-            settings
+            settings,
+            startupChecks,
+            startupNotice: startupNoticeDismissed ? null : startupNoticeState,
+            dismissStartupNotice: () => setStartupNoticeDismissed(true),
         }}>
             {children}
         </CockpitContext.Provider>
