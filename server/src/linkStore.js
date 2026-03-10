@@ -14,8 +14,10 @@ const PRIMARY_DATA_DIR = path.resolve(__dirname, "../data");
 const PRIMARY_FILE_PATH = path.join(PRIMARY_DATA_DIR, "links.json");
 const LEGACY_FILE_PATH = path.join(process.cwd(), "server", "data", "links.json");
 const STORE_VERSION = 2;
+const CUSTOM_GROUP_KIND = "custom";
 
 const db = createOptionalPgStore("linkStore");
+let customGroupDbInitPromise = null;
 
 function nowIso() {
   return new Date().toISOString();
@@ -395,6 +397,308 @@ function buildEmailListEntry(email, extra = {}) {
   };
 }
 
+function makePersistentEmailKey(email) {
+  return makeEmailLookupKey(email);
+}
+
+function mapDbGroupRow(row) {
+  if (!row) return null;
+  return {
+    id: normalizeString(row.id),
+    kind: CUSTOM_GROUP_KIND,
+    name: normalizeString(row.name),
+    description: normalizeString(row.description),
+    createdAt: normalizeString(row.created_at),
+    updatedAt: normalizeString(row.updated_at),
+  };
+}
+
+function mapDbGroupMemberRow(row) {
+  return buildEmailListEntry({
+    id: normalizeString(row.email_key),
+    itemId: normalizeString(row.item_id),
+    internetMessageId: normalizeMessageId(row.internet_message_id),
+    conversationId: normalizeString(row.conversation_id),
+    subject: normalizeString(row.subject),
+    fromEmail: normalizeString(row.from_email),
+    fromName: normalizeString(row.from_name),
+    emailWebLink: normalizeString(row.email_web_link),
+    messageDateIso: normalizeString(row.message_date_iso),
+    receivedAtIso: normalizeString(row.received_at_iso),
+    sentAtIso: normalizeString(row.sent_at_iso),
+    createdAt: normalizeString(row.created_at),
+    updatedAt: normalizeString(row.updated_at),
+  });
+}
+
+async function upsertDbCustomGroup(group) {
+  if (!db.isEnabled()) return;
+  await db.query(
+    `INSERT INTO crm_custom_groups (id, name, description, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (id) DO UPDATE SET
+       name = EXCLUDED.name,
+       description = EXCLUDED.description,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      normalizeString(group?.id),
+      normalizeString(group?.name) || "Grupo sem nome",
+      normalizeString(group?.description),
+      normalizeString(group?.createdAt) || nowIso(),
+      normalizeString(group?.updatedAt) || nowIso(),
+    ]
+  );
+}
+
+async function upsertDbCustomGroupMember(groupId, email) {
+  if (!db.isEnabled()) return;
+  const emailKey = makePersistentEmailKey(email);
+  if (!groupId || !emailKey) return;
+  await db.query(
+    `INSERT INTO crm_custom_group_members
+       (group_id, email_key, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+     ON CONFLICT (group_id, email_key) DO UPDATE SET
+       item_id = EXCLUDED.item_id,
+       internet_message_id = EXCLUDED.internet_message_id,
+       conversation_id = EXCLUDED.conversation_id,
+       subject = EXCLUDED.subject,
+       from_email = EXCLUDED.from_email,
+       from_name = EXCLUDED.from_name,
+       email_web_link = EXCLUDED.email_web_link,
+       message_date_iso = EXCLUDED.message_date_iso,
+       received_at_iso = EXCLUDED.received_at_iso,
+       sent_at_iso = EXCLUDED.sent_at_iso,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      normalizeString(groupId),
+      emailKey,
+      normalizeString(email?.itemId),
+      normalizeMessageId(email?.internetMessageId),
+      normalizeString(email?.conversationId),
+      normalizeString(email?.subject),
+      normalizeString(email?.fromEmail),
+      normalizeString(email?.fromName),
+      normalizeString(email?.emailWebLink),
+      normalizeString(email?.messageDateIso),
+      normalizeString(email?.receivedAtIso),
+      normalizeString(email?.sentAtIso),
+      normalizeString(email?.createdAt) || nowIso(),
+      normalizeString(email?.updatedAt) || nowIso(),
+    ]
+  );
+}
+
+async function getDbCustomGroupById(groupId) {
+  if (!db.isEnabled()) return null;
+  const gid = normalizeString(groupId);
+  if (!gid) return null;
+  const result = await db.query(
+    `SELECT id, name, description, created_at, updated_at
+     FROM crm_custom_groups
+     WHERE id = $1`,
+    [gid]
+  );
+  return mapDbGroupRow(result?.rows?.[0]);
+}
+
+async function listDbCustomGroups(query = "") {
+  if (!db.isEnabled()) return [];
+  const q = normalizeString(query).toLowerCase();
+  const params = [];
+  const where = [];
+  if (q) {
+    params.push(`%${q}%`);
+    where.push(`(LOWER(name) LIKE $${params.length} OR LOWER(COALESCE(description, '')) LIKE $${params.length})`);
+  }
+  const result = await db.query(
+    `SELECT g.id, g.name, g.description, g.created_at, g.updated_at, COUNT(m.email_key)::int AS member_count
+     FROM crm_custom_groups g
+     LEFT JOIN crm_custom_group_members m ON m.group_id = g.id
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     GROUP BY g.id, g.name, g.description, g.created_at, g.updated_at
+     ORDER BY g.updated_at DESC, g.created_at DESC`,
+    params
+  );
+  return (result?.rows || []).map((row) => ({
+    ...mapDbGroupRow(row),
+    memberCount: Number(row.member_count || 0),
+  }));
+}
+
+async function listDbEmailsByGroup(groupId) {
+  if (!db.isEnabled()) return [];
+  const gid = normalizeString(groupId);
+  if (!gid) return [];
+  const result = await db.query(
+    `SELECT m.*, g.name AS group_name
+     FROM crm_custom_group_members m
+     JOIN crm_custom_groups g ON g.id = m.group_id
+     WHERE m.group_id = $1
+     ORDER BY COALESCE(m.message_date_iso, m.received_at_iso, m.updated_at, m.created_at) DESC`,
+    [gid]
+  );
+  return dedupeEmailLinks((result?.rows || []).map((row) =>
+    buildEmailListEntry(mapDbGroupMemberRow(row), {
+      relatedRecords: [],
+      groupId: gid,
+      groupName: normalizeString(row.group_name),
+    })
+  ));
+}
+
+async function getDbCustomGroupContext(input) {
+  if (!db.isEnabled()) return { groups: [], emails: [] };
+
+  const normalized = normalizeEmailInput(input);
+  const emailKey = makePersistentEmailKey(normalized);
+  const params = [];
+  const where = [];
+
+  if (normalizeString(normalized.itemId)) {
+    params.push(normalizeString(normalized.itemId));
+    where.push(`m.item_id = $${params.length}`);
+  }
+  if (normalizeString(normalized.internetMessageId)) {
+    params.push(normalizeMessageId(normalized.internetMessageId));
+    where.push(`LOWER(REGEXP_REPLACE(COALESCE(m.internet_message_id, ''), '[<>[:space:]]', '', 'g')) = $${params.length}`);
+  }
+  if (normalizeString(normalized.conversationId)) {
+    params.push(normalizeString(normalized.conversationId));
+    where.push(`m.conversation_id = $${params.length}`);
+  }
+  if (emailKey) {
+    params.push(emailKey);
+    where.push(`m.email_key = $${params.length}`);
+  }
+  if (!where.length) return { groups: [], emails: [] };
+
+  const currentMemberships = await db.query(
+    `SELECT DISTINCT g.id, g.name, g.description, g.created_at, g.updated_at, m.email_key
+     FROM crm_custom_group_members m
+     JOIN crm_custom_groups g ON g.id = m.group_id
+     WHERE ${where.join(" OR ")}`,
+    params
+  );
+
+  const membershipRows = currentMemberships?.rows || [];
+  if (!membershipRows.length) return { groups: [], emails: [] };
+
+  const currentEmailKeys = new Set(membershipRows.map((row) => normalizeString(row.email_key)).filter(Boolean));
+  const groups = Array.from(
+    new Map(membershipRows.map((row) => [normalizeString(row.id), mapDbGroupRow(row)])).values()
+  ).filter(Boolean);
+
+  const groupIds = groups.map((group) => group.id).filter(Boolean);
+  if (!groupIds.length) return { groups, emails: [] };
+
+  const relatedRows = await db.query(
+    `SELECT m.*, g.name AS group_name
+     FROM crm_custom_group_members m
+     JOIN crm_custom_groups g ON g.id = m.group_id
+     WHERE m.group_id = ANY($1::text[])`,
+    [groupIds]
+  );
+
+  const aggregated = new Map();
+  for (const row of relatedRows?.rows || []) {
+    const rowEmailKey = normalizeString(row.email_key);
+    if (!rowEmailKey || currentEmailKeys.has(rowEmailKey)) continue;
+
+    const email = mapDbGroupMemberRow(row);
+    const current = aggregated.get(rowEmailKey) || {
+      ...email,
+      relatedRecords: [],
+      relatedGroups: [],
+      relatedReasons: [],
+    };
+
+    if (!current.relatedGroups.some((entry) => entry.id === row.group_id)) {
+      current.relatedGroups.push({
+        id: normalizeString(row.group_id),
+        name: normalizeString(row.group_name),
+        kind: "group",
+      });
+    }
+
+    const reason = {
+      kind: "group",
+      groupId: normalizeString(row.group_id),
+      groupName: normalizeString(row.group_name),
+      conversationId: normalizeString(row.conversation_id),
+    };
+    const reasonKey = JSON.stringify(reason);
+    if (!current.relatedReasons.some((entry) => JSON.stringify(entry) === reasonKey)) {
+      current.relatedReasons.push(reason);
+    }
+
+    aggregated.set(rowEmailKey, current);
+  }
+
+  return {
+    groups: groups.map((group) => ({ ...group, memberCount: 0 })),
+    emails: Array.from(aggregated.values()).sort((a, b) =>
+      String(b.messageDateIso || b.receivedAtIso || "").localeCompare(String(a.messageDateIso || a.receivedAtIso || ""))
+    ),
+  };
+}
+
+async function ensureCustomGroupDb() {
+  if (!db.isEnabled()) return;
+  if (customGroupDbInitPromise) return customGroupDbInitPromise;
+
+  customGroupDbInitPromise = (async () => {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS crm_custom_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS crm_custom_group_members (
+        group_id TEXT NOT NULL REFERENCES crm_custom_groups(id) ON DELETE CASCADE,
+        email_key TEXT NOT NULL,
+        item_id TEXT,
+        internet_message_id TEXT,
+        conversation_id TEXT,
+        subject TEXT,
+        from_email TEXT,
+        from_name TEXT,
+        email_web_link TEXT,
+        message_date_iso TEXT,
+        received_at_iso TEXT,
+        sent_at_iso TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (group_id, email_key)
+      );
+    `);
+
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_members_item_id ON crm_custom_group_members (item_id);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_members_conversation_id ON crm_custom_group_members (conversation_id);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_members_internet_message_id ON crm_custom_group_members (internet_message_id);`);
+
+    const store = readState();
+    const customGroups = Object.values(store.groups || {}).filter((group) => group?.kind === CUSTOM_GROUP_KIND);
+    for (const group of customGroups) {
+      await upsertDbCustomGroup(group);
+      for (const emailId of store.groupMembers[group.id] || []) {
+        const email = store.emails[emailId];
+        if (email) await upsertDbCustomGroupMember(group.id, email);
+      }
+    }
+  })().catch((error) => {
+    customGroupDbInitPromise = null;
+    throw error;
+  });
+
+  return customGroupDbInitPromise;
+}
+
 function getMatchedEmailIds(store, lookup) {
   const normalized = normalizeEmailInput(lookup);
   if (normalized.itemId && store.indexes.itemIds[normalized.itemId]) {
@@ -525,11 +829,20 @@ export async function registerRelevantEmail(input) {
 export async function createCustomGroup(input) {
   const store = readState();
   const group = ensureGroup(store, {
-    kind: "custom",
+    kind: CUSTOM_GROUP_KIND,
     name: normalizeString(input?.name) || "Grupo sem nome",
     description: normalizeString(input?.description),
   });
   writeStore(store);
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await upsertDbCustomGroup(group);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Insert Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Custom Group Insert Error, central file store kept as source of truth:", error);
+    }
+  }
   return {
     ...group,
     memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
@@ -539,7 +852,7 @@ export async function createCustomGroup(input) {
 export async function listCustomGroups(query = "") {
   const store = readState();
   const q = normalizeString(query).toLowerCase();
-  return Object.values(store.groups)
+  const fileGroups = Object.values(store.groups)
     .filter((group) => group?.kind === "custom")
     .filter((group) => {
       if (!q) return true;
@@ -551,11 +864,49 @@ export async function listCustomGroups(query = "") {
       ...group,
       memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
     }));
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      const dbGroups = await listDbCustomGroups(query);
+      const merged = new Map(fileGroups.map((group) => [group.id, group]));
+      for (const group of dbGroups) {
+        merged.set(group.id, {
+          ...group,
+          memberCount: Math.max(Number(group.memberCount || 0), Number(merged.get(group.id)?.memberCount || 0)),
+        });
+      }
+      return Array.from(merged.values()).sort((a, b) =>
+        String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""))
+      );
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Query Error, falling back to central file store:", error.message);
+      else console.error("[linkStore] DB Custom Group Query Error, falling back to central file store:", error);
+    }
+  }
+
+  return fileGroups;
 }
 
 export async function addEmailToGroup(groupId, input) {
   const store = readState();
-  const group = ensureGroup(store, { id: groupId });
+  let existingDbGroup = null;
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      existingDbGroup = await getDbCustomGroupById(groupId);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Read Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Custom Group Read Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  const group = ensureGroup(store, {
+    id: groupId,
+    kind: CUSTOM_GROUP_KIND,
+    name: existingDbGroup?.name,
+    description: existingDbGroup?.description,
+  });
   const email = upsertEmail(store, input);
   if (email.conversationId) {
     const conversationGroup = ensureConversationGroup(store, email.conversationId, email);
@@ -563,6 +914,18 @@ export async function addEmailToGroup(groupId, input) {
   }
   addEmailMembership(store, group.id, email.id);
   writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await upsertDbCustomGroup(group);
+      await upsertDbCustomGroupMember(group.id, email);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Membership Insert Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Group Membership Insert Error, central file store kept as source of truth:", error);
+    }
+  }
+
   return {
     group: {
       ...group,
@@ -576,7 +939,7 @@ export async function listEmailsByGroup(groupId) {
   const store = readState();
   const gid = normalizeString(groupId);
   const emailIds = Array.isArray(store.groupMembers[gid]) ? store.groupMembers[gid] : [];
-  const rows = emailIds.map((emailId) => {
+  const fileRows = emailIds.map((emailId) => {
     const email = store.emails[emailId];
     const relatedRecords = Array.isArray(store.emailEntityLinks[emailId])
       ? store.emailEntityLinks[emailId].map((entry) => ({
@@ -591,7 +954,19 @@ export async function listEmailsByGroup(groupId) {
       groupName: store.groups[gid]?.name || "",
     });
   });
-  return dedupeEmailLinks(rows);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      const dbRows = await listDbEmailsByGroup(groupId);
+      return dedupeEmailLinks([...fileRows, ...dbRows]);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Email Query Error, falling back to central file store:", error.message);
+      else console.error("[linkStore] DB Group Email Query Error, falling back to central file store:", error);
+    }
+  }
+
+  return dedupeEmailLinks(fileRows);
 }
 
 export async function getRelatedEmails(input) {
@@ -672,7 +1047,7 @@ export async function getRelatedEmails(input) {
     }
   }
 
-  return {
+  const fileResult = {
     email: currentEmailIds[0] ? buildEmailListEntry(store.emails[currentEmailIds[0]]) : null,
     groups: Array.from(
       new Map(
@@ -689,6 +1064,33 @@ export async function getRelatedEmails(input) {
       String(b.messageDateIso || b.receivedAtIso || "").localeCompare(String(a.messageDateIso || a.receivedAtIso || ""))
     ),
   };
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      const dbResult = await getDbCustomGroupContext(input);
+      const mergedGroups = new Map(fileResult.groups.map((group) => [group.id, group]));
+      for (const group of dbResult.groups) {
+        const current = mergedGroups.get(group.id);
+        mergedGroups.set(group.id, {
+          ...current,
+          ...group,
+          memberCount: Math.max(Number(current?.memberCount || 0), Number(group.memberCount || 0)),
+        });
+      }
+
+      return {
+        email: fileResult.email,
+        groups: Array.from(mergedGroups.values()),
+        emails: dedupeEmailLinks([...fileResult.emails, ...dbResult.emails]),
+      };
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Related Group Query Error, falling back to central file store:", error.message);
+      else console.error("[linkStore] DB Related Group Query Error, falling back to central file store:", error);
+    }
+  }
+
+  return fileResult;
 }
 
 export async function listLinksByConversation(conversationId, internetMessageId = "", itemId = "") {
