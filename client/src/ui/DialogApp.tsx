@@ -1362,7 +1362,6 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
 
   useEffect(() => {
-    if (!apiReady) return;
     let alive = true;
     (async () => {
       try {
@@ -1387,7 +1386,6 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   }, [apiReady]);
 
   useEffect(() => {
-    if (!apiReady) return;
     if (mode !== "edit" || !editId) return;
     (async () => {
       try {
