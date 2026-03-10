@@ -35,6 +35,37 @@ function writeAll(filePath, obj) {
     fs.writeFileSync(filePath, JSON.stringify(obj, null, 2), "utf-8");
 }
 
+export async function initLearningDb() {
+    if (!db.isEnabled()) return;
+    try {
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS learning_logs (
+                id BIGSERIAL PRIMARY KEY,
+                conversation_id TEXT,
+                from_email TEXT,
+                to_emails JSONB,
+                original_subject TEXT,
+                original_body TEXT,
+                user_response TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS style_profiles (
+                user_id TEXT PRIMARY KEY,
+                style_data JSONB DEFAULT '{}'::jsonb,
+                habits_data JSONB DEFAULT '{}'::jsonb,
+                last_updated TIMESTAMP
+            );
+        `);
+
+        console.log("[learningStore] Database tables ensured.");
+    } catch (e) {
+        console.error("[learningStore] Failed to initialize database tables:", e.message);
+    }
+}
+
 /**
  * Logs an interaction
  */

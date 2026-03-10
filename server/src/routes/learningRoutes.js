@@ -4,6 +4,7 @@ import { aiCreateText } from "../ai/aiService.js";
 
 export function createLearningRouter() {
     const router = Router();
+    learningStore.initLearningDb();
 
     /**
      * Log a new interaction (called when user clicks "Insert")
