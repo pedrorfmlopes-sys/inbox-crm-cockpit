@@ -1,6 +1,8 @@
+import net from "node:net";
 import pg from "pg";
 
 const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
+const PG_FORCE_IPV4 = /^(1|true|yes|on)$/i.test(String(process.env.PG_FORCE_IPV4 || "").trim());
 const NETWORK_ERROR_CODES = new Set([
   "ENETUNREACH",
   "EHOSTUNREACH",
@@ -26,6 +28,14 @@ function isLocalHost(hostname) {
 
 function isSupabaseHost(hostname) {
   return hostname.endsWith(".supabase.co") || hostname.endsWith(".supabase.com") || hostname === "supabase.co" || hostname === "supabase.com";
+}
+
+function isSupabasePoolerHost(hostname) {
+  return hostname.includes(".pooler.supabase.");
+}
+
+function isSupabaseDirectHost(hostname) {
+  return isSupabaseHost(hostname) && hostname.startsWith("db.") && !isSupabasePoolerHost(hostname);
 }
 
 function getSslConfig(connectionString) {
@@ -63,25 +73,73 @@ function isNetworkFailure(error) {
   return /ENETUNREACH|EHOSTUNREACH|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|connect timeout/i.test(message);
 }
 
+function createIpv4OnlyStream() {
+  const socket = new net.Socket();
+  const originalConnect = socket.connect.bind(socket);
+
+  socket.connect = function connect(port, host) {
+    if (typeof port === "object" && port !== null) {
+      return originalConnect({ ...port, family: 4, autoSelectFamily: false });
+    }
+    if (typeof port === "number" && typeof host === "string" && !host.startsWith("/")) {
+      return originalConnect({ port, host, family: 4, autoSelectFamily: false });
+    }
+    return originalConnect(port, host);
+  };
+
+  return socket;
+}
+
 export function createOptionalPgStore(label) {
   let pool = null;
   let dbDisabledUntil = 0;
   let disabledReason = "";
   let consecutiveFailures = 0;
   let lastFailureAt = 0;
+  let warnedAboutSupabaseDirect = false;
   const ssl = getSslConfig(DATABASE_URL);
+  const parsedUrl = safeParseDatabaseUrl(DATABASE_URL);
+  const hostname = String(parsedUrl?.hostname || "").toLowerCase();
+  const port = Number(parsedUrl?.port || 5432);
+  let forceIpv4 = PG_FORCE_IPV4 || isSupabasePoolerHost(hostname);
 
   function canUseDb() {
     return Boolean(DATABASE_URL) && Date.now() >= dbDisabledUntil;
   }
 
-  function createPool() {
-    if (!DATABASE_URL || pool) return;
-    console.log(`[${label}] Using PostgreSQL persistence via DATABASE_URL.`);
-    pool = new pg.Pool({
+  function shouldPreferIpv4() {
+    return Boolean(hostname) && !isLocalHost(hostname) && forceIpv4;
+  }
+
+  function buildPoolConfig() {
+    const poolConfig = {
       connectionString: DATABASE_URL,
       ssl,
-    });
+      connectionTimeoutMillis: 10_000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 30_000,
+    };
+
+    if (shouldPreferIpv4()) {
+      poolConfig.stream = createIpv4OnlyStream;
+    }
+
+    return poolConfig;
+  }
+
+  function maybeLogSupabaseDirectHint(error) {
+    if (warnedAboutSupabaseDirect || !isSupabaseDirectHost(hostname)) return;
+    warnedAboutSupabaseDirect = true;
+    console.warn(
+      `[${label}] Supabase direct connection detected at ${hostname}:${port}. Direct Supabase URLs are typically IPv6-only. On Render/non-IPv6 runtimes, use the Supabase Session pooler connection string in DATABASE_URL. ${error?.code || ""} ${error?.message || ""}`.trim()
+    );
+  }
+
+  function createPool() {
+    if (!DATABASE_URL || pool) return;
+    const resolutionMode = shouldPreferIpv4() ? "IPv4-preferred" : "default DNS";
+    console.log(`[${label}] Using PostgreSQL persistence via DATABASE_URL (${resolutionMode}).`);
+    pool = new pg.Pool(buildPoolConfig());
   }
 
   async function closePool() {
@@ -122,12 +180,35 @@ export function createOptionalPgStore(label) {
       disabledReason = "";
       return result;
     } catch (error) {
+      const code = String(error?.code || "").toUpperCase();
+
+      if (!forceIpv4 && (code === "ENETUNREACH" || code === "EHOSTUNREACH") && isSupabaseHost(hostname)) {
+        console.warn(
+          `[${label}] PostgreSQL connection hit ${code} for ${hostname}:${port}; retrying once with IPv4-only DNS resolution before falling back.`
+        );
+        forceIpv4 = true;
+        await closePool();
+        createPool();
+        if (pool) {
+          try {
+            const retryResult = await pool.query(text, params);
+            consecutiveFailures = 0;
+            lastFailureAt = 0;
+            disabledReason = "";
+            return retryResult;
+          } catch (retryError) {
+            error = retryError;
+          }
+        }
+      }
+
       if (isNetworkFailure(error)) {
         const now = Date.now();
         consecutiveFailures = (now - lastFailureAt) <= RETRYABLE_WINDOW_MS ? consecutiveFailures + 1 : 1;
         lastFailureAt = now;
         error.optionalDbFallback = true;
         error.optionalDbFailureCount = consecutiveFailures;
+        maybeLogSupabaseDirectHint(error);
 
         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
           await temporarilyDisable(`${error.code || "NETWORK_ERROR"} ${error.message || ""}`.trim());
