@@ -454,7 +454,7 @@ export default function GroupExplorerApp(): JSX.Element {
                   <input style={styles.compactInput} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
                 </label>
               </div>
-              <div style={styles.listShellTall}>
+              <div style={styles.listShellEmails}>
                 {loadingEmails && !groupEmails.length ? <PanelState compact tone="loading" title="A carregar emails" description="A listar os emails do grupo." /> : null}
                 {!loadingEmails && !filteredEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Nao ha emails a corresponder aos filtros atuais." /> : null}
                 {filteredEmails.map((email) => {
@@ -502,7 +502,7 @@ export default function GroupExplorerApp(): JSX.Element {
                   <input style={styles.input} value={documentSearch} onChange={(event) => setDocumentSearch(event.target.value)} placeholder="Nome, tipo ou assunto..." />
                 </label>
               </div>
-              <div style={styles.listShellTall}>
+              <div style={styles.listShellDocuments}>
                 {loadingDocuments && !groupDocuments.length ? <PanelState compact tone="loading" title="A carregar documentos" description="A listar os documentos guardados." /> : null}
                 {!loadingDocuments && !filteredDocuments.length ? <PanelState compact tone="info" title="Sem documentos visiveis" description={documentFilterMode === "selected_email" ? "Nao ha documentos associados ao email atualmente selecionado." : "Este grupo ainda nao tem documentos guardados visiveis neste filtro."} /> : null}
                 {filteredDocuments.map((document) => {
@@ -556,21 +556,21 @@ export default function GroupExplorerApp(): JSX.Element {
 
 const styles: Record<string, React.CSSProperties> = {
   root: { minHeight: "100vh", background: "var(--iccc-bg, #edf2f7)", color: "var(--iccc-text, #172b4d)", fontFamily: "var(--iccc-font, 'Segoe UI', sans-serif)", padding: 12, display: "grid", gap: 10 },
-  headerShell: { display: "grid", gridTemplateColumns: "minmax(240px, 1.2fr) minmax(280px, 0.9fr)", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.9)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.08)" },
-  headerIdentity: { display: "grid", gap: 6, minWidth: 0 },
+  headerShell: { display: "grid", gridTemplateColumns: "minmax(240px, 1.25fr) minmax(300px, 0.95fr)", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.9)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.08)", minHeight: 116, maxHeight: 116, overflow: "hidden", alignItems: "stretch" },
+  headerIdentity: { display: "grid", gap: 6, minWidth: 0, alignContent: "space-between" },
   eyebrow: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#5b6b83" },
   title: { fontSize: 16, fontWeight: 700, color: "#0f172a" },
   headerSelectorRow: { display: "grid", gridTemplateColumns: "1fr auto auto", gap: 6, alignItems: "center" },
-  headerMetrics: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, alignContent: "start" },
+  headerMetrics: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, alignContent: "stretch", minHeight: 0 },
   metricMini: { display: "grid", gap: 1, padding: 8, borderRadius: 10, background: "rgba(15, 23, 42, 0.03)", minWidth: 0 },
   metricLabel: { fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#6b7280" },
   metricValue: { fontSize: 11, fontWeight: 600, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   selectWrap: { minWidth: 0 },
   select: { width: "100%", borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "rgba(248,250,252,0.95)", color: "#172b4d", padding: "8px 12px", fontSize: 11, fontWeight: 600, outline: "none" },
   closeBtn: { borderRadius: 999, border: "none", background: "#1d4ed8", color: "#fff", padding: "7px 13px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
-  columnsGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10, alignItems: "start" },
-  panel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0 },
-  previewPanel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)" },
+  columnsGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10, alignItems: "stretch" },
+  panel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0, height: "44vh", gridTemplateRows: "auto auto 1fr" },
+  previewPanel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0 },
   sectionHeaderCompact: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" },
   sectionTitle: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#0f172a" },
   sectionActions: { display: "inline-flex", gap: 4, alignItems: "center" },
@@ -582,7 +582,9 @@ const styles: Record<string, React.CSSProperties> = {
   input: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "7px 9px", fontSize: 11, outline: "none", minWidth: 0 },
   compactInput: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "7px 9px", fontSize: 11, outline: "none", minWidth: 0 },
   compactSelect: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "7px 9px", fontSize: 11, outline: "none", minWidth: 0 },
-  listShellTall: { display: "grid", gap: 6, maxHeight: "46vh", overflowY: "auto", paddingRight: 4 },
+  listShellTall: { display: "grid", gap: 6, overflowY: "auto", minHeight: 0, paddingRight: 4 },
+  listShellEmails: { display: "grid", gap: 6, overflowY: "auto", minHeight: 0, paddingRight: 4, alignContent: "start" },
+  listShellDocuments: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, overflowY: "auto", minHeight: 0, paddingRight: 4, alignContent: "start" },
   card: { display: "grid", gridTemplateColumns: "1fr auto", gap: 6, alignItems: "center", padding: 7, borderRadius: 11, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff" },
   cardActive: { display: "grid", gridTemplateColumns: "1fr auto", gap: 6, alignItems: "center", padding: 7, borderRadius: 11, border: "1px solid rgba(37, 99, 235, 0.35)", background: "rgba(219, 234, 254, 0.65)" },
   cardMain: { border: "none", background: "transparent", padding: 0, textAlign: "left", display: "grid", gap: 3, minWidth: 0, cursor: "pointer" },
@@ -594,8 +596,8 @@ const styles: Record<string, React.CSSProperties> = {
   metaTag: { fontSize: 9, color: "#42526E", background: "#FFFFFF", borderRadius: 999, padding: "1px 6px", border: "1px solid rgba(15, 23, 42, 0.08)" },
   iconBtn: { width: 22, height: 22, borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff", color: "#1d4ed8", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   iconBtnDanger: { width: 22, height: 22, borderRadius: 999, border: "1px solid rgba(239, 68, 68, 0.18)", background: "rgba(254, 226, 226, 0.9)", color: "#b91c1c", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-  previewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 260 },
-  previewImage: { width: "100%", height: "100%", minHeight: 260, maxHeight: "52vh", objectFit: "contain", display: "block", background: "#fff" },
-  previewIframe: { width: "100%", height: "52vh", border: "none", display: "block", background: "#fff" },
-  previewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", maxHeight: "52vh", overflow: "auto" },
+  previewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 220 },
+  previewImage: { width: "100%", height: "100%", minHeight: 220, maxHeight: "40vh", objectFit: "contain", display: "block", background: "#fff" },
+  previewIframe: { width: "100%", height: "40vh", border: "none", display: "block", background: "#fff" },
+  previewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", maxHeight: "40vh", overflow: "auto" },
 };
