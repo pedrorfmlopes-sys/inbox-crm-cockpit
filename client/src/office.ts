@@ -376,11 +376,11 @@ let activeDialog: any = null;
  * Opens a separate window using Office Dialog API.
  * Guard: only one dialog at a time (evita "já existe uma dialog ativa").
  */
-export async function openCockpitDialog(params: Record<string, string>) {
+async function openCockpitView(view: string, params: Record<string, string>, options?: { height?: number; width?: number }) {
   const OfficeAny = await ensureOfficeReady();
 
   const url = new URL(window.location.origin);
-  url.searchParams.set("view", "dialog");
+  url.searchParams.set("view", view);
   Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, v));
 
   clientLog.log(`[office] openDialog ${url.toString()}`);
@@ -394,7 +394,7 @@ export async function openCockpitDialog(params: Record<string, string>) {
   return await new Promise<void>((resolve, reject) => {
     OfficeAny.context.ui.displayDialogAsync(
       url.toString(),
-      { height: 65, width: 40, displayInIframe: false },
+      { height: options?.height || 65, width: options?.width || 40, displayInIframe: false },
       (result: any) => {
         if (result.status !== OfficeAny.AsyncResultStatus.Succeeded) {
           clientLog.error(`[office] displayDialogAsync failed: ${result.error?.message || "unknown"}`);
@@ -421,6 +421,14 @@ export async function openCockpitDialog(params: Record<string, string>) {
       }
     );
   });
+}
+
+export async function openCockpitDialog(params: Record<string, string>) {
+  return await openCockpitView("dialog", params, { height: 65, width: 40 });
+}
+
+export async function openGroupExplorer(params: Record<string, string>) {
+  return await openCockpitView("group-explorer", params, { height: 78, width: 52 });
 }
 
 /**

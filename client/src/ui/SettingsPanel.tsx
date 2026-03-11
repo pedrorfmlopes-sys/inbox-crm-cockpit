@@ -72,10 +72,20 @@ const REFERENCE_ENTITY_LABELS: Record<ReferenceEntityKey, string> = {
 };
 
 const GROUP_STORAGE_PROVIDER_LABELS: Record<GroupStorageProvider, string> = {
-  disabled: "Só metadados no Cockpit",
+  cloud: "Cockpit Cloud (armazenamento central)",
+  disabled: "Cockpit Cloud (armazenamento central)",
   local: "Pasta local",
   onedrive: "OneDrive / Share",
 };
+
+const GROUP_STORAGE_PROVIDER_LABELS_UI = {
+  ...GROUP_STORAGE_PROVIDER_LABELS,
+  cloud: "Cockpit Cloud (armazenamento central)",
+  disabled: "Cockpit Cloud (armazenamento central)",
+  local: "Pasta local do utilizador",
+  onedrive: "OneDrive / SharePoint",
+} satisfies Record<GroupStorageProvider, string>;
+const GROUP_STORAGE_PROVIDER_OPTIONS: GroupStorageProvider[] = ["cloud", "local", "onedrive"];
 
 function localeShort(loc: AppLocale): string {
   if (loc === "pt-PT") return "PT";
@@ -963,12 +973,15 @@ export function SettingsPanel(): JSX.Element {
                     })
                   }
                 >
-                  {Object.entries(GROUP_STORAGE_PROVIDER_LABELS).map(([value, label]) => (
+                  {GROUP_STORAGE_PROVIDER_OPTIONS.map((value) => (
                     <option key={value} value={value}>
-                      {label}
+                      {GROUP_STORAGE_PROVIDER_LABELS_UI[value]}
                     </option>
                   ))}
                 </select>
+                <div style={S.hint}>
+                  Cockpit Cloud = armazenamento central da app. Pasta local e OneDrive/SharePoint representam destinos externos do utilizador, não o servidor onde o cockpit corre.
+                </div>
                 <div style={S.hint}>
                   Nesta fase estamos a preparar a origem documental dos grupos. A cópia real de anexos será ligada sobre esta base.
                 </div>
@@ -1057,7 +1070,7 @@ export function SettingsPanel(): JSX.Element {
                 <div style={S.fieldLabel}>Resumo atual</div>
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={S.hint}>
-                    Origem escolhida: <b>{GROUP_STORAGE_PROVIDER_LABELS[model.groupStorage.provider]}</b>
+                    Origem escolhida: <b>{GROUP_STORAGE_PROVIDER_LABELS_UI[model.groupStorage.provider]}</b>
                   </div>
                   <div style={S.hint}>
                     Localização base: <b>{model.groupStorage.baseFolderPath || "Por definir"}</b>

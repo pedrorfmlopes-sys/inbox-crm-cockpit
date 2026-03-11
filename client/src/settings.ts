@@ -23,7 +23,7 @@ export type ContactAlias = {
 export type ReferenceEntityKey = "lead" | "project" | "task" | "ticket";
 export type ReferenceCounterMode = "per_type" | "global";
 export type ReferenceCodePosition = "prefix" | "suffix";
-export type GroupStorageProvider = "disabled" | "local" | "onedrive";
+export type GroupStorageProvider = "cloud" | "local" | "onedrive" | "disabled";
 
 export type ReferenceCodeSettings = {
   enabled: boolean;
@@ -224,13 +224,24 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     },
   },
   groupStorage: {
-    provider: "disabled",
+    provider: "cloud",
     baseFolderPath: "",
     autoCreateFolderOnGroupCreate: true,
     ignoreInlineAttachments: true,
     suggestedViewer: "inline",
   },
 };
+
+function normalizeGroupStorageProvider(value: unknown): GroupStorageProvider {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "local" || normalized === "onedrive" || normalized === "cloud") {
+    return normalized;
+  }
+  if (normalized === "disabled" || !normalized) {
+    return "cloud";
+  }
+  return "cloud";
+}
 
 function hasOffice(): boolean {
   return typeof (globalThis as any).Office !== "undefined";
@@ -352,6 +363,7 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
     groupStorage: {
       ...base.groupStorage,
       ...((incoming as any).groupStorage || {}),
+      provider: normalizeGroupStorageProvider(((incoming as any).groupStorage || {}).provider ?? base.groupStorage.provider),
     },
   };
 

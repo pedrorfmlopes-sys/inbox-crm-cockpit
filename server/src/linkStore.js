@@ -748,7 +748,7 @@ async function getDbCustomGroupById(groupId) {
 async function listDbCustomGroups(query = "") {
   if (!db.isEnabled()) return [];
   const q = normalizeString(query).toLowerCase();
-  const listAllAlphabetically = q === "7" || q === "*";
+  const listAllAlphabetically = q === "/" || q === "*";
   const params = [];
   const where = [];
   if (q && !listAllAlphabetically) {
@@ -1177,7 +1177,7 @@ export async function updateCustomGroup(groupId, input) {
 export async function listCustomGroups(query = "") {
   const store = readState();
   const q = normalizeString(query).toLowerCase();
-  const listAllAlphabetically = q === "7" || q === "*";
+  const listAllAlphabetically = q === "/" || q === "*";
   const fileGroups = Object.values(store.groups)
     .filter((group) => group?.kind === "custom")
     .filter((group) => {

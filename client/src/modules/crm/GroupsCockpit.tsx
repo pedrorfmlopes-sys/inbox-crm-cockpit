@@ -15,7 +15,7 @@ import {
     updateLinkGroup,
 } from "@/api";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { addBase64AttachmentToCompose, openLinkedOutlookEmail } from "@/office";
+import { addBase64AttachmentToCompose, openGroupExplorer, openLinkedOutlookEmail } from "@/office";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 
@@ -65,6 +65,12 @@ function formatBytes(value: number | undefined): string {
 
 function sanitizePathSegment(value: string): string {
     return String(value || "").trim().replace(/[\\/:*?"<>|]+/g, "_");
+}
+
+function normalizeGroupStorageProvider(value: string | undefined): "cloud" | "local" | "onedrive" {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "local" || normalized === "onedrive") return normalized;
+    return "cloud";
 }
 
 function IconButton({
@@ -142,7 +148,7 @@ export const GroupsCockpit: React.FC = () => {
         [groups, selectedGroupId]
     );
     const trimmedQuery = String(query || "").trim();
-    const showAllAlphabetically = trimmedQuery === "7" || trimmedQuery === "*";
+    const showAllAlphabetically = trimmedQuery === "/" || trimmedQuery === "*";
     const showGroupSuggestions = Boolean(trimmedQuery);
     const matchingGroups = useMemo(() => {
         if (showAllAlphabetically) return groups;
@@ -153,6 +159,7 @@ export const GroupsCockpit: React.FC = () => {
         );
     }, [groups, showAllAlphabetically, trimmedQuery]);
     const documentsEnabled = selectedGroup?.documentsEnabled !== false;
+    const groupStorageProvider = normalizeGroupStorageProvider(settings?.groupStorage.provider);
 
     const currentEmailPayload = useMemo(
         () => ({
@@ -182,7 +189,7 @@ export const GroupsCockpit: React.FC = () => {
             setGroupsLoading(true);
             setGroupsError(null);
             try {
-                const nextGroups = await listLinkGroups("7");
+                const nextGroups = await listLinkGroups("/");
                 if (cancelled) return;
                 setGroups(nextGroups);
                 setSelectedGroupId((current) => {
@@ -435,7 +442,7 @@ export const GroupsCockpit: React.FC = () => {
         }
         setBusyAction(true);
         try {
-            const storageProvider = String(settings?.groupStorage.provider || "").trim();
+            const storageProvider = groupStorageProvider;
             const storageBasePath = String(settings?.groupStorage.baseFolderPath || "").trim();
             const payloadDocs: GroupDocumentEntry[] = candidates.map((attachment) => ({
                 id: `doc_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${attachment.id}`}`,
@@ -508,6 +515,32 @@ export const GroupsCockpit: React.FC = () => {
         }
     }
 
+    async function handleOpenExplorer(overrides?: { emailKey?: string; documentId?: string }) {
+        if (!selectedGroup) return;
+        if (groupStorageProvider === "onedrive") {
+            const target = String(settings?.groupStorage.baseFolderPath || "").trim();
+            if (/^https?:\/\//i.test(target)) {
+                window.open(target, "_blank", "noopener,noreferrer");
+                return;
+            }
+            setMsg("Configura um URL real do OneDrive/SharePoint para abrir diretamente a pasta externa.");
+            return;
+        }
+        if (groupStorageProvider === "local") {
+            setMsg("Abertura direta de pasta local ainda nao esta disponivel no add-in web. Usa o explorador interno via Cockpit Cloud ou configura OneDrive.");
+            return;
+        }
+        try {
+            await openGroupExplorer({
+                groupId: selectedGroup.id,
+                ...(overrides?.emailKey ? { emailKey: overrides.emailKey } : {}),
+                ...(overrides?.documentId ? { documentId: overrides.documentId } : {}),
+            });
+        } catch (error: any) {
+            setMsg(error?.message || "Nao foi possivel abrir o explorador documental.");
+        }
+    }
+
     return (
         <div style={styles.root}>
             <Section
@@ -521,6 +554,12 @@ export const GroupsCockpit: React.FC = () => {
                             onClick={selectedGroup ? () => void handleToggleGroupDocuments() : undefined}
                             disabled={!selectedGroup || busyAction}
                             tone={documentsEnabled ? "primary" : "default"}
+                        />
+                        <IconButton
+                            title={selectedGroup ? "Abrir explorador documental deste grupo" : "Seleciona um grupo para abrir o explorador"}
+                            icon={<Icons.ExternalLink size={13} />}
+                            onClick={selectedGroup ? () => void handleOpenExplorer() : undefined}
+                            disabled={!selectedGroup || busyAction}
                         />
                         <IconButton
                             title={selectedGroup ? "Apagar grupo selecionado" : "Seleciona um grupo para apagar"}
@@ -564,7 +603,7 @@ export const GroupsCockpit: React.FC = () => {
                                     void handleCreateGroup();
                                 }
                             }}
-                            placeholder='Pesquisar grupos... ("7" mostra todos)'
+                            placeholder='Pesquisar grupos... ("/" mostra todos)'
                         />
                         <IconButton
                             title={trimmedQuery && !showAllAlphabetically ? "Criar grupo com este nome" : "Escreve um nome para criar grupo"}
@@ -601,7 +640,7 @@ export const GroupsCockpit: React.FC = () => {
                         </div>
                     </div>
                 ) : (
-                    <div style={styles.hintText}>Escreve para procurar. Usa "7" se quiseres ver todos os grupos por ordem alfabética.</div>
+                    <div style={styles.hintText}>Escreve para procurar. Usa "/" se quiseres ver todos os grupos por ordem alfabética.</div>
                 )}
 
                 {showGroupSuggestions ? (
@@ -682,6 +721,7 @@ export const GroupsCockpit: React.FC = () => {
                                 </button>
                                 <div style={styles.emailActions}>
                                     <IconButton title={canOpen ? "Abrir email" : "Sem abertura direta disponivel"} icon={<Icons.MessageSquare size={12} />} onClick={canOpen ? () => void handleOpenEmail(email) : undefined} disabled={!canOpen} />
+                                    <IconButton title="Abrir explorador neste email" icon={<Icons.ExternalLink size={12} />} onClick={() => void handleOpenExplorer({ emailKey: makeEmailKey(email) })} disabled={busyAction} />
                                     <IconButton title="Remover do grupo" icon={<Icons.Trash size={12} />} onClick={() => void handleRemoveEmail(email)} disabled={busyAction} tone="danger" />
                                 </div>
                             </div>
@@ -707,6 +747,12 @@ export const GroupsCockpit: React.FC = () => {
                             icon={<Icons.RefreshCw size={13} />}
                             onClick={selectedGroup ? refreshGroupsAndEmails : undefined}
                             disabled={!selectedGroup || documentsLoading || busyAction}
+                        />
+                        <IconButton
+                            title={selectedGroup ? "Abrir explorador documental" : "Seleciona um grupo"}
+                            icon={<Icons.ExternalLink size={13} />}
+                            onClick={selectedGroup ? () => void handleOpenExplorer({ documentId: selectedDocument?.id }) : undefined}
+                            disabled={!selectedGroup || busyAction}
                         />
                     </>
                 }
@@ -793,6 +839,7 @@ export const GroupsCockpit: React.FC = () => {
                                             </button>
                                             <div style={styles.emailActions}>
                                                 <IconButton title="Download" icon={<Icons.Download size={12} />} onClick={() => handleDownloadDocument(document)} disabled={!document.contentBase64} />
+                                                <IconButton title="Abrir explorador neste documento" icon={<Icons.ExternalLink size={12} />} onClick={() => void handleOpenExplorer({ documentId: document.id })} disabled={busyAction} />
                                                 <IconButton title="Anexar ao email em edicao" icon={<Icons.Upload size={12} />} onClick={() => void handleAttachDocument(document)} disabled={!canAttach} />
                                                 <IconButton title="Remover documento" icon={<Icons.Trash size={12} />} onClick={() => void handleDeleteDocument(document)} disabled={busyAction} tone="danger" />
                                             </div>

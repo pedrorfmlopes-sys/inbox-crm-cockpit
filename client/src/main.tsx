@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import UniversalApp from "@/ui/UniversalApp";
 import DialogApp from "@/ui/DialogApp";
+import GroupExplorerApp from "@/modules/crm/GroupExplorerApp";
 
 // Decide which UI to render based on URL param:
 // - taskpane: main sidebar
@@ -72,7 +73,9 @@ function Boot() {
   }
 
   const view = getView();
-  return view === "dialog" ? <DialogApp /> : <UniversalApp />;
+  if (view === "dialog") return <DialogApp />;
+  if (view === "group-explorer") return <GroupExplorerApp />;
+  return <UniversalApp />;
 }
 
 const rootEl = document.getElementById("root");
