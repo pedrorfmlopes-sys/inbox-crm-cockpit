@@ -372,16 +372,20 @@ export async function syncOdooLinkedNotification(hasLinks: boolean, count = 0): 
 
 let activeDialog: any = null;
 
+function buildCockpitViewUrl(view: string, params: Record<string, string>) {
+  const url = new URL(window.location.origin);
+  url.searchParams.set("view", view);
+  Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, v));
+  return url;
+}
+
 /**
  * Opens a separate window using Office Dialog API.
  * Guard: only one dialog at a time (evita "já existe uma dialog ativa").
  */
 async function openCockpitView(view: string, params: Record<string, string>, options?: { height?: number; width?: number }) {
   const OfficeAny = await ensureOfficeReady();
-
-  const url = new URL(window.location.origin);
-  url.searchParams.set("view", view);
-  Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, v));
+  const url = buildCockpitViewUrl(view, params);
 
   clientLog.log(`[office] openDialog ${url.toString()}`);
 
@@ -392,13 +396,30 @@ async function openCockpitView(view: string, params: Record<string, string>, opt
   activeDialog = null;
 
   return await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const resolveOnce = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      clientLog.warn(`[office] displayDialogAsync timeout for ${view}`);
+      rejectOnce(new Error("A abertura da janela demorou demasiado tempo."));
+    }, 4000);
+
     OfficeAny.context.ui.displayDialogAsync(
       url.toString(),
       { height: options?.height || 65, width: options?.width || 40, displayInIframe: false },
       (result: any) => {
+        clearTimeout(timer);
         if (result.status !== OfficeAny.AsyncResultStatus.Succeeded) {
           clientLog.error(`[office] displayDialogAsync failed: ${result.error?.message || "unknown"}`);
-          reject(new Error(result.error?.message || "Falha ao abrir janela (Dialog)."));
+          rejectOnce(new Error(result.error?.message || "Falha ao abrir janela (Dialog)."));
           return;
         }
         const dialog = result.value;
@@ -410,13 +431,13 @@ async function openCockpitView(view: string, params: Record<string, string>, opt
               dialog.close();
             } catch { }
             activeDialog = null;
-            resolve();
+            resolveOnce();
           }
         });
 
         dialog.addEventHandler(OfficeAny.EventType.DialogEventReceived, () => {
           activeDialog = null;
-          resolve();
+          resolveOnce();
         });
       }
     );
@@ -428,7 +449,13 @@ export async function openCockpitDialog(params: Record<string, string>) {
 }
 
 export async function openGroupExplorer(params: Record<string, string>) {
-  return await openCockpitView("group-explorer", params, { height: 78, width: 52 });
+  try {
+    return await openCockpitView("group-explorer", params, { height: 78, width: 52 });
+  } catch (error) {
+    const url = buildCockpitViewUrl("group-explorer", params);
+    clientLog.warn("[office] group explorer fallback to browser window", error);
+    window.open(url.toString(), "_blank", "noopener,noreferrer");
+  }
 }
 
 /**
