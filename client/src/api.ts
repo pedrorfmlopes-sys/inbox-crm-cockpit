@@ -452,6 +452,7 @@ export async function getRelatedEmailContext(payload: RelevantEmailPayload): Pro
 export async function listLinkGroups(query = ""): Promise<LinkGroupEntry[]> {
   const params = new URLSearchParams();
   if (String(query || "").trim()) params.set("q", String(query || "").trim());
+  params.set("_ts", String(Date.now()));
   const response: any = await requestJSON(`/api/links/groups?${params.toString()}`);
   return Array.isArray(response?.groups) ? response.groups : [];
 }
@@ -491,7 +492,9 @@ export async function removeEmailFromLinkGroup(groupId: string, payload: Relevan
 }
 
 export async function getGroupEmails(groupId: string): Promise<RelatedEmailEntry[]> {
-  const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/emails`);
+  const params = new URLSearchParams();
+  params.set("_ts", String(Date.now()));
+  const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/emails?${params.toString()}`);
   return Array.isArray(response?.emails) ? response.emails.map(normalizeRelatedEmailEntry) : [];
 }
 

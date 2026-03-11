@@ -40,6 +40,13 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
+app.use("/api/links", (_req, res, next) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  next();
+});
+
 // AI (email assistant)
 app.use("/api/ai", createAiRouter());
 app.use("/api/learning", createLearningRouter());
