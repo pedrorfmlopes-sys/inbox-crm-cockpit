@@ -19,6 +19,7 @@ import {
   listEmailsByGroup,
   listLinksByConversation,
   listLinksByRecord,
+  removeEmailFromGroup,
   registerRelevantEmail,
 } from "./linkStore.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
@@ -925,6 +926,16 @@ app.post("/api/links/groups/:groupId/emails", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_link_failed", details: String(e?.message || e) });
+  }
+});
+
+app.delete("/api/links/groups/:groupId/emails", async (req, res) => {
+  try {
+    const result = await removeEmailFromGroup(req.params.groupId, req.body || {});
+    return res.json(result);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_unlink_failed", details: String(e?.message || e) });
   }
 });
 

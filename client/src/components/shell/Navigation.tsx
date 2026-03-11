@@ -9,6 +9,7 @@ export const Navigation: React.FC = () => {
         { id: "ai", label: "AI", icon: <Icons.Sparkles size={16} /> },
         { id: "crm", label: "CRM", icon: <Icons.Database size={16} /> },
         { id: "related", label: "Contexto", icon: <Icons.Link size={16} /> },
+        { id: "groups", label: "Grupos", icon: <Icons.Clipboard size={16} /> },
         { id: "files", label: "Files", icon: <Icons.Files size={16} /> },
         { id: "settings", label: "Settings", icon: <Icons.Settings size={16} /> },
     ];

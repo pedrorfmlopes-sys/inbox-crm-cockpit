@@ -119,6 +119,12 @@ function mergeEntryData(current, incoming) {
   const next = { ...current };
   for (const [key, value] of Object.entries(incoming || {})) {
     if (value === undefined || value === null || value === "") continue;
+    if (Array.isArray(value)) {
+      if (!Array.isArray(next[key]) || next[key].length === 0) {
+        next[key] = value;
+      }
+      continue;
+    }
     if (!next[key]) next[key] = value;
   }
   if (String(incoming?.linkedAt || "") > String(current?.linkedAt || "")) {
@@ -181,6 +187,7 @@ function parseLegacyStorageKey(key) {
 }
 
 function normalizeEmailInput(input) {
+  const attachments = normalizeAttachments(input?.attachments);
   return {
     itemId: normalizeString(input?.itemId),
     internetMessageId: normalizeMessageId(input?.internetMessageId),
@@ -193,7 +200,30 @@ function normalizeEmailInput(input) {
     sentAtIso: normalizeString(input?.sentAtIso),
     messageDateIso: normalizeString(input?.messageDateIso || input?.receivedAtIso || input?.sentAtIso || input?.linkedAt),
     linkedAt: normalizeString(input?.linkedAt),
+    ...(attachments.length ? { attachments } : {}),
   };
+}
+
+function normalizeAttachments(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((attachment) => ({
+      name: normalizeString(attachment?.name),
+      contentType: normalizeString(attachment?.contentType),
+      size: Number(attachment?.size || 0) || undefined,
+    }))
+    .filter((attachment) => attachment.name);
+}
+
+function parseAttachmentsJson(value) {
+  if (Array.isArray(value)) return normalizeAttachments(value);
+  const raw = normalizeString(value);
+  if (!raw) return [];
+  try {
+    return normalizeAttachments(JSON.parse(raw));
+  } catch {
+    return [];
+  }
 }
 
 function hydrateStore(raw) {
@@ -326,6 +356,22 @@ function addEmailMembership(store, groupId, emailId) {
   if (store.groups[gid]) store.groups[gid].updatedAt = nowIso();
 }
 
+function removeEmailMembership(store, groupId, emailId) {
+  const gid = normalizeString(groupId);
+  const eid = normalizeString(emailId);
+  if (!gid || !eid) return false;
+  const members = Array.isArray(store.groupMembers[gid]) ? store.groupMembers[gid] : [];
+  const nextMembers = members.filter((value) => value !== eid);
+  if (nextMembers.length === members.length) return false;
+  store.groupMembers[gid] = nextMembers;
+
+  const emailGroups = Array.isArray(store.emailGroups[eid]) ? store.emailGroups[eid] : [];
+  store.emailGroups[eid] = emailGroups.filter((value) => value !== gid);
+  if (!store.emailGroups[eid].length) delete store.emailGroups[eid];
+  if (store.groups[gid]) store.groups[gid].updatedAt = nowIso();
+  return true;
+}
+
 function linkEmailToEntity(store, emailId, rawLink) {
   const model = normalizeModel(rawLink?.model);
   const recordId = normalizeRecordId(rawLink?.recordId ?? rawLink?.resId);
@@ -393,6 +439,7 @@ function buildEmailListEntry(email, extra = {}) {
     sentAtIso: normalizeString(email?.sentAtIso),
     createdAt: normalizeString(email?.createdAt),
     updatedAt: normalizeString(email?.updatedAt),
+    attachments: normalizeAttachments(email?.attachments),
     ...extra,
   };
 }
@@ -428,6 +475,7 @@ function mapDbGroupMemberRow(row) {
     sentAtIso: normalizeString(row.sent_at_iso),
     createdAt: normalizeString(row.created_at),
     updatedAt: normalizeString(row.updated_at),
+    attachments: parseAttachmentsJson(row.attachments_json),
   });
 }
 
@@ -456,8 +504,8 @@ async function upsertDbCustomGroupMember(groupId, email) {
   if (!groupId || !emailKey) return;
   await db.query(
     `INSERT INTO crm_custom_group_members
-       (group_id, email_key, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       (group_id, email_key, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, attachments_json, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15)
      ON CONFLICT (group_id, email_key) DO UPDATE SET
        item_id = EXCLUDED.item_id,
        internet_message_id = EXCLUDED.internet_message_id,
@@ -469,6 +517,7 @@ async function upsertDbCustomGroupMember(groupId, email) {
        message_date_iso = EXCLUDED.message_date_iso,
        received_at_iso = EXCLUDED.received_at_iso,
        sent_at_iso = EXCLUDED.sent_at_iso,
+       attachments_json = EXCLUDED.attachments_json,
        updated_at = EXCLUDED.updated_at`,
     [
       normalizeString(groupId),
@@ -483,10 +532,44 @@ async function upsertDbCustomGroupMember(groupId, email) {
       normalizeString(email?.messageDateIso),
       normalizeString(email?.receivedAtIso),
       normalizeString(email?.sentAtIso),
+      JSON.stringify(normalizeAttachments(email?.attachments)),
       normalizeString(email?.createdAt) || nowIso(),
       normalizeString(email?.updatedAt) || nowIso(),
     ]
   );
+}
+
+async function removeDbCustomGroupMember(groupId, identity = {}) {
+  if (!db.isEnabled()) return;
+  const gid = normalizeString(groupId);
+  const key = normalizeString(identity?.emailKey);
+  if (!gid) return;
+  if (key) {
+    await db.query(`DELETE FROM crm_custom_group_members WHERE group_id = $1 AND email_key = $2`, [gid, key]);
+    return;
+  }
+
+  const normalized = normalizeEmailInput(identity);
+  const emailKey = makePersistentEmailKey(normalized);
+  if (emailKey) {
+    await db.query(`DELETE FROM crm_custom_group_members WHERE group_id = $1 AND email_key = $2`, [gid, emailKey]);
+    return;
+  }
+
+  if (normalized.itemId) {
+    await db.query(`DELETE FROM crm_custom_group_members WHERE group_id = $1 AND item_id = $2`, [gid, normalized.itemId]);
+    return;
+  }
+
+  if (normalized.internetMessageId) {
+    await db.query(
+      `DELETE FROM crm_custom_group_members
+       WHERE group_id = $1
+         AND LOWER(REGEXP_REPLACE(COALESCE(internet_message_id, ''), '[<>[:space:]]', '', 'g')) = $2`,
+      [gid, normalized.internetMessageId]
+    );
+    return;
+  }
 }
 
 async function getDbCustomGroupById(groupId) {
@@ -672,10 +755,16 @@ async function ensureCustomGroupDb() {
         message_date_iso TEXT,
         received_at_iso TEXT,
         sent_at_iso TEXT,
+        attachments_json JSONB DEFAULT '[]'::jsonb,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (group_id, email_key)
       );
+    `);
+
+    await db.query(`
+      ALTER TABLE crm_custom_group_members
+      ADD COLUMN IF NOT EXISTS attachments_json JSONB DEFAULT '[]'::jsonb;
     `);
 
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_members_item_id ON crm_custom_group_members (item_id);`);
@@ -932,6 +1021,53 @@ export async function addEmailToGroup(groupId, input) {
       memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
     },
     email: buildEmailListEntry(email),
+  };
+}
+
+export async function removeEmailFromGroup(groupId, input) {
+  const store = readState();
+  const gid = normalizeString(groupId);
+  const emailKey = normalizeString(input?.emailKey);
+  let emailId = "";
+
+  if (emailKey) {
+    emailId = Object.values(store.emails).find((email) => makePersistentEmailKey(email) === emailKey)?.id || "";
+  }
+
+  if (!emailId) {
+    emailId = resolveEmailId(store, input);
+  }
+
+  let removed = false;
+  if (emailId) {
+    removed = removeEmailMembership(store, gid, emailId);
+  } else if (emailKey && Array.isArray(store.groupMembers[gid])) {
+    const match = store.groupMembers[gid].find((candidateEmailId) => {
+      const email = store.emails[candidateEmailId];
+      return makePersistentEmailKey(email) === emailKey;
+    });
+    if (match) removed = removeEmailMembership(store, gid, match);
+  }
+
+  if (removed) {
+    writeStore(store);
+  }
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await removeDbCustomGroupMember(groupId, input);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Membership Delete Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Group Membership Delete Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return {
+    ok: true,
+    removed,
+    groupId: gid,
+    emailKey: emailKey || (emailId ? makePersistentEmailKey(store.emails[emailId]) : ""),
   };
 }
 

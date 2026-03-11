@@ -5,7 +5,7 @@ import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
 
-export type CockpitTab = "ai" | "crm" | "related" | "files" | "settings";
+export type CockpitTab = "ai" | "crm" | "related" | "groups" | "files" | "settings";
 export type StartupCheckStatus = "pending" | "running" | "success" | "warning" | "error";
 
 type StartupCheckId = "settings" | "session" | "email" | "links" | "services";
@@ -483,6 +483,10 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 fromName: c.fromName || "",
                 receivedAtIso: c.receivedDateTimeIso || "",
                 messageDateIso: c.receivedDateTimeIso || "",
+                attachments: (atts || []).map((attachment) => ({
+                    name: attachment.name,
+                    contentType: attachment.contentType,
+                })),
             }).catch(() => {
                 // best-effort central registry only
             });

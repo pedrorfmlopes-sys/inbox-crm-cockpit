@@ -147,6 +147,11 @@ export type RelevantEmailPayload = {
   messageDateIso?: string;
   sentAtIso?: string;
   receivedAtIso?: string;
+  attachments?: Array<{
+    name: string;
+    contentType?: string;
+    size?: number;
+  }>;
 };
 
 export type LinkGroupEntry = {
@@ -180,6 +185,11 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
   relatedReasons?: RelatedReason[];
   groupId?: string;
   groupName?: string;
+  attachments?: Array<{
+    name: string;
+    contentType?: string;
+    size?: number;
+  }>;
 };
 
 export type LinkPayload = {
@@ -361,6 +371,15 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
         kind: String(group?.kind || "").trim(),
       })).filter((group: any) => group.id)
       : [],
+    attachments: Array.isArray(entry?.attachments)
+      ? entry.attachments
+        .map((attachment: any) => ({
+          name: String(attachment?.name || "").trim(),
+          contentType: String(attachment?.contentType || "").trim(),
+          size: Number(attachment?.size || 0) || undefined,
+        }))
+        .filter((attachment: any) => attachment.name)
+      : [],
     relatedReasons: Array.isArray(entry?.relatedReasons) ? entry.relatedReasons : [],
   };
 }
@@ -454,6 +473,14 @@ export async function addEmailToLinkGroup(groupId: string, payload: RelevantEmai
     group: response?.group ?? response,
     email: response?.email ? normalizeRelatedEmailEntry(response.email) : null,
   };
+}
+
+export async function removeEmailFromLinkGroup(groupId: string, payload: RelevantEmailPayload & { emailKey?: string }): Promise<{ ok: boolean }> {
+  await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/emails`, {
+    method: "DELETE",
+    body: JSON.stringify(payload),
+  });
+  return { ok: true };
 }
 
 export async function getGroupEmails(groupId: string): Promise<RelatedEmailEntry[]> {
