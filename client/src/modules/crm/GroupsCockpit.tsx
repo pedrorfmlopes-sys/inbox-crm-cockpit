@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
     addEmailToLinkGroup,
     createLinkGroup,
+    deleteLinkGroup,
     getGroupEmails,
     listLinkGroups,
     removeEmailFromLinkGroup,
@@ -285,6 +286,32 @@ export const GroupsCockpit: React.FC = () => {
                 subtitle="Pesquisa, cria e seleciona grupos manuais do Cockpit."
                 actions={
                     <>
+                        <IconButton
+                            title={selectedGroup ? "Apagar grupo selecionado" : "Seleciona um grupo para apagar"}
+                            icon={<Icons.Trash size={13} />}
+                            onClick={() => {
+                                if (!selectedGroup || busyAction) return;
+                                const confirmed = window.confirm(`Apagar o grupo "${selectedGroup.name}"?`);
+                                if (!confirmed) return;
+                                void (async () => {
+                                    setBusyAction(true);
+                                    try {
+                                        await deleteLinkGroup(selectedGroup.id);
+                                        setSelectedGroupId("");
+                                        setGroupEmails([]);
+                                        setSelectedEmailKey("");
+                                        setReloadToken((value) => value + 1);
+                                        setMsg(`Grupo "${selectedGroup.name}" apagado.`);
+                                    } catch (error: any) {
+                                        setMsg(error?.message || "Nao foi possivel apagar o grupo.");
+                                    } finally {
+                                        setBusyAction(false);
+                                    }
+                                })();
+                            }}
+                            disabled={!selectedGroup || busyAction}
+                            tone="danger"
+                        />
                         <IconButton title="Atualizar grupos" icon={<Icons.RefreshCw size={13} />} onClick={refreshGroupsAndEmails} disabled={groupsLoading || busyAction} />
                     </>
                 }

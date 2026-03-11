@@ -464,6 +464,13 @@ export async function createLinkGroup(payload: { name: string; description?: str
   return response?.group ?? response;
 }
 
+export async function deleteLinkGroup(groupId: string): Promise<{ ok: boolean }> {
+  await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}`, {
+    method: "DELETE",
+  });
+  return { ok: true };
+}
+
 export async function addEmailToLinkGroup(groupId: string, payload: RelevantEmailPayload): Promise<{ group: LinkGroupEntry; email: RelatedEmailEntry | null }> {
   const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/emails`, {
     method: "POST",

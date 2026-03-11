@@ -644,7 +644,10 @@ async function listDbEmailsByGroup(groupId) {
      FROM crm_custom_group_members m
      JOIN crm_custom_groups g ON g.id = m.group_id
      WHERE m.group_id = $1
-     ORDER BY COALESCE(m.message_date_iso, m.received_at_iso, m.updated_at, m.created_at) DESC`,
+     ORDER BY
+       COALESCE(NULLIF(m.message_date_iso, ''), NULLIF(m.received_at_iso, ''), NULLIF(m.sent_at_iso, ''), '') DESC,
+       m.updated_at DESC,
+       m.created_at DESC`,
     [gid]
   );
   return dedupeEmailLinks((result?.rows || []).map((row) =>
@@ -1095,6 +1098,32 @@ export async function removeEmailFromGroup(groupId, input) {
     groupId: gid,
     emailKey: emailKey || (emailId ? makePersistentEmailKey(store.emails[emailId]) : ""),
   };
+}
+
+export async function deleteCustomGroup(groupId) {
+  const store = readState();
+  const gid = normalizeString(groupId);
+  if (!gid) return { ok: true, deleted: false };
+
+  const memberIds = Array.isArray(store.groupMembers[gid]) ? [...store.groupMembers[gid]] : [];
+  for (const emailId of memberIds) {
+    removeEmailMembership(store, gid, emailId);
+  }
+  delete store.groupMembers[gid];
+  delete store.groups[gid];
+  writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await db.query(`DELETE FROM crm_custom_groups WHERE id = $1`, [gid]);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Delete Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Custom Group Delete Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return { ok: true, deleted: true, groupId: gid };
 }
 
 export async function listEmailsByGroup(groupId) {

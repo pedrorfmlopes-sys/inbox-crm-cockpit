@@ -14,6 +14,7 @@ import {
   addEmailToGroup,
   addLink,
   createCustomGroup,
+  deleteCustomGroup,
   getRelatedEmails,
   listCustomGroups,
   listEmailsByGroup,
@@ -906,6 +907,16 @@ app.post("/api/links/groups", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_create_failed", details: String(e?.message || e) });
+  }
+});
+
+app.delete("/api/links/groups/:groupId", async (req, res) => {
+  try {
+    const result = await deleteCustomGroup(req.params.groupId);
+    return res.json(result);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_delete_failed", details: String(e?.message || e) });
   }
 });
 
