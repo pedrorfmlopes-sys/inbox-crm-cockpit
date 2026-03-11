@@ -751,7 +751,7 @@ export const GroupsCockpit: React.FC = () => {
                         <IconButton
                             title={selectedGroup ? "Abrir explorador documental" : "Seleciona um grupo"}
                             icon={<Icons.ExternalLink size={13} />}
-                            onClick={selectedGroup ? () => void handleOpenExplorer({ documentId: selectedDocument?.id }) : undefined}
+                            onClick={selectedGroup ? () => void handleOpenExplorer() : undefined}
                             disabled={!selectedGroup || busyAction}
                         />
                     </>

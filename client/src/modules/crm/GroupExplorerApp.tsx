@@ -202,7 +202,11 @@ export default function GroupExplorerApp(): JSX.Element {
         setGroupEmails(emails);
         setGroupDocuments(documents);
         setSelectedEmailKey((current) => current && emails.some((email) => makeEmailKey(email) === current) ? current : (emails[0] ? makeEmailKey(emails[0]) : ""));
-        setSelectedDocumentId((current) => current && documents.some((document) => makeDocumentKey(document) === current) ? current : (documents[0] ? makeDocumentKey(documents[0]) : ""));
+        setSelectedDocumentId((current) => {
+          if (current && documents.some((document) => makeDocumentKey(document) === current)) return current;
+          if (initial.documentId && documents.some((document) => makeDocumentKey(document) === initial.documentId)) return initial.documentId;
+          return "";
+        });
       })
       .catch((nextError: any) => { if (!cancelled) setError(nextError?.message || "Nao foi possivel carregar os dados do grupo."); })
       .finally(() => {
@@ -258,7 +262,7 @@ export default function GroupExplorerApp(): JSX.Element {
   }, [documentFilterMode, documentSearch, groupDocuments, selectedEmail]);
 
   const selectedDocument = useMemo(
-    () => filteredDocuments.find((document) => makeDocumentKey(document) === selectedDocumentId) || groupDocuments.find((document) => makeDocumentKey(document) === selectedDocumentId) || filteredDocuments[0] || groupDocuments[0] || null,
+    () => filteredDocuments.find((document) => makeDocumentKey(document) === selectedDocumentId) || groupDocuments.find((document) => makeDocumentKey(document) === selectedDocumentId) || null,
     [filteredDocuments, groupDocuments, selectedDocumentId]
   );
 
@@ -273,7 +277,7 @@ export default function GroupExplorerApp(): JSX.Element {
 
   useEffect(() => {
     if (!filteredDocuments.some((document) => makeDocumentKey(document) === selectedDocumentId)) {
-      setSelectedDocumentId(filteredDocuments[0] ? makeDocumentKey(filteredDocuments[0]) : "");
+      setSelectedDocumentId("");
     }
   }, [filteredDocuments, selectedDocumentId]);
 
@@ -399,26 +403,6 @@ export default function GroupExplorerApp(): JSX.Element {
             </div>
           </section>
 
-          <section style={styles.previewSection}>
-            <div style={styles.sectionHeader}>
-              <div>
-                <div style={styles.sectionTitle}>Preview</div>
-                <div style={styles.sectionHint}>Vista rapida do documento selecionado, agora mais acima e com muito mais area util.</div>
-              </div>
-              {selectedDocument ? (
-                <div style={styles.sectionActions}>
-                  <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(selectedDocument)} disabled={!selectedDocument.contentBase64}><Icons.Download size={13} /></button>
-                  <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(selectedDocument)} disabled={!selectedDocument.contentBase64}><Icons.Upload size={13} /></button>
-                </div>
-              ) : null}
-            </div>
-            {!selectedDocument ? <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe um documento na coluna da esquerda para o visualizar." /> : null}
-            {selectedDocument && selectedDocumentPreview?.kind === "image" ? <div style={styles.previewFrame}><img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} /></div> : null}
-            {selectedDocument && selectedDocumentPreview?.kind === "pdf" ? <div style={styles.previewFrame}><iframe title={selectedDocument.name} src={selectedDocumentPreview.dataUrl} style={styles.previewIframe} /></div> : null}
-            {selectedDocument && selectedDocumentPreview?.kind === "text" ? <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre> : null}
-            {selectedDocument && (!selectedDocumentPreview || selectedDocumentPreview.kind === "unsupported") ? <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode ser descarregado ou anexado, mas ainda nao tem preview interno para este formato." /> : null}
-          </section>
-
           <section style={styles.columnsGrid}>
             <section style={styles.panel}>
               <div style={styles.sectionHeader}>
@@ -426,6 +410,25 @@ export default function GroupExplorerApp(): JSX.Element {
                   <div style={styles.sectionTitle}>Documentos</div>
                   <div style={styles.sectionHint}>Documentos do grupo na coluna principal, com filtro global ou por email selecionado.</div>
                 </div>
+              </div>
+              <div style={styles.previewSection}>
+                <div style={styles.sectionHeader}>
+                  <div>
+                    <div style={styles.sectionTitle}>Preview</div>
+                    <div style={styles.sectionHint}>Seleciona um documento e o preview aparece logo aqui, sem esconder as listas.</div>
+                  </div>
+                  {selectedDocument ? (
+                    <div style={styles.sectionActions}>
+                      <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(selectedDocument)} disabled={!selectedDocument.contentBase64}><Icons.Download size={13} /></button>
+                      <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(selectedDocument)} disabled={!selectedDocument.contentBase64}><Icons.Upload size={13} /></button>
+                    </div>
+                  ) : null}
+                </div>
+                {!selectedDocument ? <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe um documento desta coluna para abrir o preview." /> : null}
+                {selectedDocument && selectedDocumentPreview?.kind === "image" ? <div style={styles.previewFrame}><img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} /></div> : null}
+                {selectedDocument && selectedDocumentPreview?.kind === "pdf" ? <div style={styles.previewFrame}><iframe title={selectedDocument.name} src={selectedDocumentPreview.dataUrl} style={styles.previewIframe} /></div> : null}
+                {selectedDocument && selectedDocumentPreview?.kind === "text" ? <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre> : null}
+                {selectedDocument && (!selectedDocumentPreview || selectedDocumentPreview.kind === "unsupported") ? <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode ser descarregado ou anexado, mas ainda nao tem preview interno para este formato." /> : null}
               </div>
               <div style={styles.filterGrid}>
                 <label style={styles.filterField}>
@@ -552,7 +555,7 @@ const styles: Record<string, React.CSSProperties> = {
   metric: { display: "grid", gap: 2, padding: 10, borderRadius: 12, background: "rgba(15, 23, 42, 0.03)" },
   metricLabel: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#6b7280" },
   metricValue: { fontSize: 13, fontWeight: 700, color: "#0f172a" },
-  previewSection: { display: "grid", gap: 10, padding: 12, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)" },
+  previewSection: { display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(248,250,252,0.85)" },
   columnsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, alignItems: "start" },
   panel: { display: "grid", gap: 10, padding: 12, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.9)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0 },
   sectionHeader: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" },
@@ -566,7 +569,7 @@ const styles: Record<string, React.CSSProperties> = {
   input: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "8px 10px", fontSize: 12, outline: "none", minWidth: 0 },
   compactInput: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "8px 10px", fontSize: 12, outline: "none", minWidth: 0 },
   compactSelect: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "8px 10px", fontSize: 12, outline: "none", minWidth: 0 },
-  listShell: { display: "grid", gap: 8, maxHeight: "52vh", overflowY: "auto", paddingRight: 4 },
+  listShell: { display: "grid", gap: 8, maxHeight: "36vh", overflowY: "auto", paddingRight: 4 },
   card: { display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", padding: 9, borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff" },
   cardActive: { display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", padding: 9, borderRadius: 12, border: "1px solid rgba(37, 99, 235, 0.35)", background: "rgba(219, 234, 254, 0.65)" },
   cardMain: { border: "none", background: "transparent", padding: 0, textAlign: "left", display: "grid", gap: 4, minWidth: 0, cursor: "pointer" },
@@ -575,8 +578,8 @@ const styles: Record<string, React.CSSProperties> = {
   cardActions: { display: "inline-flex", gap: 6, alignItems: "center" },
   iconBtn: { width: 30, height: 30, borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff", color: "#1d4ed8", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   iconBtnDanger: { width: 30, height: 30, borderRadius: 999, border: "1px solid rgba(239, 68, 68, 0.18)", background: "rgba(254, 226, 226, 0.9)", color: "#b91c1c", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-  previewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 360 },
-  previewImage: { width: "100%", height: "100%", minHeight: 360, objectFit: "contain", display: "block", background: "#fff" },
-  previewIframe: { width: "100%", height: 620, border: "none", display: "block", background: "#fff" },
-  previewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", maxHeight: 460, overflow: "auto" },
+  previewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 220 },
+  previewImage: { width: "100%", height: "100%", minHeight: 220, maxHeight: 300, objectFit: "contain", display: "block", background: "#fff" },
+  previewIframe: { width: "100%", height: 300, border: "none", display: "block", background: "#fff" },
+  previewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", maxHeight: 280, overflow: "auto" },
 };
