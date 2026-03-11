@@ -77,6 +77,14 @@ function stripDataUrlPrefix(value: string | undefined): string {
   return String(value || "").trim().replace(/^data:[^,]+,/, "");
 }
 
+function normalizeDocumentMimeType(value: string | undefined, name: string | undefined): string {
+  const raw = String(value || "").trim().toLowerCase();
+  const fileName = String(name || "").trim().toLowerCase();
+  if (raw === "application/x-pdf" || (!raw && /\.pdf$/.test(fileName))) return "application/pdf";
+  if (raw === "image/jpg") return "image/jpeg";
+  return raw || "application/octet-stream";
+}
+
 function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
   return String(email?.id || email?.itemId || email?.internetMessageId || `${email?.conversationId || ""}|${email?.subject || ""}`);
 }
@@ -96,7 +104,7 @@ function getEmailTimestamp(email: RelatedEmailEntry): number {
 
 function inferDocumentKind(document: GroupDocumentEntry): "image" | "pdf" | "text" | "unsupported" {
   const name = String(document.name || "").toLowerCase();
-  const type = String(document.contentType || "").toLowerCase();
+  const type = normalizeDocumentMimeType(document.contentType, document.name);
   if (!stripDataUrlPrefix(document.contentBase64)) return "unsupported";
   if (type.startsWith("image/") || /\.(png|jpe?g|gif|bmp|webp|svg)$/.test(name)) return "image";
   if (type.includes("pdf") || /\.pdf$/.test(name)) return "pdf";
@@ -108,7 +116,7 @@ function buildDocumentPreview(document: GroupDocumentEntry | null): PreviewState
   if (!document?.contentBase64) return null;
   const base64 = stripDataUrlPrefix(document.contentBase64);
   if (!base64) return null;
-  const dataUrl = `data:${document.contentType || "application/octet-stream"};base64,${base64}`;
+  const dataUrl = `data:${normalizeDocumentMimeType(document.contentType, document.name)};base64,${base64}`;
   const kind = inferDocumentKind(document);
   if (kind === "image") return { kind, dataUrl };
   if (kind === "pdf") return { kind, dataUrl };
@@ -148,7 +156,7 @@ function buildEmailHoverText(email: RelatedEmailEntry): string {
 function buildDocumentHoverText(document: GroupDocumentEntry): string {
   return [
     document.name ? `Documento: ${document.name}` : "",
-    document.contentType ? `Tipo: ${document.contentType}` : "",
+    normalizeDocumentMimeType(document.contentType, document.name) ? `Tipo: ${normalizeDocumentMimeType(document.contentType, document.name)}` : "",
     formatBytes(document.size) ? `Tamanho: ${formatBytes(document.size)}` : "",
     document.sourceEmailSubject ? `Email: ${document.sourceEmailSubject}` : "",
   ].filter(Boolean).join("\n");
@@ -346,16 +354,16 @@ export default function GroupExplorerApp(): JSX.Element {
     }
   }
 
-  function handleDownloadDocument(document: GroupDocumentEntry) {
-    const base64 = stripDataUrlPrefix(document.contentBase64);
-    if (!base64) {
-      setNotice("Este documento nao tem conteudo disponivel para download.");
-      return;
+function handleDownloadDocument(document: GroupDocumentEntry) {
+  const base64 = stripDataUrlPrefix(document.contentBase64);
+  if (!base64) {
+    setNotice("Este documento nao tem conteudo disponivel para download.");
+    return;
     }
     const bytes = globalThis.atob(base64);
     const buffer = new Array(bytes.length);
     for (let index = 0; index < bytes.length; index += 1) buffer[index] = bytes.charCodeAt(index);
-    const blob = new Blob([new Uint8Array(buffer)], { type: document.contentType || "application/octet-stream" });
+  const blob = new Blob([new Uint8Array(buffer)], { type: normalizeDocumentMimeType(document.contentType, document.name) });
     const url = URL.createObjectURL(blob);
     const anchor = downloadAnchorRef.current || globalThis.document.createElement("a");
     downloadAnchorRef.current = anchor;

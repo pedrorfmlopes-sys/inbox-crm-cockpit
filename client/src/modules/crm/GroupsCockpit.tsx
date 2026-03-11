@@ -25,6 +25,7 @@ type CurrentAttachmentCandidate = {
     contentType?: string;
     content: string;
     size?: number;
+    suspectedInline?: boolean;
 };
 
 function formatDate(value: string | undefined): string {
@@ -71,6 +72,20 @@ function normalizeGroupStorageProvider(value: string | undefined): "cloud" | "lo
     const normalized = String(value || "").trim().toLowerCase();
     if (normalized === "local" || normalized === "onedrive") return normalized;
     return "cloud";
+}
+
+function isLikelyInlineAttachment(name: string | undefined, contentType: string | undefined): boolean {
+    const lowerName = String(name || "").trim().toLowerCase();
+    const lowerType = String(contentType || "").trim().toLowerCase();
+    if (!lowerName && !lowerType) return false;
+    if (!lowerType.startsWith("image/")) return false;
+    return /^image\d+\./.test(lowerName)
+        || lowerName.includes("logo")
+        || lowerName.includes("signature")
+        || lowerName.includes("assinatura")
+        || lowerName.includes("facebook")
+        || lowerName.includes("instagram")
+        || lowerName.includes("linkedin");
 }
 
 function buildEmailHoverText(email: RelatedEmailEntry): string {
@@ -310,7 +325,6 @@ export const GroupsCockpit: React.FC = () => {
     );
 
     const currentAttachmentCandidates = useMemo<CurrentAttachmentCandidate[]>(() => {
-        const ignoreInline = Boolean(settings?.groupStorage.ignoreInlineAttachments);
         return (attachments || [])
             .map((attachment, index) => ({
                 id: `${attachment.name}:${index}`,
@@ -318,18 +332,15 @@ export const GroupsCockpit: React.FC = () => {
                 contentType: String(attachment.contentType || "").trim(),
                 content: String(attachment.content || "").trim(),
                 size: estimateBase64Size(attachment.content),
+                suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
             }))
             .filter((attachment) => attachment.name && attachment.content)
-            .filter((attachment) => {
-                if (!ignoreInline) return true;
-                const lowerName = attachment.name.toLowerCase();
-                const lowerType = String(attachment.contentType || "").toLowerCase();
-                if (lowerType.startsWith("image/") && (/^image\d+\./.test(lowerName) || lowerName.includes("logo") || lowerName.includes("signature") || lowerName.includes("assinatura"))) {
-                    return false;
-                }
-                return true;
+            .sort((a, b) => {
+                const inlineDelta = Number(Boolean(a.suspectedInline)) - Number(Boolean(b.suspectedInline));
+                if (inlineDelta !== 0) return inlineDelta;
+                return a.name.localeCompare(b.name, "pt-PT");
             });
-    }, [attachments, settings?.groupStorage.ignoreInlineAttachments]);
+    }, [attachments]);
 
     const groupFolderHint = useMemo(() => {
         const base = String(settings?.groupStorage.baseFolderPath || "").trim();
@@ -801,7 +812,7 @@ export const GroupsCockpit: React.FC = () => {
                                     <PanelState compact tone="info" title="Documentos desativados" description="Ativa os documentos do grupo no topo para guardares anexos." />
                                 ) : null}
                                 {documentsEnabled && !currentAttachmentCandidates.length ? (
-                                    <PanelState compact tone="info" title="Sem anexos importáveis" description="Abre um email com anexos úteis para os guardares neste grupo." />
+                                    <PanelState compact tone="info" title="Sem anexos disponíveis" description="Abre um email com anexos para os poderes guardar neste grupo." />
                                 ) : null}
                                 {documentsEnabled ? currentAttachmentCandidates.map((attachment) => (
                                     <div key={attachment.id} style={styles.documentRow}>
@@ -809,10 +820,19 @@ export const GroupsCockpit: React.FC = () => {
                                             <span style={styles.documentIcon}><Icons.Paperclip size={12} /></span>
                                             <div
                                                 style={styles.documentCopy}
-                                                title={[attachment.name, attachment.contentType || "Anexo", formatBytes(attachment.size), ctx.subject || "(sem assunto)"].filter(Boolean).join("\n")}
+                                                title={[
+                                                    attachment.name,
+                                                    attachment.contentType || "Anexo",
+                                                    formatBytes(attachment.size),
+                                                    attachment.suspectedInline ? "Possível anexo inline/assinatura" : "",
+                                                    ctx.subject || "(sem assunto)",
+                                                ].filter(Boolean).join("\n")}
                                             >
                                                 <div style={styles.documentName}>{attachment.name}</div>
-                                                <div style={styles.documentMiniMeta}>{formatBytes(attachment.size) || attachment.contentType || "Anexo"}</div>
+                                                <div style={styles.documentMiniMeta}>
+                                                    {formatBytes(attachment.size) || attachment.contentType || "Anexo"}
+                                                    {attachment.suspectedInline ? " · inline?" : ""}
+                                                </div>
                                             </div>
                                         </div>
                                         <div style={styles.emailActions}>
