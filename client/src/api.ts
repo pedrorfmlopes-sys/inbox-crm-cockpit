@@ -161,6 +161,7 @@ export type LinkGroupEntry = {
   description?: string;
   conversationId?: string;
   memberCount?: number;
+  documentsEnabled?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -475,9 +476,20 @@ export async function listLinkGroups(query = ""): Promise<LinkGroupEntry[]> {
   return Array.isArray(response?.groups) ? response.groups : [];
 }
 
-export async function createLinkGroup(payload: { name: string; description?: string }): Promise<LinkGroupEntry> {
+export async function createLinkGroup(payload: { name: string; description?: string; documentsEnabled?: boolean }): Promise<LinkGroupEntry> {
   const response: any = await requestJSON(`/api/links/groups`, {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return response?.group ?? response;
+}
+
+export async function updateLinkGroup(
+  groupId: string,
+  payload: { name?: string; description?: string; documentsEnabled?: boolean }
+): Promise<LinkGroupEntry> {
+  const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}`, {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
   return response?.group ?? response;

@@ -25,6 +25,7 @@ import {
   removeEmailFromGroup,
   registerRelevantEmail,
   saveDocumentsToGroup,
+  updateCustomGroup,
 } from "./linkStore.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
 import { createLearningRouter } from "./routes/learningRoutes.js";
@@ -917,6 +918,16 @@ app.post("/api/links/groups", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_create_failed", details: String(e?.message || e) });
+  }
+});
+
+app.patch("/api/links/groups/:groupId", async (req, res) => {
+  try {
+    const group = await updateCustomGroup(req.params.groupId, req.body || {});
+    return res.json({ ok: true, group });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_update_failed", details: String(e?.message || e) });
   }
 });
 

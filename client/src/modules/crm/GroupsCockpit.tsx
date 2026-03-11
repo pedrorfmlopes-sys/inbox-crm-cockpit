@@ -12,6 +12,7 @@ import {
     type GroupDocumentEntry,
     type LinkGroupEntry,
     type RelatedEmailEntry,
+    updateLinkGroup,
 } from "@/api";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { addBase64AttachmentToCompose, openLinkedOutlookEmail } from "@/office";
@@ -121,7 +122,6 @@ export const GroupsCockpit: React.FC = () => {
     const { ctx, attachments, setMsg, settings } = useCockpit();
     const downloadAnchorRef = useRef<HTMLAnchorElement | null>(null);
     const [query, setQuery] = useState("");
-    const [newGroupName, setNewGroupName] = useState("");
     const [groups, setGroups] = useState<LinkGroupEntry[]>([]);
     const [selectedGroupId, setSelectedGroupId] = useState("");
     const [selectedEmailKey, setSelectedEmailKey] = useState("");
@@ -141,6 +141,18 @@ export const GroupsCockpit: React.FC = () => {
         () => groups.find((group) => group.id === selectedGroupId) || null,
         [groups, selectedGroupId]
     );
+    const trimmedQuery = String(query || "").trim();
+    const showAllAlphabetically = trimmedQuery === "7" || trimmedQuery === "*";
+    const showGroupSuggestions = Boolean(trimmedQuery);
+    const matchingGroups = useMemo(() => {
+        if (showAllAlphabetically) return groups;
+        const q = trimmedQuery.toLowerCase();
+        return groups.filter((group) =>
+            String(group?.name || "").toLowerCase().includes(q)
+            || String(group?.description || "").toLowerCase().includes(q)
+        );
+    }, [groups, showAllAlphabetically, trimmedQuery]);
+    const documentsEnabled = selectedGroup?.documentsEnabled !== false;
 
     const currentEmailPayload = useMemo(
         () => ({
@@ -170,7 +182,7 @@ export const GroupsCockpit: React.FC = () => {
             setGroupsLoading(true);
             setGroupsError(null);
             try {
-                const nextGroups = await listLinkGroups(query);
+                const nextGroups = await listLinkGroups("7");
                 if (cancelled) return;
                 setGroups(nextGroups);
                 setSelectedGroupId((current) => {
@@ -190,7 +202,7 @@ export const GroupsCockpit: React.FC = () => {
             cancelled = true;
             window.clearTimeout(timer);
         };
-    }, [query, reloadToken]);
+    }, [reloadToken]);
 
     useEffect(() => {
         if (!selectedGroupId) {
@@ -293,11 +305,11 @@ export const GroupsCockpit: React.FC = () => {
     const groupFolderHint = useMemo(() => {
         const base = String(settings?.groupStorage.baseFolderPath || "").trim();
         const groupName = String(selectedGroup?.name || "").trim();
-        if (!groupName) return "";
+        if (!groupName || !documentsEnabled) return "";
         if (!base) return sanitizePathSegment(groupName);
         const separator = /^https?:\/\//i.test(base) || base.endsWith("/") ? "/" : base.includes("\\") ? "\\" : "/";
         return `${base.replace(/[\\/]+$/, "")}${separator}${sanitizePathSegment(groupName)}`;
-    }, [selectedGroup?.name, settings?.groupStorage.baseFolderPath]);
+    }, [documentsEnabled, selectedGroup?.name, settings?.groupStorage.baseFolderPath]);
 
     const selectedDocumentPreview = useMemo(() => {
         if (!selectedDocument?.contentBase64) return null;
@@ -324,17 +336,45 @@ export const GroupsCockpit: React.FC = () => {
     }
 
     async function handleCreateGroup() {
-        const name = String(newGroupName || "").trim();
-        if (!name) return;
+        const name = trimmedQuery;
+        if (!name || showAllAlphabetically) return;
+        const existing = groups.find((group) => String(group.name || "").trim().toLowerCase() === name.toLowerCase());
+        if (existing) {
+            setSelectedGroupId(existing.id);
+            setQuery("");
+            setMsg(`Grupo "${existing.name}" selecionado.`);
+            return;
+        }
         setBusyAction(true);
         try {
-            const group = await createLinkGroup({ name });
-            setNewGroupName("");
+            const group = await createLinkGroup({ name, documentsEnabled: true });
+            setQuery("");
             setSelectedGroupId(group.id);
             setReloadToken((value) => value + 1);
             setMsg(`Grupo "${group.name}" criado.`);
         } catch (error: any) {
             setMsg(error?.message || "Nao foi possivel criar o grupo.");
+        } finally {
+            setBusyAction(false);
+        }
+    }
+
+    async function handleToggleGroupDocuments() {
+        if (!selectedGroup) return;
+        setBusyAction(true);
+        try {
+            const nextGroup = await updateLinkGroup(selectedGroup.id, {
+                documentsEnabled: !documentsEnabled,
+            });
+            setGroups((current) => current.map((group) => (group.id === nextGroup.id ? { ...group, ...nextGroup } : group)));
+            setMsg(
+                nextGroup.documentsEnabled === false
+                    ? `Gestao documental desativada no grupo "${nextGroup.name}".`
+                    : `Gestao documental ativada no grupo "${nextGroup.name}".`
+            );
+            setReloadToken((value) => value + 1);
+        } catch (error: any) {
+            setMsg(error?.message || "Nao foi possivel atualizar a configuracao documental do grupo.");
         } finally {
             setBusyAction(false);
         }
@@ -389,6 +429,10 @@ export const GroupsCockpit: React.FC = () => {
 
     async function handleSaveAttachmentsToGroup(candidates: CurrentAttachmentCandidate[]) {
         if (!selectedGroup || !candidates.length) return;
+        if (!documentsEnabled) {
+            setMsg("Ativa a gestão documental deste grupo antes de guardares anexos.");
+            return;
+        }
         setBusyAction(true);
         try {
             const storageProvider = String(settings?.groupStorage.provider || "").trim();
@@ -468,9 +512,16 @@ export const GroupsCockpit: React.FC = () => {
         <div style={styles.root}>
             <Section
                 title="Grupos"
-                subtitle="Pesquisa, cria e seleciona grupos manuais do Cockpit."
+                subtitle="Pesquisa grupos existentes ou cria um novo no mesmo campo."
                 actions={
                     <>
+                        <IconButton
+                            title={selectedGroup ? "Ativar ou desativar documentos deste grupo" : "Seleciona um grupo para gerir documentos"}
+                            icon={<Icons.Files size={13} />}
+                            onClick={selectedGroup ? () => void handleToggleGroupDocuments() : undefined}
+                            disabled={!selectedGroup || busyAction}
+                            tone={documentsEnabled ? "primary" : "default"}
+                        />
                         <IconButton
                             title={selectedGroup ? "Apagar grupo selecionado" : "Seleciona um grupo para apagar"}
                             icon={<Icons.Trash size={13} />}
@@ -502,49 +553,85 @@ export const GroupsCockpit: React.FC = () => {
                 }
             >
                 <div style={styles.inputStack}>
-                    <div style={styles.compactField}>
+                    <div style={styles.compactFieldRow}>
                         <input
                             style={styles.input}
                             value={query}
                             onChange={(event) => setQuery(event.target.value)}
-                            placeholder="Pesquisar grupos..."
-                        />
-                    </div>
-                    <div style={styles.compactFieldRow}>
-                        <input
-                            style={styles.input}
-                            value={newGroupName}
-                            onChange={(event) => setNewGroupName(event.target.value)}
                             onKeyDown={(event) => {
                                 if (event.key === "Enter") {
                                     event.preventDefault();
                                     void handleCreateGroup();
                                 }
                             }}
-                            placeholder="Novo grupo..."
+                            placeholder='Pesquisar grupos... ("7" mostra todos)'
                         />
-                        <IconButton title="Criar grupo" icon={<Icons.Plus size={13} />} onClick={handleCreateGroup} disabled={busyAction || !newGroupName.trim()} tone="primary" />
+                        <IconButton
+                            title={trimmedQuery && !showAllAlphabetically ? "Criar grupo com este nome" : "Escreve um nome para criar grupo"}
+                            icon={<Icons.Plus size={13} />}
+                            onClick={handleCreateGroup}
+                            disabled={busyAction || !trimmedQuery || showAllAlphabetically}
+                            tone="primary"
+                        />
                     </div>
                 </div>
 
                 {groupsError ? <div style={styles.errorText}>{groupsError}</div> : null}
 
-                <div style={styles.scrollPaneTop}>
-                    {groupsLoading && !groups.length ? <PanelState compact tone="info" title="A carregar grupos" description="A sincronizar grupos guardados." /> : null}
-                    {!groupsLoading && !groups.length ? <PanelState compact tone="info" title="Sem grupos" description="Cria o primeiro grupo manual para comecar a organizar emails." /> : null}
-                    {groups.map((group) => {
-                        const selected = group.id === selectedGroupId;
-                        return (
-                            <button key={group.id} type="button" style={selected ? styles.groupRowActive : styles.groupRow} onClick={() => setSelectedGroupId(group.id)}>
-                                <span style={styles.groupMain}>
-                                    <span style={styles.groupName}>{group.name}</span>
-                                    {group.description ? <span style={styles.groupDesc}>{group.description}</span> : null}
-                                </span>
-                                <span style={styles.groupCount}>{group.memberCount || 0}</span>
-                            </button>
-                        );
-                    })}
-                </div>
+                {selectedGroup ? (
+                    <div style={styles.selectedGroupCard}>
+                        <div style={styles.groupMain}>
+                            <div style={styles.groupName}>{selectedGroup.name}</div>
+                            <div style={styles.groupDesc}>
+                                {documentsEnabled ? "Documentos ativos" : "Documentos desativados"} · {selectedGroup.memberCount || 0} email(s)
+                            </div>
+                        </div>
+                        <div style={styles.selectedGroupActions}>
+                            <span style={styles.groupCount}>{selectedGroup.memberCount || 0}</span>
+                            <IconButton
+                                title="Limpar grupo selecionado"
+                                icon={<Icons.RotateCcw size={12} />}
+                                onClick={() => {
+                                    setSelectedGroupId("");
+                                    setSelectedEmailKey("");
+                                    setSelectedDocumentId("");
+                                }}
+                                disabled={busyAction}
+                            />
+                        </div>
+                    </div>
+                ) : (
+                    <div style={styles.hintText}>Escreve para procurar. Usa "7" se quiseres ver todos os grupos por ordem alfabética.</div>
+                )}
+
+                {showGroupSuggestions ? (
+                    <div style={styles.scrollPaneTop}>
+                        {groupsLoading && !matchingGroups.length ? <PanelState compact tone="info" title="A carregar grupos" description="A procurar grupos que correspondem ao texto." /> : null}
+                        {!groupsLoading && !matchingGroups.length ? <PanelState compact tone="info" title="Sem resultados" description="Carrega em + para criar um grupo com este nome." /> : null}
+                        {matchingGroups.map((group) => {
+                            const selected = group.id === selectedGroupId;
+                            return (
+                                <button
+                                    key={group.id}
+                                    type="button"
+                                    style={selected ? styles.groupRowActive : styles.groupRow}
+                                    onClick={() => {
+                                        setSelectedGroupId(group.id);
+                                        setQuery("");
+                                    }}
+                                >
+                                    <span style={styles.groupMain}>
+                                        <span style={styles.groupName}>{group.name}</span>
+                                        <span style={styles.groupDesc}>
+                                            {group.documentsEnabled === false ? "Sem documentos" : "Documentos ativos"}
+                                        </span>
+                                    </span>
+                                    <span style={styles.groupCount}>{group.memberCount || 0}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                ) : null}
             </Section>
 
             <Section
@@ -612,7 +699,7 @@ export const GroupsCockpit: React.FC = () => {
                             title={selectedGroup && currentAttachmentCandidates.length ? "Guardar todos os anexos do email aberto no grupo" : "Abre um email com anexos para os guardar no grupo"}
                             icon={<Icons.Save size={13} />}
                             onClick={selectedGroup && currentAttachmentCandidates.length ? () => void handleSaveAttachmentsToGroup(currentAttachmentCandidates) : undefined}
-                            disabled={!selectedGroup || !currentAttachmentCandidates.length || busyAction}
+                            disabled={!selectedGroup || !documentsEnabled || !currentAttachmentCandidates.length || busyAction}
                             tone="primary"
                         />
                         <IconButton
@@ -628,6 +715,7 @@ export const GroupsCockpit: React.FC = () => {
                     <span style={styles.actionHint}>
                         {selectedGroup ? `${groupDocuments.length} documento(s) guardado(s)` : "Sem grupo ativo"}
                     </span>
+                    {selectedGroup ? <span style={styles.actionHint}>{documentsEnabled ? "Documentos ativos" : "Documentos desativados"}</span> : null}
                     {selectedGroup && groupFolderHint ? <span style={styles.actionHint}>{groupFolderHint}</span> : null}
                     {selectedEmail ? <span style={styles.actionHint}>Email ativo: {selectedEmail.subject || "(sem assunto)"}</span> : null}
                 </div>
@@ -639,16 +727,22 @@ export const GroupsCockpit: React.FC = () => {
 
                 {selectedGroup ? (
                     <div style={styles.documentSectionStack}>
+                        {!documentsEnabled ? (
+                            <PanelState compact tone="info" title="Gestao documental desativada" description="Este grupo pode continuar a organizar emails, mas nao vai guardar ficheiros ate reativares os documentos." />
+                        ) : null}
                         <div style={styles.documentSubsection}>
                             <div style={styles.documentSubTitle}>Anexos do email aberto</div>
                             <div style={styles.hintText}>
                                 Nesta fase, os documentos são guardados a partir do email que tens aberto no add-in.
                             </div>
                             <div style={styles.scrollPaneCandidates}>
-                                {!currentAttachmentCandidates.length ? (
+                                {!documentsEnabled ? (
+                                    <PanelState compact tone="info" title="Documentos desativados" description="Ativa os documentos do grupo no topo para guardares anexos." />
+                                ) : null}
+                                {documentsEnabled && !currentAttachmentCandidates.length ? (
                                     <PanelState compact tone="info" title="Sem anexos importáveis" description="Abre um email com anexos úteis para os guardares neste grupo." />
                                 ) : null}
-                                {currentAttachmentCandidates.map((attachment) => (
+                                {documentsEnabled ? currentAttachmentCandidates.map((attachment) => (
                                     <div key={attachment.id} style={styles.documentRow}>
                                         <div style={styles.documentMain}>
                                             <span style={styles.documentIcon}><Icons.Paperclip size={12} /></span>
@@ -666,12 +760,12 @@ export const GroupsCockpit: React.FC = () => {
                                                 title="Guardar no grupo"
                                                 icon={<Icons.Save size={12} />}
                                                 onClick={() => void handleSaveAttachmentsToGroup([attachment])}
-                                                disabled={busyAction}
+                                                disabled={busyAction || !documentsEnabled}
                                                 tone="primary"
                                             />
                                         </div>
                                     </div>
-                                ))}
+                                )) : null}
                             </div>
                         </div>
 
@@ -878,6 +972,22 @@ const styles: Record<string, React.CSSProperties> = {
         display: "grid",
         gap: "6px",
         paddingRight: "2px",
+    },
+    selectedGroupCard: {
+        border: panelBorder,
+        borderRadius: "8px",
+        background: "#F7FAFF",
+        padding: "8px 10px",
+        display: "grid",
+        gridTemplateColumns: "1fr auto",
+        gap: "8px",
+        alignItems: "center",
+    },
+    selectedGroupActions: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        flexShrink: 0,
     },
     documentSectionStack: {
         display: "grid",

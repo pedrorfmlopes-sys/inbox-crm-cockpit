@@ -351,6 +351,12 @@ function ensureGroup(store, partial) {
     name: normalizeString(partial?.name) || current.name || "Grupo sem nome",
     description: normalizeString(partial?.description) || current.description || "",
     conversationId: normalizeString(partial?.conversationId) || current.conversationId || "",
+    documentsEnabled:
+      typeof partial?.documentsEnabled === "boolean"
+        ? partial.documentsEnabled
+        : typeof current.documentsEnabled === "boolean"
+          ? current.documentsEnabled
+          : true,
     updatedAt: now,
   };
   if (!next.createdAt) next.createdAt = now;
@@ -519,6 +525,7 @@ function mapDbGroupRow(row) {
     kind: CUSTOM_GROUP_KIND,
     name: normalizeString(row.name),
     description: normalizeString(row.description),
+    documentsEnabled: row.documents_enabled !== false,
     createdAt: normalizeString(row.created_at),
     updatedAt: normalizeString(row.updated_at),
   };
@@ -567,16 +574,18 @@ function mapDbGroupDocumentRow(row) {
 async function upsertDbCustomGroup(group) {
   if (!db.isEnabled()) return;
   await db.query(
-    `INSERT INTO crm_custom_groups (id, name, description, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO crm_custom_groups (id, name, description, documents_enabled, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name,
        description = EXCLUDED.description,
+       documents_enabled = EXCLUDED.documents_enabled,
        updated_at = EXCLUDED.updated_at`,
     [
       normalizeString(group?.id),
       normalizeString(group?.name) || "Grupo sem nome",
       normalizeString(group?.description),
+      group?.documentsEnabled !== false,
       normalizeString(group?.createdAt) || nowIso(),
       normalizeString(group?.updatedAt) || nowIso(),
     ]
@@ -728,7 +737,7 @@ async function getDbCustomGroupById(groupId) {
   const gid = normalizeString(groupId);
   if (!gid) return null;
   const result = await db.query(
-    `SELECT id, name, description, created_at, updated_at
+    `SELECT id, name, description, documents_enabled, created_at, updated_at
      FROM crm_custom_groups
      WHERE id = $1`,
     [gid]
@@ -739,19 +748,20 @@ async function getDbCustomGroupById(groupId) {
 async function listDbCustomGroups(query = "") {
   if (!db.isEnabled()) return [];
   const q = normalizeString(query).toLowerCase();
+  const listAllAlphabetically = q === "7" || q === "*";
   const params = [];
   const where = [];
-  if (q) {
+  if (q && !listAllAlphabetically) {
     params.push(`%${q}%`);
     where.push(`(LOWER(name) LIKE $${params.length} OR LOWER(COALESCE(description, '')) LIKE $${params.length})`);
   }
   const result = await db.query(
-    `SELECT g.id, g.name, g.description, g.created_at, g.updated_at, COUNT(m.email_key)::int AS member_count
+    `SELECT g.id, g.name, g.description, g.documents_enabled, g.created_at, g.updated_at, COUNT(m.email_key)::int AS member_count
      FROM crm_custom_groups g
      LEFT JOIN crm_custom_group_members m ON m.group_id = g.id
      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-     GROUP BY g.id, g.name, g.description, g.created_at, g.updated_at
-     ORDER BY g.updated_at DESC, g.created_at DESC`,
+     GROUP BY g.id, g.name, g.description, g.documents_enabled, g.created_at, g.updated_at
+     ORDER BY LOWER(g.name) ASC, g.created_at ASC`,
     params
   );
   return (result?.rows || []).map((row) => ({
@@ -890,9 +900,15 @@ async function ensureCustomGroupDb() {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
+        documents_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    await db.query(`
+      ALTER TABLE crm_custom_groups
+      ADD COLUMN IF NOT EXISTS documents_enabled BOOLEAN NOT NULL DEFAULT TRUE;
     `);
 
     await db.query(`
@@ -1101,6 +1117,7 @@ export async function createCustomGroup(input) {
     kind: CUSTOM_GROUP_KIND,
     name: normalizeString(input?.name) || "Grupo sem nome",
     description: normalizeString(input?.description),
+    documentsEnabled: typeof input?.documentsEnabled === "boolean" ? input.documentsEnabled : true,
   });
   writeStore(store);
   if (db.isEnabled()) {
@@ -1118,19 +1135,60 @@ export async function createCustomGroup(input) {
   };
 }
 
+export async function updateCustomGroup(groupId, input) {
+  const store = readState();
+  const gid = normalizeString(groupId);
+  const current = store.groups[gid];
+  if (!gid || !current || current.kind !== CUSTOM_GROUP_KIND) {
+    throw new Error("Grupo inválido.");
+  }
+
+  const group = ensureGroup(store, {
+    ...current,
+    id: gid,
+    name: normalizeString(input?.name) || current.name,
+    description:
+      Object.prototype.hasOwnProperty.call(input || {}, "description")
+        ? normalizeString(input?.description)
+        : current.description,
+    documentsEnabled:
+      typeof input?.documentsEnabled === "boolean"
+        ? input.documentsEnabled
+        : current.documentsEnabled,
+  });
+  writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await upsertDbCustomGroup(group);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Update Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Custom Group Update Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return {
+    ...group,
+    memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
+  };
+}
+
 export async function listCustomGroups(query = "") {
   const store = readState();
   const q = normalizeString(query).toLowerCase();
+  const listAllAlphabetically = q === "7" || q === "*";
   const fileGroups = Object.values(store.groups)
     .filter((group) => group?.kind === "custom")
     .filter((group) => {
-      if (!q) return true;
+      if (!q || listAllAlphabetically) return true;
       return String(group?.name || "").toLowerCase().includes(q)
         || String(group?.description || "").toLowerCase().includes(q);
     })
-    .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")))
+    .sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), "pt"))
     .map((group) => ({
       ...group,
+      documentsEnabled: group.documentsEnabled !== false,
       memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
     }));
 
@@ -1146,7 +1204,7 @@ export async function listCustomGroups(query = "") {
         });
       }
       return Array.from(merged.values()).sort((a, b) =>
-        String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""))
+        String(a?.name || "").localeCompare(String(b?.name || ""), "pt")
       );
     } catch (error) {
       if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Query Error, falling back to central file store:", error.message);
@@ -1175,6 +1233,7 @@ export async function addEmailToGroup(groupId, input) {
     kind: CUSTOM_GROUP_KIND,
     name: existingDbGroup?.name,
     description: existingDbGroup?.description,
+    documentsEnabled: existingDbGroup?.documentsEnabled,
   });
   const email = upsertEmail(store, input);
   if (email.conversationId) {
@@ -1342,6 +1401,7 @@ export async function saveDocumentsToGroup(groupId, input) {
   const store = readState();
   const gid = normalizeString(groupId);
   const group = store.groups[gid];
+  if (group?.documentsEnabled === false) throw new Error("A gestao documental esta desativada neste grupo.");
   if (!gid || !group || group.kind !== CUSTOM_GROUP_KIND) throw new Error("Grupo inválido.");
 
   const docs = Array.isArray(input?.documents) ? input.documents.map((doc) => normalizeGroupDocumentInput(doc)).filter((doc) => doc.contentBase64) : [];
