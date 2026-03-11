@@ -420,12 +420,14 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
         </div>
       </header>
 
-      {error ? <PanelState compact tone="error" title="Falha no explorador" description={error} /> : null}
-      {notice ? <PanelState compact tone="info" title="Explorador" description={notice} /> : null}
-      {loadingGroups ? <PanelState compact tone="loading" title="A carregar grupos" description="Estamos a preparar o explorador documental." /> : null}
-      {!loadingGroups && !selectedGroup ? <PanelState compact tone="info" title="Sem grupos" description="Ainda nao existem grupos manuais disponiveis para este explorador." /> : null}
+      <div style={styles.statusStack}>
+        {error ? <PanelState compact tone="error" title="Falha no explorador" description={error} /> : null}
+        {notice ? <PanelState compact tone="info" title="Explorador" description={notice} /> : null}
+        {loadingGroups ? <PanelState compact tone="loading" title="A carregar grupos" description="Estamos a preparar o explorador documental." /> : null}
+        {!loadingGroups && !selectedGroup ? <PanelState compact tone="info" title="Sem grupos" description="Ainda nao existem grupos manuais disponiveis para este explorador." /> : null}
+      </div>
       {selectedGroup ? (
-        <>
+        <div style={styles.explorerBody}>
           <section style={styles.columnsGrid}>
             <section style={styles.panel}>
               <div style={styles.sectionHeaderCompact}>
@@ -556,14 +558,27 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
             {selectedDocument && selectedDocumentPreview?.kind === "text" ? <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre> : null}
             {selectedDocument && (!selectedDocumentPreview || selectedDocumentPreview.kind === "unsupported") ? <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode ser descarregado ou anexado, mas ainda nao tem preview interno para este formato." /> : null}
           </section>
-        </>
+        </div>
       ) : null}
     </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", background: "var(--iccc-bg, #edf2f7)", color: "var(--iccc-text, #172b4d)", fontFamily: "var(--iccc-font, 'Segoe UI', sans-serif)", padding: 12, display: "grid", gap: 10 },
+  root: {
+    height: "calc(100vh - 24px)",
+    background: "var(--iccc-bg, #edf2f7)",
+    color: "var(--iccc-text, #172b4d)",
+    fontFamily: "var(--iccc-font, 'Segoe UI', sans-serif)",
+    padding: 12,
+    display: "grid",
+    gridTemplateRows: "auto auto minmax(0, 1fr)",
+    gap: 10,
+    overflow: "hidden",
+    boxSizing: "border-box",
+  },
+  statusStack: { display: "grid", gap: 8, minHeight: 0, alignContent: "start" },
+  explorerBody: { display: "grid", gridTemplateRows: "minmax(280px, 0.9fr) minmax(300px, 1.1fr)", gap: 10, minHeight: 0, overflow: "hidden" },
   headerShell: { display: "grid", gridTemplateColumns: "minmax(240px, 1.25fr) minmax(300px, 0.95fr)", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.9)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.08)", minHeight: 116, maxHeight: 116, overflow: "hidden", alignItems: "stretch" },
   headerIdentity: { display: "grid", gap: 6, minWidth: 0, alignContent: "space-between" },
   eyebrow: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#5b6b83" },
@@ -576,9 +591,9 @@ const styles: Record<string, React.CSSProperties> = {
   selectWrap: { minWidth: 0 },
   select: { width: "100%", borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "rgba(248,250,252,0.95)", color: "#172b4d", padding: "8px 12px", fontSize: 11, fontWeight: 600, outline: "none" },
   closeBtn: { borderRadius: 999, border: "none", background: "#1d4ed8", color: "#fff", padding: "7px 13px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
-  columnsGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10, alignItems: "stretch" },
-  panel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0, height: "44vh", gridTemplateRows: "auto auto 1fr" },
-  previewPanel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0 },
+  columnsGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10, alignItems: "stretch", minHeight: 0, overflow: "hidden" },
+  panel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0, height: "100%", gridTemplateRows: "auto auto minmax(0, 1fr)", overflow: "hidden" },
+  previewPanel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0, height: "100%", overflow: "hidden", gridTemplateRows: "auto minmax(0, 1fr)" },
   sectionHeaderCompact: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" },
   sectionTitle: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#0f172a" },
   sectionActions: { display: "inline-flex", gap: 4, alignItems: "center" },
@@ -604,8 +619,8 @@ const styles: Record<string, React.CSSProperties> = {
   metaTag: { fontSize: 9, color: "#42526E", background: "#FFFFFF", borderRadius: 999, padding: "1px 6px", border: "1px solid rgba(15, 23, 42, 0.08)" },
   iconBtn: { width: 22, height: 22, borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff", color: "#1d4ed8", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   iconBtnDanger: { width: 22, height: 22, borderRadius: 999, border: "1px solid rgba(239, 68, 68, 0.18)", background: "rgba(254, 226, 226, 0.9)", color: "#b91c1c", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-  previewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 220 },
-  previewImage: { width: "100%", height: "100%", minHeight: 220, maxHeight: "40vh", objectFit: "contain", display: "block", background: "#fff" },
-  previewIframe: { width: "100%", height: "40vh", border: "none", display: "block", background: "#fff" },
-  previewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", maxHeight: "40vh", overflow: "auto" },
+  previewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 0, height: "100%" },
+  previewImage: { width: "100%", height: "100%", minHeight: 0, objectFit: "contain", display: "block", background: "#fff" },
+  previewIframe: { width: "100%", height: "100%", border: "none", display: "block", background: "#fff" },
+  previewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", height: "100%", overflow: "auto", boxSizing: "border-box" },
 };
