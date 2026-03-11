@@ -517,19 +517,6 @@ export const GroupsCockpit: React.FC = () => {
 
     async function handleOpenExplorer(overrides?: { emailKey?: string; documentId?: string }) {
         if (!selectedGroup) return;
-        if (groupStorageProvider === "onedrive") {
-            const target = String(settings?.groupStorage.baseFolderPath || "").trim();
-            if (/^https?:\/\//i.test(target)) {
-                window.open(target, "_blank", "noopener,noreferrer");
-                return;
-            }
-            setMsg("Configura um URL real do OneDrive/SharePoint para abrir diretamente a pasta externa.");
-            return;
-        }
-        if (groupStorageProvider === "local") {
-            setMsg("Abertura direta de pasta local ainda nao esta disponivel no add-in web. Usa o explorador interno via Cockpit Cloud ou configura OneDrive.");
-            return;
-        }
         try {
             await openGroupExplorer({
                 groupId: selectedGroup.id,
