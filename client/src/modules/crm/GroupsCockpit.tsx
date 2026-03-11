@@ -388,6 +388,11 @@ export const GroupsCockpit: React.FC = () => {
 
     const visibleAttachmentCandidates = attachmentSource === "selected" ? selectedEmailAttachmentCandidates : currentAttachmentCandidates;
     const savableAttachmentCandidates = visibleAttachmentCandidates.filter((attachment) => Boolean(attachment.content));
+    const currentEmailIdentity = useMemo(
+        () => [String(ctx.itemId || "").trim(), normalizeMessageKey(ctx.internetMessageId), String(ctx.conversationId || "").trim()].join("|"),
+        [ctx.conversationId, ctx.internetMessageId, ctx.itemId]
+    );
+    const attachmentListKey = `${attachmentSource}:${currentEmailIdentity}:${selectedEmailKey}`;
 
     const groupFolderHint = useMemo(() => {
         const base = String(settings?.groupStorage.baseFolderPath || "").trim();
@@ -397,6 +402,10 @@ export const GroupsCockpit: React.FC = () => {
         const separator = /^https?:\/\//i.test(base) || base.endsWith("/") ? "/" : base.includes("\\") ? "\\" : "/";
         return `${base.replace(/[\\/]+$/, "")}${separator}${sanitizePathSegment(groupName)}`;
     }, [documentsEnabled, selectedGroup?.name, settings?.groupStorage.baseFolderPath]);
+
+    useEffect(() => {
+        setAttachmentSource("current");
+    }, [currentEmailIdentity]);
 
     async function refreshGroupsAndEmails() {
         setReloadToken((value) => value + 1);
@@ -884,7 +893,7 @@ export const GroupsCockpit: React.FC = () => {
                                     ? "Os anexos do email selecionado podem ser revistos aqui. Guardar so fica disponivel quando o conteudo do ficheiro estiver acessivel no add-in."
                                     : "Nesta fase, os documentos sao guardados diretamente a partir do email que tens aberto no add-in."}
                             </div>
-                            <div style={styles.scrollPaneCandidates}>
+                            <div key={attachmentListKey} style={styles.scrollPaneCandidates}>
                                 {!documentsEnabled ? (
                                     <PanelState compact tone="info" title="Documentos desativados" description="Ativa os documentos do grupo no topo para guardares anexos." />
                                 ) : null}
