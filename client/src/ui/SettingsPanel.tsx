@@ -8,6 +8,7 @@ import {
   setSignatureImageDataUrl,
   type AppLocale,
   type CockpitSettingsV1,
+  type GroupStorageProvider,
   type LangOption,
   type ReferenceEntityKey,
   type ReplyLength,
@@ -20,7 +21,7 @@ import { aiListModels } from "../api";
 import { PanelState, type PanelStateTone } from "./PanelState";
 import { previewReferenceCode } from "../referenceCodes";
 
-type Section = "general" | "conns" | "ai" | "persona" | "signature" | "references" | "protection";
+type Section = "general" | "conns" | "ai" | "persona" | "signature" | "references" | "groups" | "protection";
 type StatusNotice = { tone: PanelStateTone; title: string; description?: string };
 type StatusValue = StatusNotice | string | null;
 
@@ -68,6 +69,12 @@ const REFERENCE_ENTITY_LABELS: Record<ReferenceEntityKey, string> = {
   project: "Projeto",
   task: "Tarefa",
   ticket: "Ticket",
+};
+
+const GROUP_STORAGE_PROVIDER_LABELS: Record<GroupStorageProvider, string> = {
+  disabled: "Só metadados no Cockpit",
+  local: "Pasta local",
+  onedrive: "OneDrive / Share",
 };
 
 function localeShort(loc: AppLocale): string {
@@ -145,6 +152,7 @@ export function SettingsPanel(): JSX.Element {
     if (section === "persona") return "Minha Persona";
     if (section === "signature") return "Assinatura";
     if (section === "references") return "Codigos de Referencia";
+    if (section === "groups") return "Grupos";
     return "Proteção (O Moat)";
   }, [section]);
 
@@ -306,6 +314,9 @@ export function SettingsPanel(): JSX.Element {
           </button>
           <button style={section === "references" ? S.sideItemOn : S.sideItem} onClick={() => setSection("references")}>
             Referencias
+          </button>
+          <button style={section === "groups" ? S.sideItemOn : S.sideItem} onClick={() => setSection("groups")}>
+            Grupos
           </button>
           <button style={section === "protection" ? S.sideItemOn : S.sideItem} onClick={() => setSection("protection")}>
             Proteção
@@ -925,6 +936,136 @@ export function SettingsPanel(): JSX.Element {
                   ))}
                 </div>
                 <div style={S.hint}>O reset afeta apenas futuros codigos.</div>
+              </div>
+            </div>
+          )}
+
+          {section === "groups" && (
+            <div style={{ display: "grid", gap: 14 }}>
+              <PanelState
+                compact
+                tone="info"
+                title="Configuração documental dos grupos"
+                description="Definimos aqui a localização base e as regras para a futura gestão de anexos por grupo, sem mexer já na operação diária do cockpit."
+              />
+
+              <Field label="Modo de armazenamento">
+                <select
+                  style={S.select}
+                  value={model.groupStorage.provider}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      groupStorage: {
+                        ...model.groupStorage,
+                        provider: e.target.value as GroupStorageProvider,
+                      },
+                    })
+                  }
+                >
+                  {Object.entries(GROUP_STORAGE_PROVIDER_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <div style={S.hint}>
+                  Nesta fase estamos a preparar a origem documental dos grupos. A cópia real de anexos será ligada sobre esta base.
+                </div>
+              </Field>
+
+              <Field label="Pasta base / localização">
+                <input
+                  style={S.input}
+                  value={model.groupStorage.baseFolderPath || ""}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      groupStorage: {
+                        ...model.groupStorage,
+                        baseFolderPath: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder={model.groupStorage.provider === "onedrive" ? "URL ou caminho da biblioteca/document library" : "C:\\Documentos\\InboxCockpit\\Grupos"}
+                />
+                <div style={S.hint}>
+                  Cada grupo poderá usar esta localização como raiz para criar ou localizar a sua própria pasta.
+                </div>
+              </Field>
+
+              <label style={S.toggleRow}>
+                <input
+                  type="checkbox"
+                  checked={model.groupStorage.autoCreateFolderOnGroupCreate}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      groupStorage: {
+                        ...model.groupStorage,
+                        autoCreateFolderOnGroupCreate: e.target.checked,
+                      },
+                    })
+                  }
+                />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Criar pasta automaticamente ao criar grupo</div>
+                  <div style={S.hint}>Útil quando quisermos que os grupos nasçam já preparados para receber anexos selecionados.</div>
+                </div>
+              </label>
+
+              <label style={S.toggleRow}>
+                <input
+                  type="checkbox"
+                  checked={model.groupStorage.ignoreInlineAttachments}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      groupStorage: {
+                        ...model.groupStorage,
+                        ignoreInlineAttachments: e.target.checked,
+                      },
+                    })
+                  }
+                />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ignorar anexos inline e imagens de assinatura</div>
+                  <div style={S.hint}>Ajuda a reduzir ruído quando começarmos a escolher anexos úteis para guardar por grupo.</div>
+                </div>
+              </label>
+
+              <Field label="Viewer preferido">
+                <select
+                  style={S.select}
+                  value={model.groupStorage.suggestedViewer}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      groupStorage: {
+                        ...model.groupStorage,
+                        suggestedViewer: e.target.value as "system" | "inline",
+                      },
+                    })
+                  }
+                >
+                  <option value="inline">Viewer interno do cockpit</option>
+                  <option value="system">Aplicação do sistema</option>
+                </select>
+              </Field>
+
+              <div style={S.referenceCard}>
+                <div style={S.fieldLabel}>Resumo atual</div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={S.hint}>
+                    Origem escolhida: <b>{GROUP_STORAGE_PROVIDER_LABELS[model.groupStorage.provider]}</b>
+                  </div>
+                  <div style={S.hint}>
+                    Localização base: <b>{model.groupStorage.baseFolderPath || "Por definir"}</b>
+                  </div>
+                  <div style={S.hint}>
+                    Pastas automáticas: <b>{model.groupStorage.autoCreateFolderOnGroupCreate ? "Sim" : "Não"}</b>
+                  </div>
+                </div>
               </div>
             </div>
           )}

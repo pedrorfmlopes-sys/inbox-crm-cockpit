@@ -23,6 +23,7 @@ export type ContactAlias = {
 export type ReferenceEntityKey = "lead" | "project" | "task" | "ticket";
 export type ReferenceCounterMode = "per_type" | "global";
 export type ReferenceCodePosition = "prefix" | "suffix";
+export type GroupStorageProvider = "disabled" | "local" | "onedrive";
 
 export type ReferenceCodeSettings = {
   enabled: boolean;
@@ -34,6 +35,14 @@ export type ReferenceCodeSettings = {
     global: number;
     perType: Record<ReferenceEntityKey, number>;
   };
+};
+
+export type GroupStorageSettings = {
+  provider: GroupStorageProvider;
+  baseFolderPath: string;
+  autoCreateFolderOnGroupCreate: boolean;
+  ignoreInlineAttachments: boolean;
+  suggestedViewer: "system" | "inline";
 };
 
 export type CockpitSettingsV1 = {
@@ -114,6 +123,9 @@ export type CockpitSettingsV1 = {
 
   // Configurable reference codes for Odoo-created records
   referenceCodes: ReferenceCodeSettings;
+
+  // Group document storage configuration
+  groupStorage: GroupStorageSettings;
 };
 
 const KEY_API_BASE = "apiBaseUrl";
@@ -210,6 +222,13 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
         ticket: 0,
       },
     },
+  },
+  groupStorage: {
+    provider: "disabled",
+    baseFolderPath: "",
+    autoCreateFolderOnGroupCreate: true,
+    ignoreInlineAttachments: true,
+    suggestedViewer: "inline",
   },
 };
 
@@ -329,6 +348,10 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
           ...((((incoming as any).referenceCodes || {}).counters || {}).perType || {}),
         },
       },
+    },
+    groupStorage: {
+      ...base.groupStorage,
+      ...((incoming as any).groupStorage || {}),
     },
   };
 

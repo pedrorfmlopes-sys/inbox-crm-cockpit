@@ -438,6 +438,9 @@ export const GroupsCockpit: React.FC = () => {
                     </span>
                     {selectedEmail ? <span style={styles.actionHint}>Email ativo: {selectedEmail.subject || "(sem assunto)"}</span> : null}
                 </div>
+                <div style={styles.hintText}>
+                    A pasta base e as regras documentais dos grupos ficam em Settings &gt; Grupos.
+                </div>
                 <div style={styles.scrollPaneBottom}>
                     {!selectedGroup ? <PanelState compact tone="info" title="Sem grupo ativo" description="A secao inferior mostra anexos dos emails do grupo selecionado." /> : null}
                     {selectedGroup && !documents.length ? (
