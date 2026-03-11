@@ -73,6 +73,25 @@ function normalizeGroupStorageProvider(value: string | undefined): "cloud" | "lo
     return "cloud";
 }
 
+function buildEmailHoverText(email: RelatedEmailEntry): string {
+    return [
+        email.subject ? `Assunto: ${email.subject}` : "",
+        email.fromName || email.fromEmail ? `De: ${email.fromName || email.fromEmail}` : "",
+        formatDate(email.messageDateIso || email.receivedAtIso) ? `Data: ${formatDate(email.messageDateIso || email.receivedAtIso)}` : "",
+        Array.isArray(email.attachments) ? `Anexos: ${email.attachments.length}` : "",
+        Array.isArray(email.relatedRecords) ? `Registos Odoo: ${email.relatedRecords.length}` : "",
+    ].filter(Boolean).join("\n");
+}
+
+function buildDocumentHoverText(document: Partial<GroupDocumentEntry>): string {
+    return [
+        document.name ? `Documento: ${document.name}` : "",
+        document.contentType ? `Tipo: ${document.contentType}` : "",
+        formatBytes(document.size) ? `Tamanho: ${formatBytes(document.size)}` : "",
+        document.sourceEmailSubject ? `Email: ${document.sourceEmailSubject}` : "",
+    ].filter(Boolean).join("\n");
+}
+
 function IconButton({
     title,
     icon,
@@ -142,6 +161,9 @@ export const GroupsCockpit: React.FC = () => {
     const [documentsError, setDocumentsError] = useState<string | null>(null);
     const [busyAction, setBusyAction] = useState(false);
     const [reloadToken, setReloadToken] = useState(0);
+    const [emailsExpanded, setEmailsExpanded] = useState(true);
+    const [documentsExpanded, setDocumentsExpanded] = useState(true);
+    const [documentDetailsExpanded, setDocumentDetailsExpanded] = useState(false);
 
     const selectedGroup = useMemo(
         () => groups.find((group) => group.id === selectedGroupId) || null,
@@ -317,26 +339,6 @@ export const GroupsCockpit: React.FC = () => {
         const separator = /^https?:\/\//i.test(base) || base.endsWith("/") ? "/" : base.includes("\\") ? "\\" : "/";
         return `${base.replace(/[\\/]+$/, "")}${separator}${sanitizePathSegment(groupName)}`;
     }, [documentsEnabled, selectedGroup?.name, settings?.groupStorage.baseFolderPath]);
-
-    const selectedDocumentPreview = useMemo(() => {
-        if (!selectedDocument?.contentBase64) return null;
-        const contentType = String(selectedDocument.contentType || "").toLowerCase();
-        const dataUrl = `data:${selectedDocument.contentType || "application/octet-stream"};base64,${selectedDocument.contentBase64}`;
-        if (contentType.startsWith("image/")) {
-            return { kind: "image" as const, dataUrl };
-        }
-        if (contentType === "application/pdf") {
-            return { kind: "pdf" as const, dataUrl };
-        }
-        if (contentType.startsWith("text/") || contentType.includes("json") || contentType.includes("xml")) {
-            try {
-                return { kind: "text" as const, text: globalThis.atob(selectedDocument.contentBase64) };
-            } catch {
-                return { kind: "unsupported" as const };
-            }
-        }
-        return { kind: "unsupported" as const };
-    }, [selectedDocument]);
 
     async function refreshGroupsAndEmails() {
         setReloadToken((value) => value + 1);
@@ -605,10 +607,13 @@ export const GroupsCockpit: React.FC = () => {
                 {groupsError ? <div style={styles.errorText}>{groupsError}</div> : null}
 
                 {selectedGroup ? (
-                    <div style={styles.selectedGroupCard}>
+                    <div
+                        style={styles.selectedGroupCard}
+                        title={`${selectedGroup.name}\n${documentsEnabled ? "Documentos ativos" : "Documentos desativados"}\n${selectedGroup.memberCount || 0} email(s)`}
+                    >
                         <div style={styles.groupMain}>
                             <div style={styles.groupName}>{selectedGroup.name}</div>
-                            <div style={styles.groupDesc}>
+                            <div style={styles.groupMutedMeta}>
                                 {documentsEnabled ? "Documentos ativos" : "Documentos desativados"} · {selectedGroup.memberCount || 0} email(s)
                             </div>
                         </div>
@@ -662,7 +667,6 @@ export const GroupsCockpit: React.FC = () => {
 
             <Section
                 title="Emails"
-                subtitle={selectedGroup ? `Grupo selecionado: ${selectedGroup.name}` : "Seleciona um grupo para ver os emails associados."}
                 actions={
                     <>
                         <IconButton
@@ -678,12 +682,18 @@ export const GroupsCockpit: React.FC = () => {
                             onClick={refreshGroupsAndEmails}
                             disabled={!selectedGroup || emailsLoading || busyAction}
                         />
+                        <IconButton
+                            title={emailsExpanded ? "Recolher emails" : "Expandir emails"}
+                            icon={emailsExpanded ? <Icons.ArrowUp size={10} /> : <Icons.ArrowDown size={10} />}
+                            onClick={() => setEmailsExpanded((value) => !value)}
+                            disabled={!selectedGroup && !groupEmails.length}
+                        />
                     </>
                 }
             >
-                {!hasCurrentEmail ? <div style={styles.hintText}>A associacao continua a ser feita a partir do email atualmente aberto no add-in.</div> : null}
+                {selectedGroup ? <div style={styles.sectionMetaHint}>Grupo: {selectedGroup.name}</div> : null}
                 {emailsError ? <div style={styles.errorText}>{emailsError}</div> : null}
-                <div style={styles.scrollPaneMiddle}>
+                {emailsExpanded ? <div style={styles.scrollPaneMiddle}>
                     {!selectedGroup ? <PanelState compact tone="info" title="Nenhum grupo selecionado" description="Escolhe um grupo acima para ver ou gerir os emails." /> : null}
                     {selectedGroup && emailsLoading && !groupEmails.length ? <PanelState compact tone="info" title="A carregar emails" description="A listar os emails ligados ao grupo." /> : null}
                     {selectedGroup && !emailsLoading && !groupEmails.length ? <PanelState compact tone="info" title="Grupo sem emails" description="Podes associar o email atualmente aberto com o botao de ligacao." /> : null}
@@ -693,28 +703,29 @@ export const GroupsCockpit: React.FC = () => {
                         const canOpen = Boolean(email.itemId || email.emailWebLink);
                         return (
                             <div key={makeEmailKey(email)} style={active ? styles.emailRowActive : styles.emailRow}>
-                                <button type="button" style={styles.emailSelectArea} onClick={() => setSelectedEmailKey(makeEmailKey(email))}>
+                                <button
+                                    type="button"
+                                    style={styles.emailSelectArea}
+                                    onClick={() => setSelectedEmailKey(makeEmailKey(email))}
+                                    title={buildEmailHoverText(email)}
+                                >
                                     <div style={styles.emailSubject}>{email.subject || "(sem assunto)"}</div>
-                                    <div style={styles.emailMeta}>
-                                        <span>{email.fromName || email.fromEmail || "(sem remetente)"}</span>
-                                        {formatDate(email.messageDateIso || email.receivedAtIso) ? <span>{formatDate(email.messageDateIso || email.receivedAtIso)}</span> : null}
-                                    </div>
                                     <div style={styles.emailTagRow}>
-                                        {attachmentCount ? <span style={styles.metaTag}>{attachmentCount} anexo(s)</span> : null}
+                                        {attachmentCount ? <span style={styles.metaTag} title={`${attachmentCount} anexo(s)`}>{attachmentCount}</span> : null}
                                         {Array.isArray(email.relatedRecords) && email.relatedRecords.length ? (
-                                            <span style={styles.metaTag}>{email.relatedRecords.length} registo(s) Odoo</span>
+                                            <span style={styles.metaTag} title={`${email.relatedRecords.length} registo(s) Odoo`}>{email.relatedRecords.length}</span>
                                         ) : null}
                                     </div>
                                 </button>
                                 <div style={styles.emailActions}>
-                                    <IconButton title={canOpen ? "Abrir email" : "Sem abertura direta disponivel"} icon={<Icons.MessageSquare size={12} />} onClick={canOpen ? () => void handleOpenEmail(email) : undefined} disabled={!canOpen} />
-                                    <IconButton title="Abrir explorador neste email" icon={<Icons.ExternalLink size={12} />} onClick={() => void handleOpenExplorer({ emailKey: makeEmailKey(email) })} disabled={busyAction} />
-                                    <IconButton title="Remover do grupo" icon={<Icons.Trash size={12} />} onClick={() => void handleRemoveEmail(email)} disabled={busyAction} tone="danger" />
+                                    <IconButton title={canOpen ? "Abrir email" : "Sem abertura direta disponivel"} icon={<Icons.MessageSquare size={10} />} onClick={canOpen ? () => void handleOpenEmail(email) : undefined} disabled={!canOpen} />
+                                    <IconButton title="Abrir explorador neste email" icon={<Icons.ExternalLink size={10} />} onClick={() => void handleOpenExplorer({ emailKey: makeEmailKey(email) })} disabled={busyAction} />
+                                    <IconButton title="Remover do grupo" icon={<Icons.Trash size={10} />} onClick={() => void handleRemoveEmail(email)} disabled={busyAction} tone="danger" />
                                 </div>
                             </div>
                         );
                     })}
-                </div>
+                </div> : <div style={styles.collapsedHint}>Emails recolhidos</div>}
             </Section>
 
             <Section
@@ -741,24 +752,41 @@ export const GroupsCockpit: React.FC = () => {
                             onClick={selectedGroup ? () => void handleOpenExplorer() : undefined}
                             disabled={!selectedGroup || busyAction}
                         />
+                        <IconButton
+                            title={documentsExpanded ? "Recolher documentos" : "Expandir documentos"}
+                            icon={documentsExpanded ? <Icons.ArrowUp size={10} /> : <Icons.ArrowDown size={10} />}
+                            onClick={() => setDocumentsExpanded((value) => !value)}
+                            disabled={!selectedGroup && !groupDocuments.length}
+                        />
                     </>
                 }
             >
-                <div style={styles.actionStrip}>
-                    <span style={styles.actionHint}>
-                        {selectedGroup ? `${groupDocuments.length} documento(s) guardado(s)` : "Sem grupo ativo"}
+                <div style={styles.actionStripCompact}>
+                    <span style={styles.actionHint} title={selectedGroup ? `${groupDocuments.length} documento(s) guardado(s)` : "Sem grupo ativo"}>
+                        {selectedGroup ? `${groupDocuments.length}` : "-"}
                     </span>
-                    {selectedGroup ? <span style={styles.actionHint}>{documentsEnabled ? "Documentos ativos" : "Documentos desativados"}</span> : null}
-                    {selectedGroup && groupFolderHint ? <span style={styles.actionHint}>{groupFolderHint}</span> : null}
-                    {selectedEmail ? <span style={styles.actionHint}>Email ativo: {selectedEmail.subject || "(sem assunto)"}</span> : null}
+                    {selectedGroup ? <span style={styles.actionHint} title={documentsEnabled ? "Documentos ativos" : "Documentos desativados"}>{documentsEnabled ? "on" : "off"}</span> : null}
+                    <button
+                        type="button"
+                        style={styles.detailToggle}
+                        onClick={() => setDocumentDetailsExpanded((value) => !value)}
+                        title={documentDetailsExpanded ? "Esconder detalhes" : "Mostrar detalhes"}
+                        disabled={!selectedGroup}
+                    >
+                        {documentDetailsExpanded ? "menos" : "mais"}
+                    </button>
                 </div>
-                <div style={styles.hintText}>
-                    A pasta base e as regras documentais dos grupos ficam em Settings &gt; Grupos.
-                </div>
+                {documentDetailsExpanded && selectedGroup ? (
+                    <div style={styles.detailChipWrap}>
+                        {groupFolderHint ? <span style={styles.actionHint} title={groupFolderHint}>{groupFolderHint}</span> : null}
+                        {selectedEmail ? <span style={styles.actionHint} title={selectedEmail.subject || "(sem assunto)"}>Email ativo</span> : null}
+                        <span style={styles.actionHint} title={"As regras documentais dos grupos ficam em Settings > Grupos."}>Settings &gt; Grupos</span>
+                    </div>
+                ) : null}
                 {!selectedGroup ? <PanelState compact tone="info" title="Sem grupo ativo" description="A secao inferior vai mostrar anexos guardados e anexos disponiveis do email aberto." /> : null}
                 {documentsError ? <div style={styles.errorText}>{documentsError}</div> : null}
 
-                {selectedGroup ? (
+                {selectedGroup && documentsExpanded ? (
                     <div style={styles.documentSectionStack}>
                         {!documentsEnabled ? (
                             <PanelState compact tone="info" title="Gestao documental desativada" description="Este grupo pode continuar a organizar emails, mas nao vai guardar ficheiros ate reativares os documentos." />
@@ -779,19 +807,18 @@ export const GroupsCockpit: React.FC = () => {
                                     <div key={attachment.id} style={styles.documentRow}>
                                         <div style={styles.documentMain}>
                                             <span style={styles.documentIcon}><Icons.Paperclip size={12} /></span>
-                                            <div style={styles.documentCopy}>
+                                            <div
+                                                style={styles.documentCopy}
+                                                title={[attachment.name, attachment.contentType || "Anexo", formatBytes(attachment.size), ctx.subject || "(sem assunto)"].filter(Boolean).join("\n")}
+                                            >
                                                 <div style={styles.documentName}>{attachment.name}</div>
-                                                <div style={styles.documentMeta}>
-                                                    <span>{attachment.contentType || "Anexo"}</span>
-                                                    {formatBytes(attachment.size) ? <span>{formatBytes(attachment.size)}</span> : null}
-                                                    <span>{ctx.subject || "(sem assunto)"}</span>
-                                                </div>
+                                                <div style={styles.documentMiniMeta}>{formatBytes(attachment.size) || attachment.contentType || "Anexo"}</div>
                                             </div>
                                         </div>
                                         <div style={styles.emailActions}>
                                             <IconButton
                                                 title="Guardar no grupo"
-                                                icon={<Icons.Save size={12} />}
+                                                icon={<Icons.Save size={10} />}
                                                 onClick={() => void handleSaveAttachmentsToGroup([attachment])}
                                                 disabled={busyAction || !documentsEnabled}
                                                 tone="primary"
@@ -816,19 +843,20 @@ export const GroupsCockpit: React.FC = () => {
                                     const canAttach = Boolean(document.contentBase64);
                                     return (
                                         <div key={makeDocumentKey(document)} style={active ? styles.documentRowActive : styles.documentRow}>
-                                            <button type="button" style={styles.emailSelectArea} onClick={() => setSelectedDocumentId(makeDocumentKey(document))}>
+                                            <button
+                                                type="button"
+                                                style={styles.emailSelectArea}
+                                                onClick={() => setSelectedDocumentId(makeDocumentKey(document))}
+                                                title={buildDocumentHoverText(document)}
+                                            >
                                                 <div style={styles.documentName}>{document.name}</div>
-                                                <div style={styles.documentMeta}>
-                                                    <span>{document.contentType || "Documento"}</span>
-                                                    {formatBytes(document.size) ? <span>{formatBytes(document.size)}</span> : null}
-                                                    {document.sourceEmailSubject ? <span>{document.sourceEmailSubject}</span> : null}
-                                                </div>
+                                                <div style={styles.documentMiniMeta}>{formatBytes(document.size) || document.contentType || "Documento"}</div>
                                             </button>
                                             <div style={styles.emailActions}>
-                                                <IconButton title="Download" icon={<Icons.Download size={12} />} onClick={() => handleDownloadDocument(document)} disabled={!document.contentBase64} />
-                                                <IconButton title="Abrir explorador neste documento" icon={<Icons.ExternalLink size={12} />} onClick={() => void handleOpenExplorer({ documentId: document.id })} disabled={busyAction} />
-                                                <IconButton title="Anexar ao email em edicao" icon={<Icons.Upload size={12} />} onClick={() => void handleAttachDocument(document)} disabled={!canAttach} />
-                                                <IconButton title="Remover documento" icon={<Icons.Trash size={12} />} onClick={() => void handleDeleteDocument(document)} disabled={busyAction} tone="danger" />
+                                                <IconButton title="Download" icon={<Icons.Download size={10} />} onClick={() => handleDownloadDocument(document)} disabled={!document.contentBase64} />
+                                                <IconButton title="Abrir explorador neste documento" icon={<Icons.ExternalLink size={10} />} onClick={() => void handleOpenExplorer({ documentId: document.id })} disabled={busyAction} />
+                                                <IconButton title="Anexar ao email em edicao" icon={<Icons.Upload size={10} />} onClick={() => void handleAttachDocument(document)} disabled={!canAttach} />
+                                                <IconButton title="Remover documento" icon={<Icons.Trash size={10} />} onClick={() => void handleDeleteDocument(document)} disabled={busyAction} tone="danger" />
                                             </div>
                                         </div>
                                     );
@@ -836,29 +864,9 @@ export const GroupsCockpit: React.FC = () => {
                             </div>
                         </div>
 
-                        {selectedDocument ? (
-                            <div style={styles.documentSubsection}>
-                                <div style={styles.documentSubTitle}>Preview</div>
-                                {selectedDocumentPreview?.kind === "image" ? (
-                                    <div style={styles.previewFrame}>
-                                        <img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} />
-                                    </div>
-                                ) : null}
-                                {selectedDocumentPreview?.kind === "pdf" ? (
-                                    <div style={styles.previewFrame}>
-                                        <iframe title={selectedDocument.name} src={selectedDocumentPreview.dataUrl} style={styles.previewIframe} />
-                                    </div>
-                                ) : null}
-                                {selectedDocumentPreview?.kind === "text" ? (
-                                    <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre>
-                                ) : null}
-                                {!selectedDocumentPreview || selectedDocumentPreview.kind === "unsupported" ? (
-                                    <PanelState compact tone="info" title="Preview não disponível" description="Este tipo de documento pode ser descarregado ou anexado, mas não tem preview interno nesta fase." />
-                                ) : null}
-                            </div>
-                        ) : null}
                     </div>
                 ) : null}
+                {selectedGroup && !documentsExpanded ? <div style={styles.collapsedHint}>Documentos recolhidos</div> : null}
             </Section>
         </div>
     );
@@ -869,7 +877,7 @@ const panelBorder = "1px solid #DFE1E6";
 const styles: Record<string, React.CSSProperties> = {
     root: {
         display: "grid",
-        gap: "10px",
+        gap: "8px",
         alignContent: "start",
     },
     section: {
@@ -877,15 +885,15 @@ const styles: Record<string, React.CSSProperties> = {
         borderRadius: "10px",
         background: "#FFFFFF",
         display: "grid",
-        gap: "8px",
-        padding: "10px",
+        gap: "6px",
+        padding: "8px",
         minWidth: 0,
     },
     sectionHeader: {
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "space-between",
-        gap: "8px",
+        gap: "6px",
         minWidth: 0,
     },
     sectionTitleWrap: {
@@ -894,27 +902,24 @@ const styles: Record<string, React.CSSProperties> = {
         minWidth: 0,
     },
     sectionTitle: {
-        fontSize: "12px",
+        fontSize: "11px",
         fontWeight: 800,
         color: "#172B4D",
         textTransform: "uppercase",
         letterSpacing: "0.05em",
     },
     sectionSubtitle: {
-        fontSize: "11px",
-        color: "#6B778C",
-        lineHeight: 1.4,
-        wordBreak: "break-word",
+        display: "none",
     },
     sectionActions: {
         display: "inline-flex",
         alignItems: "center",
-        gap: "6px",
+        gap: "4px",
         flexShrink: 0,
     },
     sectionBody: {
         display: "grid",
-        gap: "8px",
+        gap: "6px",
         minWidth: 0,
     },
     inputStack: {
@@ -934,8 +939,8 @@ const styles: Record<string, React.CSSProperties> = {
         width: "100%",
         border: panelBorder,
         borderRadius: "8px",
-        padding: "8px 10px",
-        fontSize: "12px",
+        padding: "7px 9px",
+        fontSize: "11px",
         background: "#FAFBFC",
         color: "#172B4D",
         minWidth: 0,
@@ -944,9 +949,9 @@ const styles: Record<string, React.CSSProperties> = {
         border: panelBorder,
         background: "#F7F8FA",
         color: "#42526E",
-        width: "30px",
-        height: "30px",
-        borderRadius: "8px",
+        width: "22px",
+        height: "22px",
+        borderRadius: "7px",
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -957,9 +962,9 @@ const styles: Record<string, React.CSSProperties> = {
         border: "1px solid #0747A6",
         background: "#0747A6",
         color: "#FFFFFF",
-        width: "30px",
-        height: "30px",
-        borderRadius: "8px",
+        width: "22px",
+        height: "22px",
+        borderRadius: "7px",
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -970,9 +975,9 @@ const styles: Record<string, React.CSSProperties> = {
         border: "1px solid #DE350B",
         background: "#FFF0EB",
         color: "#DE350B",
-        width: "30px",
-        height: "30px",
-        borderRadius: "8px",
+        width: "22px",
+        height: "22px",
+        borderRadius: "7px",
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -980,38 +985,38 @@ const styles: Record<string, React.CSSProperties> = {
         flexShrink: 0,
     },
     scrollPaneTop: {
-        maxHeight: "180px",
+        maxHeight: "136px",
         overflowY: "auto",
         display: "grid",
-        gap: "6px",
+        gap: "4px",
         paddingRight: "2px",
     },
     scrollPaneMiddle: {
-        maxHeight: "320px",
+        maxHeight: "268px",
         overflowY: "auto",
         display: "grid",
-        gap: "6px",
+        gap: "4px",
         paddingRight: "2px",
     },
     scrollPaneBottom: {
-        maxHeight: "220px",
+        maxHeight: "210px",
         overflowY: "auto",
         display: "grid",
-        gap: "6px",
+        gap: "4px",
         paddingRight: "2px",
     },
     scrollPaneCandidates: {
-        maxHeight: "160px",
+        maxHeight: "122px",
         overflowY: "auto",
         display: "grid",
-        gap: "6px",
+        gap: "4px",
         paddingRight: "2px",
     },
     selectedGroupCard: {
         border: panelBorder,
         borderRadius: "8px",
         background: "#F7FAFF",
-        padding: "8px 10px",
+        padding: "6px 8px",
         display: "grid",
         gridTemplateColumns: "1fr auto",
         gap: "8px",
@@ -1020,19 +1025,19 @@ const styles: Record<string, React.CSSProperties> = {
     selectedGroupActions: {
         display: "inline-flex",
         alignItems: "center",
-        gap: "6px",
+        gap: "4px",
         flexShrink: 0,
     },
     documentSectionStack: {
         display: "grid",
-        gap: "10px",
+        gap: "8px",
     },
     documentSubsection: {
         display: "grid",
-        gap: "6px",
+        gap: "4px",
     },
     documentSubTitle: {
-        fontSize: "11px",
+        fontSize: "10px",
         fontWeight: 800,
         textTransform: "uppercase",
         letterSpacing: "0.04em",
@@ -1042,10 +1047,10 @@ const styles: Record<string, React.CSSProperties> = {
         border: panelBorder,
         borderRadius: "8px",
         background: "#FAFBFC",
-        padding: "8px 10px",
+        padding: "6px 8px",
         display: "grid",
         gridTemplateColumns: "1fr auto",
-        gap: "8px",
+        gap: "6px",
         alignItems: "center",
         textAlign: "left",
         cursor: "pointer",
@@ -1054,58 +1059,59 @@ const styles: Record<string, React.CSSProperties> = {
         border: "1px solid #0747A6",
         borderRadius: "8px",
         background: "#E9F2FF",
-        padding: "8px 10px",
+        padding: "6px 8px",
         display: "grid",
         gridTemplateColumns: "1fr auto",
-        gap: "8px",
+        gap: "6px",
         alignItems: "center",
         textAlign: "left",
         cursor: "pointer",
     },
     groupMain: {
         display: "grid",
-        gap: "2px",
+        gap: "1px",
         minWidth: 0,
     },
     groupName: {
-        fontSize: "12px",
-        fontWeight: 700,
+        fontSize: "11px",
+        fontWeight: 600,
         color: "#172B4D",
         wordBreak: "break-word",
     },
     groupDesc: {
-        fontSize: "11px",
-        color: "#6B778C",
-        wordBreak: "break-word",
+        display: "none",
+    },
+    groupMutedMeta: {
+        display: "none",
     },
     groupCount: {
-        fontSize: "11px",
+        fontSize: "10px",
         fontWeight: 800,
         color: "#0747A6",
         borderRadius: "999px",
         background: "#FFFFFF",
-        padding: "2px 8px",
-        minWidth: "28px",
+        padding: "2px 6px",
+        minWidth: "24px",
         textAlign: "center",
     },
     emailRow: {
         border: panelBorder,
         borderRadius: "8px",
         background: "#FAFBFC",
-        padding: "8px",
+        padding: "6px",
         display: "grid",
         gridTemplateColumns: "1fr auto",
-        gap: "8px",
+        gap: "6px",
         alignItems: "start",
     },
     emailRowActive: {
         border: "1px solid #0747A6",
         borderRadius: "8px",
         background: "#E9F2FF",
-        padding: "8px",
+        padding: "6px",
         display: "grid",
         gridTemplateColumns: "1fr auto",
-        gap: "8px",
+        gap: "6px",
         alignItems: "start",
     },
     emailSelectArea: {
@@ -1114,40 +1120,36 @@ const styles: Record<string, React.CSSProperties> = {
         padding: 0,
         textAlign: "left",
         display: "grid",
-        gap: "4px",
+        gap: "3px",
         cursor: "pointer",
         minWidth: 0,
     },
     emailSubject: {
-        fontSize: "12px",
-        fontWeight: 700,
+        fontSize: "10.5px",
+        fontWeight: 600,
         color: "#172B4D",
-        lineHeight: 1.35,
+        lineHeight: 1.22,
         wordBreak: "break-word",
     },
     emailMeta: {
-        display: "flex",
-        flexWrap: "wrap",
-        gap: "6px",
-        fontSize: "11px",
-        color: "#6B778C",
+        display: "none",
     },
     emailTagRow: {
         display: "flex",
         flexWrap: "wrap",
-        gap: "6px",
+        gap: "4px",
     },
     metaTag: {
-        fontSize: "10px",
+        fontSize: "9px",
         color: "#42526E",
         background: "#FFFFFF",
         borderRadius: "999px",
-        padding: "2px 7px",
+        padding: "1px 6px",
         border: panelBorder,
     },
     emailActions: {
         display: "inline-flex",
-        gap: "6px",
+        gap: "4px",
         flexShrink: 0,
     },
     actionStrip: {
@@ -1155,38 +1157,62 @@ const styles: Record<string, React.CSSProperties> = {
         flexWrap: "wrap",
         gap: "8px",
     },
+    actionStripCompact: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        flexWrap: "wrap",
+    },
     actionHint: {
-        fontSize: "11px",
+        fontSize: "9px",
         color: "#6B778C",
         background: "#FAFBFC",
         borderRadius: "999px",
-        padding: "4px 8px",
+        padding: "2px 6px",
         border: panelBorder,
+        maxWidth: "100%",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+    },
+    detailToggle: {
+        border: panelBorder,
+        borderRadius: "999px",
+        background: "#FFFFFF",
+        color: "#42526E",
+        fontSize: "9px",
+        padding: "2px 7px",
+        cursor: "pointer",
+    },
+    detailChipWrap: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "6px",
     },
     documentRow: {
         border: panelBorder,
         borderRadius: "8px",
         background: "#FAFBFC",
-        padding: "8px",
+        padding: "6px",
         display: "grid",
         gridTemplateColumns: "1fr auto",
-        gap: "8px",
+        gap: "6px",
         alignItems: "center",
     },
     documentRowActive: {
         border: "1px solid #0747A6",
         borderRadius: "8px",
         background: "#E9F2FF",
-        padding: "8px",
+        padding: "6px",
         display: "grid",
         gridTemplateColumns: "1fr auto",
-        gap: "8px",
+        gap: "6px",
         alignItems: "center",
     },
     documentMain: {
         display: "grid",
         gridTemplateColumns: "auto 1fr",
-        gap: "8px",
+        gap: "6px",
         alignItems: "start",
         minWidth: 0,
     },
@@ -1197,29 +1223,42 @@ const styles: Record<string, React.CSSProperties> = {
     },
     documentCopy: {
         display: "grid",
-        gap: "2px",
+        gap: "1px",
         minWidth: 0,
     },
     documentName: {
-        fontSize: "12px",
-        fontWeight: 700,
+        fontSize: "10.5px",
+        fontWeight: 600,
         color: "#172B4D",
         wordBreak: "break-word",
     },
     documentMeta: {
-        display: "flex",
-        flexWrap: "wrap",
-        gap: "6px",
-        fontSize: "11px",
+        display: "none",
+    },
+    documentMiniMeta: {
+        fontSize: "9px",
         color: "#6B778C",
+        lineHeight: 1.2,
     },
     errorText: {
         fontSize: "11px",
         color: "#DE350B",
     },
     hintText: {
-        fontSize: "11px",
+        display: "none",
+    },
+    mutedHint: {
+        fontSize: "10px",
         color: "#6B778C",
+    },
+    sectionMetaHint: {
+        fontSize: "10px",
+        color: "#6B778C",
+    },
+    collapsedHint: {
+        fontSize: "10px",
+        color: "#6B778C",
+        padding: "2px 0",
     },
     previewFrame: {
         border: panelBorder,

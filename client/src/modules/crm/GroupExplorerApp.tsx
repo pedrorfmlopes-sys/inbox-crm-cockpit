@@ -136,6 +136,24 @@ function matchesSelectedEmail(document: GroupDocumentEntry, email: RelatedEmailE
   );
 }
 
+function buildEmailHoverText(email: RelatedEmailEntry): string {
+  return [
+    email.subject ? `Assunto: ${email.subject}` : "",
+    email.fromName || email.fromEmail ? `De: ${email.fromName || email.fromEmail}` : "",
+    formatDate(email.messageDateIso || email.receivedAtIso) ? `Data: ${formatDate(email.messageDateIso || email.receivedAtIso)}` : "",
+    Array.isArray(email.attachments) ? `Anexos: ${email.attachments.length}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function buildDocumentHoverText(document: GroupDocumentEntry): string {
+  return [
+    document.name ? `Documento: ${document.name}` : "",
+    document.contentType ? `Tipo: ${document.contentType}` : "",
+    formatBytes(document.size) ? `Tamanho: ${formatBytes(document.size)}` : "",
+    document.sourceEmailSubject ? `Email: ${document.sourceEmailSubject}` : "",
+  ].filter(Boolean).join("\n");
+}
+
 export default function GroupExplorerApp(): JSX.Element {
   const initial = useMemo(() => readExplorerParams(), []);
   const downloadAnchorRef = useRef<HTMLAnchorElement | null>(null);
@@ -372,20 +390,25 @@ export default function GroupExplorerApp(): JSX.Element {
 
   return (
     <div style={styles.root}>
-      <header style={styles.header}>
-        <div style={styles.headerCopy}>
+      <header style={styles.headerShell}>
+        <div style={styles.headerIdentity}>
           <div style={styles.eyebrow}>Explorador documental</div>
           <div style={styles.title}>Grupos</div>
-          <div style={styles.subtitle}>Primeiro os documentos. Depois os emails ligados ao grupo, com filtros rapidos e preview mais visivel.</div>
-        </div>
-        <div style={styles.headerActions}>
-          <div style={styles.selectWrap}>
-            <select style={styles.select} value={selectedGroupId} onChange={(event) => { setSelectedGroupId(event.target.value); setSelectedEmailKey(""); setSelectedDocumentId(""); setNotice(null); }}>
-              {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-            </select>
+          <div style={styles.headerSelectorRow}>
+            <div style={styles.selectWrap}>
+              <select style={styles.select} value={selectedGroupId} onChange={(event) => { setSelectedGroupId(event.target.value); setSelectedEmailKey(""); setSelectedDocumentId(""); setNotice(null); }}>
+                {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+              </select>
+            </div>
+            <button type="button" style={styles.iconBtn} onClick={() => void refreshCurrentGroup()} disabled={loadingGroups || loadingEmails || loadingDocuments} title="Atualizar"><Icons.RefreshCw size={12} /></button>
+            <button type="button" style={styles.closeBtn} onClick={closeExplorer}>Fechar</button>
           </div>
-          <button type="button" style={styles.iconBtn} onClick={() => void refreshCurrentGroup()} disabled={loadingGroups || loadingEmails || loadingDocuments}><Icons.RefreshCw size={14} /></button>
-          <button type="button" style={styles.closeBtn} onClick={closeExplorer}>Fechar</button>
+        </div>
+        <div style={styles.headerMetrics}>
+          <div style={styles.metricMini}><span style={styles.metricLabel}>Grupo</span><span style={styles.metricValue}>{selectedGroup?.name || "-"}</span></div>
+          <div style={styles.metricMini}><span style={styles.metricLabel}>Provider</span><span style={styles.metricValue}>{selectedProvider}</span></div>
+          <div style={styles.metricMini}><span style={styles.metricLabel}>Docs</span><span style={styles.metricValue}>{groupDocuments.length}</span></div>
+          <div style={styles.metricMini}><span style={styles.metricLabel}>Emails</span><span style={styles.metricValue}>{groupEmails.length}</span></div>
         </div>
       </header>
 
@@ -395,106 +418,29 @@ export default function GroupExplorerApp(): JSX.Element {
       {!loadingGroups && !selectedGroup ? <PanelState compact tone="info" title="Sem grupos" description="Ainda nao existem grupos manuais disponiveis para este explorador." /> : null}
       {selectedGroup ? (
         <>
-          <section style={styles.summaryCard}>
-            <div style={styles.metricGrid}>
-              <div style={styles.metric}><span style={styles.metricLabel}>Grupo</span><span style={styles.metricValue}>{selectedGroup.name}</span></div>
-              <div style={styles.metric}><span style={styles.metricLabel}>Provider</span><span style={styles.metricValue}>{selectedProvider}</span></div>
-              <div style={styles.metric}><span style={styles.metricLabel}>Documentos</span><span style={styles.metricValue}>{groupDocuments.length}</span></div>
-              <div style={styles.metric}><span style={styles.metricLabel}>Emails</span><span style={styles.metricValue}>{groupEmails.length}</span></div>
-            </div>
-          </section>
-
           <section style={styles.columnsGrid}>
             <section style={styles.panel}>
-              <div style={styles.sectionHeader}>
-                <div>
-                  <div style={styles.sectionTitle}>Documentos</div>
-                  <div style={styles.sectionHint}>Documentos do grupo na coluna principal, com filtro global ou por email selecionado.</div>
-                </div>
+              <div style={styles.sectionHeaderCompact}>
+                <div style={styles.sectionTitle}>Emails</div>
               </div>
-              <div style={styles.previewSection}>
-                <div style={styles.sectionHeader}>
-                  <div>
-                    <div style={styles.sectionTitle}>Preview</div>
-                    <div style={styles.sectionHint}>Seleciona um documento e o preview aparece logo aqui, sem esconder as listas.</div>
-                  </div>
-                  {selectedDocument ? (
-                    <div style={styles.sectionActions}>
-                      <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(selectedDocument)} disabled={!selectedDocument.contentBase64}><Icons.Download size={13} /></button>
-                      <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(selectedDocument)} disabled={!selectedDocument.contentBase64}><Icons.Upload size={13} /></button>
-                    </div>
-                  ) : null}
-                </div>
-                {!selectedDocument ? <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe um documento desta coluna para abrir o preview." /> : null}
-                {selectedDocument && selectedDocumentPreview?.kind === "image" ? <div style={styles.previewFrame}><img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} /></div> : null}
-                {selectedDocument && selectedDocumentPreview?.kind === "pdf" ? <div style={styles.previewFrame}><iframe title={selectedDocument.name} src={selectedDocumentPreview.dataUrl} style={styles.previewIframe} /></div> : null}
-                {selectedDocument && selectedDocumentPreview?.kind === "text" ? <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre> : null}
-                {selectedDocument && (!selectedDocumentPreview || selectedDocumentPreview.kind === "unsupported") ? <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode ser descarregado ou anexado, mas ainda nao tem preview interno para este formato." /> : null}
-              </div>
-              <div style={styles.filterGrid}>
-                <label style={styles.filterField}>
-                  <span style={styles.filterLabel}>Filtro</span>
-                  <select style={styles.compactSelect} value={documentFilterMode} onChange={(event) => setDocumentFilterMode(event.target.value as DocumentFilterMode)}>
-                    <option value="all">Todos os documentos</option>
-                    <option value="selected_email">Do email selecionado</option>
-                  </select>
-                </label>
+              <div style={styles.filterGridEmails}>
                 <label style={styles.filterFieldWide}>
-                  <span style={styles.filterLabel}>Pesquisar documento</span>
-                  <input style={styles.input} value={documentSearch} onChange={(event) => setDocumentSearch(event.target.value)} placeholder="Nome, tipo ou assunto..." />
-                </label>
-              </div>
-              <div style={styles.listShell}>
-                {loadingDocuments && !groupDocuments.length ? <PanelState compact tone="loading" title="A carregar documentos" description="A listar os documentos guardados." /> : null}
-                {!loadingDocuments && !filteredDocuments.length ? <PanelState compact tone="info" title="Sem documentos visiveis" description={documentFilterMode === "selected_email" ? "Nao ha documentos associados ao email atualmente selecionado." : "Este grupo ainda nao tem documentos guardados visiveis neste filtro."} /> : null}
-                {filteredDocuments.map((document) => {
-                  const active = makeDocumentKey(document) === makeDocumentKey(selectedDocument || {});
-                  return (
-                    <div key={makeDocumentKey(document)} style={active ? styles.cardActive : styles.card}>
-                      <button type="button" style={styles.cardMain} onClick={() => setSelectedDocumentId(makeDocumentKey(document))}>
-                        <div style={styles.cardTitle}>{document.name}</div>
-                        <div style={styles.cardMeta}>
-                          <span>{document.contentType || "Documento"}</span>
-                          {formatBytes(document.size) ? <span>{formatBytes(document.size)}</span> : null}
-                          {document.sourceEmailSubject ? <span>{document.sourceEmailSubject}</span> : null}
-                        </div>
-                      </button>
-                      <div style={styles.cardActions}>
-                        <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(document)} disabled={!document.contentBase64}><Icons.Download size={12} /></button>
-                        <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(document)} disabled={!document.contentBase64}><Icons.Upload size={12} /></button>
-                        <button type="button" style={styles.iconBtnDanger} onClick={() => void handleDeleteDocument(document)} disabled={busy}><Icons.Trash size={12} /></button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section style={styles.panel}>
-              <div style={styles.sectionHeader}>
-                <div>
-                  <div style={styles.sectionTitle}>Emails</div>
-                  <div style={styles.sectionHint}>Emails ligados ao grupo, com pesquisa, filtros rapidos e ordenacao.</div>
-                </div>
-              </div>
-              <div style={styles.filterGrid}>
-                <label style={styles.filterFieldWide}>
-                  <span style={styles.filterLabel}>Pesquisar email</span>
+                  <span style={styles.filterLabel}>Pesquisar</span>
                   <input style={styles.input} value={emailSearch} onChange={(event) => setEmailSearch(event.target.value)} placeholder="Assunto, contacto ou email..." />
                 </label>
                 <label style={styles.filterField}>
                   <span style={styles.filterLabel}>Anexos</span>
                   <select style={styles.compactSelect} value={emailAttachmentFilter} onChange={(event) => setEmailAttachmentFilter(event.target.value as EmailAttachmentFilter)}>
                     <option value="all">Todos</option>
-                    <option value="with">Com anexos</option>
-                    <option value="without">Sem anexos</option>
+                    <option value="with">Com</option>
+                    <option value="without">Sem</option>
                   </select>
                 </label>
                 <label style={styles.filterField}>
                   <span style={styles.filterLabel}>Ordenar</span>
                   <select style={styles.compactSelect} value={emailSort} onChange={(event) => setEmailSort(event.target.value as EmailSortMode)}>
-                    <option value="date_desc">Mais recentes</option>
-                    <option value="date_asc">Mais antigos</option>
+                    <option value="date_desc">Recentes</option>
+                    <option value="date_asc">Antigos</option>
                     <option value="subject_asc">A-Z</option>
                     <option value="subject_desc">Z-A</option>
                   </select>
@@ -508,31 +454,99 @@ export default function GroupExplorerApp(): JSX.Element {
                   <input style={styles.compactInput} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
                 </label>
               </div>
-              <div style={styles.listShell}>
+              <div style={styles.listShellTall}>
                 {loadingEmails && !groupEmails.length ? <PanelState compact tone="loading" title="A carregar emails" description="A listar os emails do grupo." /> : null}
                 {!loadingEmails && !filteredEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Nao ha emails a corresponder aos filtros atuais." /> : null}
                 {filteredEmails.map((email) => {
                   const active = makeEmailKey(email) === makeEmailKey(selectedEmail || {});
                   const canOpen = Boolean(email.itemId || email.emailWebLink);
+                  const attachmentCount = emailHasAttachments(email) ? (email.attachments?.length || 0) : 0;
                   return (
                     <div key={makeEmailKey(email)} style={active ? styles.cardActive : styles.card}>
-                      <button type="button" style={styles.cardMain} onClick={() => setSelectedEmailKey(makeEmailKey(email))}>
+                      <button
+                        type="button"
+                        style={styles.cardMain}
+                        onClick={() => setSelectedEmailKey(makeEmailKey(email))}
+                        title={buildEmailHoverText(email)}
+                      >
                         <div style={styles.cardTitle}>{email.subject || "(sem assunto)"}</div>
-                        <div style={styles.cardMeta}>
-                          <span>{email.fromName || email.fromEmail || "(sem remetente)"}</span>
-                          {formatDate(email.messageDateIso || email.receivedAtIso) ? <span>{formatDate(email.messageDateIso || email.receivedAtIso)}</span> : null}
-                          <span>{emailHasAttachments(email) ? `${email.attachments?.length || 0} anexo(s)` : "sem anexos"}</span>
+                        <div style={styles.cardBadgeRow}>
+                          <span style={styles.metaTag} title={formatDate(email.messageDateIso || email.receivedAtIso) || "Sem data"}>{formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</span>
+                          <span style={styles.metaTag} title={attachmentCount ? `${attachmentCount} anexo(s)` : "Sem anexos"}>{attachmentCount || 0}</span>
                         </div>
                       </button>
                       <div style={styles.cardActions}>
-                        <button type="button" style={styles.iconBtn} onClick={() => void handleOpenEmail(email)} disabled={!canOpen}><Icons.MessageSquare size={12} /></button>
-                        <button type="button" style={styles.iconBtnDanger} onClick={() => void handleRemoveEmail(email)} disabled={busy}><Icons.Trash size={12} /></button>
+                        <button type="button" style={styles.iconBtn} onClick={() => void handleOpenEmail(email)} disabled={!canOpen} title={canOpen ? "Abrir email" : "Sem abertura direta"}><Icons.MessageSquare size={10} /></button>
+                        <button type="button" style={styles.iconBtnDanger} onClick={() => void handleRemoveEmail(email)} disabled={busy} title="Remover do grupo"><Icons.Trash size={10} /></button>
                       </div>
                     </div>
                   );
                 })}
               </div>
             </section>
+
+            <section style={styles.panel}>
+              <div style={styles.sectionHeaderCompact}>
+                <div style={styles.sectionTitle}>Documentos</div>
+              </div>
+              <div style={styles.filterGridDocuments}>
+                <label style={styles.filterField}>
+                  <span style={styles.filterLabel}>Filtro</span>
+                  <select style={styles.compactSelect} value={documentFilterMode} onChange={(event) => setDocumentFilterMode(event.target.value as DocumentFilterMode)}>
+                    <option value="all">Todos</option>
+                    <option value="selected_email">Email ativo</option>
+                  </select>
+                </label>
+                <label style={styles.filterFieldWide}>
+                  <span style={styles.filterLabel}>Pesquisar</span>
+                  <input style={styles.input} value={documentSearch} onChange={(event) => setDocumentSearch(event.target.value)} placeholder="Nome, tipo ou assunto..." />
+                </label>
+              </div>
+              <div style={styles.listShellTall}>
+                {loadingDocuments && !groupDocuments.length ? <PanelState compact tone="loading" title="A carregar documentos" description="A listar os documentos guardados." /> : null}
+                {!loadingDocuments && !filteredDocuments.length ? <PanelState compact tone="info" title="Sem documentos visiveis" description={documentFilterMode === "selected_email" ? "Nao ha documentos associados ao email atualmente selecionado." : "Este grupo ainda nao tem documentos guardados visiveis neste filtro."} /> : null}
+                {filteredDocuments.map((document) => {
+                  const active = makeDocumentKey(document) === makeDocumentKey(selectedDocument || {});
+                  return (
+                    <div key={makeDocumentKey(document)} style={active ? styles.cardActive : styles.card}>
+                      <button
+                        type="button"
+                        style={styles.cardMain}
+                        onClick={() => setSelectedDocumentId(makeDocumentKey(document))}
+                        title={buildDocumentHoverText(document)}
+                      >
+                        <div style={styles.cardTitle}>{document.name}</div>
+                        <div style={styles.cardMetaCompact}>
+                          <span>{formatBytes(document.size) || document.contentType || "Documento"}</span>
+                        </div>
+                      </button>
+                      <div style={styles.cardActions}>
+                        <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(document)} disabled={!document.contentBase64} title="Download"><Icons.Download size={10} /></button>
+                        <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(document)} disabled={!document.contentBase64} title="Anexar ao email"><Icons.Upload size={10} /></button>
+                        <button type="button" style={styles.iconBtnDanger} onClick={() => void handleDeleteDocument(document)} disabled={busy} title="Apagar"><Icons.Trash size={10} /></button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </section>
+
+          <section style={styles.previewPanel}>
+            <div style={styles.sectionHeaderCompact}>
+              <div style={styles.sectionTitle}>Preview</div>
+              {selectedDocument ? (
+                <div style={styles.sectionActions}>
+                  <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(selectedDocument)} disabled={!selectedDocument.contentBase64} title="Download"><Icons.Download size={10} /></button>
+                  <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(selectedDocument)} disabled={!selectedDocument.contentBase64} title="Anexar ao email"><Icons.Upload size={10} /></button>
+                </div>
+              ) : null}
+            </div>
+            {!selectedDocument ? <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe um documento para abrir o preview." /> : null}
+            {selectedDocument && selectedDocumentPreview?.kind === "image" ? <div style={styles.previewFrame}><img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} /></div> : null}
+            {selectedDocument && selectedDocumentPreview?.kind === "pdf" ? <div style={styles.previewFrame}><iframe title={selectedDocument.name} src={selectedDocumentPreview.dataUrl} style={styles.previewIframe} /></div> : null}
+            {selectedDocument && selectedDocumentPreview?.kind === "text" ? <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre> : null}
+            {selectedDocument && (!selectedDocumentPreview || selectedDocumentPreview.kind === "unsupported") ? <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode ser descarregado ou anexado, mas ainda nao tem preview interno para este formato." /> : null}
           </section>
         </>
       ) : null}
@@ -541,46 +555,47 @@ export default function GroupExplorerApp(): JSX.Element {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", background: "var(--iccc-bg, #edf2f7)", color: "var(--iccc-text, #172b4d)", fontFamily: "var(--iccc-font, 'Segoe UI', sans-serif)", padding: 14, display: "grid", gap: 12 },
-  header: { display: "grid", gap: 10, padding: 12, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.86)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.08)" },
-  headerCopy: { display: "grid", gap: 4 },
-  eyebrow: { fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#5b6b83" },
-  title: { fontSize: 24, fontWeight: 800, color: "#0f172a" },
-  subtitle: { fontSize: 12, color: "#607086", lineHeight: 1.45 },
-  headerActions: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
-  selectWrap: { flex: "1 1 240px", minWidth: 180 },
-  select: { width: "100%", borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "rgba(248,250,252,0.95)", color: "#172b4d", padding: "9px 14px", fontSize: 12, fontWeight: 600, outline: "none" },
-  closeBtn: { borderRadius: 999, border: "none", background: "#1d4ed8", color: "#fff", padding: "9px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" },
-  summaryCard: { padding: 12, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.86)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)" },
-  metricGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 },
-  metric: { display: "grid", gap: 2, padding: 10, borderRadius: 12, background: "rgba(15, 23, 42, 0.03)" },
-  metricLabel: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#6b7280" },
-  metricValue: { fontSize: 13, fontWeight: 700, color: "#0f172a" },
-  previewSection: { display: "grid", gap: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(248,250,252,0.85)" },
-  columnsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, alignItems: "start" },
-  panel: { display: "grid", gap: 10, padding: 12, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.9)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0 },
-  sectionHeader: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" },
-  sectionTitle: { fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#0f172a" },
-  sectionHint: { fontSize: 11, color: "#64748b", lineHeight: 1.4, marginTop: 2 },
-  sectionActions: { display: "inline-flex", gap: 6, alignItems: "center" },
-  filterGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, alignItems: "end" },
-  filterField: { display: "grid", gap: 4, minWidth: 0 },
-  filterFieldWide: { display: "grid", gap: 4, minWidth: 0, gridColumn: "span 2" },
-  filterLabel: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b" },
-  input: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "8px 10px", fontSize: 12, outline: "none", minWidth: 0 },
-  compactInput: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "8px 10px", fontSize: 12, outline: "none", minWidth: 0 },
-  compactSelect: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "8px 10px", fontSize: 12, outline: "none", minWidth: 0 },
-  listShell: { display: "grid", gap: 8, maxHeight: "36vh", overflowY: "auto", paddingRight: 4 },
-  card: { display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", padding: 9, borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff" },
-  cardActive: { display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", padding: 9, borderRadius: 12, border: "1px solid rgba(37, 99, 235, 0.35)", background: "rgba(219, 234, 254, 0.65)" },
-  cardMain: { border: "none", background: "transparent", padding: 0, textAlign: "left", display: "grid", gap: 4, minWidth: 0, cursor: "pointer" },
-  cardTitle: { fontSize: 12, fontWeight: 600, color: "#172b4d", lineHeight: 1.35, wordBreak: "break-word" },
-  cardMeta: { display: "flex", flexWrap: "wrap", gap: 8, fontSize: 10.5, color: "#6b778c", lineHeight: 1.35 },
-  cardActions: { display: "inline-flex", gap: 6, alignItems: "center" },
-  iconBtn: { width: 30, height: 30, borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff", color: "#1d4ed8", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-  iconBtnDanger: { width: 30, height: 30, borderRadius: 999, border: "1px solid rgba(239, 68, 68, 0.18)", background: "rgba(254, 226, 226, 0.9)", color: "#b91c1c", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-  previewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 220 },
-  previewImage: { width: "100%", height: "100%", minHeight: 220, maxHeight: 300, objectFit: "contain", display: "block", background: "#fff" },
-  previewIframe: { width: "100%", height: 300, border: "none", display: "block", background: "#fff" },
-  previewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", maxHeight: 280, overflow: "auto" },
+  root: { minHeight: "100vh", background: "var(--iccc-bg, #edf2f7)", color: "var(--iccc-text, #172b4d)", fontFamily: "var(--iccc-font, 'Segoe UI', sans-serif)", padding: 12, display: "grid", gap: 10 },
+  headerShell: { display: "grid", gridTemplateColumns: "minmax(240px, 1.2fr) minmax(280px, 0.9fr)", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.9)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.08)" },
+  headerIdentity: { display: "grid", gap: 6, minWidth: 0 },
+  eyebrow: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#5b6b83" },
+  title: { fontSize: 16, fontWeight: 700, color: "#0f172a" },
+  headerSelectorRow: { display: "grid", gridTemplateColumns: "1fr auto auto", gap: 6, alignItems: "center" },
+  headerMetrics: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, alignContent: "start" },
+  metricMini: { display: "grid", gap: 1, padding: 8, borderRadius: 10, background: "rgba(15, 23, 42, 0.03)", minWidth: 0 },
+  metricLabel: { fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#6b7280" },
+  metricValue: { fontSize: 11, fontWeight: 600, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  selectWrap: { minWidth: 0 },
+  select: { width: "100%", borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "rgba(248,250,252,0.95)", color: "#172b4d", padding: "8px 12px", fontSize: 11, fontWeight: 600, outline: "none" },
+  closeBtn: { borderRadius: 999, border: "none", background: "#1d4ed8", color: "#fff", padding: "7px 13px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
+  columnsGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10, alignItems: "start" },
+  panel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0 },
+  previewPanel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)" },
+  sectionHeaderCompact: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" },
+  sectionTitle: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#0f172a" },
+  sectionActions: { display: "inline-flex", gap: 4, alignItems: "center" },
+  filterGridEmails: { display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) repeat(4, minmax(0, 0.7fr))", gap: 6, alignItems: "end" },
+  filterGridDocuments: { display: "grid", gridTemplateColumns: "minmax(120px, 0.6fr) minmax(0, 1.4fr)", gap: 6, alignItems: "end" },
+  filterField: { display: "grid", gap: 3, minWidth: 0 },
+  filterFieldWide: { display: "grid", gap: 3, minWidth: 0 },
+  filterLabel: { fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b" },
+  input: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "7px 9px", fontSize: 11, outline: "none", minWidth: 0 },
+  compactInput: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "7px 9px", fontSize: 11, outline: "none", minWidth: 0 },
+  compactSelect: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "7px 9px", fontSize: 11, outline: "none", minWidth: 0 },
+  listShellTall: { display: "grid", gap: 6, maxHeight: "46vh", overflowY: "auto", paddingRight: 4 },
+  card: { display: "grid", gridTemplateColumns: "1fr auto", gap: 6, alignItems: "center", padding: 7, borderRadius: 11, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff" },
+  cardActive: { display: "grid", gridTemplateColumns: "1fr auto", gap: 6, alignItems: "center", padding: 7, borderRadius: 11, border: "1px solid rgba(37, 99, 235, 0.35)", background: "rgba(219, 234, 254, 0.65)" },
+  cardMain: { border: "none", background: "transparent", padding: 0, textAlign: "left", display: "grid", gap: 3, minWidth: 0, cursor: "pointer" },
+  cardTitle: { fontSize: 10.5, fontWeight: 600, color: "#172b4d", lineHeight: 1.22, wordBreak: "break-word" },
+  cardMeta: { display: "none" },
+  cardMetaCompact: { display: "flex", flexWrap: "wrap", gap: 6, fontSize: 9.5, color: "#6b778c", lineHeight: 1.2 },
+  cardBadgeRow: { display: "flex", flexWrap: "wrap", gap: 4 },
+  cardActions: { display: "inline-flex", gap: 4, alignItems: "center" },
+  metaTag: { fontSize: 9, color: "#42526E", background: "#FFFFFF", borderRadius: 999, padding: "1px 6px", border: "1px solid rgba(15, 23, 42, 0.08)" },
+  iconBtn: { width: 22, height: 22, borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff", color: "#1d4ed8", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  iconBtnDanger: { width: 22, height: 22, borderRadius: 999, border: "1px solid rgba(239, 68, 68, 0.18)", background: "rgba(254, 226, 226, 0.9)", color: "#b91c1c", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  previewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 260 },
+  previewImage: { width: "100%", height: "100%", minHeight: 260, maxHeight: "52vh", objectFit: "contain", display: "block", background: "#fff" },
+  previewIframe: { width: "100%", height: "52vh", border: "none", display: "block", background: "#fff" },
+  previewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", maxHeight: "52vh", overflow: "auto" },
 };
