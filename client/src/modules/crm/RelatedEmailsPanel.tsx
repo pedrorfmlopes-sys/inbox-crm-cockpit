@@ -53,6 +53,17 @@ function formatDate(value: string | undefined): string {
   });
 }
 
+function buildEmailHoverText(email: RelatedEmailEntry): string {
+  return [
+    email.subject ? `Assunto: ${email.subject}` : "",
+    email.fromName || email.fromEmail ? `De: ${email.fromName || email.fromEmail}` : "",
+    formatDate(email.messageDateIso || email.receivedAtIso) ? `Data: ${formatDate(email.messageDateIso || email.receivedAtIso)}` : "",
+    Array.isArray(email.attachments) ? `Anexos: ${email.attachments.length}` : "",
+    Array.isArray(email.relatedRecords) ? `Registos Odoo: ${email.relatedRecords.length}` : "",
+    Array.isArray(email.relatedGroups) ? `Grupos: ${email.relatedGroups.length}` : "",
+  ].filter(Boolean).join("\n");
+}
+
 function buildRecordUrl(settings: CockpitSettingsV1 | null, meta: OdooMeta | null, model: string, recordId: number): string {
   const baseUrl = settings?.odooUrl || meta?.baseUrl || meta?.webBaseUrl || meta?.url || "";
   if (!baseUrl) return "";
@@ -348,14 +359,19 @@ function RelatedEmailRow({
   const primaryRecord = item.relatedRecords?.[0];
   const odooUrl = primaryRecord ? buildRecordUrl(settings, meta, primaryRecord.model, primaryRecord.recordId) : "";
   const hasOutlookOpen = Boolean(item.itemId || item.emailWebLink);
+  const attachmentCount = Array.isArray(item.attachments) ? item.attachments.length : 0;
+  const recordCount = Array.isArray(item.relatedRecords) ? item.relatedRecords.length : 0;
+  const groupCount = Array.isArray(item.relatedGroups) ? item.relatedGroups.length : 0;
   return (
     <div style={styles.emailCard}>
       <div style={styles.emailHeaderRow}>
-        <div style={styles.emailBodyCopy}>
+        <div style={styles.emailBodyCopy} title={buildEmailHoverText(item)}>
           <div style={styles.emailSubject}>{item.subject || "(sem assunto)"}</div>
-          <div style={styles.emailMetaRow}>
-            <span>{item.fromName || item.fromEmail || "(sem remetente)"}</span>
-            {formatDate(item.messageDateIso || item.receivedAtIso) ? <span>{formatDate(item.messageDateIso || item.receivedAtIso)}</span> : null}
+          <div style={styles.emailBadgeRow}>
+            {formatDate(item.messageDateIso || item.receivedAtIso) ? <span style={styles.metaTag}>{formatDate(item.messageDateIso || item.receivedAtIso)}</span> : null}
+            {attachmentCount ? <span style={styles.metaTag} title={`${attachmentCount} anexo(s)`}>{attachmentCount}</span> : null}
+            {recordCount ? <span style={styles.metaTag} title={`${recordCount} registo(s) Odoo`}>{recordCount}</span> : null}
+            {groupCount ? <span style={styles.metaTag} title={`${groupCount} grupo(s)`}>{groupCount}</span> : null}
           </div>
         </div>
         <div style={styles.rowActions}>
@@ -750,66 +766,67 @@ export function RelatedEmailsPanel({
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  section: { border: "1px solid #DFE1E6", borderRadius: "6px", overflow: "hidden", background: "#FFFFFF" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", padding: "8px 10px", background: "#F7F8FA", borderBottom: "1px solid #DFE1E6" },
-  headerLead: { display: "grid", gap: "2px", minWidth: 0 },
+  section: { border: "1px solid #DFE1E6", borderRadius: "10px", overflow: "hidden", background: "#FFFFFF" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap", padding: "7px 9px", background: "#F7F8FA", borderBottom: "1px solid #DFE1E6" },
+  headerLead: { display: "grid", gap: "1px", minWidth: 0 },
   headerTitle: { fontSize: "11px", fontWeight: 800, color: "#172B4D", textTransform: "uppercase", letterSpacing: "0.05em" },
-  headerHint: { fontSize: "11px", color: "#6B778C" },
-  headerActions: { display: "flex", gap: "6px", flexWrap: "wrap" },
-  switchBtn: { border: "1px solid #C1C7D0", background: "#FFFFFF", color: "#42526E", borderRadius: "14px", padding: "4px 9px", fontSize: "11px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "5px" },
-  switchBtnActive: { border: "1px solid #0052CC", background: "#DEEBFF", color: "#0747A6", borderRadius: "14px", padding: "4px 9px", fontSize: "11px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "5px" },
-  content: { padding: "10px", minWidth: 0 },
-  modeShell: { display: "grid", gap: "10px", minWidth: 0 },
-  exploreSwitch: { display: "inline-flex", gap: "6px", flexWrap: "wrap" },
-  exploreBtn: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#42526E", borderRadius: "999px", padding: "4px 9px", fontSize: "11px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "5px" },
-  exploreBtnActive: { border: "1px solid #0C66E4", background: "#E9F2FF", color: "#0C66E4", borderRadius: "999px", padding: "4px 9px", fontSize: "11px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "5px" },
-  metricStrip: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "8px" },
-  metricMini: { border: "1px solid #DFE1E6", borderRadius: "6px", background: "#FAFBFC", padding: "8px", display: "grid", gap: "2px" },
-  metricMiniValue: { fontSize: "16px", fontWeight: 800, color: "#172B4D" },
-  metricMiniLabel: { fontSize: "10px", color: "#6B778C", textTransform: "uppercase", letterSpacing: "0.04em" },
-  compactSection: { border: "1px solid #DFE1E6", borderRadius: "6px", overflow: "hidden", background: "#FFFFFF" },
-  compactHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap", padding: "7px 9px", background: "#FAFBFC", borderBottom: "1px solid #EBECF0" },
-  compactToggle: { border: "none", background: "transparent", padding: 0, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px", minWidth: 0, textAlign: "left" },
-  compactHeaderText: { display: "grid", gap: "2px", minWidth: 0 },
-  compactTitle: { fontSize: "11px", fontWeight: 800, color: "#172B4D", textTransform: "uppercase", letterSpacing: "0.05em" },
-  compactSubtitle: { fontSize: "11px", color: "#6B778C", lineHeight: 1.4 },
-  compactHeaderSide: { display: "inline-flex", alignItems: "center", gap: "6px", flexWrap: "wrap" },
-  countPill: { fontSize: "10px", fontWeight: 800, color: "#0747A6", background: "#DEEBFF", borderRadius: "999px", padding: "2px 7px" },
-  compactBody: { padding: "10px", display: "grid", gap: "10px", minWidth: 0 },
-  iconBtn: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#42526E", borderRadius: "6px", width: "28px", height: "28px", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 },
-  iconBtnPrimary: { border: "1px solid #0C66E4", background: "#0C66E4", color: "#FFFFFF", borderRadius: "6px", width: "28px", height: "28px", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 },
-  iconLinkBtn: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#0C66E4", borderRadius: "6px", width: "28px", height: "28px", display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none", flexShrink: 0 },
-  formGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: "10px", alignItems: "start" },
-  fieldBlock: { display: "grid", gap: "4px", minWidth: 0 },
-  fieldLabel: { fontSize: "10px", fontWeight: 800, color: "#42526E", textTransform: "uppercase", letterSpacing: "0.05em" },
-  pickerShell: { position: "relative", display: "grid", gap: "4px", minWidth: 0 },
-  pickerInputRow: { display: "flex", gap: "6px", alignItems: "center", minWidth: 0 },
-  inlineActionRow: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" },
-  pickerInput: { flex: 1, minWidth: 0, height: "30px", border: "1px solid #C1C7D0", borderRadius: "6px", padding: "0 9px", fontSize: "12px", color: "#172B4D", background: "#FFFFFF" },
-  entitySelect: { height: "30px", border: "1px solid #C1C7D0", borderRadius: "6px", padding: "0 9px", fontSize: "12px", color: "#172B4D", background: "#FFFFFF" },
-  pickList: { position: "absolute", top: "60px", left: 0, right: 0, zIndex: 5, background: "#FFFFFF", border: "1px solid #C1C7D0", borderRadius: "6px", boxShadow: "0 8px 16px rgba(9, 30, 66, 0.15)", overflow: "hidden", maxHeight: "220px", overflowY: "auto" },
-  pickItem: { width: "100%", border: "none", background: "#FFFFFF", padding: "7px 9px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", textAlign: "left", borderBottom: "1px solid #F4F5F7", gap: "8px" },
-  pickName: { fontSize: "12px", color: "#172B4D", fontWeight: 600, minWidth: 0, wordBreak: "break-word" },
-  pickMeta: { fontSize: "10px", color: "#6B778C", flexShrink: 0 },
-  pickEmpty: { padding: "9px", fontSize: "12px", color: "#6B778C" },
-  selectedHint: { fontSize: "11px", color: "#6B778C" },
-  errorHint: { fontSize: "11px", color: "#BF2600" },
-  selectedCard: { border: "1px solid #DFE1E6", borderRadius: "6px", padding: "9px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px", background: "#FAFBFC", flexWrap: "wrap" },
-  selectedCardBody: { display: "grid", gap: "3px", minWidth: 0, flex: "1 1 180px" },
-  selectedCardLabel: { fontSize: "10px", fontWeight: 800, color: "#6B778C", textTransform: "uppercase", letterSpacing: "0.05em" },
-  selectedCardTitle: { fontSize: "13px", fontWeight: 700, color: "#172B4D", lineHeight: 1.35, wordBreak: "break-word" },
-  listShell: { display: "grid", gap: "8px", maxHeight: "320px", overflowY: "auto", paddingRight: "2px" },
-  emailCard: { border: "1px solid #DFE1E6", borderRadius: "6px", padding: "9px", display: "grid", gap: "7px", background: "#FFFFFF" },
-  emailHeaderRow: { display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "flex-start" },
-  emailBodyCopy: { display: "grid", gap: "4px", minWidth: 0, flex: "1 1 auto" },
-  emailSubject: { fontSize: "12px", fontWeight: 700, color: "#172B4D", lineHeight: 1.4, wordBreak: "break-word" },
-  emailMetaRow: { display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap", color: "#6B778C", fontSize: "10px" },
-  rowActions: { display: "inline-flex", gap: "6px", flexWrap: "wrap", flexShrink: 0 },
-  tagRow: { display: "flex", flexWrap: "wrap", gap: "6px" },
-  entityTag: { fontSize: "10px", fontWeight: 800, color: "#0747A6", background: "#DEEBFF", borderRadius: "999px", padding: "2px 8px" },
-  groupTag: { fontSize: "10px", fontWeight: 700, color: "#5E4DB2", background: "#ECEBFF", borderRadius: "999px", padding: "2px 8px" },
-  conversationTag: { fontSize: "10px", fontWeight: 700, color: "#0052CC", background: "#E9F2FF", borderRadius: "999px", padding: "2px 8px" },
-  groupManager: { display: "grid", gap: "10px" },
-  groupChip: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#42526E", borderRadius: "999px", padding: "4px 9px", fontSize: "11px", fontWeight: 700, cursor: "pointer" },
-  groupChipActive: { border: "1px solid #0C66E4", background: "#E9F2FF", color: "#0C66E4", borderRadius: "999px", padding: "4px 9px", fontSize: "11px", fontWeight: 700, cursor: "pointer" },
+  headerHint: { display: "none" },
+  headerActions: { display: "flex", gap: "5px", flexWrap: "wrap" },
+  switchBtn: { border: "1px solid #C1C7D0", background: "#FFFFFF", color: "#42526E", borderRadius: "999px", padding: "3px 8px", fontSize: "10px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" },
+  switchBtnActive: { border: "1px solid #0052CC", background: "#DEEBFF", color: "#0747A6", borderRadius: "999px", padding: "3px 8px", fontSize: "10px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" },
+  content: { padding: "8px", minWidth: 0 },
+  modeShell: { display: "grid", gap: "8px", minWidth: 0 },
+  exploreSwitch: { display: "inline-flex", gap: "5px", flexWrap: "wrap" },
+  exploreBtn: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#42526E", borderRadius: "999px", padding: "3px 8px", fontSize: "10px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" },
+  exploreBtnActive: { border: "1px solid #0C66E4", background: "#E9F2FF", color: "#0C66E4", borderRadius: "999px", padding: "3px 8px", fontSize: "10px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" },
+  metricStrip: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "6px" },
+  metricMini: { border: "1px solid #DFE1E6", borderRadius: "10px", background: "#FAFBFC", padding: "6px 7px", display: "grid", gap: "1px", minWidth: 0 },
+  metricMiniValue: { fontSize: "13px", fontWeight: 800, color: "#172B4D" },
+  metricMiniLabel: { fontSize: "9px", color: "#6B778C", textTransform: "uppercase", letterSpacing: "0.04em", lineHeight: 1.2 },
+  compactSection: { border: "1px solid #DFE1E6", borderRadius: "10px", overflow: "hidden", background: "#FFFFFF" },
+  compactHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap", padding: "7px 8px", background: "#FAFBFC", borderBottom: "1px solid #EBECF0" },
+  compactToggle: { border: "none", background: "transparent", padding: 0, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "5px", minWidth: 0, textAlign: "left" },
+  compactHeaderText: { display: "grid", gap: "1px", minWidth: 0 },
+  compactTitle: { fontSize: "10px", fontWeight: 800, color: "#172B4D", textTransform: "uppercase", letterSpacing: "0.05em" },
+  compactSubtitle: { display: "none" },
+  compactHeaderSide: { display: "inline-flex", alignItems: "center", gap: "5px", flexWrap: "wrap" },
+  countPill: { fontSize: "9px", fontWeight: 800, color: "#0747A6", background: "#DEEBFF", borderRadius: "999px", padding: "2px 6px" },
+  compactBody: { padding: "8px", display: "grid", gap: "8px", minWidth: 0 },
+  iconBtn: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#42526E", borderRadius: "7px", width: "22px", height: "22px", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 },
+  iconBtnPrimary: { border: "1px solid #0C66E4", background: "#0C66E4", color: "#FFFFFF", borderRadius: "7px", width: "22px", height: "22px", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 },
+  iconLinkBtn: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#0C66E4", borderRadius: "7px", width: "22px", height: "22px", display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none", flexShrink: 0 },
+  formGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: "8px", alignItems: "start" },
+  fieldBlock: { display: "grid", gap: "3px", minWidth: 0 },
+  fieldLabel: { fontSize: "9px", fontWeight: 800, color: "#42526E", textTransform: "uppercase", letterSpacing: "0.05em" },
+  pickerShell: { position: "relative", display: "grid", gap: "3px", minWidth: 0 },
+  pickerInputRow: { display: "flex", gap: "5px", alignItems: "center", minWidth: 0 },
+  inlineActionRow: { display: "flex", gap: "5px", alignItems: "center", flexWrap: "wrap" },
+  pickerInput: { flex: 1, minWidth: 0, height: "28px", border: "1px solid #C1C7D0", borderRadius: "8px", padding: "0 8px", fontSize: "11px", color: "#172B4D", background: "#FFFFFF" },
+  entitySelect: { height: "28px", border: "1px solid #C1C7D0", borderRadius: "8px", padding: "0 8px", fontSize: "11px", color: "#172B4D", background: "#FFFFFF" },
+  pickList: { position: "absolute", top: "56px", left: 0, right: 0, zIndex: 5, background: "#FFFFFF", border: "1px solid #C1C7D0", borderRadius: "8px", boxShadow: "0 8px 16px rgba(9, 30, 66, 0.15)", overflow: "hidden", maxHeight: "220px", overflowY: "auto" },
+  pickItem: { width: "100%", border: "none", background: "#FFFFFF", padding: "7px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", textAlign: "left", borderBottom: "1px solid #F4F5F7", gap: "8px" },
+  pickName: { fontSize: "11px", color: "#172B4D", fontWeight: 600, minWidth: 0, wordBreak: "break-word" },
+  pickMeta: { fontSize: "9px", color: "#6B778C", flexShrink: 0 },
+  pickEmpty: { padding: "8px", fontSize: "11px", color: "#6B778C" },
+  selectedHint: { fontSize: "10px", color: "#6B778C" },
+  errorHint: { fontSize: "10px", color: "#BF2600" },
+  selectedCard: { border: "1px solid #DFE1E6", borderRadius: "10px", padding: "7px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px", background: "#FAFBFC", flexWrap: "wrap" },
+  selectedCardBody: { display: "grid", gap: "2px", minWidth: 0, flex: "1 1 180px" },
+  selectedCardLabel: { fontSize: "9px", fontWeight: 800, color: "#6B778C", textTransform: "uppercase", letterSpacing: "0.05em" },
+  selectedCardTitle: { fontSize: "11px", fontWeight: 600, color: "#172B4D", lineHeight: 1.25, wordBreak: "break-word" },
+  listShell: { display: "grid", gap: "6px", maxHeight: "310px", overflowY: "auto", paddingRight: "2px" },
+  emailCard: { border: "1px solid #DFE1E6", borderRadius: "10px", padding: "7px 8px", display: "grid", gap: "5px", background: "#FFFFFF" },
+  emailHeaderRow: { display: "flex", justifyContent: "space-between", gap: "6px", alignItems: "flex-start" },
+  emailBodyCopy: { display: "grid", gap: "3px", minWidth: 0, flex: "1 1 auto" },
+  emailSubject: { fontSize: "10.5px", fontWeight: 600, color: "#172B4D", lineHeight: 1.24, wordBreak: "break-word" },
+  emailBadgeRow: { display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center" },
+  metaTag: { fontSize: "9px", color: "#42526E", background: "#FAFBFC", borderRadius: "999px", padding: "1px 6px", border: "1px solid #DFE1E6" },
+  rowActions: { display: "inline-flex", gap: "4px", flexWrap: "wrap", flexShrink: 0 },
+  tagRow: { display: "flex", flexWrap: "wrap", gap: "4px" },
+  entityTag: { fontSize: "9px", fontWeight: 800, color: "#0747A6", background: "#DEEBFF", borderRadius: "999px", padding: "1px 6px" },
+  groupTag: { fontSize: "9px", fontWeight: 700, color: "#5E4DB2", background: "#ECEBFF", borderRadius: "999px", padding: "1px 6px" },
+  conversationTag: { fontSize: "9px", fontWeight: 700, color: "#0052CC", background: "#E9F2FF", borderRadius: "999px", padding: "1px 6px" },
+  groupManager: { display: "grid", gap: "8px" },
+  groupChip: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#42526E", borderRadius: "999px", padding: "3px 8px", fontSize: "10px", fontWeight: 700, cursor: "pointer" },
+  groupChipActive: { border: "1px solid #0C66E4", background: "#E9F2FF", color: "#0C66E4", borderRadius: "999px", padding: "3px 8px", fontSize: "10px", fontWeight: 700, cursor: "pointer" },
 };
