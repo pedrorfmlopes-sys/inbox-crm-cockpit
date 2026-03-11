@@ -606,6 +606,32 @@ export async function setSubject(subject: string): Promise<void> {
   });
 }
 
+export async function addBase64AttachmentToCompose(name: string, contentBase64: string): Promise<void> {
+  const OfficeAny = await ensureOfficeReady();
+  const item = OfficeAny?.context?.mailbox?.item;
+
+  if (!item?.addFileAttachmentFromBase64Async) {
+    throw new Error("Abre uma mensagem em modo de edição para anexar documentos.");
+  }
+
+  const safeName = String(name || "").trim() || "documento";
+  const base64 = String(contentBase64 || "").trim().replace(/^data:[^,]+,/, "");
+  if (!base64) {
+    throw new Error("O documento não tem conteúdo disponível para anexar.");
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      item.addFileAttachmentFromBase64Async(base64, safeName, { isInline: false }, (result: any) => {
+        if (result?.status === OfficeAny.AsyncResultStatus.Succeeded) resolve();
+        else reject(new Error(result?.error?.message || "Falha ao anexar o documento."));
+      });
+    } catch (error: any) {
+      reject(error);
+    }
+  });
+}
+
 /**
  * Fetch attachments from the current item.
  * Returns array of { name, contentType, contentBase64 }

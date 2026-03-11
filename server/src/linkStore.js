@@ -89,6 +89,7 @@ function createEmptyStore() {
     conversationGroups: {},
     entityLinks: {},
     emailEntityLinks: {},
+    groupDocuments: {},
   };
 }
 
@@ -215,6 +216,42 @@ function normalizeAttachments(value) {
     .filter((attachment) => attachment.name);
 }
 
+function normalizeBase64Content(value) {
+  return normalizeString(value).replace(/^data:[^,]+,/, "");
+}
+
+function estimateBase64Size(base64) {
+  const raw = normalizeBase64Content(base64);
+  if (!raw) return 0;
+  const padding = raw.endsWith("==") ? 2 : raw.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((raw.length * 3) / 4) - padding);
+}
+
+function normalizeDocumentName(value) {
+  return normalizeString(value).replace(/[\\/:*?"<>|]+/g, "_");
+}
+
+function normalizeGroupDocumentInput(input = {}) {
+  const contentBase64 = normalizeBase64Content(input?.contentBase64 || input?.content);
+  return {
+    id: normalizeString(input?.id) || `doc_${crypto.randomUUID()}`,
+    name: normalizeDocumentName(input?.name) || "documento",
+    contentType: normalizeString(input?.contentType) || "application/octet-stream",
+    contentBase64,
+    size: Number(input?.size || 0) || estimateBase64Size(contentBase64),
+    sourceEmailKey: normalizeString(input?.sourceEmailKey),
+    sourceItemId: normalizeString(input?.sourceItemId),
+    sourceInternetMessageId: normalizeMessageId(input?.sourceInternetMessageId),
+    sourceConversationId: normalizeString(input?.sourceConversationId),
+    sourceEmailSubject: normalizeString(input?.sourceEmailSubject),
+    storageProvider: normalizeString(input?.storageProvider),
+    storageBasePath: normalizeString(input?.storageBasePath),
+    storagePathHint: normalizeString(input?.storagePathHint),
+    createdAt: normalizeString(input?.createdAt) || nowIso(),
+    updatedAt: normalizeString(input?.updatedAt) || nowIso(),
+  };
+}
+
 function parseAttachmentsJson(value) {
   if (Array.isArray(value)) return normalizeAttachments(value);
   const raw = normalizeString(value);
@@ -244,6 +281,7 @@ function hydrateStore(raw) {
   store.conversationGroups = source.conversationGroups && typeof source.conversationGroups === "object" ? source.conversationGroups : {};
   store.entityLinks = source.entityLinks && typeof source.entityLinks === "object" ? source.entityLinks : {};
   store.emailEntityLinks = source.emailEntityLinks && typeof source.emailEntityLinks === "object" ? source.emailEntityLinks : {};
+  store.groupDocuments = source.groupDocuments && typeof source.groupDocuments === "object" ? source.groupDocuments : {};
   return store;
 }
 
@@ -505,6 +543,27 @@ function mapDbGroupMemberRow(row) {
   });
 }
 
+function mapDbGroupDocumentRow(row) {
+  if (!row) return null;
+  return normalizeGroupDocumentInput({
+    id: row.id,
+    name: row.name,
+    contentType: row.content_type,
+    contentBase64: row.content_base64,
+    size: row.size_bytes,
+    sourceEmailKey: row.source_email_key,
+    sourceItemId: row.source_item_id,
+    sourceInternetMessageId: row.source_internet_message_id,
+    sourceConversationId: row.source_conversation_id,
+    sourceEmailSubject: row.source_email_subject,
+    storageProvider: row.storage_provider,
+    storageBasePath: row.storage_base_path,
+    storagePathHint: row.storage_path_hint,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
 async function upsertDbCustomGroup(group) {
   if (!db.isEnabled()) return;
   await db.query(
@@ -522,6 +581,72 @@ async function upsertDbCustomGroup(group) {
       normalizeString(group?.updatedAt) || nowIso(),
     ]
   );
+}
+
+async function upsertDbGroupDocument(groupId, input) {
+  if (!db.isEnabled()) return;
+  const gid = normalizeString(groupId);
+  const doc = normalizeGroupDocumentInput(input);
+  if (!gid || !doc.id || !doc.contentBase64) return;
+
+  await db.query(
+    `INSERT INTO crm_custom_group_documents
+      (id, group_id, name, content_type, size_bytes, content_base64, source_email_key, source_item_id, source_internet_message_id, source_conversation_id, source_email_subject, storage_provider, storage_base_path, storage_path_hint, created_at, updated_at)
+     VALUES
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+     ON CONFLICT (id) DO UPDATE SET
+      group_id = EXCLUDED.group_id,
+      name = EXCLUDED.name,
+      content_type = EXCLUDED.content_type,
+      size_bytes = EXCLUDED.size_bytes,
+      content_base64 = EXCLUDED.content_base64,
+      source_email_key = EXCLUDED.source_email_key,
+      source_item_id = EXCLUDED.source_item_id,
+      source_internet_message_id = EXCLUDED.source_internet_message_id,
+      source_conversation_id = EXCLUDED.source_conversation_id,
+      source_email_subject = EXCLUDED.source_email_subject,
+      storage_provider = EXCLUDED.storage_provider,
+      storage_base_path = EXCLUDED.storage_base_path,
+      storage_path_hint = EXCLUDED.storage_path_hint,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      doc.id,
+      gid,
+      doc.name,
+      doc.contentType,
+      doc.size,
+      doc.contentBase64,
+      doc.sourceEmailKey,
+      doc.sourceItemId,
+      doc.sourceInternetMessageId,
+      doc.sourceConversationId,
+      doc.sourceEmailSubject,
+      doc.storageProvider,
+      doc.storageBasePath,
+      doc.storagePathHint,
+      doc.createdAt,
+      doc.updatedAt,
+    ]
+  );
+}
+
+async function listDbGroupDocuments(groupId) {
+  if (!db.isEnabled()) return [];
+  const gid = normalizeString(groupId);
+  if (!gid) return [];
+  const result = await db.query(
+    `SELECT * FROM crm_custom_group_documents WHERE group_id = $1 ORDER BY updated_at DESC, created_at DESC`,
+    [gid]
+  );
+  return (result?.rows || []).map(mapDbGroupDocumentRow).filter(Boolean);
+}
+
+async function deleteDbGroupDocument(groupId, documentId) {
+  if (!db.isEnabled()) return;
+  const gid = normalizeString(groupId);
+  const did = normalizeString(documentId);
+  if (!gid || !did) return;
+  await db.query(`DELETE FROM crm_custom_group_documents WHERE group_id = $1 AND id = $2`, [gid, did]);
 }
 
 async function upsertDbCustomGroupMember(groupId, email) {
@@ -800,6 +925,29 @@ async function ensureCustomGroupDb() {
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_members_conversation_id ON crm_custom_group_members (conversation_id);`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_members_internet_message_id ON crm_custom_group_members (internet_message_id);`);
 
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS crm_custom_group_documents (
+        id TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL REFERENCES crm_custom_groups(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        content_type TEXT,
+        size_bytes INTEGER DEFAULT 0,
+        content_base64 TEXT NOT NULL,
+        source_email_key TEXT,
+        source_item_id TEXT,
+        source_internet_message_id TEXT,
+        source_conversation_id TEXT,
+        source_email_subject TEXT,
+        storage_provider TEXT DEFAULT '',
+        storage_base_path TEXT DEFAULT '',
+        storage_path_hint TEXT DEFAULT '',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_documents_group_id ON crm_custom_group_documents (group_id);`);
+
     const store = readState();
     const customGroups = Object.values(store.groups || {}).filter((group) => group?.kind === CUSTOM_GROUP_KIND);
     for (const group of customGroups) {
@@ -807,6 +955,9 @@ async function ensureCustomGroupDb() {
       for (const emailId of store.groupMembers[group.id] || []) {
         const email = buildRecoveredEmailSnapshot(store, emailId);
         if (email) await upsertDbCustomGroupMember(group.id, email);
+      }
+      for (const doc of store.groupDocuments[group.id] || []) {
+        await upsertDbGroupDocument(group.id, doc);
       }
     }
   })().catch((error) => {
@@ -1110,6 +1261,7 @@ export async function deleteCustomGroup(groupId) {
     removeEmailMembership(store, gid, emailId);
   }
   delete store.groupMembers[gid];
+  delete store.groupDocuments[gid];
   delete store.groups[gid];
   writeStore(store);
 
@@ -1158,6 +1310,97 @@ export async function listEmailsByGroup(groupId) {
   }
 
   return dedupeEmailLinks(fileRows);
+}
+
+export async function listDocumentsByGroup(groupId) {
+  const store = readState();
+  const gid = normalizeString(groupId);
+  const fileRows = Array.isArray(store.groupDocuments?.[gid])
+    ? store.groupDocuments[gid].map((doc) => normalizeGroupDocumentInput(doc))
+    : [];
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      const dbRows = await listDbGroupDocuments(gid);
+      const merged = new Map();
+      for (const doc of [...fileRows, ...dbRows]) {
+        if (!doc?.id) continue;
+        merged.set(doc.id, doc);
+      }
+      return Array.from(merged.values()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Document Query Error, falling back to central file store:", error.message);
+      else console.error("[linkStore] DB Group Document Query Error, falling back to central file store:", error);
+    }
+  }
+
+  return fileRows.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+}
+
+export async function saveDocumentsToGroup(groupId, input) {
+  const store = readState();
+  const gid = normalizeString(groupId);
+  const group = store.groups[gid];
+  if (!gid || !group || group.kind !== CUSTOM_GROUP_KIND) throw new Error("Grupo inválido.");
+
+  const docs = Array.isArray(input?.documents) ? input.documents.map((doc) => normalizeGroupDocumentInput(doc)).filter((doc) => doc.contentBase64) : [];
+  if (!docs.length) throw new Error("Sem documentos válidos para guardar.");
+
+  const current = Array.isArray(store.groupDocuments[gid]) ? store.groupDocuments[gid].map((doc) => normalizeGroupDocumentInput(doc)) : [];
+  const byId = new Map(current.map((doc) => [doc.id, doc]));
+  for (const doc of docs) {
+    byId.set(doc.id, {
+      ...doc,
+      updatedAt: nowIso(),
+      createdAt: byId.get(doc.id)?.createdAt || doc.createdAt || nowIso(),
+    });
+  }
+  store.groupDocuments[gid] = Array.from(byId.values()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+  if (store.groups[gid]) store.groups[gid].updatedAt = nowIso();
+  writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      for (const doc of docs) {
+        await upsertDbGroupDocument(gid, doc);
+      }
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Document Save Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Group Document Save Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return {
+    ok: true,
+    group: store.groups[gid],
+    documents: await listDocumentsByGroup(gid),
+  };
+}
+
+export async function deleteDocumentFromGroup(groupId, documentId) {
+  const store = readState();
+  const gid = normalizeString(groupId);
+  const did = normalizeString(documentId);
+  const current = Array.isArray(store.groupDocuments[gid]) ? store.groupDocuments[gid] : [];
+  const next = current.filter((doc) => normalizeString(doc?.id) !== did);
+  const removed = next.length !== current.length;
+  store.groupDocuments[gid] = next;
+  if (removed && store.groups[gid]) store.groups[gid].updatedAt = nowIso();
+  if (removed) writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await deleteDbGroupDocument(gid, did);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Document Delete Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Group Document Delete Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return { ok: true, removed, groupId: gid, documentId: did };
 }
 
 export async function getRelatedEmails(input) {

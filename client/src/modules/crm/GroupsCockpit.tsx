@@ -1,27 +1,29 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     addEmailToLinkGroup,
     createLinkGroup,
     deleteLinkGroup,
+    deleteGroupDocument,
     getGroupEmails,
+    getGroupDocuments,
     listLinkGroups,
     removeEmailFromLinkGroup,
+    saveGroupDocuments,
+    type GroupDocumentEntry,
     type LinkGroupEntry,
     type RelatedEmailEntry,
 } from "@/api";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { openLinkedOutlookEmail } from "@/office";
+import { addBase64AttachmentToCompose, openLinkedOutlookEmail } from "@/office";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 
-type GroupDocumentRow = {
-    emailId: string;
-    email: RelatedEmailEntry;
-    attachment: {
-        name: string;
-        contentType?: string;
-        size?: number;
-    };
+type CurrentAttachmentCandidate = {
+    id: string;
+    name: string;
+    contentType?: string;
+    content: string;
+    size?: number;
 };
 
 function formatDate(value: string | undefined): string {
@@ -39,6 +41,29 @@ function formatDate(value: string | undefined): string {
 
 function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
     return String(email?.id || email?.itemId || email?.internetMessageId || `${email?.conversationId || ""}|${email?.subject || ""}`);
+}
+
+function makeDocumentKey(document: Partial<GroupDocumentEntry>): string {
+    return String(document?.id || document?.storagePathHint || document?.name || "");
+}
+
+function estimateBase64Size(base64: string | undefined): number {
+    const raw = String(base64 || "").trim().replace(/^data:[^,]+,/, "");
+    if (!raw) return 0;
+    const padding = raw.endsWith("==") ? 2 : raw.endsWith("=") ? 1 : 0;
+    return Math.max(0, Math.floor((raw.length * 3) / 4) - padding);
+}
+
+function formatBytes(value: number | undefined): string {
+    const size = Number(value || 0);
+    if (!size) return "";
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function sanitizePathSegment(value: string): string {
+    return String(value || "").trim().replace(/[\\/:*?"<>|]+/g, "_");
 }
 
 function IconButton({
@@ -93,17 +118,22 @@ function Section({
 }
 
 export const GroupsCockpit: React.FC = () => {
-    const { ctx, attachments, setMsg } = useCockpit();
+    const { ctx, attachments, setMsg, settings } = useCockpit();
+    const downloadAnchorRef = useRef<HTMLAnchorElement | null>(null);
     const [query, setQuery] = useState("");
     const [newGroupName, setNewGroupName] = useState("");
     const [groups, setGroups] = useState<LinkGroupEntry[]>([]);
     const [selectedGroupId, setSelectedGroupId] = useState("");
     const [selectedEmailKey, setSelectedEmailKey] = useState("");
+    const [selectedDocumentId, setSelectedDocumentId] = useState("");
     const [groupEmails, setGroupEmails] = useState<RelatedEmailEntry[]>([]);
+    const [groupDocuments, setGroupDocuments] = useState<GroupDocumentEntry[]>([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
     const [emailsLoading, setEmailsLoading] = useState(false);
+    const [documentsLoading, setDocumentsLoading] = useState(false);
     const [groupsError, setGroupsError] = useState<string | null>(null);
     const [emailsError, setEmailsError] = useState<string | null>(null);
+    const [documentsError, setDocumentsError] = useState<string | null>(null);
     const [busyAction, setBusyAction] = useState(false);
     const [reloadToken, setReloadToken] = useState(0);
 
@@ -195,21 +225,99 @@ export const GroupsCockpit: React.FC = () => {
         };
     }, [selectedGroupId, reloadToken]);
 
+    useEffect(() => {
+        if (!selectedGroupId) {
+            setGroupDocuments([]);
+            setSelectedDocumentId("");
+            return;
+        }
+        let cancelled = false;
+        setDocumentsLoading(true);
+        setDocumentsError(null);
+        getGroupDocuments(selectedGroupId)
+            .then((documents) => {
+                if (cancelled) return;
+                setGroupDocuments(documents);
+                setSelectedDocumentId((current) => {
+                    if (current && documents.some((document) => makeDocumentKey(document) === current)) return current;
+                    return documents[0] ? makeDocumentKey(documents[0]) : "";
+                });
+            })
+            .catch((error: any) => {
+                if (cancelled) return;
+                setDocumentsError(error?.message || "Nao foi possivel carregar os documentos do grupo.");
+                setGroupDocuments([]);
+                setSelectedDocumentId("");
+            })
+            .finally(() => {
+                if (!cancelled) setDocumentsLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedGroupId, reloadToken]);
+
     const selectedEmail = useMemo(
         () => groupEmails.find((email) => makeEmailKey(email) === selectedEmailKey) || groupEmails[0] || null,
         [groupEmails, selectedEmailKey]
     );
 
-    const documents = useMemo<GroupDocumentRow[]>(() => {
-        const source = selectedEmail ? [selectedEmail, ...groupEmails.filter((email) => makeEmailKey(email) !== makeEmailKey(selectedEmail))] : groupEmails;
-        return source.flatMap((email) =>
-            (email.attachments || []).map((attachment) => ({
-                emailId: makeEmailKey(email),
-                email,
-                attachment,
+    const selectedDocument = useMemo(
+        () => groupDocuments.find((document) => makeDocumentKey(document) === selectedDocumentId) || groupDocuments[0] || null,
+        [groupDocuments, selectedDocumentId]
+    );
+
+    const currentAttachmentCandidates = useMemo<CurrentAttachmentCandidate[]>(() => {
+        const ignoreInline = Boolean(settings?.groupStorage.ignoreInlineAttachments);
+        return (attachments || [])
+            .map((attachment, index) => ({
+                id: `${attachment.name}:${index}`,
+                name: String(attachment.name || "").trim(),
+                contentType: String(attachment.contentType || "").trim(),
+                content: String(attachment.content || "").trim(),
+                size: estimateBase64Size(attachment.content),
             }))
-        );
-    }, [groupEmails, selectedEmail]);
+            .filter((attachment) => attachment.name && attachment.content)
+            .filter((attachment) => {
+                if (!ignoreInline) return true;
+                const lowerName = attachment.name.toLowerCase();
+                const lowerType = String(attachment.contentType || "").toLowerCase();
+                if (lowerType.startsWith("image/") && (/^image\d+\./.test(lowerName) || lowerName.includes("logo") || lowerName.includes("signature") || lowerName.includes("assinatura"))) {
+                    return false;
+                }
+                return true;
+            });
+    }, [attachments, settings?.groupStorage.ignoreInlineAttachments]);
+
+    const groupFolderHint = useMemo(() => {
+        const base = String(settings?.groupStorage.baseFolderPath || "").trim();
+        const groupName = String(selectedGroup?.name || "").trim();
+        if (!groupName) return "";
+        if (!base) return sanitizePathSegment(groupName);
+        const separator = /^https?:\/\//i.test(base) || base.endsWith("/") ? "/" : base.includes("\\") ? "\\" : "/";
+        return `${base.replace(/[\\/]+$/, "")}${separator}${sanitizePathSegment(groupName)}`;
+    }, [selectedGroup?.name, settings?.groupStorage.baseFolderPath]);
+
+    const selectedDocumentPreview = useMemo(() => {
+        if (!selectedDocument?.contentBase64) return null;
+        const contentType = String(selectedDocument.contentType || "").toLowerCase();
+        const dataUrl = `data:${selectedDocument.contentType || "application/octet-stream"};base64,${selectedDocument.contentBase64}`;
+        if (contentType.startsWith("image/")) {
+            return { kind: "image" as const, dataUrl };
+        }
+        if (contentType === "application/pdf") {
+            return { kind: "pdf" as const, dataUrl };
+        }
+        if (contentType.startsWith("text/") || contentType.includes("json") || contentType.includes("xml")) {
+            try {
+                return { kind: "text" as const, text: globalThis.atob(selectedDocument.contentBase64) };
+            } catch {
+                return { kind: "unsupported" as const };
+            }
+        }
+        return { kind: "unsupported" as const };
+    }, [selectedDocument]);
 
     async function refreshGroupsAndEmails() {
         setReloadToken((value) => value + 1);
@@ -276,6 +384,83 @@ export const GroupsCockpit: React.FC = () => {
         });
         if (!opened) {
             setMsg("Este email ainda nao tem abertura direta disponivel.");
+        }
+    }
+
+    async function handleSaveAttachmentsToGroup(candidates: CurrentAttachmentCandidate[]) {
+        if (!selectedGroup || !candidates.length) return;
+        setBusyAction(true);
+        try {
+            const storageProvider = String(settings?.groupStorage.provider || "").trim();
+            const storageBasePath = String(settings?.groupStorage.baseFolderPath || "").trim();
+            const payloadDocs: GroupDocumentEntry[] = candidates.map((attachment) => ({
+                id: `doc_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${attachment.id}`}`,
+                name: attachment.name,
+                contentType: attachment.contentType,
+                contentBase64: attachment.content,
+                size: attachment.size,
+                sourceEmailKey: String(ctx.itemId || ctx.internetMessageId || ctx.conversationId || "").trim(),
+                sourceItemId: String(ctx.itemId || "").trim(),
+                sourceInternetMessageId: String(ctx.internetMessageId || "").trim(),
+                sourceConversationId: String(ctx.conversationId || "").trim(),
+                sourceEmailSubject: String(ctx.subject || "").trim(),
+                storageProvider,
+                storageBasePath,
+                storagePathHint: groupFolderHint ? `${groupFolderHint}${groupFolderHint.includes("\\") ? "\\" : "/"}${sanitizePathSegment(attachment.name)}` : "",
+            }));
+            const result = await saveGroupDocuments(selectedGroup.id, { documents: payloadDocs });
+            setGroupDocuments(result.documents || []);
+            setSelectedDocumentId(result.documents?.[0] ? makeDocumentKey(result.documents[0]) : "");
+            setMsg(candidates.length === 1 ? `Documento "${candidates[0].name}" guardado no grupo.` : `${candidates.length} documento(s) guardados no grupo.`);
+            setReloadToken((value) => value + 1);
+        } catch (error: any) {
+            setMsg(error?.message || "Nao foi possivel guardar os anexos neste grupo.");
+        } finally {
+            setBusyAction(false);
+        }
+    }
+
+    async function handleDeleteDocument(document: GroupDocumentEntry) {
+        if (!selectedGroup || !document?.id) return;
+        setBusyAction(true);
+        try {
+            await deleteGroupDocument(selectedGroup.id, document.id);
+            setGroupDocuments((current) => current.filter((entry) => entry.id !== document.id));
+            setSelectedDocumentId((current) => (current === makeDocumentKey(document) ? "" : current));
+            setMsg(`Documento "${document.name}" removido do grupo.`);
+            setReloadToken((value) => value + 1);
+        } catch (error: any) {
+            setMsg(error?.message || "Nao foi possivel remover o documento.");
+        } finally {
+            setBusyAction(false);
+        }
+    }
+
+    function handleDownloadDocument(doc: GroupDocumentEntry) {
+        const base64 = String(doc?.contentBase64 || "").trim();
+        if (!base64) {
+            setMsg("Este documento nao tem conteudo disponivel para download.");
+            return;
+        }
+        const byteCharacters = globalThis.atob(base64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i += 1) byteNumbers[i] = byteCharacters.charCodeAt(i);
+        const blob = new Blob([new Uint8Array(byteNumbers)], { type: doc.contentType || "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+        const anchor = downloadAnchorRef.current || globalThis.document.createElement("a");
+        downloadAnchorRef.current = anchor;
+        anchor.href = url;
+        anchor.download = doc.name || "documento";
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+
+    async function handleAttachDocument(document: GroupDocumentEntry) {
+        try {
+            await addBase64AttachmentToCompose(document.name || "documento", String(document.contentBase64 || ""));
+            setMsg(`Documento "${document.name}" anexado ao email em edicao.`);
+        } catch (error: any) {
+            setMsg(error?.message || "Nao foi possivel anexar o documento.");
         }
     }
 
@@ -420,56 +605,132 @@ export const GroupsCockpit: React.FC = () => {
 
             <Section
                 title="Documentos e acoes"
-                subtitle={selectedEmail ? "Anexos conhecidos do email selecionado e do grupo." : "Seleciona um email para veres anexos e acoes rapidas."}
+                subtitle={selectedGroup ? "Documentos guardados no grupo e anexos disponiveis do email aberto." : "Seleciona um grupo para começar a gerir documentos."}
                 actions={
                     <>
                         <IconButton
-                            title={selectedEmail ? "Abrir email selecionado" : "Seleciona um email"}
-                            icon={<Icons.ExternalLink size={13} />}
-                            onClick={selectedEmail ? () => void handleOpenEmail(selectedEmail) : undefined}
-                            disabled={!selectedEmail}
+                            title={selectedGroup && currentAttachmentCandidates.length ? "Guardar todos os anexos do email aberto no grupo" : "Abre um email com anexos para os guardar no grupo"}
+                            icon={<Icons.Save size={13} />}
+                            onClick={selectedGroup && currentAttachmentCandidates.length ? () => void handleSaveAttachmentsToGroup(currentAttachmentCandidates) : undefined}
+                            disabled={!selectedGroup || !currentAttachmentCandidates.length || busyAction}
+                            tone="primary"
+                        />
+                        <IconButton
+                            title={selectedGroup ? "Atualizar documentos do grupo" : "Seleciona um grupo"}
+                            icon={<Icons.RefreshCw size={13} />}
+                            onClick={selectedGroup ? refreshGroupsAndEmails : undefined}
+                            disabled={!selectedGroup || documentsLoading || busyAction}
                         />
                     </>
                 }
             >
                 <div style={styles.actionStrip}>
                     <span style={styles.actionHint}>
-                        {selectedGroup ? `${groupEmails.length} email(s) no grupo` : "Sem grupo ativo"}
+                        {selectedGroup ? `${groupDocuments.length} documento(s) guardado(s)` : "Sem grupo ativo"}
                     </span>
+                    {selectedGroup && groupFolderHint ? <span style={styles.actionHint}>{groupFolderHint}</span> : null}
                     {selectedEmail ? <span style={styles.actionHint}>Email ativo: {selectedEmail.subject || "(sem assunto)"}</span> : null}
                 </div>
                 <div style={styles.hintText}>
                     A pasta base e as regras documentais dos grupos ficam em Settings &gt; Grupos.
                 </div>
-                <div style={styles.scrollPaneBottom}>
-                    {!selectedGroup ? <PanelState compact tone="info" title="Sem grupo ativo" description="A secao inferior mostra anexos dos emails do grupo selecionado." /> : null}
-                    {selectedGroup && !documents.length ? (
-                        <PanelState
-                            compact
-                            tone="info"
-                            title="Sem documentos conhecidos"
-                            description="Os anexos aparecem aqui quando o email foi registado no Cockpit com metadados de anexos."
-                        />
-                    ) : null}
-                    {documents.map((row, index) => {
-                        const canOpen = Boolean(row.email.itemId || row.email.emailWebLink);
-                        return (
-                            <div key={`${row.emailId}:${row.attachment.name}:${index}`} style={styles.documentRow}>
-                                <div style={styles.documentMain}>
-                                    <span style={styles.documentIcon}><Icons.Paperclip size={12} /></span>
-                                    <div style={styles.documentCopy}>
-                                        <div style={styles.documentName}>{row.attachment.name}</div>
-                                        <div style={styles.documentMeta}>
-                                            <span>{row.attachment.contentType || "Anexo"}</span>
-                                            <span>{row.email.subject || "(sem assunto)"}</span>
+                {!selectedGroup ? <PanelState compact tone="info" title="Sem grupo ativo" description="A secao inferior vai mostrar anexos guardados e anexos disponiveis do email aberto." /> : null}
+                {documentsError ? <div style={styles.errorText}>{documentsError}</div> : null}
+
+                {selectedGroup ? (
+                    <div style={styles.documentSectionStack}>
+                        <div style={styles.documentSubsection}>
+                            <div style={styles.documentSubTitle}>Anexos do email aberto</div>
+                            <div style={styles.hintText}>
+                                Nesta fase, os documentos são guardados a partir do email que tens aberto no add-in.
+                            </div>
+                            <div style={styles.scrollPaneCandidates}>
+                                {!currentAttachmentCandidates.length ? (
+                                    <PanelState compact tone="info" title="Sem anexos importáveis" description="Abre um email com anexos úteis para os guardares neste grupo." />
+                                ) : null}
+                                {currentAttachmentCandidates.map((attachment) => (
+                                    <div key={attachment.id} style={styles.documentRow}>
+                                        <div style={styles.documentMain}>
+                                            <span style={styles.documentIcon}><Icons.Paperclip size={12} /></span>
+                                            <div style={styles.documentCopy}>
+                                                <div style={styles.documentName}>{attachment.name}</div>
+                                                <div style={styles.documentMeta}>
+                                                    <span>{attachment.contentType || "Anexo"}</span>
+                                                    {formatBytes(attachment.size) ? <span>{formatBytes(attachment.size)}</span> : null}
+                                                    <span>{ctx.subject || "(sem assunto)"}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div style={styles.emailActions}>
+                                            <IconButton
+                                                title="Guardar no grupo"
+                                                icon={<Icons.Save size={12} />}
+                                                onClick={() => void handleSaveAttachmentsToGroup([attachment])}
+                                                disabled={busyAction}
+                                                tone="primary"
+                                            />
                                         </div>
                                     </div>
-                                </div>
-                                <IconButton title={canOpen ? "Abrir email do anexo" : "Sem abertura direta disponivel"} icon={<Icons.MessageSquare size={12} />} onClick={canOpen ? () => void handleOpenEmail(row.email) : undefined} disabled={!canOpen} />
+                                ))}
                             </div>
-                        );
-                    })}
-                </div>
+                        </div>
+
+                        <div style={styles.documentSubsection}>
+                            <div style={styles.documentSubTitle}>Documentos guardados</div>
+                            <div style={styles.scrollPaneBottom}>
+                                {documentsLoading && !groupDocuments.length ? (
+                                    <PanelState compact tone="info" title="A carregar documentos" description="A listar os documentos já guardados neste grupo." />
+                                ) : null}
+                                {!documentsLoading && !groupDocuments.length ? (
+                                    <PanelState compact tone="info" title="Sem documentos guardados" description="Guarda anexos do email aberto para começares a construir a pasta documental do grupo." />
+                                ) : null}
+                                {groupDocuments.map((document) => {
+                                    const active = makeDocumentKey(document) === makeDocumentKey(selectedDocument || {});
+                                    const canAttach = Boolean(document.contentBase64);
+                                    return (
+                                        <div key={makeDocumentKey(document)} style={active ? styles.documentRowActive : styles.documentRow}>
+                                            <button type="button" style={styles.emailSelectArea} onClick={() => setSelectedDocumentId(makeDocumentKey(document))}>
+                                                <div style={styles.documentName}>{document.name}</div>
+                                                <div style={styles.documentMeta}>
+                                                    <span>{document.contentType || "Documento"}</span>
+                                                    {formatBytes(document.size) ? <span>{formatBytes(document.size)}</span> : null}
+                                                    {document.sourceEmailSubject ? <span>{document.sourceEmailSubject}</span> : null}
+                                                </div>
+                                            </button>
+                                            <div style={styles.emailActions}>
+                                                <IconButton title="Download" icon={<Icons.Download size={12} />} onClick={() => handleDownloadDocument(document)} disabled={!document.contentBase64} />
+                                                <IconButton title="Anexar ao email em edicao" icon={<Icons.Upload size={12} />} onClick={() => void handleAttachDocument(document)} disabled={!canAttach} />
+                                                <IconButton title="Remover documento" icon={<Icons.Trash size={12} />} onClick={() => void handleDeleteDocument(document)} disabled={busyAction} tone="danger" />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {selectedDocument ? (
+                            <div style={styles.documentSubsection}>
+                                <div style={styles.documentSubTitle}>Preview</div>
+                                {selectedDocumentPreview?.kind === "image" ? (
+                                    <div style={styles.previewFrame}>
+                                        <img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} />
+                                    </div>
+                                ) : null}
+                                {selectedDocumentPreview?.kind === "pdf" ? (
+                                    <div style={styles.previewFrame}>
+                                        <iframe title={selectedDocument.name} src={selectedDocumentPreview.dataUrl} style={styles.previewIframe} />
+                                    </div>
+                                ) : null}
+                                {selectedDocumentPreview?.kind === "text" ? (
+                                    <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre>
+                                ) : null}
+                                {!selectedDocumentPreview || selectedDocumentPreview.kind === "unsupported" ? (
+                                    <PanelState compact tone="info" title="Preview não disponível" description="Este tipo de documento pode ser descarregado ou anexado, mas não tem preview interno nesta fase." />
+                                ) : null}
+                            </div>
+                        ) : null}
+                    </div>
+                ) : null}
             </Section>
         </div>
     );
@@ -611,6 +872,28 @@ const styles: Record<string, React.CSSProperties> = {
         gap: "6px",
         paddingRight: "2px",
     },
+    scrollPaneCandidates: {
+        maxHeight: "160px",
+        overflowY: "auto",
+        display: "grid",
+        gap: "6px",
+        paddingRight: "2px",
+    },
+    documentSectionStack: {
+        display: "grid",
+        gap: "10px",
+    },
+    documentSubsection: {
+        display: "grid",
+        gap: "6px",
+    },
+    documentSubTitle: {
+        fontSize: "11px",
+        fontWeight: 800,
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+        color: "#42526E",
+    },
     groupRow: {
         border: panelBorder,
         borderRadius: "8px",
@@ -746,6 +1029,16 @@ const styles: Record<string, React.CSSProperties> = {
         gap: "8px",
         alignItems: "center",
     },
+    documentRowActive: {
+        border: "1px solid #0747A6",
+        borderRadius: "8px",
+        background: "#E9F2FF",
+        padding: "8px",
+        display: "grid",
+        gridTemplateColumns: "1fr auto",
+        gap: "8px",
+        alignItems: "center",
+    },
     documentMain: {
         display: "grid",
         gridTemplateColumns: "auto 1fr",
@@ -783,5 +1076,41 @@ const styles: Record<string, React.CSSProperties> = {
     hintText: {
         fontSize: "11px",
         color: "#6B778C",
+    },
+    previewFrame: {
+        border: panelBorder,
+        borderRadius: "8px",
+        overflow: "hidden",
+        background: "#F7F8FA",
+        minHeight: "160px",
+        maxHeight: "260px",
+    },
+    previewImage: {
+        width: "100%",
+        height: "100%",
+        objectFit: "contain",
+        display: "block",
+        maxHeight: "260px",
+        background: "#FFFFFF",
+    },
+    previewIframe: {
+        width: "100%",
+        height: "260px",
+        border: "none",
+        background: "#FFFFFF",
+    },
+    previewText: {
+        margin: 0,
+        padding: "10px",
+        border: panelBorder,
+        borderRadius: "8px",
+        background: "#FAFBFC",
+        fontSize: "11px",
+        lineHeight: 1.45,
+        color: "#172B4D",
+        maxHeight: "260px",
+        overflow: "auto",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
     },
 };

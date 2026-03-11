@@ -14,14 +14,17 @@ import {
   addEmailToGroup,
   addLink,
   createCustomGroup,
+  deleteDocumentFromGroup,
   deleteCustomGroup,
   getRelatedEmails,
+  listDocumentsByGroup,
   listCustomGroups,
   listEmailsByGroup,
   listLinksByConversation,
   listLinksByRecord,
   removeEmailFromGroup,
   registerRelevantEmail,
+  saveDocumentsToGroup,
 } from "./linkStore.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
 import { createLearningRouter } from "./routes/learningRoutes.js";
@@ -954,6 +957,36 @@ app.delete("/api/links/groups/:groupId/emails", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_unlink_failed", details: String(e?.message || e) });
+  }
+});
+
+app.get("/api/links/groups/:groupId/documents", async (req, res) => {
+  try {
+    const documents = await listDocumentsByGroup(req.params.groupId);
+    return res.json({ ok: true, documents });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_documents_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/:groupId/documents", async (req, res) => {
+  try {
+    const result = await saveDocumentsToGroup(req.params.groupId, req.body || {});
+    return res.json(result);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_documents_save_failed", details: String(e?.message || e) });
+  }
+});
+
+app.delete("/api/links/groups/:groupId/documents/:documentId", async (req, res) => {
+  try {
+    const result = await deleteDocumentFromGroup(req.params.groupId, req.params.documentId);
+    return res.json(result);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_document_delete_failed", details: String(e?.message || e) });
   }
 });
 

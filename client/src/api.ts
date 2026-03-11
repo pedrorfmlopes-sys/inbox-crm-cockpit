@@ -165,6 +165,24 @@ export type LinkGroupEntry = {
   updatedAt?: string;
 };
 
+export type GroupDocumentEntry = {
+  id: string;
+  name: string;
+  contentType?: string;
+  size?: number;
+  contentBase64?: string;
+  sourceEmailKey?: string;
+  sourceItemId?: string;
+  sourceInternetMessageId?: string;
+  sourceConversationId?: string;
+  sourceEmailSubject?: string;
+  storageProvider?: string;
+  storageBasePath?: string;
+  storagePathHint?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type RelatedReason =
   | {
     kind: "entity";
@@ -496,6 +514,37 @@ export async function getGroupEmails(groupId: string): Promise<RelatedEmailEntry
   params.set("_ts", String(Date.now()));
   const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/emails?${params.toString()}`);
   return Array.isArray(response?.emails) ? response.emails.map(normalizeRelatedEmailEntry) : [];
+}
+
+export async function getGroupDocuments(groupId: string): Promise<GroupDocumentEntry[]> {
+  const params = new URLSearchParams();
+  params.set("_ts", String(Date.now()));
+  const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/documents?${params.toString()}`);
+  return Array.isArray(response?.documents) ? response.documents : [];
+}
+
+export async function saveGroupDocuments(
+  groupId: string,
+  payload: {
+    documents: GroupDocumentEntry[];
+  }
+): Promise<{ ok: boolean; group?: LinkGroupEntry; documents: GroupDocumentEntry[] }> {
+  const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/documents`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return {
+    ok: Boolean(response?.ok),
+    group: response?.group,
+    documents: Array.isArray(response?.documents) ? response.documents : [],
+  };
+}
+
+export async function deleteGroupDocument(groupId: string, documentId: string): Promise<{ ok: boolean }> {
+  await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/documents/${encodeURIComponent(String(documentId || "").trim())}`, {
+    method: "DELETE",
+  });
+  return { ok: true };
 }
 
 
