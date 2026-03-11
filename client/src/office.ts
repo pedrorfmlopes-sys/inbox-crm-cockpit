@@ -383,7 +383,7 @@ function buildCockpitViewUrl(view: string, params: Record<string, string>) {
  * Opens a separate window using Office Dialog API.
  * Guard: only one dialog at a time (evita "já existe uma dialog ativa").
  */
-async function openCockpitView(view: string, params: Record<string, string>, options?: { height?: number; width?: number }) {
+async function openCockpitView(view: string, params: Record<string, string>, options?: { height?: number; width?: number; displayInIframe?: boolean }) {
   const OfficeAny = await ensureOfficeReady();
   const url = buildCockpitViewUrl(view, params);
 
@@ -414,7 +414,7 @@ async function openCockpitView(view: string, params: Record<string, string>, opt
 
     OfficeAny.context.ui.displayDialogAsync(
       url.toString(),
-      { height: options?.height || 65, width: options?.width || 40, displayInIframe: false },
+      { height: options?.height || 65, width: options?.width || 40, displayInIframe: Boolean(options?.displayInIframe) },
       (result: any) => {
         clearTimeout(timer);
         if (result.status !== OfficeAny.AsyncResultStatus.Succeeded) {
@@ -445,16 +445,20 @@ async function openCockpitView(view: string, params: Record<string, string>, opt
 }
 
 export async function openCockpitDialog(params: Record<string, string>) {
-  return await openCockpitView("dialog", params, { height: 65, width: 40 });
+  return await openCockpitView("dialog", params, { height: 65, width: 40, displayInIframe: false });
 }
 
 export async function openGroupExplorer(params: Record<string, string>) {
   try {
-    return await openCockpitView("group-explorer", params, { height: 78, width: 52 });
+    return await openCockpitView("group-explorer", params, { height: 78, width: 52, displayInIframe: true });
   } catch (error) {
     const url = buildCockpitViewUrl("group-explorer", params);
     clientLog.warn("[office] group explorer fallback to browser window", error);
-    window.open(url.toString(), "_blank", "noopener,noreferrer");
+    try {
+      const popup = window.open(url.toString(), "_blank", "noopener,noreferrer");
+      if (popup) return;
+    } catch {}
+    window.location.assign(url.toString());
   }
 }
 

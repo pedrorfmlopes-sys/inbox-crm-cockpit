@@ -28,6 +28,7 @@ type PreviewState =
 function closeExplorer() {
   try { (window as any).Office?.context?.ui?.messageParent?.("close"); } catch {}
   try { window.close(); } catch {}
+  try { window.location.assign(window.location.origin); } catch {}
 }
 
 function normalizeProvider(value: string | undefined): "cloud" | "local" | "onedrive" {
