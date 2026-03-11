@@ -444,6 +444,32 @@ function buildEmailListEntry(email, extra = {}) {
   };
 }
 
+function buildRecoveredEmailSnapshot(store, emailId) {
+  const existing = store.emails[emailId];
+  if (existing) return existing;
+
+  const entityLinks = Array.isArray(store.emailEntityLinks[emailId]) ? dedupeRecordLinks(store.emailEntityLinks[emailId]) : [];
+  const source = entityLinks[0];
+  if (!source) return null;
+
+  return {
+    id: normalizeString(emailId),
+    itemId: normalizeString(source?.itemId),
+    internetMessageId: normalizeMessageId(source?.internetMessageId),
+    conversationId: normalizeString(source?.conversationId),
+    subject: normalizeString(source?.subject),
+    fromEmail: normalizeString(source?.fromEmail),
+    fromName: normalizeString(source?.fromName),
+    emailWebLink: normalizeString(source?.emailWebLink),
+    messageDateIso: normalizeString(source?.messageDateIso || source?.receivedAtIso || source?.linkedAt),
+    receivedAtIso: normalizeString(source?.receivedAtIso || source?.messageDateIso || source?.linkedAt),
+    sentAtIso: normalizeString(source?.sentAtIso),
+    linkedAt: normalizeString(source?.linkedAt),
+    createdAt: normalizeString(source?.linkedAt || nowIso()),
+    updatedAt: normalizeString(source?.linkedAt || nowIso()),
+  };
+}
+
 function makePersistentEmailKey(email) {
   return makeEmailLookupKey(email);
 }
@@ -776,7 +802,7 @@ async function ensureCustomGroupDb() {
     for (const group of customGroups) {
       await upsertDbCustomGroup(group);
       for (const emailId of store.groupMembers[group.id] || []) {
-        const email = store.emails[emailId];
+        const email = buildRecoveredEmailSnapshot(store, emailId);
         if (email) await upsertDbCustomGroupMember(group.id, email);
       }
     }
@@ -1076,7 +1102,7 @@ export async function listEmailsByGroup(groupId) {
   const gid = normalizeString(groupId);
   const emailIds = Array.isArray(store.groupMembers[gid]) ? store.groupMembers[gid] : [];
   const fileRows = emailIds.map((emailId) => {
-    const email = store.emails[emailId];
+    const email = buildRecoveredEmailSnapshot(store, emailId);
     const relatedRecords = Array.isArray(store.emailEntityLinks[emailId])
       ? store.emailEntityLinks[emailId].map((entry) => ({
         model: entry.model,
