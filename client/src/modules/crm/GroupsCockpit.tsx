@@ -26,6 +26,7 @@ type CurrentAttachmentCandidate = {
     content: string;
     size?: number;
     suspectedInline?: boolean;
+    sourceLabel?: string;
 };
 
 function formatDate(value: string | undefined): string {
@@ -66,6 +67,10 @@ function formatBytes(value: number | undefined): string {
 
 function sanitizePathSegment(value: string): string {
     return String(value || "").trim().replace(/[\\/:*?"<>|]+/g, "_");
+}
+
+function normalizeMessageKey(value: string | undefined): string {
+    return String(value || "").trim().toLowerCase().replace(/[<>\s]/g, "");
 }
 
 function normalizeGroupStorageProvider(value: string | undefined): "cloud" | "local" | "onedrive" {
@@ -179,6 +184,7 @@ export const GroupsCockpit: React.FC = () => {
     const [emailsExpanded, setEmailsExpanded] = useState(true);
     const [documentsExpanded, setDocumentsExpanded] = useState(true);
     const [documentDetailsExpanded, setDocumentDetailsExpanded] = useState(false);
+    const [attachmentSource, setAttachmentSource] = useState<"current" | "selected">("current");
 
     const selectedGroup = useMemo(
         () => groups.find((group) => group.id === selectedGroupId) || null,
@@ -333,6 +339,7 @@ export const GroupsCockpit: React.FC = () => {
                 content: String(attachment.content || "").trim(),
                 size: estimateBase64Size(attachment.content),
                 suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
+                sourceLabel: String(ctx.subject || "").trim(),
             }))
             .filter((attachment) => attachment.name && attachment.content)
             .sort((a, b) => {
@@ -340,7 +347,47 @@ export const GroupsCockpit: React.FC = () => {
                 if (inlineDelta !== 0) return inlineDelta;
                 return a.name.localeCompare(b.name, "pt-PT");
             });
-    }, [attachments]);
+    }, [attachments, ctx.subject]);
+
+    const selectedEmailMatchesCurrent = useMemo(() => {
+        if (!selectedEmail) return false;
+        const currentItemId = String(ctx.itemId || "").trim();
+        const selectedItemId = String(selectedEmail.itemId || "").trim();
+        if (currentItemId && selectedItemId && currentItemId === selectedItemId) return true;
+        const currentMessageId = normalizeMessageKey(ctx.internetMessageId);
+        const selectedMessageId = normalizeMessageKey(selectedEmail.internetMessageId);
+        if (currentMessageId && selectedMessageId && currentMessageId === selectedMessageId) return true;
+        return false;
+    }, [ctx.internetMessageId, ctx.itemId, selectedEmail]);
+
+    const selectedEmailAttachmentCandidates = useMemo<CurrentAttachmentCandidate[]>(() => {
+        if (!selectedEmail || !Array.isArray(selectedEmail.attachments) || !selectedEmail.attachments.length) return [];
+        if (selectedEmailMatchesCurrent) {
+            return currentAttachmentCandidates.map((attachment) => ({
+                ...attachment,
+                sourceLabel: selectedEmail.subject || attachment.sourceLabel || "",
+            }));
+        }
+        return selectedEmail.attachments
+            .map((attachment, index) => ({
+                id: `selected:${makeEmailKey(selectedEmail)}:${attachment.name || index}`,
+                name: String(attachment.name || "").trim(),
+                contentType: String(attachment.contentType || "").trim(),
+                content: "",
+                size: Number(attachment.size || 0) || undefined,
+                suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
+                sourceLabel: String(selectedEmail.subject || "").trim(),
+            }))
+            .filter((attachment) => attachment.name)
+            .sort((a, b) => {
+                const inlineDelta = Number(Boolean(a.suspectedInline)) - Number(Boolean(b.suspectedInline));
+                if (inlineDelta !== 0) return inlineDelta;
+                return a.name.localeCompare(b.name, "pt-PT");
+            });
+    }, [currentAttachmentCandidates, selectedEmail, selectedEmailMatchesCurrent]);
+
+    const visibleAttachmentCandidates = attachmentSource === "selected" ? selectedEmailAttachmentCandidates : currentAttachmentCandidates;
+    const savableAttachmentCandidates = visibleAttachmentCandidates.filter((attachment) => Boolean(attachment.content));
 
     const groupFolderHint = useMemo(() => {
         const base = String(settings?.groupStorage.baseFolderPath || "").trim();
@@ -745,10 +792,18 @@ export const GroupsCockpit: React.FC = () => {
                 actions={
                     <>
                         <IconButton
-                            title={selectedGroup && currentAttachmentCandidates.length ? "Guardar todos os anexos do email aberto no grupo" : "Abre um email com anexos para os guardar no grupo"}
+                            title={
+                                selectedGroup && savableAttachmentCandidates.length
+                                    ? attachmentSource === "selected"
+                                        ? "Guardar anexos disponiveis do email selecionado no grupo"
+                                        : "Guardar todos os anexos do email aberto no grupo"
+                                    : attachmentSource === "selected"
+                                        ? "O email selecionado so tem metadados dos anexos nesta fase"
+                                        : "Abre um email com anexos para os guardar no grupo"
+                            }
                             icon={<Icons.Save size={13} />}
-                            onClick={selectedGroup && currentAttachmentCandidates.length ? () => void handleSaveAttachmentsToGroup(currentAttachmentCandidates) : undefined}
-                            disabled={!selectedGroup || !documentsEnabled || !currentAttachmentCandidates.length || busyAction}
+                            onClick={selectedGroup && savableAttachmentCandidates.length ? () => void handleSaveAttachmentsToGroup(savableAttachmentCandidates) : undefined}
+                            disabled={!selectedGroup || !documentsEnabled || !savableAttachmentCandidates.length || busyAction}
                             tone="primary"
                         />
                         <IconButton
@@ -794,7 +849,7 @@ export const GroupsCockpit: React.FC = () => {
                         <span style={styles.actionHint} title={"As regras documentais dos grupos ficam em Settings > Grupos."}>Settings &gt; Grupos</span>
                     </div>
                 ) : null}
-                {!selectedGroup ? <PanelState compact tone="info" title="Sem grupo ativo" description="A secao inferior vai mostrar anexos guardados e anexos disponiveis do email aberto." /> : null}
+                {!selectedGroup ? <PanelState compact tone="info" title="Sem grupo ativo" description="A secao inferior vai mostrar anexos do email aberto ou do email selecionado no grupo." /> : null}
                 {documentsError ? <div style={styles.errorText}>{documentsError}</div> : null}
 
                 {selectedGroup && documentsExpanded ? (
@@ -803,18 +858,40 @@ export const GroupsCockpit: React.FC = () => {
                             <PanelState compact tone="info" title="Gestao documental desativada" description="Este grupo pode continuar a organizar emails, mas nao vai guardar ficheiros ate reativares os documentos." />
                         ) : null}
                         <div style={styles.documentSubsection}>
-                            <div style={styles.documentSubTitle}>Anexos do email aberto</div>
+                            <div style={styles.documentHeaderRow}>
+                                <div style={styles.documentSubTitle}>Anexos de origem</div>
+                                <div style={styles.sourceSwitch}>
+                                    <button
+                                        type="button"
+                                        style={attachmentSource === "current" ? styles.sourceBtnActive : styles.sourceBtn}
+                                        onClick={() => setAttachmentSource("current")}
+                                        title="Ver anexos do email atualmente aberto no Outlook"
+                                    >
+                                        Email aberto
+                                    </button>
+                                    <button
+                                        type="button"
+                                        style={attachmentSource === "selected" ? styles.sourceBtnActive : styles.sourceBtn}
+                                        onClick={() => setAttachmentSource("selected")}
+                                        title="Ver anexos do email selecionado na lista acima"
+                                    >
+                                        Email selecionado
+                                    </button>
+                                </div>
+                            </div>
                             <div style={styles.hintText}>
-                                Nesta fase, os documentos são guardados a partir do email que tens aberto no add-in.
+                                {attachmentSource === "selected"
+                                    ? "Os anexos do email selecionado podem ser revistos aqui. Guardar so fica disponivel quando o conteudo do ficheiro estiver acessivel no add-in."
+                                    : "Nesta fase, os documentos sao guardados diretamente a partir do email que tens aberto no add-in."}
                             </div>
                             <div style={styles.scrollPaneCandidates}>
                                 {!documentsEnabled ? (
                                     <PanelState compact tone="info" title="Documentos desativados" description="Ativa os documentos do grupo no topo para guardares anexos." />
                                 ) : null}
-                                {documentsEnabled && !currentAttachmentCandidates.length ? (
-                                    <PanelState compact tone="info" title="Sem anexos disponíveis" description="Abre um email com anexos para os poderes guardar neste grupo." />
+                                {documentsEnabled && !visibleAttachmentCandidates.length ? (
+                                    <PanelState compact tone="info" title="Sem anexos disponiveis" description={attachmentSource === "selected" ? "Seleciona acima um email do grupo que tenha anexos." : "Abre um email com anexos para os poderes guardar neste grupo."} />
                                 ) : null}
-                                {documentsEnabled ? currentAttachmentCandidates.map((attachment) => (
+                                {documentsEnabled ? visibleAttachmentCandidates.map((attachment) => (
                                     <div key={attachment.id} style={styles.documentRow}>
                                         <div style={styles.documentMain}>
                                             <span style={styles.documentIcon}><Icons.Paperclip size={12} /></span>
@@ -825,22 +902,23 @@ export const GroupsCockpit: React.FC = () => {
                                                     attachment.contentType || "Anexo",
                                                     formatBytes(attachment.size),
                                                     attachment.suspectedInline ? "Possível anexo inline/assinatura" : "",
-                                                    ctx.subject || "(sem assunto)",
+                                                    attachment.sourceLabel || ctx.subject || "(sem assunto)",
                                                 ].filter(Boolean).join("\n")}
                                             >
                                                 <div style={styles.documentName}>{attachment.name}</div>
                                                 <div style={styles.documentMiniMeta}>
                                                     {formatBytes(attachment.size) || attachment.contentType || "Anexo"}
                                                     {attachment.suspectedInline ? " · inline?" : ""}
+                                                    {!attachment.content ? " · sem conteudo" : ""}
                                                 </div>
                                             </div>
                                         </div>
                                         <div style={styles.emailActions}>
                                             <IconButton
-                                                title="Guardar no grupo"
+                                                title={attachment.content ? "Guardar no grupo" : "Este anexo ainda nao tem conteudo disponivel para guardar"}
                                                 icon={<Icons.Save size={10} />}
-                                                onClick={() => void handleSaveAttachmentsToGroup([attachment])}
-                                                disabled={busyAction || !documentsEnabled}
+                                                onClick={attachment.content ? () => void handleSaveAttachmentsToGroup([attachment]) : undefined}
+                                                disabled={busyAction || !documentsEnabled || !attachment.content}
                                                 tone="primary"
                                             />
                                         </div>
@@ -856,7 +934,7 @@ export const GroupsCockpit: React.FC = () => {
                                     <PanelState compact tone="info" title="A carregar documentos" description="A listar os documentos já guardados neste grupo." />
                                 ) : null}
                                 {!documentsLoading && !groupDocuments.length ? (
-                                    <PanelState compact tone="info" title="Sem documentos guardados" description="Guarda anexos do email aberto para começares a construir a pasta documental do grupo." />
+                                    <PanelState compact tone="info" title="Sem documentos guardados" description="Guarda anexos do email aberto ou dos emails selecionados para comecares a construir a pasta documental do grupo." />
                                 ) : null}
                                 {groupDocuments.map((document) => {
                                     const active = makeDocumentKey(document) === makeDocumentKey(selectedDocument || {});
@@ -1062,6 +1140,38 @@ const styles: Record<string, React.CSSProperties> = {
         textTransform: "uppercase",
         letterSpacing: "0.04em",
         color: "#42526E",
+    },
+    documentHeaderRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "6px",
+        flexWrap: "wrap",
+    },
+    sourceSwitch: {
+        display: "inline-flex",
+        gap: "4px",
+        flexWrap: "wrap",
+    },
+    sourceBtn: {
+        border: panelBorder,
+        background: "#FFFFFF",
+        color: "#42526E",
+        borderRadius: "999px",
+        padding: "2px 7px",
+        fontSize: "9px",
+        fontWeight: 700,
+        cursor: "pointer",
+    },
+    sourceBtnActive: {
+        border: "1px solid #0747A6",
+        background: "#E9F2FF",
+        color: "#0747A6",
+        borderRadius: "999px",
+        padding: "2px 7px",
+        fontSize: "9px",
+        fontWeight: 700,
+        cursor: "pointer",
     },
     groupRow: {
         border: panelBorder,
