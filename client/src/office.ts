@@ -453,11 +453,7 @@ export async function openGroupExplorer(params: Record<string, string>) {
     return await openCockpitView("group-explorer", params, { height: 78, width: 52, displayInIframe: true });
   } catch (error) {
     const url = buildCockpitViewUrl("group-explorer", params);
-    clientLog.warn("[office] group explorer fallback to browser window", error);
-    try {
-      const popup = window.open(url.toString(), "_blank", "noopener,noreferrer");
-      if (popup) return;
-    } catch {}
+    clientLog.warn("[office] group explorer fallback to same-window navigation", error);
     window.location.assign(url.toString());
   }
 }
