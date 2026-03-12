@@ -292,20 +292,78 @@ function AttachmentPicker({ attachments, selected, onToggle }: {
 }) {
   if (!attachments?.length) return null;
 
+  const selectedCount = selected.length;
+
   return (
     <div style={{ marginTop: 16 }}>
-      <label style={S.labBlock}>ANEXOS ({attachments.length})</label>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <div>
+          <label style={S.labBlock}>ANEXOS PARA O ODOO ({attachments.length})</label>
+          <div style={{ fontSize: 11, color: "#5E6C84", marginTop: 2 }}>
+            Seleciona os ficheiros que queres associar ao registo.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            style={S.secondaryBtn}
+            onClick={() => attachments.forEach((att) => { if (!selected.includes(att.name)) onToggle(att.name); })}
+            title="Selecionar todos os anexos"
+          >
+            TODOS
+          </button>
+          <button
+            type="button"
+            style={S.secondaryBtn}
+            onClick={() => selected.forEach((name) => onToggle(name))}
+            title="Limpar selecao"
+            disabled={!selectedCount}
+          >
+            LIMPAR
+          </button>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 700, marginBottom: 8 }}>
+        {selectedCount
+          ? `${selectedCount} anexo(s) seguem para o Odoo.`
+          : "Nenhum anexo selecionado. O registo sera criado sem ficheiros."}
+      </div>
+
+      <div style={S.attachmentCardGrid}>
         {attachments.map(att => {
           const isSelected = selected.includes(att.name);
+          const dataUrl = attachmentToPreviewUrl(att);
+          const textPreview = getAttachmentTextPreview(att);
           return (
             <button
+              type="button"
               key={att.name}
               onClick={() => onToggle(att.name)}
-              style={isSelected ? S.primaryBtn : S.secondaryBtn}
+              style={isSelected ? { ...S.attachmentPreviewCard, ...S.attachmentPreviewCardActive } : S.attachmentPreviewCard}
               title={att.name}
             >
-              {isSelected ? "✅" : "📎"} {att.name.length > 8 ? att.name.substring(0, 7) + ".." : att.name}
+              <div style={S.attachmentPreviewHeader}>
+                <span style={S.attachmentPreviewCheck}>{isSelected ? "✓" : ""}</span>
+                <span style={S.attachmentPreviewName}>{att.name}</span>
+              </div>
+
+              <div style={S.attachmentPreviewBody}>
+                {isImageAttachment(att) && dataUrl ? (
+                  <img src={dataUrl} alt={att.name} style={S.attachmentPreviewImage} />
+                ) : isPdfAttachment(att) && dataUrl ? (
+                  <iframe title={att.name} src={`${dataUrl}#toolbar=0&navpanes=0&scrollbar=0`} style={S.attachmentPreviewFrame} />
+                ) : textPreview ? (
+                  <div style={S.attachmentPreviewText}>{textPreview}</div>
+                ) : (
+                  <div style={S.attachmentPreviewFallback}>{attachmentKindLabel(att)}</div>
+                )}
+              </div>
+
+              <div style={S.attachmentPreviewMeta}>
+                <span>{normalizeMimeLabel(att.contentType || att.mimetype || "") || "ficheiro"}</span>
+                <span>{formatBytes(att.size)}</span>
+              </div>
             </button>
           );
         })}
@@ -340,6 +398,170 @@ function shortenPreview(text: string, max = 420) {
   if (!clean) return "";
   if (clean.length <= max) return clean;
   return `${clean.slice(0, max - 1)}…`;
+}
+
+function escapeHtmlClient(value: string) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function plainTextToHtmlClient(text?: string) {
+  const normalized = String(text || "")
+    .replace(/\r/g, "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\t ]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (!normalized) return "";
+
+  return normalized
+    .split(/\n{2,}/)
+    .map((block) => `<p style="margin: 0 0 10px 0;">${escapeHtmlClient(block).replace(/\n/g, "<br/>")}</p>`)
+    .join("\n");
+}
+
+function sanitizeEmailHtmlForOdooClient(html?: string) {
+  let cleaned = String(html || "").trim();
+  if (!cleaned) return "";
+
+  const bodyMatch = cleaned.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  if (bodyMatch?.[1]) cleaned = bodyMatch[1];
+
+  cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, "");
+  cleaned = cleaned.replace(/<(script|style|meta|link|title|head|xml|svg|canvas|noscript|iframe)[^>]*>[\s\S]*?<\/\1>/gi, "");
+  cleaned = cleaned.replace(/<img\b[^>]*>/gi, "");
+  cleaned = cleaned.replace(/<picture\b[^>]*>[\s\S]*?<\/picture>/gi, "");
+  cleaned = cleaned.replace(/<source\b[^>]*>/gi, "");
+  cleaned = cleaned.replace(/<\/?(o:p|v:[^>\s]+|w:[^>\s]+)\b[^>]*>/gi, "");
+  cleaned = cleaned.replace(/<(div|table|section)[^>]*(?:class|id)=["'][^"']*(?:gmail_signature|signature|x_signature|moz-signature|apple-mail-signature)[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi, "");
+  cleaned = cleaned.replace(/\s+on[a-z]+\s*=\s*(['"]).*?\1/gi, "");
+  cleaned = cleaned.replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, "");
+  cleaned = cleaned.replace(/\s(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi, "");
+  cleaned = cleaned.replace(/<(\/?)(html|body)\b[^>]*>/gi, "");
+  cleaned = cleaned.trim();
+
+  return cleaned;
+}
+
+function normalizeMimeLabel(value: string) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw === "application/x-pdf") return "pdf";
+  if (raw.startsWith("image/")) return raw.replace("image/", "");
+  if (raw.startsWith("application/")) return raw.replace("application/", "");
+  if (raw.startsWith("text/")) return raw.replace("text/", "");
+  return raw;
+}
+
+function normalizeAttachmentMime(att: any) {
+  return String(att?.contentType || att?.mimetype || "").trim().toLowerCase();
+}
+
+function isImageAttachment(att: any) {
+  return normalizeAttachmentMime(att).startsWith("image/");
+}
+
+function isPdfAttachment(att: any) {
+  const mime = normalizeAttachmentMime(att);
+  return mime === "application/pdf" || mime === "application/x-pdf" || /\.pdf$/i.test(String(att?.name || ""));
+}
+
+function attachmentToPreviewUrl(att: any) {
+  const content = String(att?.content || "").trim();
+  if (!content) return "";
+  if (content.startsWith("data:")) return content;
+  const mime = normalizeAttachmentMime(att) || "application/octet-stream";
+  return `data:${mime};base64,${content}`;
+}
+
+function getAttachmentTextPreview(att: any) {
+  const mime = normalizeAttachmentMime(att);
+  if (!mime.startsWith("text/")) return "";
+  const content = String(att?.content || "").trim();
+  if (!content) return "";
+  try {
+    const normalized = content.replace(/^data:[^,]+,/, "");
+    const decoded = atob(normalized);
+    return decoded.replace(/\s+/g, " ").trim().slice(0, 120) || "";
+  } catch {
+    return "";
+  }
+}
+
+function attachmentKindLabel(att: any) {
+  const name = String(att?.name || "").trim();
+  const ext = name.includes(".") ? name.split(".").pop() : "";
+  return ext ? ext.toUpperCase() : "FICHEIRO";
+}
+
+function formatBytes(value: any) {
+  const size = Number(value || 0);
+  if (!size) return "";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function buildOdooPreviewHtml({
+  subject,
+  fromName,
+  fromEmail,
+  receivedAtIso,
+  emailWebLink,
+  publishState,
+  emailHtml,
+  emailText,
+  description,
+}: {
+  subject?: string;
+  fromName?: string;
+  fromEmail?: string;
+  receivedAtIso?: string;
+  emailWebLink?: string;
+  publishState: OdooPublishState;
+  emailHtml?: string;
+  emailText?: string;
+  description?: string;
+}) {
+  if (!publishState.postToChatter) {
+    return `<p style="margin:0;color:#5E6C84;">O email será apenas ligado ao registo, sem nova mensagem no chatter.</p>`;
+  }
+
+  const fallbackText = String(emailText || htmlToReadableTextClient(emailHtml) || "").trim();
+  let innerHtml = "";
+  switch (publishState.chatterMode) {
+    case "html":
+      innerHtml = sanitizeEmailHtmlForOdooClient(emailHtml) || plainTextToHtmlClient(fallbackText);
+      break;
+    case "text":
+      innerHtml = plainTextToHtmlClient(fallbackText);
+      break;
+    case "custom":
+      innerHtml = plainTextToHtmlClient(publishState.customText);
+      break;
+    case "description":
+    default:
+      innerHtml = plainTextToHtmlClient(description || fallbackText);
+      break;
+  }
+
+  const safeFrom = `${String(fromName || "").trim()}${fromEmail ? ` <${fromEmail}>` : ""}`.trim() || "(desconhecido)";
+  return [
+    `<div style="font-family: Arial, sans-serif; line-height: 1.5; color: #172B4D;">`,
+    `<div style="border-left: 3px solid #714B67; padding-left: 12px; margin-bottom: 16px; color: #5E6C84;">`,
+    subject ? `<p style="margin: 0 0 4px 0;"><b>Assunto:</b> ${escapeHtmlClient(subject)}</p>` : "",
+    `<p style="margin: 0 0 4px 0;"><b>De:</b> ${escapeHtmlClient(safeFrom)}</p>`,
+    receivedAtIso ? `<p style="margin: 0 0 4px 0;"><b>Data:</b> ${escapeHtmlClient(receivedAtIso)}</p>` : "",
+    emailWebLink ? `<p style="margin: 0;"><a href="${escapeHtmlClient(emailWebLink)}" target="_blank" rel="noreferrer">Ver no Outlook</a></p>` : "",
+    `</div>`,
+    `<div style="overflow-x:auto;">${innerHtml || `<p style="margin:0;color:#5E6C84;">Não há conteúdo preparado para o Odoo.</p>`}</div>`,
+    `</div>`,
+  ].filter(Boolean).join("");
 }
 
 function getDefaultPublishState(mode: Mode, emailHtml?: string, emailText?: string): OdooPublishState {
@@ -421,22 +643,36 @@ async function uploadSelectedAttachmentsToRecord(model: string, recordId: number
 
 function OdooContentEditor({
   mode,
+  subject,
+  fromName,
+  fromEmail,
+  receivedAtIso,
+  emailWebLink,
   emailHtml,
   emailText,
   description,
   onDescriptionChange,
   publishState,
   onPublishChange,
+  attachments,
+  selectedAttachments,
   selectedAttachmentCount,
   totalAttachmentCount,
 }: {
   mode: Mode;
+  subject?: string;
+  fromName?: string;
+  fromEmail?: string;
+  receivedAtIso?: string;
+  emailWebLink?: string;
   emailHtml?: string;
   emailText: string;
   description: string;
   onDescriptionChange: (value: string) => void;
   publishState: OdooPublishState;
   onPublishChange: (next: OdooPublishState) => void;
+  attachments: any[];
+  selectedAttachments: string[];
   selectedAttachmentCount: number;
   totalAttachmentCount: number;
 }) {
@@ -460,12 +696,33 @@ function OdooContentEditor({
     }
   }, [cleanEmailText, description, publishState]);
 
+  const odooPreviewHtml = useMemo(
+    () => buildOdooPreviewHtml({
+      subject,
+      fromName,
+      fromEmail,
+      receivedAtIso,
+      emailWebLink,
+      publishState,
+      emailHtml,
+      emailText,
+      description,
+    }),
+    [subject, fromName, fromEmail, receivedAtIso, emailWebLink, publishState, emailHtml, emailText, description],
+  );
+
+  const attachmentCards = useMemo(() => {
+    const source = Array.isArray(attachments) ? attachments : [];
+    const picked = source.filter((att: any) => selectedAttachments.includes(att.name));
+    return (picked.length ? picked : source).slice(0, 6);
+  }, [attachments, selectedAttachments]);
+
   return (
     <div style={S.odooEditorCard}>
       <div style={S.odooEditorHeader}>
         <div>
           <div style={S.odooEditorTitle}>CONTEUDO ODOO</div>
-          <div style={S.odooEditorHint}>Decide o que fica na descricao e o que segue para o chatter.</div>
+          <div style={S.odooEditorHint}>Revê aqui o resultado final antes de criar ou atualizar o registo no Odoo.</div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
           <button
@@ -521,7 +778,16 @@ function OdooContentEditor({
           placeholder="Escreve a mensagem que queres enviar para o chatter do Odoo..."
         />
       ) : (
-        <div style={S.odooPreviewBox}>{previewText || "Nao ha conteudo preparado para o chatter."}</div>
+        <>
+          <div style={S.odooPreviewBox}>
+            <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: "#2563eb", marginBottom: 4 }}>
+              Resumo
+            </div>
+            {previewText || "Nao ha conteudo preparado para o chatter."}
+          </div>
+          <div style={{ ...S.odooEditorMiniLab, marginTop: 10 }}>PREVIEW FINAL NO ODOO</div>
+          <div style={S.odooHtmlPreview} dangerouslySetInnerHTML={{ __html: odooPreviewHtml }} />
+        </>
       )}
 
       <div style={S.odooAttachmentHint}>
@@ -531,6 +797,36 @@ function OdooContentEditor({
             ? "Podes selecionar anexos abaixo para os associar ao registo."
             : "Este email nao tem anexos disponiveis nesta fase."}
       </div>
+
+      {attachmentCards.length ? (
+        <div style={{ marginTop: 10 }}>
+          <div style={S.odooEditorMiniLab}>PREVIEW DE ANEXOS</div>
+          <div style={S.odooAttachmentPreviewGrid}>
+            {attachmentCards.map((att: any) => {
+              const dataUrl = attachmentToPreviewUrl(att);
+              const textPreview = getAttachmentTextPreview(att);
+              return (
+                <div key={att.name} style={S.odooAttachmentPreviewCard}>
+                  <div style={S.odooAttachmentPreviewName}>{att.name}</div>
+                  {isImageAttachment(att) && dataUrl ? (
+                    <img src={dataUrl} alt={att.name} style={S.odooAttachmentPreviewImage} />
+                  ) : isPdfAttachment(att) && dataUrl ? (
+                    <iframe title={att.name} src={`${dataUrl}#toolbar=0&navpanes=0&scrollbar=0`} style={S.odooAttachmentPreviewFrame} />
+                  ) : textPreview ? (
+                    <div style={S.odooAttachmentPreviewText}>{textPreview}</div>
+                  ) : (
+                    <div style={S.odooAttachmentPreviewFallback}>{attachmentKindLabel(att)}</div>
+                  )}
+                  <div style={S.odooAttachmentPreviewMeta}>
+                    <span>{normalizeMimeLabel(att.contentType || att.mimetype || "") || "ficheiro"}</span>
+                    <span>{formatBytes(att.size)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1221,7 +1517,7 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
       <div style={S.row}><label style={S.lab}>SUBTAREFA</label><input type="checkbox" checked={isSub} onChange={(e) => { setIsSub(e.target.checked); if (!e.target.checked) { setParentId(null); setParentName(""); } }} /></div>
       {isSub ? <TypeaheadPicker label="PARENT TASK" placeholder={projectId ? "Pesquisar tarefa (filtra por projeto)..." : "Pesquisar tarefa (global)..."} model="project.task" fields={["id", "name", "display_name", "project_id"]} pickedId={parentId} pickedName={parentName} extraDomain={(query) => { const domain: any[] = []; if (projectId) domain.push(["project_id", "=", projectId]); if (query?.trim()) domain.push(["name", "ilike", query.trim()]); return domain; }} onPick={(item: any) => { const id = item?.id ?? null; setParentId(id); setParentName(id ? (item.display_name || item.name || `#${id}`) : ""); }} /> : null}
       <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Descricao / notas..." /></div>
-      <OdooContentEditor mode={mode} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <OdooContentEditor mode={mode} subject={ctx.subject} fromName={ctx.fromName} fromEmail={ctx.fromEmail} receivedAtIso={ctx.receivedAtIso} emailWebLink={ctx.emailWebLink} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} attachments={emailAtts || []} selectedAttachments={selectedAtts} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
@@ -1326,7 +1622,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
       <TypeaheadPicker label="CLIENTE" placeholder="Pesquisar contacto/empresa..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
       <TypeaheadPicker label="GESTOR" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name", "email"]} pickedId={managerId} pickedName={managerName} onPick={(item: any) => { const id = item?.id ?? null; setManagerId(id); setManagerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
       <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notas do projeto..." /></div>
-      <OdooContentEditor mode={mode} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <OdooContentEditor mode={mode} subject={ctx.subject} fromName={ctx.fromName} fromEmail={ctx.fromEmail} receivedAtIso={ctx.receivedAtIso} emailWebLink={ctx.emailWebLink} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} attachments={emailAtts || []} selectedAttachments={selectedAtts} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
@@ -1479,7 +1775,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       <TypeaheadPicker label="EMPRESA" placeholder="Pesquisar res.partner..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
       <TypeaheadPicker label="ETAPA" placeholder="Pesquisar etapa do lead..." model="crm.stage" fields={["id", "name"]} pickedId={stageId} pickedName={stageName} onPick={(item: any) => { const id = item?.id ?? null; setStageId(id); setStageName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
       <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notas do lead..." /></div>
-      <OdooContentEditor mode={mode} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <OdooContentEditor mode={mode} subject={ctx.subject} fromName={ctx.fromName} fromEmail={ctx.fromEmail} receivedAtIso={ctx.receivedAtIso} emailWebLink={ctx.emailWebLink} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} attachments={emailAtts || []} selectedAttachments={selectedAtts} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
@@ -1763,7 +2059,7 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
         <div style={S.row}><label style={S.lab}>PRIORIDADE</label><select style={S.sel} value={priority} onChange={(e) => setPriority(e.target.value)}><option value="0">Baixa</option><option value="1">Media</option><option value="2">Alta</option><option value="3">Urgente</option></select></div>
       </div>
       <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Detalhes do ticket..." /></div>
-      <OdooContentEditor mode={mode} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <OdooContentEditor mode={mode} subject={ctx.subject} fromName={ctx.fromName} fromEmail={ctx.fromEmail} receivedAtIso={ctx.receivedAtIso} emailWebLink={ctx.emailWebLink} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} attachments={emailAtts || []} selectedAttachments={selectedAtts} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
@@ -1972,7 +2268,28 @@ const S: Record<string, React.CSSProperties> = {
   odooEditorSelectWrap: { display: "flex", flexDirection: "column", gap: 4 },
   odooEditorMiniLab: { fontSize: 10, fontWeight: 700, color: "#6B778C", textTransform: "uppercase" },
   odooPreviewBox: { marginTop: 10, padding: "10px 12px", borderRadius: 10, border: "1px solid #d6def2", background: "#F7F9FC", fontSize: 12, color: "#253858", lineHeight: 1.45, whiteSpace: "pre-wrap" },
+  odooHtmlPreview: { marginTop: 10, padding: "12px", borderRadius: 10, border: "1px solid #d6def2", background: "#FFFFFF", color: "#172B4D", fontSize: 12, lineHeight: 1.5, maxHeight: 260, overflow: "auto" },
   odooAttachmentHint: { marginTop: 8, fontSize: 11, color: "#5E6C84" },
+  odooAttachmentPreviewGrid: { marginTop: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 },
+  odooAttachmentPreviewCard: { border: "1px solid #d6def2", borderRadius: 10, background: "#F7F9FC", padding: "8px", display: "flex", flexDirection: "column", gap: 6, minHeight: 138 },
+  odooAttachmentPreviewName: { fontSize: 11, fontWeight: 700, color: "#172B4D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  odooAttachmentPreviewImage: { width: "100%", height: 88, objectFit: "contain", borderRadius: 8, background: "#fff" },
+  odooAttachmentPreviewFrame: { width: "100%", height: 88, border: "none", borderRadius: 8, background: "#fff" },
+  odooAttachmentPreviewText: { fontSize: 11, color: "#253858", lineHeight: 1.35, background: "#fff", borderRadius: 8, padding: 8, minHeight: 88, overflow: "hidden" },
+  odooAttachmentPreviewFallback: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: 88, borderRadius: 8, background: "#fff", fontSize: 12, fontWeight: 700, color: "#5E6C84" },
+  odooAttachmentPreviewMeta: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10, color: "#6B778C" },
+  attachmentCardGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "8px", marginTop: "4px" },
+  attachmentPreviewCard: { border: "1px solid #d6def2", borderRadius: 10, background: "#F7F9FC", padding: "8px", display: "flex", flexDirection: "column", gap: 6, minHeight: 148, cursor: "pointer", textAlign: "left" as const },
+  attachmentPreviewCardActive: { border: "1px solid #2563eb", boxShadow: "0 0 0 2px rgba(37,99,235,0.12) inset", background: "#EEF4FF" },
+  attachmentPreviewHeader: { display: "flex", alignItems: "center", gap: 6 },
+  attachmentPreviewCheck: { width: 16, height: 16, borderRadius: 999, border: "1px solid #c3d4f4", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#2563eb", flexShrink: 0 },
+  attachmentPreviewName: { fontSize: 11, fontWeight: 700, color: "#172B4D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  attachmentPreviewBody: { borderRadius: 8, background: "#fff", minHeight: 88, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" },
+  attachmentPreviewImage: { width: "100%", height: 88, objectFit: "contain" },
+  attachmentPreviewFrame: { width: "100%", height: 88, border: "none" },
+  attachmentPreviewText: { fontSize: 11, color: "#253858", lineHeight: 1.35, padding: 8 },
+  attachmentPreviewFallback: { fontSize: 12, fontWeight: 700, color: "#5E6C84" },
+  attachmentPreviewMeta: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10, color: "#6B778C" },
 
   grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
 
