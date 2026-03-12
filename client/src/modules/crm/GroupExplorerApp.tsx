@@ -10,7 +10,7 @@ import {
   type LinkGroupEntry,
   type RelatedEmailEntry,
 } from "@/api";
-import { addBase64AttachmentToCompose, displayForwardForm, displayReplyForm, getAttachments, getSelectedMessageContext, openLinkedOutlookEmail, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { addBase64AttachmentToCompose, getAttachments, getSelectedMessageContext, openLinkedOutlookEmail, requestCockpitHostAction, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getSettings } from "@/settings";
 import { applySkin } from "@/ui/skins";
 import { PanelState } from "@/ui/PanelState";
@@ -572,16 +572,13 @@ export default function GroupExplorerApp(): JSX.Element {
   async function handleReplyEmail(email: RelatedEmailEntry | null) {
     if (!email) return;
     if (emailMatchesCurrentContext(email, liveCurrentContext)) {
-      try {
-        await displayReplyForm("", true);
-        setNotice("Formulario de resposta aberto para o email atual.");
-      } catch (nextError: any) {
-        setError(nextError?.message || "Nao foi possivel abrir a resposta.");
-      }
+      const handled = await requestCockpitHostAction({ type: "reply-current" });
+      if (handled) setNotice("Formulario de resposta aberto para o email atual.");
+      else setError("Nao foi possivel abrir a resposta.");
       return;
     }
 
-    const opened = await openLinkedOutlookEmail({ itemId: email.itemId, emailWebLink: email.emailWebLink });
+    const opened = await requestCockpitHostAction({ type: "open-email", itemId: email.itemId, emailWebLink: email.emailWebLink });
     if (opened) {
       setNotice("Email aberto no Outlook. Usa Responder no Outlook para continuar.");
     } else {
@@ -592,16 +589,13 @@ export default function GroupExplorerApp(): JSX.Element {
   async function handleForwardEmail(email: RelatedEmailEntry | null) {
     if (!email) return;
     if (emailMatchesCurrentContext(email, liveCurrentContext)) {
-      try {
-        await displayForwardForm("", true);
-        setNotice("Formulario de reencaminhamento aberto para o email atual.");
-      } catch (nextError: any) {
-        setError(nextError?.message || "Nao foi possivel abrir o reencaminhamento.");
-      }
+      const handled = await requestCockpitHostAction({ type: "forward-current" });
+      if (handled) setNotice("Formulario de reencaminhamento aberto para o email atual.");
+      else setError("Nao foi possivel abrir o reencaminhamento.");
       return;
     }
 
-    const opened = await openLinkedOutlookEmail({ itemId: email.itemId, emailWebLink: email.emailWebLink });
+    const opened = await requestCockpitHostAction({ type: "open-email", itemId: email.itemId, emailWebLink: email.emailWebLink });
     if (opened) {
       setNotice("Email aberto no Outlook. Usa Reencaminhar no Outlook para continuar.");
     } else {

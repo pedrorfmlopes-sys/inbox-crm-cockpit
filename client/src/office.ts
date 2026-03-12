@@ -477,6 +477,50 @@ export async function syncOdooLinkedNotification(hasLinks: boolean, count = 0): 
 
 let activeDialog: any = null;
 
+type CockpitHostAction =
+  | { type: "close" }
+  | { type: "open-email"; itemId?: string; emailWebLink?: string }
+  | { type: "reply-current" }
+  | { type: "forward-current" };
+
+async function executeCockpitHostAction(action: CockpitHostAction): Promise<void> {
+  if (action.type === "close") {
+    try {
+      if (activeDialog) activeDialog.close();
+    } catch { }
+    activeDialog = null;
+    return;
+  }
+
+  if (action.type === "open-email") {
+    await openLinkedOutlookEmail({ itemId: action.itemId, emailWebLink: action.emailWebLink });
+    return;
+  }
+
+  if (action.type === "reply-current") {
+    await displayReplyForm("", true);
+    return;
+  }
+
+  if (action.type === "forward-current") {
+    await displayForwardForm("", true);
+    return;
+  }
+}
+
+function tryParseCockpitHostMessage(rawMessage: any): CockpitHostAction | null {
+  const text = String(rawMessage || "").trim();
+  if (!text) return null;
+  if (text === "close") return { type: "close" };
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?.type !== "host-action" || !parsed?.action?.type) return null;
+    return parsed.action as CockpitHostAction;
+  } catch {
+    return null;
+  }
+}
+
 function buildCockpitViewUrl(view: string, params: Record<string, string>) {
   const url = new URL(window.location.origin);
   url.searchParams.set("view", view);
@@ -531,13 +575,15 @@ async function openCockpitView(view: string, params: Record<string, string>, opt
         activeDialog = dialog;
 
         dialog.addEventHandler(OfficeAny.EventType.DialogMessageReceived, (arg: any) => {
-          if (arg?.message === "close") {
-            try {
-              dialog.close();
-            } catch { }
-            activeDialog = null;
-            resolveOnce();
-          }
+          const action = tryParseCockpitHostMessage(arg?.message);
+          if (!action) return;
+          void executeCockpitHostAction(action)
+            .catch((error) => clientLog.error("[office] host action failed", error))
+            .finally(() => {
+              if (action.type === "close") {
+                resolveOnce();
+              }
+            });
         });
 
         dialog.addEventHandler(OfficeAny.EventType.DialogEventReceived, () => {
@@ -560,6 +606,25 @@ export async function openGroupExplorer(params: Record<string, string>) {
     const url = buildCockpitViewUrl("group-explorer", params);
     clientLog.warn("[office] group explorer fallback to same-window navigation", error);
     window.location.assign(url.toString());
+  }
+}
+
+export async function requestCockpitHostAction(action: CockpitHostAction): Promise<boolean> {
+  try {
+    const OfficeAny = await ensureOfficeReady();
+    if (typeof OfficeAny?.context?.ui?.messageParent === "function") {
+      OfficeAny.context.ui.messageParent(JSON.stringify({ type: "host-action", action }));
+      return true;
+    }
+  } catch {
+    // fall through to local execution
+  }
+
+  try {
+    await executeCockpitHostAction(action);
+    return true;
+  } catch {
+    return false;
   }
 }
 
