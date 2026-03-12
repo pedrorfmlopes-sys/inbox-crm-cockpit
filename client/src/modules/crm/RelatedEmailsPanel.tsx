@@ -114,6 +114,7 @@ function getRelatedEmailPayload(email: Partial<RelatedEmailEntry>) {
           name: String(attachment?.name || "").trim(),
           contentType: String(attachment?.contentType || "").trim(),
           size: Number(attachment?.size || 0) || undefined,
+          content: String(attachment?.content || "").trim(),
         }))
         .filter((attachment) => attachment.name)
       : [],

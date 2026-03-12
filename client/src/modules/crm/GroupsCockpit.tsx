@@ -298,6 +298,8 @@ export const GroupsCockpit: React.FC = () => {
             attachments: (attachments || []).map((attachment) => ({
                 name: attachment.name,
                 contentType: attachment.contentType,
+                size: estimateBase64Size(attachment.content),
+                content: String(attachment.content || "").trim(),
             })),
         }),
         [attachments, ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject]
@@ -492,7 +494,7 @@ export const GroupsCockpit: React.FC = () => {
                 id: `selected:${makeEmailKey(selectedEmail)}:${attachment.name || index}`,
                 name: String(attachment.name || "").trim(),
                 contentType: String(attachment.contentType || "").trim(),
-                content: "",
+                content: String(attachment.content || "").trim(),
                 size: Number(attachment.size || 0) || undefined,
                 suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
                 sourceLabel: String(selectedEmail.subject || "").trim(),
@@ -535,7 +537,7 @@ export const GroupsCockpit: React.FC = () => {
                         name: attachment.name,
                         contentType: attachment.contentType,
                         size: attachment.size,
-                        content: "",
+                        content: String(attachment.content || "").trim(),
                         suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
                         sourceLabel: email.subject || "",
                         ordinal: index,

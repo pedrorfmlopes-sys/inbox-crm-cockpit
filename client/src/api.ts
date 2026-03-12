@@ -219,6 +219,7 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
     name: string;
     contentType?: string;
     size?: number;
+    content?: string;
   }>;
 };
 
@@ -407,6 +408,7 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
           name: String(attachment?.name || "").trim(),
           contentType: String(attachment?.contentType || "").trim(),
           size: Number(attachment?.size || 0) || undefined,
+          content: String(attachment?.content || "").trim(),
         }))
         .filter((attachment: any) => attachment.name)
       : [],

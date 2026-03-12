@@ -213,6 +213,7 @@ function normalizeAttachments(value) {
       name: normalizeString(attachment?.name),
       contentType: normalizeString(attachment?.contentType),
       size: Number(attachment?.size || 0) || undefined,
+      content: normalizeBase64Content(attachment?.content),
     }))
     .filter((attachment) => attachment.name);
 }
