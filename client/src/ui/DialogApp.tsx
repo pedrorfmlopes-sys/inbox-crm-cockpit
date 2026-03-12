@@ -314,6 +314,227 @@ function AttachmentPicker({ attachments, selected, onToggle }: {
   );
 }
 
+type OdooPublishMode = "html" | "text" | "description" | "custom";
+type OdooPublishState = {
+  postToChatter: boolean;
+  chatterMode: OdooPublishMode;
+  customText: string;
+};
+
+function htmlToReadableTextClient(html?: string) {
+  const raw = String(html || "").trim();
+  if (!raw) return "";
+  try {
+    const doc = new DOMParser().parseFromString(raw, "text/html");
+    return String(doc.body?.textContent || "")
+      .replace(/\r/g, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  } catch {
+    return raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+}
+
+function shortenPreview(text: string, max = 420) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  if (clean.length <= max) return clean;
+  return `${clean.slice(0, max - 1)}…`;
+}
+
+function getDefaultPublishState(mode: Mode, emailHtml?: string, emailText?: string): OdooPublishState {
+  return {
+    postToChatter: mode !== "edit",
+    chatterMode: emailHtml ? "html" : (emailText ? "text" : "description"),
+    customText: "",
+  };
+}
+
+function buildLinkPayloadForRecord(
+  ctx: Ctx,
+  model: string,
+  recordId: number,
+  recordName: string,
+  publishState: OdooPublishState,
+  emailText: string,
+  description: string,
+) {
+  const fallbackText = String(emailText || htmlToReadableTextClient(ctx.bodyHtml) || "").trim();
+  const safeDescription = String(description || "").trim();
+  let bodyHtml = "";
+  let bodyText = "";
+
+  switch (publishState.chatterMode) {
+    case "html":
+      bodyHtml = String(ctx.bodyHtml || "").trim();
+      bodyText = fallbackText;
+      break;
+    case "text":
+      bodyText = fallbackText;
+      break;
+    case "custom":
+      bodyText = String(publishState.customText || "").trim();
+      break;
+    case "description":
+    default:
+      bodyText = safeDescription || fallbackText;
+      break;
+  }
+
+  return {
+    conversationId: ctx.conversationId,
+    model,
+    recordId,
+    recordName,
+    internetMessageId: ctx.internetMessageId,
+    itemId: ctx.itemId,
+    subject: ctx.subject,
+    fromEmail: ctx.fromEmail,
+    fromName: ctx.fromName,
+    receivedAtIso: ctx.receivedAtIso,
+    emailWebLink: ctx.emailWebLink,
+    bodyHtml,
+    bodyText,
+    postToChatter: publishState.postToChatter,
+  };
+}
+
+async function uploadSelectedAttachmentsToRecord(model: string, recordId: number, emailAtts: any[], selectedAtts: string[]) {
+  for (const fileName of selectedAtts) {
+    const att = (emailAtts || []).find((item: any) => item.name === fileName);
+    if (!att?.content) continue;
+    try {
+      await createOdoo("ir.attachment", {
+        name: att.name,
+        datas: att.content,
+        datas_fname: att.name,
+        mimetype: att.contentType,
+        res_model: model,
+        res_id: recordId,
+        type: "binary",
+      });
+    } catch (error) {
+      console.error("Erro ao enviar anexo", att.name, error);
+    }
+  }
+}
+
+function OdooContentEditor({
+  mode,
+  emailHtml,
+  emailText,
+  description,
+  onDescriptionChange,
+  publishState,
+  onPublishChange,
+  selectedAttachmentCount,
+  totalAttachmentCount,
+}: {
+  mode: Mode;
+  emailHtml?: string;
+  emailText: string;
+  description: string;
+  onDescriptionChange: (value: string) => void;
+  publishState: OdooPublishState;
+  onPublishChange: (next: OdooPublishState) => void;
+  selectedAttachmentCount: number;
+  totalAttachmentCount: number;
+}) {
+  const cleanEmailText = useMemo(
+    () => String(emailText || htmlToReadableTextClient(emailHtml) || "").trim(),
+    [emailHtml, emailText],
+  );
+
+  const previewText = useMemo(() => {
+    if (!publishState.postToChatter) return "O email será apenas ligado ao registo, sem nova mensagem no chatter.";
+    switch (publishState.chatterMode) {
+      case "html":
+        return shortenPreview(cleanEmailText || "Odoo vai receber o HTML original do email com limpeza de segurança.");
+      case "text":
+        return shortenPreview(cleanEmailText);
+      case "custom":
+        return shortenPreview(publishState.customText || "Escreve o texto que queres publicar no chatter.");
+      case "description":
+      default:
+        return shortenPreview(description || cleanEmailText);
+    }
+  }, [cleanEmailText, description, publishState]);
+
+  return (
+    <div style={S.odooEditorCard}>
+      <div style={S.odooEditorHeader}>
+        <div>
+          <div style={S.odooEditorTitle}>CONTEUDO ODOO</div>
+          <div style={S.odooEditorHint}>Decide o que fica na descricao e o que segue para o chatter.</div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            style={S.secondaryBtn}
+            onClick={() => onDescriptionChange(cleanEmailText)}
+            title="Preencher descricao com o texto limpo do email"
+          >
+            EMAIL
+          </button>
+          <button
+            type="button"
+            style={S.secondaryBtn}
+            onClick={() => onDescriptionChange("")}
+            title="Limpar descricao"
+          >
+            LIMPAR
+          </button>
+        </div>
+      </div>
+
+      <div style={S.odooEditorGrid}>
+        <label style={S.odooToggleRow}>
+          <input
+            type="checkbox"
+            checked={publishState.postToChatter}
+            onChange={(e) => onPublishChange({ ...publishState, postToChatter: e.target.checked })}
+          />
+          <span>{mode === "edit" ? "Adicionar mensagem no chatter" : "Publicar email no chatter"}</span>
+        </label>
+
+        <div style={S.odooEditorSelectWrap}>
+          <span style={S.odooEditorMiniLab}>Origem</span>
+          <select
+            style={S.sel}
+            value={publishState.chatterMode}
+            disabled={!publishState.postToChatter}
+            onChange={(e) => onPublishChange({ ...publishState, chatterMode: e.target.value as OdooPublishMode })}
+          >
+            <option value="html">HTML original</option>
+            <option value="text">Texto limpo</option>
+            <option value="description">Descricao</option>
+            <option value="custom">Personalizado</option>
+          </select>
+        </div>
+      </div>
+
+      {publishState.postToChatter && publishState.chatterMode === "custom" ? (
+        <textarea
+          style={{ ...S.ta, minHeight: 100, marginTop: 10 }}
+          value={publishState.customText}
+          onChange={(e) => onPublishChange({ ...publishState, customText: e.target.value })}
+          placeholder="Escreve a mensagem que queres enviar para o chatter do Odoo..."
+        />
+      ) : (
+        <div style={S.odooPreviewBox}>{previewText || "Nao ha conteudo preparado para o chatter."}</div>
+      )}
+
+      <div style={S.odooAttachmentHint}>
+        {selectedAttachmentCount > 0
+          ? `${selectedAttachmentCount} anexo(s) selecionado(s) seguem para o registo no Odoo.`
+          : totalAttachmentCount > 0
+            ? "Podes selecionar anexos abaixo para os associar ao registo."
+            : "Este email nao tem anexos disponiveis nesta fase."}
+      </div>
+    </div>
+  );
+}
+
 type Recipient = { name: string; email: string };
 
 function parseRecipientsParam(raw: string): Recipient[] {
@@ -862,65 +1083,54 @@ function AddExistingPanel({ entity, ctx, onStatus }: any) {
 function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [description, setDescription] = useState("");
-
-  useEffect(() => {
-    if (mode === "new" && fullBody) setDescription(fullBody);
-  }, [mode, fullBody]);
-
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
-
+  const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectName, setProjectName] = useState("");
-
   const [assigneeId, setAssigneeId] = useState<number | null>(null);
   const [assigneeName, setAssigneeName] = useState("");
-
   const [deadline, setDeadline] = useState("");
   const [stageId, setStageId] = useState<number | null>(null);
   const [stageName, setStageName] = useState("");
   const [stagePick, setStagePick] = useState<any[]>([]);
-
   const [isSub, setIsSub] = useState(false);
   const [parentId, setParentId] = useState<number | null>(null);
   const [parentName, setParentName] = useState("");
-
   const [pendingSubtasks, setPendingSubtasks] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (mode === "new" && fullBody) setDescription(fullBody);
+  }, [mode, fullBody]);
 
   useEffect(() => {
     if (mode !== "edit" || !editId) return;
     (async () => {
       try {
         const rows = await readOdoo("project.task", [editId], ["name", "description", "project_id", "user_ids", "date_deadline", "stage_id", "parent_id"]);
-        const r = rows?.[0];
-        if (!r) return;
-        setName(r.name || "");
-        setDescription(r.description || "");
-        if (r.project_id) { setProjectId(r.project_id[0]); setProjectName(r.project_id[1]); }
-        if (Array.isArray(r.user_ids) && r.user_ids.length) {
-          const u = await readOdoo("res.users", [r.user_ids[0]], ["name"]);
-          setAssigneeId(r.user_ids[0]);
-          setAssigneeName(u?.[0]?.name || "");
+        const record = rows?.[0];
+        if (!record) return;
+        setName(record.name || "");
+        setDescription(record.description || "");
+        if (record.project_id) { setProjectId(record.project_id[0]); setProjectName(record.project_id[1]); }
+        if (Array.isArray(record.user_ids) && record.user_ids.length) {
+          const users = await readOdoo("res.users", [record.user_ids[0]], ["name"]);
+          setAssigneeId(record.user_ids[0]);
+          setAssigneeName(users?.[0]?.name || "");
         }
-        if (r.date_deadline) setDeadline(String(r.date_deadline));
-        if (r.stage_id) { setStageId(r.stage_id[0]); setStageName(r.stage_id[1]); }
-        if (r.parent_id) { setIsSub(true); setParentId(r.parent_id[0]); setParentName(r.parent_id[1]); }
-      } catch (e: any) {
-        onStatus(e?.message ?? String(e));
+        if (record.date_deadline) setDeadline(String(record.date_deadline));
+        if (record.stage_id) { setStageId(record.stage_id[0]); setStageName(record.stage_id[1]); }
+        if (record.parent_id) { setIsSub(true); setParentId(record.parent_id[0]); setParentName(record.parent_id[1]); }
+      } catch (error: any) {
+        onStatus(error?.message ?? String(error));
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, editId]);
+  }, [editId, mode, onStatus]);
 
   useEffect(() => {
     (async () => {
       try {
         if (!projectId) return setStagePick([]);
-        const rows = await searchOdooDomain(
-          "project.task.type",
-          ["|", ["project_ids", "=", false], ["project_ids", "in", [projectId]]],
-          ["id", "name"],
-          50
-        );
+        const rows = await searchOdooDomain("project.task.type", ["|", ["project_ids", "=", false], ["project_ids", "in", [projectId]]], ["id", "name"], 50);
         setStagePick(rows || []);
       } catch {
         setStagePick([]);
@@ -930,10 +1140,7 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
 
   async function save() {
     try {
-      let values: any = {
-        name: name || "Nova tarefa",
-        description: description || "",
-      };
+      let values: any = { name: name || "Nova tarefa", description: description || "" };
       if (projectId) values.project_id = projectId;
       if (assigneeId) values.user_ids = [[6, 0, [assigneeId]]];
       if (deadline) values.date_deadline = deadline;
@@ -941,223 +1148,85 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
       if (isSub && parentId) values.parent_id = parentId;
 
       let id = editId;
-
       if (mode === "edit") {
         await writeOdoo("project.task", id, values);
-        onStatus("Atualizado ✅");
+        if (selectedAtts.length > 0) {
+          onStatus("A enviar anexos...");
+          await uploadSelectedAttachmentsToRecord("project.task", Number(id), emailAtts || [], selectedAtts);
+        }
+        if (publishState.postToChatter) {
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", Number(id), values.name, publishState, fullBody, description));
+        }
+        onStatus("Atualizado OK");
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
       values = await withReferenceCode("project.task", values);
       id = await createOdoo("project.task", values);
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", id, values.name, publishState, fullBody, description));
 
-      await linkEmailToRecord({
-        conversationId: ctx.conversationId,
-        model: "project.task",
-        recordId: id,
-        recordName: values.name,
-        internetMessageId: ctx.internetMessageId,
-        itemId: ctx.itemId,
-        subject: ctx.subject,
-        fromEmail: ctx.fromEmail,
-        fromName: ctx.fromName,
-        receivedAtIso: ctx.receivedAtIso,
-        emailWebLink: ctx.emailWebLink,
-      });
-
-      onStatus("Tarefa criada + Ligada ✅");
-
-      // Criar subtarefas pendentes
       if (pendingSubtasks.length > 0) {
-        onStatus(`A criar ${pendingSubtasks.length} subtarefas detetadas...`);
+        onStatus(`A criar ${pendingSubtasks.length} subtarefas...`);
         for (const subTitle of pendingSubtasks) {
           try {
-            const subtaskValues = await withReferenceCode("project.task", {
-              name: subTitle,
-              project_id: projectId || false,
-              parent_id: id,
-              user_ids: assigneeId ? [assigneeId] : [],
-            });
+            const subtaskValues = await withReferenceCode("project.task", { name: subTitle, project_id: projectId || false, parent_id: id, user_ids: assigneeId ? [assigneeId] : [] });
             await createOdoo("project.task", subtaskValues);
-          } catch (e) {
-            console.error("Erro ao criar subtarefa diferida", e);
+          } catch (error) {
+            console.error("Erro ao criar subtarefa diferida", error);
           }
         }
       }
 
-      onStatus("Criado ✅");
-
-      // Handle Attachments
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        for (const name of selectedAtts) {
-          const att = (emailAtts || []).find((a: any) => a.name === name);
-          if (att) {
-            try {
-              await createOdoo("ir.attachment", {
-                name: att.name,
-                datas: att.content,
-                datas_fname: att.name,
-                mimetype: att.contentType,
-                res_model: "project.task",
-                res_id: id,
-                type: "binary"
-              });
-            } catch (e) {
-              console.error("Erro ao enviar anexo", att.name, e);
-              // keep going with other attachments
-            }
-          }
-        }
+        await uploadSelectedAttachmentsToRecord("project.task", id, emailAtts || [], selectedAtts);
       }
 
-      onStatus("Sucesso! ✅");
+      onStatus("Criado com sucesso");
       setTimeout(() => closeDialog(), 500);
-    } catch (e: any) {
-      onStatus(e?.message ?? String(e));
+    } catch (error: any) {
+      onStatus(error?.message ?? String(error));
     }
   }
 
   async function handleAddAiAction(title: string) {
     if (mode === "new") {
-      setPendingSubtasks(prev => [...prev, title]);
-      onStatus(`Subtarefa "${title}" agendada para criação ✅`);
+      setPendingSubtasks((prev) => [...prev, title]);
+      onStatus(`Subtarefa \"${title}\" agendada.`);
       return;
     }
-
     onStatus(`A criar tarefa: ${title}...`);
     try {
-      let val: any = {
-        name: title,
-        project_id: projectId || false,
-        user_ids: assigneeId ? [assigneeId] : [],
-      };
-      if (mode === "edit" && editId) val.parent_id = editId;
-
-      val = await withReferenceCode("project.task", val);
-      const newId = await createOdoo("project.task", val);
-      onStatus(`Tarefa "${title}" criada (#${newId}) ✅`);
-    } catch (e: any) {
-      onStatus(`Falha ao criar: ${e.message}`);
+      let values: any = { name: title, project_id: projectId || false, user_ids: assigneeId ? [assigneeId] : [] };
+      values = await withReferenceCode("project.task", values);
+      const newId = await createOdoo("project.task", values);
+      onStatus(`Tarefa criada (#${newId})`);
+    } catch (error: any) {
+      onStatus(`Falha IA: ${error.message}`);
     }
   }
 
   return (
     <div>
-      <OdooMemoryCheck projectId={projectId} fromEmail={fromEmail} />
-
-      <div style={S.row}>
-        <label style={S.lab}>TÍTULO</label>
-        <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Título da tarefa" />
-      </div>
-
+      <OdooMemoryCheck partnerId={projectId} projectId={projectId} fromEmail={fromEmail} />
+      <div style={S.row}><label style={S.lab}>NOME</label><input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da tarefa" /></div>
       <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
-
-      {pendingSubtasks.length > 0 && (
-        <div style={{ marginTop: 8, padding: "4px 8px", background: "#E3F2FD", borderRadius: 8, fontSize: 10, color: "#0D47A1", fontWeight: 700 }}>
-          AGENDADAS: {pendingSubtasks.map(s => `"${s}"`).join(", ")}
-        </div>
-      )}
-
-      <TypeaheadPicker
-        label="PROJETO"
-        placeholder="Pesquisar projeto…"
-        model="project.project"
-        pickedId={projectId}
-        pickedName={projectName}
-        onPick={(it: any) => {
-          const id = it?.id ?? null;
-          setProjectId(id);
-          setProjectName(id ? (it.display_name || it.name || `#${id}`) : "");
-          if (!id) { setStageId(null); setStageName(""); }
-        }}
-      />
-
-      <TypeaheadPicker
-        label="RESPONSÁVEL"
-        placeholder="Pesquisar utilizador…"
-        model="res.users"
-        fields={["id", "name", "display_name", "email"]}
-        pickedId={assigneeId}
-        pickedName={assigneeName}
-        onPick={(it: any) => {
-          const id = it?.id ?? null;
-          setAssigneeId(id);
-          setAssigneeName(id ? (it.display_name || it.name || `#${id}`) : "");
-        }}
-      />
-
+      <TypeaheadPicker label="PROJETO" placeholder="Pesquisar projeto..." model="project.project" pickedId={projectId} pickedName={projectName} onPick={(item: any) => { const id = item?.id ?? null; setProjectId(id); setProjectName(id ? (item.display_name || item.name || `#${id}`) : ""); if (!id) { setStageId(null); setStageName(""); } }} />
+      <TypeaheadPicker label="RESPONSAVEL" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name", "email"]} pickedId={assigneeId} pickedName={assigneeName} onPick={(item: any) => { const id = item?.id ?? null; setAssigneeId(id); setAssigneeName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
       <div style={S.grid2}>
-        <PickerStatic
-          label="ETAPA"
-          pickedId={stageId}
-          pickedName={stageName}
-          items={stagePick}
-          onPick={(it: any) => { setStageId(it.id); setStageName(it.name || it.display_name || `#${it.id}`); }}
-          placeholder={projectId ? "Escolher etapa..." : "Etapa (opcional)"}
-        />
-
-        <div style={S.row}>
-          <label style={S.lab}>PRAZO</label>
-          <input style={S.input} type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
-        </div>
+        <PickerStatic label="ETAPA" pickedId={stageId} pickedName={stageName} items={stagePick} onPick={(item: any) => { setStageId(item.id); setStageName(item.name || item.display_name || `#${item.id}`); }} placeholder={projectId ? "Escolher etapa..." : "Etapa (opcional)"} />
+        <div style={S.row}><label style={S.lab}>PRAZO</label><input style={S.input} type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} /></div>
       </div>
-
-      <div style={S.row}>
-        <label style={S.lab}>SUBTAREFA</label>
-        <input
-          type="checkbox"
-          checked={isSub}
-          onChange={(e) => {
-            setIsSub(e.target.checked);
-            if (!e.target.checked) { setParentId(null); setParentName(""); }
-          }}
-        />
-      </div>
-
-      {isSub ? (
-        <TypeaheadPicker
-          label="PARENT TASK"
-          placeholder={projectId ? "Pesquisar tarefa (filtra por projeto)..." : "Pesquisar tarefa (global)..."}
-          model="project.task"
-          fields={["id", "name", "display_name", "project_id"]}
-          pickedId={parentId}
-          pickedName={parentName}
-          extraDomain={(q) => {
-            const d: any[] = [];
-            if (projectId) d.push(["project_id", "=", projectId]);
-            if (q?.trim()) d.push(["name", "ilike", q.trim()]);
-            return d;
-          }}
-          onPick={(it: any) => {
-            const id = it?.id ?? null;
-            setParentId(id);
-            setParentName(id ? (it.display_name || it.name || `#${id}`) : "");
-          }}
-        />
-      ) : null}
-
-
-      <div style={{ marginTop: 12 }}>
-        <label style={S.labBlock}>DESCRIÇÃO</label>
-        <textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Descrição / notas..." />
-      </div>
-
-      <AttachmentPicker
-        attachments={emailAtts}
-        selected={selectedAtts}
-        onToggle={(name) => setSelectedAtts(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name])}
-      />
-
-      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-        <button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button>
-      </div>
+      <div style={S.row}><label style={S.lab}>SUBTAREFA</label><input type="checkbox" checked={isSub} onChange={(e) => { setIsSub(e.target.checked); if (!e.target.checked) { setParentId(null); setParentName(""); } }} /></div>
+      {isSub ? <TypeaheadPicker label="PARENT TASK" placeholder={projectId ? "Pesquisar tarefa (filtra por projeto)..." : "Pesquisar tarefa (global)..."} model="project.task" fields={["id", "name", "display_name", "project_id"]} pickedId={parentId} pickedName={parentName} extraDomain={(query) => { const domain: any[] = []; if (projectId) domain.push(["project_id", "=", projectId]); if (query?.trim()) domain.push(["name", "ilike", query.trim()]); return domain; }} onPick={(item: any) => { const id = item?.id ?? null; setParentId(id); setParentName(id ? (item.display_name || item.name || `#${id}`) : ""); }} /> : null}
+      <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Descricao / notas..." /></div>
+      <OdooContentEditor mode={mode} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
+      <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
   );
 }
-
-
 function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [partnerId, setPartnerId] = useState<number | null>(null);
@@ -1165,12 +1234,12 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
   const [managerId, setManagerId] = useState<number | null>(null);
   const [managerName, setManagerName] = useState("");
   const [description, setDescription] = useState("");
+  const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
+  const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
 
   useEffect(() => {
     if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
   }, [mode, ctx.bodyHtml, fullBody]);
-
-  const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
 
   useEffect(() => {
     if (mode !== "edit" || !editId) return;
@@ -1182,23 +1251,17 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
         } catch {
           rows = await readOdoo("project.project", [editId], ["name", "partner_id", "user_id"]);
         }
-        const r = rows?.[0];
-        if (!r) return;
-        setName(r.name || "");
-        if (r.partner_id) {
-          setPartnerId(r.partner_id[0]);
-          setPartnerName(r.partner_id[1]);
-        }
-        if (r.user_id) {
-          setManagerId(r.user_id[0]);
-          setManagerName(r.user_id[1]);
-        }
-        if (r.description) setDescription(String(r.description));
-      } catch (e: any) {
-        onStatus(e?.message ?? String(e));
+        const record = rows?.[0];
+        if (!record) return;
+        setName(record.name || "");
+        if (record.partner_id) { setPartnerId(record.partner_id[0]); setPartnerName(record.partner_id[1]); }
+        if (record.user_id) { setManagerId(record.user_id[0]); setManagerName(record.user_id[1]); }
+        if (record.description) setDescription(String(record.description));
+      } catch (error: any) {
+        onStatus(error?.message ?? String(error));
       }
     })();
-  }, [mode, editId]);
+  }, [editId, mode, onStatus]);
 
   async function save() {
     try {
@@ -1206,136 +1269,69 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
       if (partnerId) values.partner_id = partnerId;
       if (managerId) values.user_id = managerId;
       if (description) values.description = description;
-      if (ctx.bodyHtml) values.bodyHtml = ctx.bodyHtml; // Server can use this for the first message post too if needed
 
       if (mode === "edit") {
         try {
           await writeOdoo("project.project", editId, values);
         } catch {
-          const v2 = { ...values };
-          delete v2.description;
-          await writeOdoo("project.project", editId, v2);
+          const fallbackValues = { ...values };
+          delete fallbackValues.description;
+          await writeOdoo("project.project", editId, fallbackValues);
         }
-        onStatus("Atualizado ✅");
+        if (selectedAtts.length > 0) {
+          onStatus("A enviar anexos...");
+          await uploadSelectedAttachmentsToRecord("project.project", Number(editId), emailAtts || [], selectedAtts);
+        }
+        if (publishState.postToChatter) {
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", Number(editId), values.name, publishState, fullBody, description));
+        }
+        onStatus("Atualizado OK");
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
       values = await withReferenceCode("project.project", values);
-      let id = await createOdoo("project.project", values);
-
-      await linkEmailToRecord({
-        conversationId: ctx.conversationId,
-        model: "project.project",
-        recordId: id,
-        recordName: values.name,
-        internetMessageId: ctx.internetMessageId,
-        itemId: ctx.itemId,
-        subject: ctx.subject,
-        fromEmail: ctx.fromEmail,
-        fromName: ctx.fromName,
-        receivedAtIso: ctx.receivedAtIso,
-        emailWebLink: ctx.emailWebLink,
-      });
-
-      onStatus("Criado + Ligado ✅");
+      const id = await createOdoo("project.project", values);
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", id, values.name, publishState, fullBody, description));
 
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        for (const fname of selectedAtts) {
-          const att = (emailAtts || []).find((a: any) => a.name === fname);
-          if (att) {
-            await createOdoo("ir.attachment", {
-              name: att.name,
-              datas: att.content,
-              res_model: "project.project",
-              res_id: id,
-              type: "binary"
-            });
-          }
-        }
+        await uploadSelectedAttachmentsToRecord("project.project", id, emailAtts || [], selectedAtts);
       }
-      onStatus("Sucesso! ✅");
+
+      onStatus("Criado com sucesso");
       setTimeout(() => closeDialog(), 500);
-    } catch (e: any) {
-      onStatus(e?.message ?? String(e));
+    } catch (error: any) {
+      onStatus(error?.message ?? String(error));
     }
   }
 
   async function handleAddAiAction(title: string) {
     onStatus(`A criar tarefa IA: ${title}...`);
     try {
-      let val: any = {
-        name: title,
-        project_id: editId || false,
-        partner_id: partnerId || false,
-      };
-      val = await withReferenceCode("project.task", val);
-      const nId = await createOdoo("project.task", val);
-      onStatus(`Tarefa IA detetada e criada (#${nId}) ✅`);
-    } catch (e: any) {
-      onStatus(`Falha IA: ${e.message}`);
+      let values: any = { name: title, project_id: editId || false, partner_id: partnerId || false };
+      values = await withReferenceCode("project.task", values);
+      const newId = await createOdoo("project.task", values);
+      onStatus(`Tarefa IA criada (#${newId})`);
+    } catch (error: any) {
+      onStatus(`Falha IA: ${error.message}`);
     }
   }
 
   return (
     <div>
       <OdooMemoryCheck partnerId={partnerId} fromEmail={fromEmail} />
-
-      <div style={S.row}>
-        <label style={S.lab}>NOME</label>
-        <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do projeto" />
-      </div>
-
+      <div style={S.row}><label style={S.lab}>NOME</label><input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do projeto" /></div>
       <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
-
-      <TypeaheadPicker
-        label="CLIENTE"
-        placeholder="Pesquisar contacto/empresa…"
-        model="res.partner"
-        pickedId={partnerId}
-        pickedName={partnerName}
-        onPick={(it: any) => {
-          const id = it?.id ?? null;
-          setPartnerId(id);
-          setPartnerName(id ? (it.display_name || it.name || `#${id}`) : "");
-        }}
-      />
-
-      <TypeaheadPicker
-        label="GESTOR"
-        placeholder="Pesquisar utilizador…"
-        model="res.users"
-        fields={["id", "name", "display_name", "email"]}
-        pickedId={managerId}
-        pickedName={managerName}
-        onPick={(it: any) => {
-          const id = it?.id ?? null;
-          setManagerId(id);
-          setManagerName(id ? (it.display_name || it.name || `#${id}`) : "");
-        }}
-      />
-
-      <div style={{ marginTop: 12 }}>
-        <label style={S.labBlock}>DESCRIÇÃO</label>
-        <textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notas do projeto…" />
-      </div>
-
-      <AttachmentPicker
-        attachments={emailAtts}
-        selected={selectedAtts}
-        onToggle={(fname) => setSelectedAtts(prev => prev.includes(fname) ? prev.filter(n => n !== fname) : [...prev, fname])}
-      />
-
-      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-        <button style={S.btn} onClick={save}>
-          {mode === "edit" ? "Guardar" : "Criar"}
-        </button>
-      </div>
+      <TypeaheadPicker label="CLIENTE" placeholder="Pesquisar contacto/empresa..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+      <TypeaheadPicker label="GESTOR" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name", "email"]} pickedId={managerId} pickedName={managerName} onPick={(item: any) => { const id = item?.id ?? null; setManagerId(id); setManagerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+      <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notas do projeto..." /></div>
+      <OdooContentEditor mode={mode} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
+      <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
   );
 }
-
 function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail, apiReady }: any) {
   const LEAD_TYPE_FIELD_NAME = "x_studio_tipo_de_lead";
   const [name, setName] = useState(ctx.subject || "");
@@ -1351,15 +1347,13 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   const [leadTypeLoading, setLeadTypeLoading] = useState(true);
   const [leadTypeError, setLeadTypeError] = useState<string | null>(null);
   const [leadTypeValue, setLeadTypeValue] = useState("");
-  const leadTypeOptions = useMemo(() => {
-    return Array.isArray(leadTypeField?.selection) ? leadTypeField.selection : [];
-  }, [leadTypeField]);
+  const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
+  const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
+  const leadTypeOptions = useMemo(() => Array.isArray(leadTypeField?.selection) ? leadTypeField.selection : [], [leadTypeField]);
 
   useEffect(() => {
     if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
   }, [mode, ctx.bodyHtml, fullBody]);
-
-  const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -1380,9 +1374,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         if (alive) setLeadTypeLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [apiReady]);
 
   useEffect(() => {
@@ -1396,21 +1388,21 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         } catch {
           rows = await readOdoo("crm.lead", [editId], baseFields);
         }
-        const r = rows?.[0];
-        if (!r) return;
-        setName(r.name || "");
-        setContactName(r.contact_name || "");
-        setEmail(r.email_from || "");
-        setPhone(r.phone || "");
-        if (r.partner_id) { setPartnerId(r.partner_id[0]); setPartnerName(r.partner_id[1]); }
-        if (r.stage_id) { setStageId(r.stage_id[0]); setStageName(r.stage_id[1]); }
-        if (r.description) setDescription(String(r.description));
-        setLeadTypeValue(String(r[LEAD_TYPE_FIELD_NAME] || ""));
-      } catch (e: any) {
-        onStatus(e?.message ?? String(e));
+        const record = rows?.[0];
+        if (!record) return;
+        setName(record.name || "");
+        setContactName(record.contact_name || "");
+        setEmail(record.email_from || "");
+        setPhone(record.phone || "");
+        if (record.partner_id) { setPartnerId(record.partner_id[0]); setPartnerName(record.partner_id[1]); }
+        if (record.stage_id) { setStageId(record.stage_id[0]); setStageName(record.stage_id[1]); }
+        if (record.description) setDescription(String(record.description));
+        setLeadTypeValue(String(record[LEAD_TYPE_FIELD_NAME] || ""));
+      } catch (error: any) {
+        onStatus(error?.message ?? String(error));
       }
     })();
-  }, [apiReady, mode, editId]);
+  }, [apiReady, editId, mode, onStatus]);
 
   async function save() {
     try {
@@ -1423,181 +1415,76 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       if (partnerId) values.partner_id = partnerId;
       if (stageId) values.stage_id = stageId;
       if (description) values.description = description;
-      if (ctx.bodyHtml) values.bodyHtml = ctx.bodyHtml;
       values[LEAD_TYPE_FIELD_NAME] = leadTypeValue || false;
 
       if (mode === "edit") {
         try {
           await writeOdoo("crm.lead", editId, values);
         } catch {
-          const v2 = { ...values };
-          delete v2.description;
-          await writeOdoo("crm.lead", editId, v2);
+          const fallbackValues = { ...values };
+          delete fallbackValues.description;
+          await writeOdoo("crm.lead", editId, fallbackValues);
         }
-        onStatus("Atualizado ✅");
+        if (selectedAtts.length > 0) {
+          onStatus("A enviar anexos...");
+          await uploadSelectedAttachmentsToRecord("crm.lead", Number(editId), emailAtts || [], selectedAtts);
+        }
+        if (publishState.postToChatter) {
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", Number(editId), values.name, publishState, fullBody, description));
+        }
+        onStatus("Atualizado OK");
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
       values = await withReferenceCode("crm.lead", values);
-      let id = await createOdoo("crm.lead", values);
-
-      await linkEmailToRecord({
-        conversationId: ctx.conversationId,
-        model: "crm.lead",
-        recordId: id,
-        recordName: values.name,
-        internetMessageId: ctx.internetMessageId,
-        itemId: ctx.itemId,
-        subject: ctx.subject,
-        fromEmail: ctx.fromEmail,
-        fromName: ctx.fromName,
-        receivedAtIso: ctx.receivedAtIso,
-        emailWebLink: ctx.emailWebLink,
-      });
-
-      onStatus("Criado + Ligado ✅");
+      const id = await createOdoo("crm.lead", values);
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", id, values.name, publishState, fullBody, description));
 
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        for (const fname of selectedAtts) {
-          const att = (emailAtts || []).find((a: any) => a.name === fname);
-          if (att) {
-            await createOdoo("ir.attachment", {
-              name: att.name,
-              datas: att.content,
-              res_model: "crm.lead",
-              res_id: id,
-              type: "binary"
-            });
-          }
-        }
+        await uploadSelectedAttachmentsToRecord("crm.lead", id, emailAtts || [], selectedAtts);
       }
-      onStatus("Sucesso! ✅");
+
+      onStatus("Criado com sucesso");
       setTimeout(() => closeDialog(), 500);
-    } catch (e: any) {
-      onStatus(e?.message ?? String(e));
+    } catch (error: any) {
+      onStatus(error?.message ?? String(error));
     }
   }
 
   async function handleAddAiAction(title: string) {
     onStatus(`A criar tarefa IA: ${title}...`);
     try {
-      let val: any = {
-        name: title,
-        partner_id: partnerId || false,
-      };
-      val = await withReferenceCode("project.task", val);
-      const nId = await createOdoo("project.task", val);
-      onStatus(`Tarefa IA detetada e criada (#${nId}) ✅`);
-    } catch (e: any) {
-      onStatus(`Falha IA: ${e.message}`);
+      let values: any = { name: title, partner_id: partnerId || false };
+      values = await withReferenceCode("project.task", values);
+      const newId = await createOdoo("project.task", values);
+      onStatus(`Tarefa IA criada (#${newId})`);
+    } catch (error: any) {
+      onStatus(`Falha IA: ${error.message}`);
     }
   }
 
   return (
     <div>
       <OdooMemoryCheck partnerId={partnerId} fromEmail={fromEmail} />
-
-      <div style={S.row}>
-        <label style={S.lab}>NOME LEAD</label>
-        <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do lead" />
-      </div>
-
+      <div style={S.row}><label style={S.lab}>NOME LEAD</label><input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do lead" /></div>
       <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
-
-      <div style={S.row}>
-        <label style={S.lab}>CONTACTO</label>
-        <input style={S.input} value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Nome do contacto" />
-      </div>
-
-      <div style={S.row}>
-        <label style={S.lab}>EMAIL</label>
-        <input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@..." />
-      </div>
-
-      <div style={S.row}>
-        <label style={S.lab}>TELEFONE</label>
-        <input style={S.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone" />
-      </div>
-
-      {leadTypeLoading && (
-        <div style={S.row}>
-          <label style={S.lab}>TIPO DE LEAD</label>
-          <select style={S.sel} value="" disabled>
-            <option value="">A carregar tipo de lead...</option>
-          </select>
-        </div>
-      )}
-
-      {!leadTypeLoading && !!leadTypeField && (
-        <div style={S.row}>
-          <label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label>
-          <select style={S.sel} value={leadTypeValue} onChange={(e) => setLeadTypeValue(e.target.value)}>
-            <option value="">Selecionar...</option>
-            {leadTypeOptions.map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {!leadTypeLoading && !leadTypeField && (
-        <div style={S.row}>
-          <label style={S.lab}>TIPO DE LEAD</label>
-          <select style={S.sel} value="" disabled>
-            <option value="">{leadTypeError || "Tipo de Lead indisponível"}</option>
-          </select>
-        </div>
-      )}
-
-      <TypeaheadPicker
-        label="EMPRESA"
-        placeholder="Pesquisar res.partner…"
-        model="res.partner"
-        pickedId={partnerId}
-        pickedName={partnerName}
-        onPick={(it: any) => {
-          const id = it?.id ?? null;
-          setPartnerId(id);
-          setPartnerName(id ? (it.display_name || it.name || `#${id}`) : "");
-        }}
-      />
-
-      <TypeaheadPicker
-        label="ETAPA"
-        placeholder="Pesquisar etapa do lead…"
-        model="crm.stage"
-        fields={["id", "name"]}
-        pickedId={stageId}
-        pickedName={stageName}
-        onPick={(it: any) => {
-          const id = it?.id ?? null;
-          setStageId(id);
-          setStageName(id ? (it.display_name || it.name || `#${id}`) : "");
-        }}
-      />
-
-      <div style={{ marginTop: 12 }}>
-        <label style={S.labBlock}>DESCRIÇÃO</label>
-        <textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notas do lead…" />
-      </div>
-
-      <AttachmentPicker
-        attachments={emailAtts}
-        selected={selectedAtts}
-        onToggle={(fname) => setSelectedAtts(prev => prev.includes(fname) ? prev.filter(n => n !== fname) : [...prev, fname])}
-      />
-
-      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-        <button style={S.btn} onClick={save}>
-          {mode === "edit" ? "Guardar" : "Criar"}
-        </button>
-      </div>
+      <div style={S.row}><label style={S.lab}>CONTACTO</label><input style={S.input} value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Nome do contacto" /></div>
+      <div style={S.row}><label style={S.lab}>EMAIL</label><input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@..." /></div>
+      <div style={S.row}><label style={S.lab}>TELEFONE</label><input style={S.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone" /></div>
+      {leadTypeLoading && <div style={S.row}><label style={S.lab}>TIPO DE LEAD</label><select style={S.sel} value="" disabled><option value="">A carregar tipo de lead...</option></select></div>}
+      {!leadTypeLoading && !!leadTypeField && <div style={S.row}><label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label><select style={S.sel} value={leadTypeValue} onChange={(e) => setLeadTypeValue(e.target.value)}><option value="">Selecionar...</option>{leadTypeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>}
+      {!leadTypeLoading && !leadTypeField && <div style={S.row}><label style={S.lab}>TIPO DE LEAD</label><select style={S.sel} value="" disabled><option value="">{leadTypeError || "Tipo de Lead indisponivel"}</option></select></div>}
+      <TypeaheadPicker label="EMPRESA" placeholder="Pesquisar res.partner..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+      <TypeaheadPicker label="ETAPA" placeholder="Pesquisar etapa do lead..." model="crm.stage" fields={["id", "name"]} pickedId={stageId} pickedName={stageName} onPick={(item: any) => { const id = item?.id ?? null; setStageId(id); setStageName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+      <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notas do lead..." /></div>
+      <OdooContentEditor mode={mode} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
+      <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
   );
 }
-
 function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
   const [name, setName] = useState(ctx.fromName || ctx.subject || "");
   const [email, setEmail] = useState(ctx.fromEmail || "");
@@ -1796,6 +1683,7 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
   const [stageName, setStageName] = useState("");
   const [priority, setPriority] = useState("0");
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
+  const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
 
   useEffect(() => {
     if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
@@ -1806,26 +1694,24 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
     (async () => {
       try {
         const rows = await readOdoo("helpdesk.ticket", [editId], ["name", "description", "partner_id", "team_id", "user_id", "stage_id", "priority"]);
-        const r = rows?.[0];
-        if (!r) return;
-        setName(r.name || "");
-        setDescription(String(r.description || ""));
-        if (r.partner_id) { setPartnerId(r.partner_id[0]); setPartnerName(r.partner_id[1]); }
-        if (r.team_id) { setTeamId(r.team_id[0]); setTeamName(r.team_id[1]); }
-        if (r.user_id) { setAssigneeId(r.user_id[0]); setAssigneeName(r.user_id[1]); }
-        if (r.stage_id) { setStageId(r.stage_id[0]); setStageName(r.stage_id[1]); }
-        setPriority(String(r.priority ?? "0"));
-      } catch (e: any) {
-        onStatus(e?.message ?? String(e));
+        const record = rows?.[0];
+        if (!record) return;
+        setName(record.name || "");
+        setDescription(String(record.description || ""));
+        if (record.partner_id) { setPartnerId(record.partner_id[0]); setPartnerName(record.partner_id[1]); }
+        if (record.team_id) { setTeamId(record.team_id[0]); setTeamName(record.team_id[1]); }
+        if (record.user_id) { setAssigneeId(record.user_id[0]); setAssigneeName(record.user_id[1]); }
+        if (record.stage_id) { setStageId(record.stage_id[0]); setStageName(record.stage_id[1]); }
+        setPriority(String(record.priority ?? "0"));
+      } catch (error: any) {
+        onStatus(error?.message ?? String(error));
       }
     })();
-  }, [mode, editId]);
+  }, [editId, mode, onStatus]);
 
   async function save() {
     try {
-      let values: any = {
-        name: name || `Ticket: ${ctx.subject || "sem assunto"}`,
-      };
+      let values: any = { name: name || `Ticket: ${ctx.subject || "sem assunto"}` };
       if (description) values.description = description;
       if (partnerId) values.partner_id = partnerId;
       if (teamId) values.team_id = teamId;
@@ -1836,147 +1722,53 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
       let id = editId;
       if (mode === "edit") {
         await writeOdoo("helpdesk.ticket", id, values);
-        onStatus("Atualizado ✅");
+        if (selectedAtts.length > 0) {
+          onStatus("A enviar anexos...");
+          await uploadSelectedAttachmentsToRecord("helpdesk.ticket", Number(id), emailAtts || [], selectedAtts);
+        }
+        if (publishState.postToChatter) {
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", Number(id), values.name, publishState, fullBody, description));
+        }
+        onStatus("Atualizado OK");
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
       values = await withReferenceCode("helpdesk.ticket", values);
       id = await createOdoo("helpdesk.ticket", values);
-      onStatus("Ticket criado ✅");
-
-      await linkEmailToRecord({
-        conversationId: ctx.conversationId,
-        model: "helpdesk.ticket",
-        recordId: id,
-        recordName: values.name,
-        internetMessageId: ctx.internetMessageId,
-        itemId: ctx.itemId,
-        subject: ctx.subject,
-        fromEmail: ctx.fromEmail,
-        fromName: ctx.fromName,
-        receivedAtIso: ctx.receivedAtIso,
-        emailWebLink: ctx.emailWebLink,
-      });
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", id, values.name, publishState, fullBody, description));
 
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        for (const fname of selectedAtts) {
-          const att = (emailAtts || []).find((a: any) => a.name === fname);
-          if (!att) continue;
-          await createOdoo("ir.attachment", {
-            name: att.name,
-            datas: att.content,
-            datas_fname: att.name,
-            mimetype: att.contentType,
-            res_model: "helpdesk.ticket",
-            res_id: id,
-            type: "binary",
-          });
-        }
+        await uploadSelectedAttachmentsToRecord("helpdesk.ticket", id, emailAtts || [], selectedAtts);
       }
 
-      onStatus("Sucesso! ✅");
+      onStatus("Criado com sucesso");
       setTimeout(() => closeDialog(), 500);
-    } catch (e: any) {
-      onStatus(e?.message ?? String(e));
+    } catch (error: any) {
+      onStatus(error?.message ?? String(error));
     }
   }
 
   return (
     <div>
-      <div style={S.row}>
-        <label style={S.lab}>TÍTULO</label>
-        <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Título do ticket" />
-      </div>
-
-      <TypeaheadPicker
-        label="CONTACTO"
-        placeholder="Pesquisar res.partner…"
-        model="res.partner"
-        pickedId={partnerId}
-        pickedName={partnerName}
-        onPick={(it: any) => {
-          const id = it?.id ?? null;
-          setPartnerId(id);
-          setPartnerName(id ? (it.display_name || it.name || `#${id}`) : "");
-        }}
-      />
-
+      <div style={S.row}><label style={S.lab}>TITULO</label><input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Titulo do ticket" /></div>
+      <TypeaheadPicker label="CONTACTO" placeholder="Pesquisar res.partner..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
       <div style={S.grid2}>
-        <TypeaheadPicker
-          label="EQUIPA"
-          placeholder="Pesquisar equipa…"
-          model="helpdesk.team"
-          fields={["id", "name"]}
-          pickedId={teamId}
-          pickedName={teamName}
-          onPick={(it: any) => {
-            const id = it?.id ?? null;
-            setTeamId(id);
-            setTeamName(id ? (it.display_name || it.name || `#${id}`) : "");
-          }}
-        />
-
-        <TypeaheadPicker
-          label="RESPONSÁVEL"
-          placeholder="Pesquisar utilizador…"
-          model="res.users"
-          fields={["id", "name", "display_name"]}
-          pickedId={assigneeId}
-          pickedName={assigneeName}
-          onPick={(it: any) => {
-            const id = it?.id ?? null;
-            setAssigneeId(id);
-            setAssigneeName(id ? (it.display_name || it.name || `#${id}`) : "");
-          }}
-        />
+        <TypeaheadPicker label="EQUIPA" placeholder="Pesquisar equipa..." model="helpdesk.team" fields={["id", "name"]} pickedId={teamId} pickedName={teamName} onPick={(item: any) => { const id = item?.id ?? null; setTeamId(id); setTeamName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+        <TypeaheadPicker label="RESPONSAVEL" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name"]} pickedId={assigneeId} pickedName={assigneeName} onPick={(item: any) => { const id = item?.id ?? null; setAssigneeId(id); setAssigneeName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
       </div>
-
       <div style={S.grid2}>
-        <TypeaheadPicker
-          label="ETAPA"
-          placeholder="Pesquisar etapa do ticket…"
-          model="helpdesk.stage"
-          fields={["id", "name"]}
-          pickedId={stageId}
-          pickedName={stageName}
-          onPick={(it: any) => {
-            const id = it?.id ?? null;
-            setStageId(id);
-            setStageName(id ? (it.display_name || it.name || `#${id}`) : "");
-          }}
-        />
-
-        <div style={S.row}>
-          <label style={S.lab}>PRIORIDADE</label>
-          <select style={S.sel} value={priority} onChange={(e) => setPriority(e.target.value)}>
-            <option value="0">Baixa</option>
-            <option value="1">Média</option>
-            <option value="2">Alta</option>
-            <option value="3">Urgente</option>
-          </select>
-        </div>
+        <TypeaheadPicker label="ETAPA" placeholder="Pesquisar etapa do ticket..." model="helpdesk.stage" fields={["id", "name"]} pickedId={stageId} pickedName={stageName} onPick={(item: any) => { const id = item?.id ?? null; setStageId(id); setStageName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+        <div style={S.row}><label style={S.lab}>PRIORIDADE</label><select style={S.sel} value={priority} onChange={(e) => setPriority(e.target.value)}><option value="0">Baixa</option><option value="1">Media</option><option value="2">Alta</option><option value="3">Urgente</option></select></div>
       </div>
-
-      <div style={{ marginTop: 12 }}>
-        <label style={S.labBlock}>DESCRIÇÃO</label>
-        <textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Detalhes do ticket…" />
-      </div>
-
-      <AttachmentPicker
-        attachments={emailAtts}
-        selected={selectedAtts}
-        onToggle={(fname) => setSelectedAtts(prev => prev.includes(fname) ? prev.filter(n => n !== fname) : [...prev, fname])}
-      />
-
-      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-        <button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button>
-      </div>
+      <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Detalhes do ticket..." /></div>
+      <OdooContentEditor mode={mode} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
+      <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
   );
 }
-
 function GenericMiniForm({ mode, ctx, model, editId, onStatus }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [email, setEmail] = useState(ctx.fromEmail || "");
@@ -2171,6 +1963,16 @@ const S: Record<string, React.CSSProperties> = {
   sel: { padding: "6px 8px", border: "1px solid #DFE1E6", borderRadius: 3, color: "#172B4D", background: "#FAFBFC", fontSize: 13, height: "32px", outline: "none" },
   input: { width: "100%", padding: "6px 8px", border: "2px solid #DFE1E6", borderRadius: 3, color: "#172B4D", background: "#FAFBFC", fontSize: 13, height: "32px", outline: "none" },
   ta: { width: "100%", minHeight: 80, padding: "8px", border: "2px solid #DFE1E6", borderRadius: 3, resize: "vertical", color: "#172B4D", background: "#FAFBFC", fontSize: 13, outline: "none" },
+  odooEditorCard: { marginTop: 12, padding: "12px", borderRadius: 12, border: "1px solid #d6def2", background: "rgba(255,255,255,0.55)" },
+  odooEditorHeader: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" },
+  odooEditorTitle: { fontSize: 11, fontWeight: 800, color: "#2563eb", textTransform: "uppercase" },
+  odooEditorHint: { fontSize: 11, color: "#5E6C84", marginTop: 2 },
+  odooEditorGrid: { display: "grid", gridTemplateColumns: "1fr 180px", gap: 10, marginTop: 10, alignItems: "end" },
+  odooToggleRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#172B4D", fontWeight: 600 },
+  odooEditorSelectWrap: { display: "flex", flexDirection: "column", gap: 4 },
+  odooEditorMiniLab: { fontSize: 10, fontWeight: 700, color: "#6B778C", textTransform: "uppercase" },
+  odooPreviewBox: { marginTop: 10, padding: "10px 12px", borderRadius: 10, border: "1px solid #d6def2", background: "#F7F9FC", fontSize: 12, color: "#253858", lineHeight: 1.45, whiteSpace: "pre-wrap" },
+  odooAttachmentHint: { marginTop: 8, fontSize: 11, color: "#5E6C84" },
 
   grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
 
@@ -2385,3 +2187,7 @@ const S: Record<string, React.CSSProperties> = {
     border: "1px solid rgba(251, 191, 36, 0.3)",
   },
 };
+
+
+
+

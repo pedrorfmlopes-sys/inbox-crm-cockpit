@@ -796,6 +796,7 @@ app.post("/api/odoo/link-email", async (req, res) => {
 
     const safeSubject = subject || "(sem assunto)";
     const safeFrom = `${(fromName || "").trim()}${fromEmail ? ` <${fromEmail}>` : ""}`.trim() || "(desconhecido)";
+    const shouldPostToChatter = bodyIn.postToChatter !== false;
 
     const normalizedEmailBody = normalizeEmailBodyForOdoo(bodyIn.bodyHtml, bodyIn.bodyText);
     const bodyForOdoo = [
@@ -813,10 +814,12 @@ app.post("/api/odoo/link-email", async (req, res) => {
       `</div>`
     ].filter(Boolean).join("\n");
 
-    // message_post no chatter do registo
-    await odoo.messagePost(m, rid, bodyForOdoo, safeSubject, {
-      message_id: internetMessageId || false
-    });
+    if (shouldPostToChatter) {
+      // message_post no chatter do registo
+      await odoo.messagePost(m, rid, bodyForOdoo, safeSubject, {
+        message_id: internetMessageId || false
+      });
+    }
 
     const entry = {
       model: m,

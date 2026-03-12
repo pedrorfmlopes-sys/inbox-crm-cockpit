@@ -250,6 +250,7 @@ export type LinkPayload = {
   receivedAtIso?: string;
   bodyHtml?: string;
   bodyText?: string;
+  postToChatter?: boolean;
 
   // compat aliases
   resId?: number;
