@@ -7,6 +7,7 @@ import {
     getGroupAttachmentFlags,
     getGroupEmails,
     getGroupDocuments,
+    getRelatedEmailContext,
     listLinkGroups,
     removeEmailFromLinkGroup,
     saveGroupAttachmentFlags,
@@ -277,7 +278,7 @@ function Section({
 }
 
 export const GroupsCockpit: React.FC = () => {
-    const { ctx, attachments, setMsg, settings } = useCockpit();
+    const { ctx, attachments, setMsg, settings, activeGroupSelection, setActiveGroupForCurrentEmail } = useCockpit();
     const downloadAnchorRef = useRef<HTMLAnchorElement | null>(null);
     const [query, setQuery] = useState("");
     const [groups, setGroups] = useState<LinkGroupEntry[]>([]);
@@ -305,6 +306,7 @@ export const GroupsCockpit: React.FC = () => {
     const [imageManagerOpen, setImageManagerOpen] = useState(false);
     const [imageFilter, setImageFilter] = useState<"active" | "dismissed" | "all">("active");
     const [selectedImageKeys, setSelectedImageKeys] = useState<string[]>([]);
+    const [currentContextGroupIds, setCurrentContextGroupIds] = useState<string[]>([]);
 
     const selectedGroup = useMemo(
         () => groups.find((group) => group.id === selectedGroupId) || null,
@@ -347,6 +349,11 @@ export const GroupsCockpit: React.FC = () => {
     const hasCurrentEmail = Boolean(
         currentEmailPayload.itemId || currentEmailPayload.internetMessageId || currentEmailPayload.conversationId
     );
+    const currentEmailIdentityKey = [
+        currentEmailPayload.itemId,
+        normalizeMessageKey(currentEmailPayload.internetMessageId),
+        currentEmailPayload.conversationId,
+    ].join("|");
 
     useEffect(() => {
         let cancelled = false;
@@ -357,15 +364,10 @@ export const GroupsCockpit: React.FC = () => {
                 const nextGroups = await listLinkGroups("/");
                 if (cancelled) return;
                 setGroups(nextGroups);
-                setSelectedGroupId((current) => {
-                    if (current && nextGroups.some((group) => group.id === current)) return current;
-                    return nextGroups[0]?.id || "";
-                });
             } catch (error: any) {
                 if (cancelled) return;
                 setGroupsError(error?.message || "Nao foi possivel carregar grupos.");
                 setGroups([]);
-                setSelectedGroupId("");
             } finally {
                 if (!cancelled) setGroupsLoading(false);
             }
@@ -375,6 +377,36 @@ export const GroupsCockpit: React.FC = () => {
             window.clearTimeout(timer);
         };
     }, [reloadToken]);
+
+    useEffect(() => {
+        if (!hasCurrentEmail) {
+            setCurrentContextGroupIds([]);
+            return;
+        }
+        let cancelled = false;
+        getRelatedEmailContext(currentEmailPayload)
+            .then((response) => {
+                if (cancelled) return;
+                const customIds = Array.isArray(response?.groups)
+                    ? response.groups.filter((group) => group.kind === "custom").map((group) => String(group.id || "").trim()).filter(Boolean)
+                    : [];
+                setCurrentContextGroupIds(customIds);
+            })
+            .catch(() => {
+                if (!cancelled) setCurrentContextGroupIds([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [currentEmailIdentityKey, hasCurrentEmail]);
+
+    useEffect(() => {
+        const preferredId =
+            activeGroupSelection.emailKey === currentEmailIdentityKey
+                ? String(activeGroupSelection.groupId || "").trim()
+                : currentContextGroupIds.find((groupId) => groups.some((group) => group.id === groupId)) || "";
+        setSelectedGroupId((current) => (current === preferredId ? current : preferredId));
+    }, [activeGroupSelection, currentContextGroupIds, currentEmailIdentityKey, groups]);
 
     useEffect(() => {
         if (!selectedGroupId) {
@@ -670,6 +702,7 @@ export const GroupsCockpit: React.FC = () => {
         const existing = groups.find((group) => String(group.name || "").trim().toLowerCase() === name.toLowerCase());
         if (existing) {
             setSelectedGroupId(existing.id);
+            if (hasCurrentEmail) setActiveGroupForCurrentEmail(existing.id);
             setQuery("");
             setMsg(`Grupo "${existing.name}" selecionado.`);
             return;
@@ -679,6 +712,7 @@ export const GroupsCockpit: React.FC = () => {
             const group = await createLinkGroup({ name, documentsEnabled: true });
             setQuery("");
             setSelectedGroupId(group.id);
+            if (hasCurrentEmail) setActiveGroupForCurrentEmail(group.id);
             setReloadToken((value) => value + 1);
             setMsg(`Grupo "${group.name}" criado.`);
         } catch (error: any) {
@@ -714,6 +748,7 @@ export const GroupsCockpit: React.FC = () => {
         setBusyAction(true);
         try {
             await addEmailToLinkGroup(selectedGroup.id, currentEmailPayload);
+            setActiveGroupForCurrentEmail(selectedGroup.id);
             setReloadToken((value) => value + 1);
             setMsg(`Email atual associado ao grupo "${selectedGroup.name}".`);
         } catch (error: any) {
@@ -737,6 +772,9 @@ export const GroupsCockpit: React.FC = () => {
                 fromEmail: email.fromEmail,
                 receivedAtIso: email.receivedAtIso || email.messageDateIso,
             });
+            if (emailMatchesCurrentContext(email, ctx)) {
+                setActiveGroupForCurrentEmail(null);
+            }
             setReloadToken((value) => value + 1);
             setMsg("Email removido do grupo.");
         } catch (error: any) {
@@ -955,6 +993,7 @@ export const GroupsCockpit: React.FC = () => {
                                         setSelectedGroupId("");
                                         setGroupEmails([]);
                                         setSelectedEmailKey("");
+                                        setActiveGroupForCurrentEmail(null);
                                         setReloadToken((value) => value + 1);
                                         setMsg(`Grupo "${selectedGroup.name}" apagado.`);
                                     } catch (error: any) {
@@ -1017,6 +1056,7 @@ export const GroupsCockpit: React.FC = () => {
                                     setSelectedGroupId("");
                                     setSelectedEmailKey("");
                                     setSelectedDocumentId("");
+                                    setActiveGroupForCurrentEmail(null);
                                 }}
                                 disabled={busyAction}
                             />
@@ -1039,6 +1079,7 @@ export const GroupsCockpit: React.FC = () => {
                                     style={selected ? styles.groupRowActive : styles.groupRow}
                                     onClick={() => {
                                         setSelectedGroupId(group.id);
+                                        if (hasCurrentEmail) setActiveGroupForCurrentEmail(group.id);
                                         setQuery("");
                                     }}
                                 >

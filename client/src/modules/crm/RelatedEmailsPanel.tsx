@@ -13,6 +13,7 @@ import {
   type OdooMeta,
   type RelatedEmailEntry,
 } from "@/api";
+import { useCockpit } from "@/components/shell/CockpitProvider";
 import { openLinkedOutlookEmail, type OutlookMessageContext } from "@/office";
 import { type CockpitSettingsV1 } from "@/settings";
 import { HelpHint } from "@/ui/HelpHint";
@@ -145,6 +146,11 @@ function belongsToCurrentConversation(email: RelatedEmailEntry, currentConversat
 function hasCurrentEmailIdentity(currentCtx: OutlookMessageContext): boolean {
   const payload = getCurrentEmailPayload(currentCtx);
   return Boolean(payload.itemId || payload.internetMessageId || payload.conversationId);
+}
+
+function buildCurrentEmailIdentityKey(currentCtx: OutlookMessageContext): string {
+  const payload = getCurrentEmailPayload(currentCtx);
+  return [payload.itemId, payload.internetMessageId, payload.conversationId].join("|");
 }
 
 function CompactSection({
@@ -426,6 +432,126 @@ function GroupSearchPicker({
   );
 }
 
+function CompactGroupPicker({
+  selected,
+  onSelect,
+  onCreate,
+  busy,
+}: {
+  selected: LinkGroupEntry | null;
+  onSelect: (group: LinkGroupEntry | null) => void;
+  onCreate: (name: string) => void;
+  busy?: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const [items, setItems] = useState<LinkGroupEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const loadSeqRef = useRef(0);
+  const trimmedQuery = String(query || "").trim();
+  const showAllAlphabetically = trimmedQuery === "/" || trimmedQuery === "*";
+  const showSuggestions = Boolean(trimmedQuery);
+  const matchingGroups = useMemo(() => {
+    if (showAllAlphabetically) return items;
+    const lowered = trimmedQuery.toLowerCase();
+    return items.filter((group) => String(group.name || "").toLowerCase().includes(lowered));
+  }, [items, showAllAlphabetically, trimmedQuery]);
+
+  useEffect(() => {
+    if (!showSuggestions) {
+      setItems([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      const reqId = ++loadSeqRef.current;
+      setLoading(true);
+      setError(null);
+      try {
+        const groups = await listLinkGroups(showAllAlphabetically ? "/" : query);
+        if (reqId !== loadSeqRef.current) return;
+        setItems(Array.isArray(groups) ? groups : []);
+      } catch (loadError: any) {
+        if (reqId !== loadSeqRef.current) return;
+        setItems([]);
+        setError(loadError?.message || "Nao foi possivel carregar grupos.");
+      } finally {
+        if (reqId === loadSeqRef.current) setLoading(false);
+      }
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [query, showAllAlphabetically, showSuggestions]);
+
+  return (
+    <div style={styles.groupPickerCard}>
+      <div style={styles.groupPickerRow}>
+        <input
+          style={styles.pickerInput}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              const name = String(query || "").trim();
+              if (name && !showAllAlphabetically) onCreate(name);
+            }
+          }}
+          placeholder='Pesquisar grupos... ("/" mostra todos)'
+        />
+        <IconActionButton
+          title={trimmedQuery && !showAllAlphabetically ? "Criar grupo com este nome" : 'Escreve um nome ou "/" para ver todos'}
+          onClick={trimmedQuery && !showAllAlphabetically ? () => onCreate(trimmedQuery) : undefined}
+          icon={<Icons.Plus size={12} />}
+          tone="primary"
+          disabled={busy || !trimmedQuery || showAllAlphabetically}
+        />
+      </div>
+
+      {selected ? (
+        <div style={styles.groupPickerSelectedCard} title={`${selected.name}\n${selected.memberCount || 0} email(s)`}>
+          <div style={styles.selectedCardBody}>
+            <div style={styles.selectedCardLabel}>Grupo ativo</div>
+            <div style={styles.selectedCardTitle}>{selected.name}</div>
+          </div>
+          <div style={styles.rowActions}>
+            <span style={styles.countPill}>{selected.memberCount || 0}</span>
+            <IconActionButton
+              title="Limpar grupo selecionado"
+              onClick={() => onSelect(null)}
+              icon={<Icons.RotateCcw size={12} />}
+              disabled={busy}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {error ? <div style={styles.errorHint}>{error}</div> : null}
+
+      {showSuggestions ? (
+        <div style={styles.pickListInline}>
+          {loading && !matchingGroups.length ? <div style={styles.pickEmpty}>A procurar...</div> : null}
+          {!loading && !matchingGroups.length ? <div style={styles.pickEmpty}>Sem resultados.</div> : null}
+          {matchingGroups.map((group) => (
+            <button
+              key={group.id}
+              type="button"
+              style={selected?.id === group.id ? styles.pickRowActive : styles.pickRow}
+              onClick={() => {
+                onSelect(group);
+                setQuery("");
+              }}
+            >
+              <span style={styles.pickName}>{group.name}</span>
+              <span style={styles.pickMeta}>{group.memberCount || 0} email(s)</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function RelatedEmailRow({
   item,
   settings,
@@ -484,6 +610,7 @@ export function RelatedEmailsPanel({
   onEditRecord: (model: string, recordId: number) => void;
   onStatus: (message: string) => void;
 }) {
+  const { activeGroupSelection, setActiveGroupForCurrentEmail } = useCockpit();
   const [view, setView] = useState<"context" | "manual">("context");
   const [exploreMode, setExploreMode] = useState<ExploreMode>("records");
   const [manualModel, setManualModel] = useState<SupportedModel>("res.partner");
@@ -541,6 +668,7 @@ export function RelatedEmailsPanel({
     const items = contextItems.filter((item) => belongsToCurrentConversation(item, currentConversationId));
     return currentContextEmail ? [currentContextEmail, ...items] : items;
   }, [contextItems, currentContextEmail, currentCtx.conversationId]);
+  const currentEmailIdentityKey = useMemo(() => buildCurrentEmailIdentityKey(currentCtx), [currentCtx]);
   const conversationSelectedCount = selectedContextEmailKeys.length;
   const selectedRecordUrl = useMemo(() => {
     if (!selectedRecord) return "";
@@ -551,6 +679,16 @@ export function RelatedEmailsPanel({
     const validKeys = new Set(conversationContextItems.map((item) => makeRelatedEmailSelectionKey(item)));
     setSelectedContextEmailKeys((current) => current.filter((key) => validKeys.has(key)));
   }, [conversationContextItems]);
+
+  useEffect(() => {
+    const customGroups = contextGroups.filter((group) => group.kind === "custom");
+    const preferredId =
+      activeGroupSelection.emailKey === currentEmailIdentityKey
+        ? String(activeGroupSelection.groupId || "").trim()
+        : String(customGroups[0]?.id || "").trim();
+    const nextGroup = customGroups.find((group) => group.id === preferredId) || null;
+    setSelectedGroup((current) => (current?.id === nextGroup?.id ? current : nextGroup));
+  }, [activeGroupSelection, contextGroups, currentEmailIdentityKey]);
 
   useEffect(() => {
     setSelectedRecord(null);
@@ -647,6 +785,7 @@ export function RelatedEmailsPanel({
     try {
       await addEmailToLinkGroup(group.id, emailPayload);
       setSelectedGroup(group);
+      setActiveGroupForCurrentEmail(group.id);
       setContextReloadToken((value) => value + 1);
       onStatus(`Email atual ligado ao grupo "${group.name}".`);
     } catch (error: any) {
@@ -656,13 +795,14 @@ export function RelatedEmailsPanel({
     }
   }
 
-  async function createAndLinkGroup() {
-    const name = String(newGroupName || "").trim();
+  async function createAndLinkGroup(nameOverride?: string) {
+    const name = String(typeof nameOverride === "string" ? nameOverride : newGroupName || "").trim();
     if (!name) return;
     setGroupActionBusy(true);
     try {
       const group = await createLinkGroup({ name });
       setSelectedGroup(group);
+      setActiveGroupForCurrentEmail(group.id);
       setNewGroupName("");
       if (hasCurrentEmailIdentity(currentCtx)) {
         await addEmailToLinkGroup(group.id, emailPayload);
@@ -707,6 +847,7 @@ export function RelatedEmailsPanel({
         await addEmailToLinkGroup(group.id, getRelatedEmailPayload(item));
       }
       setSelectedGroup(group);
+      setActiveGroupForCurrentEmail(group.id);
       setContextReloadToken((value) => value + 1);
       onStatus(`${selectedItems.length} email(s) ligados ao grupo "${group.name}".`);
     } catch (error: any) {
@@ -716,13 +857,14 @@ export function RelatedEmailsPanel({
     }
   }
 
-  async function createGroupAndLinkSelectedConversationEmails() {
-    const name = String(newGroupName || "").trim();
+  async function createGroupAndLinkSelectedConversationEmails(nameOverride?: string) {
+    const name = String(typeof nameOverride === "string" ? nameOverride : newGroupName || "").trim();
     if (!name) return;
     setGroupActionBusy(true);
     try {
       const group = await createLinkGroup({ name });
       setSelectedGroup(group);
+      setActiveGroupForCurrentEmail(group.id);
       setNewGroupName("");
       const selectedItems = conversationContextItems.filter((item) => selectedContextEmailKeys.includes(makeRelatedEmailSelectionKey(item)));
       if (selectedItems.length) {
@@ -777,8 +919,11 @@ export function RelatedEmailsPanel({
           const attachmentCount = Array.isArray(item.attachments) ? item.attachments.length : 0;
           const isCurrent = currentContextEmail ? key === makeRelatedEmailSelectionKey(currentContextEmail) : false;
           const hasOutlookOpen = Boolean(item.itemId || item.emailWebLink);
+          const rowStyle = checked
+            ? (isCurrent ? styles.emailCardCurrentSelected : styles.emailCardSelected)
+            : (isCurrent ? styles.emailCardCurrent : styles.emailCard);
           return (
-            <div key={`context-select:${key}`} style={checked ? styles.emailCardSelected : styles.emailCard}>
+            <div key={`context-select:${key}`} style={rowStyle}>
               <div style={styles.emailHeaderRow}>
                 <label style={styles.contextSelectWrap} title={buildEmailHoverText(item)}>
                   <input type="checkbox" checked={checked} onChange={() => toggleContextSelection(item)} style={styles.contextCheckbox} />
@@ -827,12 +972,28 @@ export function RelatedEmailsPanel({
           ) : (
             <>
               <div style={styles.bulkManager}>
-                <GroupSearchPicker selected={selectedGroup} onSelect={setSelectedGroup} />
-                <div style={styles.inlineActionRow}>
-                  <input style={styles.pickerInput} value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="Novo grupo..." />
-                  <IconActionButton title="Criar grupo e ligar selecionados" onClick={createGroupAndLinkSelectedConversationEmails} icon={<Icons.Plus size={12} />} tone="primary" disabled={groupActionBusy || !String(newGroupName || "").trim()} />
-                  <IconActionButton title="Ligar emails selecionados ao grupo escolhido" onClick={selectedGroup ? () => linkSelectedConversationEmailsToGroup(selectedGroup) : undefined} icon={<Icons.Link size={12} />} disabled={groupActionBusy || !selectedGroup || !conversationSelectedCount} />
-                </div>
+                <CompactGroupPicker
+                  selected={selectedGroup}
+                  onSelect={(group) => {
+                    setSelectedGroup(group);
+                    setActiveGroupForCurrentEmail(group?.id || null);
+                  }}
+                  onCreate={(name) => {
+                    setNewGroupName(name);
+                    void createGroupAndLinkSelectedConversationEmails(name);
+                  }}
+                  busy={groupActionBusy}
+                />
+                <button
+                  type="button"
+                  style={selectedGroup && conversationSelectedCount ? styles.linkActionBtn : styles.linkActionBtnDisabled}
+                  onClick={selectedGroup ? () => linkSelectedConversationEmailsToGroup(selectedGroup) : undefined}
+                  disabled={groupActionBusy || !selectedGroup || !conversationSelectedCount}
+                  title="Ligar emails selecionados ao grupo ativo"
+                >
+                  <Icons.Link size={12} />
+                  <span>Ligar ao grupo</span>
+                </button>
                 <div style={styles.bulkActionRow}>
                   <button type="button" style={styles.bulkTextBtn} onClick={selectAllConversationEmails} disabled={!conversationContextItems.length}>Selecionar todos</button>
                   <button type="button" style={styles.bulkTextBtn} onClick={clearConversationSelection} disabled={!conversationSelectedCount}>Limpar</button>
@@ -904,23 +1065,31 @@ export function RelatedEmailsPanel({
 
         <CompactSection title="Grupos manuais" subtitle="Liga emails entre si mesmo quando nao existe processo Odoo." helpText="Cria grupos manuais para juntar emails que nao dependem de um registo Odoo." count={customGroups.length}>
           <div style={styles.groupManager}>
-            <GroupSearchPicker selected={selectedGroup} onSelect={setSelectedGroup} />
-            <div style={styles.inlineActionRow}>
-              <input style={styles.pickerInput} value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="Novo grupo..." />
-              <IconActionButton title="Criar grupo" onClick={createAndLinkGroup} icon={<Icons.Plus size={12} />} tone="primary" disabled={groupActionBusy || !String(newGroupName || "").trim()} />
-              <IconActionButton title="Ligar email atual ao grupo selecionado" onClick={selectedGroup ? () => linkCurrentEmailToGroup(selectedGroup) : undefined} icon={<Icons.Link size={12} />} disabled={groupActionBusy || !selectedGroup || !hasCurrentEmailIdentity(currentCtx)} />
-            </div>
-            {customGroups.length ? (
-              <div style={styles.tagRow}>
-                {customGroups.map((group) => (
-                  <button type="button" key={group.id} style={selectedGroup?.id === group.id ? styles.groupChipActive : styles.groupChip} title={`Selecionar grupo ${group.name}`} onClick={() => setSelectedGroup(group)}>
-                    {group.name}
-                  </button>
-                ))}
-              </div>
-            ) : (
+            <CompactGroupPicker
+              selected={selectedGroup}
+              onSelect={(group) => {
+                setSelectedGroup(group);
+                setActiveGroupForCurrentEmail(group?.id || null);
+              }}
+              onCreate={(name) => {
+                setNewGroupName(name);
+                void createAndLinkGroup(name);
+              }}
+              busy={groupActionBusy}
+            />
+            <button
+              type="button"
+              style={selectedGroup && hasCurrentEmailIdentity(currentCtx) ? styles.linkActionBtn : styles.linkActionBtnDisabled}
+              onClick={selectedGroup ? () => linkCurrentEmailToGroup(selectedGroup) : undefined}
+              disabled={groupActionBusy || !selectedGroup || !hasCurrentEmailIdentity(currentCtx)}
+              title="Ligar email aberto ao grupo ativo"
+            >
+              <Icons.Link size={12} />
+              <span>Ligar email ao grupo</span>
+            </button>
+            {!customGroups.length ? (
               <PanelState tone="empty" title="Sem grupos manuais" description="Cria um grupo para ligar este email a outros fora do Odoo." compact />
-            )}
+            ) : null}
           </div>
           <HowToBlock
             title="Grupos manuais"
@@ -990,12 +1159,18 @@ export function RelatedEmailsPanel({
     return (
       <div style={styles.modeShell}>
         <div style={styles.formGrid}>
-          <GroupSearchPicker selected={selectedGroup} onSelect={setSelectedGroup} />
+          <GroupSearchPicker
+            selected={selectedGroup}
+            onSelect={(group) => {
+              setSelectedGroup(group);
+              setActiveGroupForCurrentEmail(group?.id || null);
+            }}
+          />
           <div style={styles.fieldBlock}>
             <div style={styles.fieldLabel}>Novo grupo</div>
             <div style={styles.inlineActionRow}>
               <input style={styles.pickerInput} value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="Nome do grupo..." />
-              <IconActionButton title="Criar grupo" onClick={createAndLinkGroup} icon={<Icons.Plus size={12} />} tone="primary" disabled={groupActionBusy || !String(newGroupName || "").trim()} />
+              <IconActionButton title="Criar grupo" onClick={() => createAndLinkGroup()} icon={<Icons.Plus size={12} />} tone="primary" disabled={groupActionBusy || !String(newGroupName || "").trim()} />
             </div>
           </div>
         </div>
@@ -1166,11 +1341,88 @@ const styles: Record<string, React.CSSProperties> = {
   selectedCardLabel: { fontSize: "9px", fontWeight: 800, color: "#6B778C", textTransform: "uppercase", letterSpacing: "0.05em" },
   selectedCardTitle: { fontSize: "11px", fontWeight: 600, color: "#172B4D", lineHeight: 1.25, wordBreak: "break-word" },
   bulkManager: { display: "grid", gap: "8px", marginBottom: "8px" },
+  groupPickerCard: { display: "grid", gap: "6px" },
+  groupPickerRow: { display: "grid", gridTemplateColumns: "1fr auto", gap: "6px", alignItems: "center" },
+  groupPickerSelectedCard: {
+    border: "1px solid #DFE1E6",
+    borderRadius: "8px",
+    background: "#F7FAFF",
+    padding: "6px 8px",
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: "8px",
+    alignItems: "center",
+  },
+  pickListInline: {
+    border: "1px solid #DFE1E6",
+    borderRadius: "8px",
+    background: "#FFFFFF",
+    boxShadow: "0 8px 16px rgba(9, 30, 66, 0.08)",
+    overflow: "hidden",
+    maxHeight: "180px",
+    overflowY: "auto",
+  },
+  pickRow: {
+    width: "100%",
+    border: "none",
+    background: "#FFFFFF",
+    padding: "7px 8px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    cursor: "pointer",
+    textAlign: "left",
+    borderBottom: "1px solid #F4F5F7",
+    gap: "8px",
+  },
+  pickRowActive: {
+    width: "100%",
+    border: "none",
+    background: "#E9F2FF",
+    padding: "7px 8px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    cursor: "pointer",
+    textAlign: "left",
+    borderBottom: "1px solid #CFE1FF",
+    gap: "8px",
+  },
   bulkActionRow: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px" },
   bulkTextBtn: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#172B4D", borderRadius: "999px", padding: "4px 8px", fontSize: "10px", fontWeight: 700, cursor: "pointer" },
+  linkActionBtn: {
+    border: "1px solid #0C66E4",
+    background: "#0C66E4",
+    color: "#FFFFFF",
+    borderRadius: "999px",
+    padding: "5px 10px",
+    fontSize: "10px",
+    fontWeight: 800,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "6px",
+  },
+  linkActionBtnDisabled: {
+    border: "1px solid #DFE1E6",
+    background: "#F4F5F7",
+    color: "#97A0AF",
+    borderRadius: "999px",
+    padding: "5px 10px",
+    fontSize: "10px",
+    fontWeight: 800,
+    cursor: "not-allowed",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "6px",
+  },
   listShell: { display: "grid", gap: "6px", maxHeight: "310px", overflowY: "auto", paddingRight: "2px" },
   emailCard: { border: "1px solid #DFE1E6", borderRadius: "10px", padding: "7px 8px", display: "grid", gap: "5px", background: "#FFFFFF" },
+  emailCardCurrent: { border: "1px solid #9F8FEF", borderRadius: "10px", padding: "7px 8px", display: "grid", gap: "5px", background: "#F8F7FF" },
   emailCardSelected: { border: "1px solid #4C9AFF", borderRadius: "10px", padding: "7px 8px", display: "grid", gap: "5px", background: "#F7FBFF" },
+  emailCardCurrentSelected: { border: "1px solid #6554C0", borderRadius: "10px", padding: "7px 8px", display: "grid", gap: "5px", background: "#F0EEFF" },
   emailHeaderRow: { display: "flex", justifyContent: "space-between", gap: "6px", alignItems: "flex-start" },
   contextSelectWrap: { display: "flex", gap: "8px", alignItems: "flex-start", minWidth: 0, flex: "1 1 auto", cursor: "pointer" },
   contextCheckbox: { marginTop: "2px", flexShrink: 0 },

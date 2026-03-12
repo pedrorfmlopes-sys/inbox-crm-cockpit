@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export const HelpHint: React.FC<{
     text: string;
@@ -7,6 +8,7 @@ export const HelpHint: React.FC<{
     const [open, setOpen] = useState(false);
     const [alignRight, setAlignRight] = useState(false);
     const [openUpward, setOpenUpward] = useState(false);
+    const [position, setPosition] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
     const wrapRef = useRef<HTMLSpanElement | null>(null);
     const tooltipRef = useRef<HTMLSpanElement | null>(null);
 
@@ -20,8 +22,18 @@ export const HelpHint: React.FC<{
         const spaceLeft = rect.right;
         const spaceBelow = viewportHeight - rect.bottom;
         const spaceAbove = rect.top;
-        setAlignRight(spaceRight < tooltipRect.width + 12 && spaceLeft > spaceRight);
-        setOpenUpward(spaceBelow < tooltipRect.height + 12 && spaceAbove > spaceBelow);
+        const nextAlignRight = spaceRight < tooltipRect.width + 12 && spaceLeft > spaceRight;
+        const nextOpenUpward = spaceBelow < tooltipRect.height + 12 && spaceAbove > spaceBelow;
+        setAlignRight(nextAlignRight);
+        setOpenUpward(nextOpenUpward);
+        setPosition({
+            left: nextAlignRight
+                ? Math.max(8, rect.right - tooltipRect.width)
+                : Math.min(viewportWidth - tooltipRect.width - 8, rect.left),
+            top: nextOpenUpward
+                ? Math.max(8, rect.top - tooltipRect.height - 8)
+                : Math.min(viewportHeight - tooltipRect.height - 8, rect.bottom + 8),
+        });
     }, [open]);
 
     return (
@@ -36,24 +48,27 @@ export const HelpHint: React.FC<{
             <button
                 type="button"
                 aria-label={title}
-                title={title}
                 style={styles.button}
             >
                 ?
             </button>
-            {open ? (
-                <span
-                    ref={tooltipRef}
-                    role="tooltip"
-                    style={{
-                        ...styles.tooltip,
-                        ...(alignRight ? styles.tooltipRight : styles.tooltipLeft),
-                        ...(openUpward ? styles.tooltipUpward : styles.tooltipDownward),
-                    }}
-                >
-                    {text}
-                </span>
-            ) : null}
+            {open
+                ? createPortal(
+                    <span
+                        ref={tooltipRef}
+                        role="tooltip"
+                        style={{
+                            ...styles.tooltip,
+                            left: `${position.left}px`,
+                            top: `${position.top}px`,
+                            transformOrigin: `${alignRight ? "right" : "left"} ${openUpward ? "bottom" : "top"}`,
+                        }}
+                    >
+                        {text}
+                    </span>,
+                    document.body
+                )
+                : null}
         </span>
     );
 };
@@ -84,8 +99,8 @@ const styles: Record<string, React.CSSProperties> = {
         cursor: "help",
     },
     tooltip: {
-        position: "absolute",
-        zIndex: 30,
+        position: "fixed",
+        zIndex: 9999,
         minWidth: "170px",
         maxWidth: "220px",
         padding: "6px 8px",
@@ -99,17 +114,5 @@ const styles: Record<string, React.CSSProperties> = {
         pointerEvents: "none",
         textAlign: "left",
         whiteSpace: "normal",
-    },
-    tooltipLeft: {
-        left: 0,
-    },
-    tooltipRight: {
-        right: 0,
-    },
-    tooltipDownward: {
-        top: "18px",
-    },
-    tooltipUpward: {
-        bottom: "18px",
     },
 };

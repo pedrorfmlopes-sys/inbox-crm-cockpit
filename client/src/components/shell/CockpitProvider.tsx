@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookMessageContext } from "@/office";
-import { getLinks, getOdooMeta, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, syncManualGroupCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookMessageContext } from "@/office";
+import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
@@ -84,6 +84,8 @@ export interface CockpitContextType {
     login: (credentials: any) => Promise<void>;
     logout: () => void;
     settings: CockpitSettingsV1 | null;
+    activeGroupSelection: { emailKey: string; groupId: string | null };
+    setActiveGroupForCurrentEmail: (groupId: string | null) => void;
     startupChecks: StartupCheck[];
     startupNotice: StartupNotice | null;
     dismissStartupNotice: () => void;
@@ -112,6 +114,14 @@ function createStartupChecks(): StartupCheck[] {
     return STARTUP_CHECK_BLUEPRINT.map((check) => ({ ...check, status: "pending" as StartupCheckStatus }));
 }
 
+function buildContextEmailKey(ctx: OutlookMessageContext): string {
+    return [
+        String(ctx.itemId || "").trim(),
+        String(ctx.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, ""),
+        String(ctx.conversationId || "").trim(),
+    ].join("|");
+}
+
 if (!G[GK]) {
     G[GK] = createContext<CockpitContextType | undefined>(undefined);
 }
@@ -129,6 +139,11 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState<"none" | "success" | "error">("none");
     const [settings, setSettings] = useState<CockpitSettingsV1 | null>(() => getCachedSettingsSnapshot());
+    const [activeGroupSelection, setActiveGroupSelection] = useState<{ emailKey: string; groupId: string | null }>({
+        emailKey: "",
+        groupId: null,
+    });
+    const [currentCustomGroupNames, setCurrentCustomGroupNames] = useState<string[]>([]);
     const [startupChecks, setStartupChecks] = useState<StartupCheck[]>(() => createStartupChecks());
     const [startupNoticeState, setStartupNoticeState] = useState<StartupNotice | null>(null);
     const [startupNoticeDismissed, setStartupNoticeDismissed] = useState(false);
@@ -146,6 +161,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     function setStartupNotice(next: StartupNotice | null) {
         setStartupNoticeState(next);
         setStartupNoticeDismissed(false);
+    }
+
+    function setActiveGroupForCurrentEmail(groupId: string | null) {
+        setActiveGroupSelection({
+            emailKey: buildContextEmailKey(ctx),
+            groupId: groupId ? String(groupId).trim() : null,
+        });
     }
 
     function dedupeLinks(entries: LinkEntry[]): LinkEntry[] {
@@ -805,13 +827,53 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
 
     useEffect(() => {
+        const hasContextIdentity = Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
+        if (!hasContextIdentity) {
+            setCurrentCustomGroupNames([]);
+            return;
+        }
+        let cancelled = false;
+        const payload = {
+            itemId: String(ctx.itemId || "").trim(),
+            internetMessageId: String(ctx.internetMessageId || "").trim(),
+            conversationId: String(ctx.conversationId || "").trim(),
+            subject: String(ctx.subject || "").trim(),
+            fromEmail: String(ctx.fromEmail || "").trim(),
+            fromName: String(ctx.fromName || "").trim(),
+            receivedAtIso: String(ctx.receivedDateTimeIso || "").trim(),
+            messageDateIso: String(ctx.receivedDateTimeIso || "").trim(),
+        };
+        getRelatedEmailContext(payload)
+            .then((response) => {
+                if (cancelled) return;
+                const names = Array.isArray(response?.groups)
+                    ? response.groups
+                        .filter((group) => group.kind === "custom")
+                        .map((group) => String(group.name || "").trim())
+                        .filter(Boolean)
+                    : [];
+                setCurrentCustomGroupNames(names);
+            })
+            .catch(() => {
+                if (!cancelled) setCurrentCustomGroupNames([]);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, links.length]);
+
+    useEffect(() => {
         syncOdooLinkedCategory(links.length > 0).catch(() => {
             // best-effort host hint only
         });
         syncOdooLinkedNotification(links.length > 0, links.length).catch(() => {
             // best-effort host hint only
         });
-    }, [ctx.itemId, links.length]);
+        syncManualGroupCategories(currentCustomGroupNames).catch(() => {
+            // best-effort host hint only
+        });
+    }, [ctx.itemId, currentCustomGroupNames, links.length]);
 
     const setAiState = (update: Partial<AiState>) => {
         if (!ctx.conversationId) return;
@@ -882,6 +944,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             files, addFile, removeFile, clearFiles,
             isAuthenticated, connectionStatus, granularStatus, granularStatusDetails, granularStatusString, checkConnectivity, login, logout,
             settings,
+            activeGroupSelection,
+            setActiveGroupForCurrentEmail,
             startupChecks,
             startupNotice: startupNoticeDismissed ? null : startupNoticeState,
             dismissStartupNotice: () => setStartupNoticeDismissed(true),

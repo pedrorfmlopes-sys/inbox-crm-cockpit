@@ -167,6 +167,7 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
 export const getSelectedMessageContext = getOutlookContext;
 
 const ODOO_LINKED_CATEGORY = "Odoo Linked";
+const GROUP_CATEGORY_PREFIX = "Grupo: ";
 const ODOO_LINKED_NOTICE = "iccc-odoo-linked";
 
 
@@ -318,6 +319,21 @@ async function addCategoryToCurrentItem(displayName: string): Promise<void> {
   });
 }
 
+async function addCategoriesToCurrentItem(displayNames: string[]): Promise<void> {
+  const uniqueNames = Array.from(new Set((displayNames || []).map((name) => String(name || "").trim()).filter(Boolean)));
+  if (!uniqueNames.length) return;
+  const OfficeAny: any = await ensureOfficeReady().catch(() => null);
+  if (!OfficeAny?.context?.mailbox?.item?.categories?.addAsync) return;
+
+  await new Promise<void>((resolve) => {
+    try {
+      OfficeAny.context.mailbox.item.categories.addAsync(uniqueNames, () => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
 async function removeCategoryFromCurrentItem(displayName: string): Promise<void> {
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
   if (!OfficeAny?.context?.mailbox?.item?.categories?.removeAsync) return;
@@ -331,6 +347,53 @@ async function removeCategoryFromCurrentItem(displayName: string): Promise<void>
   });
 }
 
+async function removeCategoriesFromCurrentItem(displayNames: string[]): Promise<void> {
+  const uniqueNames = Array.from(new Set((displayNames || []).map((name) => String(name || "").trim()).filter(Boolean)));
+  if (!uniqueNames.length) return;
+  const OfficeAny: any = await ensureOfficeReady().catch(() => null);
+  if (!OfficeAny?.context?.mailbox?.item?.categories?.removeAsync) return;
+
+  await new Promise<void>((resolve) => {
+    try {
+      OfficeAny.context.mailbox.item.categories.removeAsync(uniqueNames, () => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
+async function getCurrentItemCategoryNames(): Promise<string[]> {
+  const OfficeAny: any = await ensureOfficeReady().catch(() => null);
+  const categoriesApi = OfficeAny?.context?.mailbox?.item?.categories;
+  if (!categoriesApi) return [];
+
+  if (Array.isArray(categoriesApi)) {
+    return categoriesApi
+      .map((entry: any) => String(entry?.displayName || entry?.name || entry || "").trim())
+      .filter(Boolean);
+  }
+
+  if (typeof categoriesApi.getAsync === "function") {
+    return await new Promise<string[]>((resolve) => {
+      try {
+        categoriesApi.getAsync((result: any) => {
+          if (result?.status !== OfficeAny.AsyncResultStatus.Succeeded) return resolve([]);
+          const value = Array.isArray(result.value) ? result.value : [];
+          resolve(
+            value
+              .map((entry: any) => String(entry?.displayName || entry?.name || entry || "").trim())
+              .filter(Boolean)
+          );
+        });
+      } catch {
+        resolve([]);
+      }
+    });
+  }
+
+  return [];
+}
+
 export async function syncOdooLinkedCategory(hasLinks: boolean): Promise<void> {
   if (hasLinks) {
     await ensureMasterCategory(ODOO_LINKED_CATEGORY);
@@ -338,6 +401,27 @@ export async function syncOdooLinkedCategory(hasLinks: boolean): Promise<void> {
     return;
   }
   await removeCategoryFromCurrentItem(ODOO_LINKED_CATEGORY);
+}
+
+export async function syncManualGroupCategories(groupNames: string[]): Promise<void> {
+  const uniqueNames = Array.from(
+    new Set(
+      (groupNames || [])
+        .map((name) => String(name || "").trim())
+        .filter(Boolean)
+    )
+  );
+  const desiredCategories = uniqueNames.map((name) => `${GROUP_CATEGORY_PREFIX}${name}`);
+  const currentCategories = await getCurrentItemCategoryNames();
+  const currentGroupCategories = currentCategories.filter((name) => name.startsWith(GROUP_CATEGORY_PREFIX));
+  const toRemove = currentGroupCategories.filter((name) => !desiredCategories.includes(name));
+  const toAdd = desiredCategories.filter((name) => !currentCategories.includes(name));
+
+  for (const categoryName of toAdd) {
+    await ensureMasterCategory(categoryName);
+  }
+  await addCategoriesToCurrentItem(toAdd);
+  await removeCategoriesFromCurrentItem(toRemove);
 }
 
 export async function syncOdooLinkedNotification(hasLinks: boolean, count = 0): Promise<void> {
