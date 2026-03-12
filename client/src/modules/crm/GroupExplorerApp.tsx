@@ -9,7 +9,7 @@ import {
   type LinkGroupEntry,
   type RelatedEmailEntry,
 } from "@/api";
-import { addBase64AttachmentToCompose, getAttachments, getSelectedMessageContext, openLinkedOutlookEmail, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { addBase64AttachmentToCompose, displayForwardForm, displayReplyForm, getAttachments, getSelectedMessageContext, openLinkedOutlookEmail, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getSettings } from "@/settings";
 import { applySkin } from "@/ui/skins";
 import { PanelState } from "@/ui/PanelState";
@@ -527,6 +527,46 @@ export default function GroupExplorerApp(): JSX.Element {
     if (!opened) setNotice("Este email ainda nao tem abertura direta disponivel.");
   }
 
+  async function handleReplyEmail(email: RelatedEmailEntry | null) {
+    if (!email) return;
+    if (emailMatchesCurrentContext(email, liveCurrentContext)) {
+      try {
+        await displayReplyForm("", true);
+        setNotice("Formulario de resposta aberto para o email atual.");
+      } catch (nextError: any) {
+        setError(nextError?.message || "Nao foi possivel abrir a resposta.");
+      }
+      return;
+    }
+
+    const opened = await openLinkedOutlookEmail({ itemId: email.itemId, emailWebLink: email.emailWebLink });
+    if (opened) {
+      setNotice("Email aberto no Outlook. Usa Responder no Outlook para continuar.");
+    } else {
+      setNotice("Este email ainda nao tem abertura direta para responder.");
+    }
+  }
+
+  async function handleForwardEmail(email: RelatedEmailEntry | null) {
+    if (!email) return;
+    if (emailMatchesCurrentContext(email, liveCurrentContext)) {
+      try {
+        await displayForwardForm("", true);
+        setNotice("Formulario de reencaminhamento aberto para o email atual.");
+      } catch (nextError: any) {
+        setError(nextError?.message || "Nao foi possivel abrir o reencaminhamento.");
+      }
+      return;
+    }
+
+    const opened = await openLinkedOutlookEmail({ itemId: email.itemId, emailWebLink: email.emailWebLink });
+    if (opened) {
+      setNotice("Email aberto no Outlook. Usa Reencaminhar no Outlook para continuar.");
+    } else {
+      setNotice("Este email ainda nao tem abertura direta para reencaminhar.");
+    }
+  }
+
   async function handleRemoveEmail(email: RelatedEmailEntry) {
     if (!selectedGroup) return;
     setBusy(true);
@@ -762,6 +802,26 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
                     Documento
                   </button>
                 </div>
+                {selectedEmail ? (
+                  <>
+                    <button
+                      type="button"
+                      style={styles.previewActionBtn}
+                      onClick={() => void handleReplyEmail(selectedEmail)}
+                      title={emailMatchesCurrentContext(selectedEmail, liveCurrentContext) ? "Responder ao email atual" : "Abrir email para responder"}
+                    >
+                      Responder
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.previewActionBtn}
+                      onClick={() => void handleForwardEmail(selectedEmail)}
+                      title={emailMatchesCurrentContext(selectedEmail, liveCurrentContext) ? "Reencaminhar o email atual" : "Abrir email para reencaminhar"}
+                    >
+                      Reencam.
+                    </button>
+                  </>
+                ) : null}
                 {selectedDocument ? (
                   <>
                   <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(selectedDocument)} disabled={!selectedDocument.contentBase64} title="Download"><Icons.Download size={10} /></button>
@@ -837,6 +897,7 @@ const styles: Record<string, React.CSSProperties> = {
   previewTabs: { display: "inline-flex", gap: 4, alignItems: "center", marginRight: 4 },
   previewTab: { borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#fff", color: "#42526E", padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" },
   previewTabActive: { borderRadius: 999, border: "1px solid rgba(37, 99, 235, 0.22)", background: "#dbeafe", color: "#1d4ed8", padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" },
+  previewActionBtn: { borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#fff", color: "#0f172a", padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" },
   filterGridEmails: { display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) repeat(4, minmax(0, 0.7fr))", gap: 6, alignItems: "end" },
   filterGridDocuments: { display: "grid", gridTemplateColumns: "minmax(120px, 0.6fr) minmax(0, 1.4fr)", gap: 6, alignItems: "end" },
   filterField: { display: "grid", gap: 3, minWidth: 0 },

@@ -678,11 +678,14 @@ export async function displayReplyForm(content: string, isHtml = true): Promise<
 
   const finalContent = isHtml ? content.replace(/\n/g, "<br/>") : content;
 
-  if (isHtml) {
-    item.displayReplyAllForm({ htmlBody: finalContent });
-  } else {
-    item.displayReplyAllForm(finalContent);
+  if (typeof item.displayReplyForm === "function") {
+    if (isHtml) item.displayReplyForm({ htmlBody: finalContent });
+    else item.displayReplyForm(finalContent);
+    return;
   }
+
+  if (isHtml) item.displayReplyAllForm({ htmlBody: finalContent });
+  else item.displayReplyAllForm(finalContent);
 }
 
 /**
