@@ -213,6 +213,39 @@ function IconButton({
     );
 }
 
+function HowToBlock({
+    title,
+    steps,
+}: {
+    title: string;
+    steps: string[];
+}) {
+    const [open, setOpen] = useState(false);
+    return (
+        <div style={styles.howToWrap}>
+            <button
+                type="button"
+                style={styles.howToToggle}
+                onClick={() => setOpen((value) => !value)}
+                title={open ? "Esconder instrucoes" : "Mostrar instrucoes"}
+            >
+                <Icons.AlertCircle size={11} />
+                <span>{open ? `Esconder ${title}` : `Como usar`}</span>
+            </button>
+            {open ? (
+                <div style={styles.howToPanel}>
+                    {steps.map((step, index) => (
+                        <div key={`${title}:${index}`} style={styles.howToStep}>
+                            <span style={styles.howToIndex}>{index + 1}</span>
+                            <span>{step}</span>
+                        </div>
+                    ))}
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
 function Section({
     title,
     subtitle,
@@ -1021,6 +1054,14 @@ export const GroupsCockpit: React.FC = () => {
                         })}
                     </div>
                 ) : null}
+                <HowToBlock
+                    title="Grupos"
+                    steps={[
+                        'Escreve para procurar um grupo ou usa "/" para ver todos.',
+                        "Seleciona um grupo para o ativar.",
+                        'Usa "+" para criar um grupo novo com o texto que escreveste.',
+                    ]}
+                />
             </Section>
 
             <Section
@@ -1107,6 +1148,14 @@ export const GroupsCockpit: React.FC = () => {
                         );
                     })}
                 </div> : <div style={styles.collapsedHint}>Emails recolhidos</div>}
+                <HowToBlock
+                    title="Emails"
+                    steps={[
+                        "Liga o email aberto ao grupo no botao de ligacao.",
+                        "Marca um ou varios emails com as checkboxes para gerir imagens.",
+                        "Usa o icone de ficheiros para abrir o gestor de imagens.",
+                    ]}
+                />
             </Section>
 
             <Section
@@ -1295,6 +1344,14 @@ export const GroupsCockpit: React.FC = () => {
                     </div>
                 ) : null}
                 {selectedGroup && !documentsExpanded ? <div style={styles.collapsedHint}>Documentos recolhidos</div> : null}
+                <HowToBlock
+                    title="Documentos"
+                    steps={[
+                        'Escolhe "Email aberto" ou "Email selecionado" para definir a origem dos anexos.',
+                        "Guarda os anexos que interessam no grupo.",
+                        "Usa os documentos guardados para descarregar, anexar ou abrir no explorador.",
+                    ]}
+                />
             </Section>
 
             {imageManagerOpen ? (
@@ -1445,6 +1502,54 @@ const styles: Record<string, React.CSSProperties> = {
         display: "grid",
         gap: "6px",
         minWidth: 0,
+    },
+    howToWrap: {
+        display: "grid",
+        gap: "6px",
+    },
+    howToToggle: {
+        border: panelBorder,
+        background: "#FFFFFF",
+        color: "#42526E",
+        borderRadius: "999px",
+        padding: "4px 8px",
+        fontSize: "10px",
+        fontWeight: 700,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "5px",
+        justifySelf: "start",
+        cursor: "pointer",
+    },
+    howToPanel: {
+        border: panelBorder,
+        background: "#FAFBFC",
+        borderRadius: "10px",
+        padding: "7px 8px",
+        display: "grid",
+        gap: "6px",
+    },
+    howToStep: {
+        display: "grid",
+        gridTemplateColumns: "16px 1fr",
+        gap: "6px",
+        alignItems: "start",
+        fontSize: "10px",
+        lineHeight: 1.35,
+        color: "#42526E",
+    },
+    howToIndex: {
+        width: "16px",
+        height: "16px",
+        borderRadius: "999px",
+        background: "#DEEBFF",
+        color: "#0747A6",
+        fontSize: "9px",
+        fontWeight: 800,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        marginTop: "1px",
     },
     inputStack: {
         display: "grid",

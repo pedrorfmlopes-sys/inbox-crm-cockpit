@@ -1,13 +1,32 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 export const HelpHint: React.FC<{
     text: string;
     title?: string;
 }> = ({ text, title = "Ajuda" }) => {
     const [open, setOpen] = useState(false);
+    const [alignRight, setAlignRight] = useState(false);
+    const [openUpward, setOpenUpward] = useState(false);
+    const wrapRef = useRef<HTMLSpanElement | null>(null);
+    const tooltipRef = useRef<HTMLSpanElement | null>(null);
+
+    useEffect(() => {
+        if (!open || !wrapRef.current || !tooltipRef.current) return;
+        const rect = wrapRef.current.getBoundingClientRect();
+        const tooltipRect = tooltipRef.current.getBoundingClientRect();
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        const spaceRight = viewportWidth - rect.left;
+        const spaceLeft = rect.right;
+        const spaceBelow = viewportHeight - rect.bottom;
+        const spaceAbove = rect.top;
+        setAlignRight(spaceRight < tooltipRect.width + 12 && spaceLeft > spaceRight);
+        setOpenUpward(spaceBelow < tooltipRect.height + 12 && spaceAbove > spaceBelow);
+    }, [open]);
 
     return (
         <span
+            ref={wrapRef}
             style={styles.wrap}
             onMouseEnter={() => setOpen(true)}
             onMouseLeave={() => setOpen(false)}
@@ -23,7 +42,15 @@ export const HelpHint: React.FC<{
                 ?
             </button>
             {open ? (
-                <span role="tooltip" style={styles.tooltip}>
+                <span
+                    ref={tooltipRef}
+                    role="tooltip"
+                    style={{
+                        ...styles.tooltip,
+                        ...(alignRight ? styles.tooltipRight : styles.tooltipLeft),
+                        ...(openUpward ? styles.tooltipUpward : styles.tooltipDownward),
+                    }}
+                >
                     {text}
                 </span>
             ) : null}
@@ -58,8 +85,6 @@ const styles: Record<string, React.CSSProperties> = {
     },
     tooltip: {
         position: "absolute",
-        top: "18px",
-        right: 0,
         zIndex: 30,
         minWidth: "170px",
         maxWidth: "220px",
@@ -74,5 +99,17 @@ const styles: Record<string, React.CSSProperties> = {
         pointerEvents: "none",
         textAlign: "left",
         whiteSpace: "normal",
+    },
+    tooltipLeft: {
+        left: 0,
+    },
+    tooltipRight: {
+        right: 0,
+    },
+    tooltipDownward: {
+        top: "18px",
+    },
+    tooltipUpward: {
+        bottom: "18px",
     },
 };

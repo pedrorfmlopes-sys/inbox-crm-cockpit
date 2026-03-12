@@ -208,6 +208,39 @@ function IconActionButton({
   );
 }
 
+function HowToBlock({
+  title,
+  steps,
+}: {
+  title: string;
+  steps: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={styles.howToWrap}>
+      <button
+        type="button"
+        style={styles.howToToggle}
+        onClick={() => setOpen((value) => !value)}
+        title={open ? "Esconder instrucoes" : "Mostrar instrucoes"}
+      >
+        <Icons.AlertCircle size={11} />
+        <span>{open ? `Esconder ${title}` : "Como usar"}</span>
+      </button>
+      {open ? (
+        <div style={styles.howToPanel}>
+          {steps.map((step, index) => (
+            <div key={`${title}:${index}`} style={styles.howToStep}>
+              <span style={styles.howToIndex}>{index + 1}</span>
+              <span>{step}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function RecordSearchPicker({
   model,
   selected,
@@ -807,6 +840,14 @@ export function RelatedEmailsPanel({
                 </div>
               </div>
               {renderConversationSelectionList()}
+              <HowToBlock
+                title="Conversa atual"
+                steps={[
+                  "Marca os emails da conversa que queres reaproveitar.",
+                  "Escolhe um grupo existente ou escreve um nome para criar um novo.",
+                  "Liga os emails selecionados ao grupo para os gerir depois na aba Grupos.",
+                ]}
+              />
             </>
           )}
         </CompactSection>
@@ -825,7 +866,17 @@ export function RelatedEmailsPanel({
           ) : contextError ? (
             <PanelState tone="error" title="Contexto indisponivel" description={contextError} compact />
           ) : (
-            renderRelatedList(contextItems, "Sem outros emails relacionados", "Ainda nao existem outros emails relevantes ligados ao mesmo contexto.")
+            <>
+              {renderRelatedList(contextItems, "Sem outros emails relacionados", "Ainda nao existem outros emails relevantes ligados ao mesmo contexto.")}
+              <HowToBlock
+                title="Relacionados agora"
+                steps={[
+                  "Usa esta lista para perceber rapidamente o contexto do email aberto.",
+                  "Abre um email relacionado no Outlook pelo icone de mensagem.",
+                  "Se precisares de organizar emails sem Odoo, usa os grupos manuais abaixo.",
+                ]}
+              />
+            </>
           )}
         </CompactSection>
 
@@ -841,6 +892,14 @@ export function RelatedEmailsPanel({
           ) : (
             <PanelState tone="empty" title="Sem ligacoes Odoo" description="Podes continuar a usar grupos manuais mesmo sem associar este email a um registo Odoo." compact />
           )}
+          <HowToBlock
+            title="Ligacoes Odoo"
+            steps={[
+              "Aqui ves os registos Odoo ligados ao email aberto.",
+              "Se estiver vazio, ainda podes trabalhar com grupos manuais.",
+              "Os registos ligados aparecem tambem na pesquisa manual do modo Explorar.",
+            ]}
+          />
         </CompactSection>
 
         <CompactSection title="Grupos manuais" subtitle="Liga emails entre si mesmo quando nao existe processo Odoo." helpText="Cria grupos manuais para juntar emails que nao dependem de um registo Odoo." count={customGroups.length}>
@@ -863,6 +922,14 @@ export function RelatedEmailsPanel({
               <PanelState tone="empty" title="Sem grupos manuais" description="Cria um grupo para ligar este email a outros fora do Odoo." compact />
             )}
           </div>
+          <HowToBlock
+            title="Grupos manuais"
+            steps={[
+              "Seleciona um grupo para o tornar ativo neste email.",
+              "Liga o email atual ao grupo para o fazer aparecer depois na aba Grupos.",
+              "Usa grupos quando queres juntar emails sem depender do Odoo.",
+            ]}
+          />
         </CompactSection>
       </div>
     );
@@ -902,7 +969,17 @@ export function RelatedEmailsPanel({
           ) : !selectedRecord ? (
             <PanelState tone="empty" title="Escolhe um registo" description="Seleciona uma entidade e um registo para ver os emails relacionados." compact />
           ) : (
-            renderRelatedList(manualItems, "Sem emails relacionados", "Nao existem emails ligados a este registo no armazenamento atual.")
+            <>
+              {renderRelatedList(manualItems, "Sem emails relacionados", "Nao existem emails ligados a este registo no armazenamento atual.")}
+              <HowToBlock
+                title="Emails do registo"
+                steps={[
+                  "Escolhe a entidade e o registo Odoo que queres explorar.",
+                  "Abre o registo no Odoo ou edita-o no Cockpit pelos icones do topo.",
+                  "Usa a lista para navegar pelos emails persistidos desse registo.",
+                ]}
+              />
+            </>
           )}
         </CompactSection>
       </div>
@@ -945,7 +1022,17 @@ export function RelatedEmailsPanel({
           ) : !selectedGroup ? (
             <PanelState tone="empty" title="Escolhe um grupo" description="Seleciona um grupo manual para ver os emails ligados." compact />
           ) : (
-            renderRelatedList(groupItems, "Sem emails no grupo", "Este grupo ainda nao tem outros emails ligados.")
+            <>
+              {renderRelatedList(groupItems, "Sem emails no grupo", "Este grupo ainda nao tem outros emails ligados.")}
+              <HowToBlock
+                title="Emails do grupo"
+                steps={[
+                  "Seleciona um grupo manual para ver os emails que ja lhe pertencem.",
+                  "Usa a aba Grupos quando precisares de gerir anexos e documentos desse grupo.",
+                  "Se o grupo estiver vazio, liga primeiro emails a partir do Contexto ou da aba Grupos.",
+                ]}
+              />
+            </>
           )}
         </CompactSection>
       </div>
@@ -1011,6 +1098,51 @@ const styles: Record<string, React.CSSProperties> = {
   compactHeaderSide: { display: "inline-flex", alignItems: "center", gap: "5px", flexWrap: "wrap" },
   countPill: { fontSize: "9px", fontWeight: 800, color: "#0747A6", background: "#DEEBFF", borderRadius: "999px", padding: "2px 6px" },
   compactBody: { padding: "8px", display: "grid", gap: "8px", minWidth: 0 },
+  howToWrap: { display: "grid", gap: "6px" },
+  howToToggle: {
+    border: "1px solid #DFE1E6",
+    background: "#FFFFFF",
+    color: "#42526E",
+    borderRadius: "999px",
+    padding: "4px 8px",
+    fontSize: "10px",
+    fontWeight: 700,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "5px",
+    justifySelf: "start",
+    cursor: "pointer",
+  },
+  howToPanel: {
+    border: "1px solid #DFE1E6",
+    background: "#FAFBFC",
+    borderRadius: "10px",
+    padding: "7px 8px",
+    display: "grid",
+    gap: "6px",
+  },
+  howToStep: {
+    display: "grid",
+    gridTemplateColumns: "16px 1fr",
+    gap: "6px",
+    alignItems: "start",
+    fontSize: "10px",
+    lineHeight: 1.35,
+    color: "#42526E",
+  },
+  howToIndex: {
+    width: "16px",
+    height: "16px",
+    borderRadius: "999px",
+    background: "#DEEBFF",
+    color: "#0747A6",
+    fontSize: "9px",
+    fontWeight: 800,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
   iconBtn: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#42526E", borderRadius: "7px", width: "22px", height: "22px", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 },
   iconBtnPrimary: { border: "1px solid #0C66E4", background: "#0C66E4", color: "#FFFFFF", borderRadius: "7px", width: "22px", height: "22px", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 },
   iconLinkBtn: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#0C66E4", borderRadius: "7px", width: "22px", height: "22px", display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none", flexShrink: 0 },
