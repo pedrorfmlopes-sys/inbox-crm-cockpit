@@ -46,6 +46,8 @@
 
   <script>
     (function () {
+      const WARM_BOOT_STORAGE_KEY = "iccc_warm_boot_v1";
+      const WARM_BOOT_MAX_AGE_MS = 10 * 60 * 1000;
       const pre = document.getElementById("preflight");
       const statusEl = document.getElementById("pf-status");
       const errEl = document.getElementById("pf-error");
@@ -65,6 +67,15 @@
       }
       function hidePreflight() {
         if (pre) pre.style.display = "none";
+      }
+
+      try {
+        const warmTs = Number(sessionStorage.getItem(WARM_BOOT_STORAGE_KEY) || "0");
+        if (Number.isFinite(warmTs) && warmTs > 0 && (Date.now() - warmTs) < WARM_BOOT_MAX_AGE_MS) {
+          hidePreflight();
+        }
+      } catch {
+        // ignore storage failures
       }
 
       // React will dispatch this event as soon as it mounts.

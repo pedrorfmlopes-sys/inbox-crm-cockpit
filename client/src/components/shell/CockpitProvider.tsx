@@ -100,6 +100,9 @@ type CockpitContextSingletonHost = typeof globalThis & {
 
 const G = globalThis as CockpitContextSingletonHost;
 const GK = "__ICCC_COCKPIT_CONTEXT_v1__";
+const ACTIVE_TAB_STORAGE_KEY = "iccc_active_tab_v1";
+const WARM_BOOT_STORAGE_KEY = "iccc_warm_boot_v1";
+const WARM_BOOT_MAX_AGE_MS = 10 * 60 * 1000;
 const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
 const LINKS_CACHE_MESSAGE_PREFIX = "iccc_links_cache_msg_v1:";
 const LINKS_CACHE_ITEM_PREFIX = "iccc_links_cache_item_v1:";
@@ -129,7 +132,28 @@ if (!G[GK]) {
 export const CockpitContext = G[GK] as React.Context<CockpitContextType | undefined>;
 
 export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [tab, setTab] = useState<CockpitTab>("ai");
+    function readPersistedTab(): CockpitTab {
+        try {
+            const raw = sessionStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
+            return raw === "ai" || raw === "crm" || raw === "related" || raw === "groups" || raw === "files" || raw === "settings"
+                ? raw
+                : "ai";
+        } catch {
+            return "ai";
+        }
+    }
+
+    function hasWarmBootHint(): boolean {
+        try {
+            const raw = Number(sessionStorage.getItem(WARM_BOOT_STORAGE_KEY) || "0");
+            return Number.isFinite(raw) && raw > 0 && (Date.now() - raw) < WARM_BOOT_MAX_AGE_MS;
+        } catch {
+            return false;
+        }
+    }
+
+    const warmStartupRef = useRef<boolean>(hasWarmBootHint());
+    const [tab, setTab] = useState<CockpitTab>(() => readPersistedTab());
     const [ctx, setCtx] = useState<OutlookMessageContext>({});
     const [bodyText, setBodyText] = useState<string>("");
     const [bodyHtml, setBodyHtml] = useState<string>("");
@@ -137,8 +161,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [links, setLinks] = useState<LinkEntry[]>([]);
     const [attachments, setAttachments] = useState<OutlookAttachment[]>([]);
     const [msg, setMsg] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [isLoading, setIsLoading] = useState<boolean>(() => !warmStartupRef.current);
+    const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(getCachedSettingsSnapshot()?.odooSessionToken));
     const [connectionStatus, setConnectionStatus] = useState<"none" | "success" | "error">("none");
     const [settings, setSettings] = useState<CockpitSettingsV1 | null>(() => getCachedSettingsSnapshot());
     const [activeGroupSelection, setActiveGroupSelection] = useState<{ emailKey: string; groupId: string | null }>({
@@ -236,6 +260,14 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     useEffect(() => {
         setApiSessionToken(settings?.odooSessionToken || null);
     }, [settings?.odooSessionToken]);
+
+    useEffect(() => {
+        try {
+            sessionStorage.setItem(ACTIVE_TAB_STORAGE_KEY, tab);
+        } catch {
+            // ignore storage failures
+        }
+    }, [tab]);
 
     // AI History Persistence
     const [aiCache, setAiCache] = useState<Record<string, AiState>>(() => {
@@ -359,7 +391,9 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             // Background refreshes (poll/item-changed) update silently.
             if (reason === "init") {
                 resetStartupPreflight();
-                setIsLoading(true);
+                if (!warmStartupRef.current) {
+                    setIsLoading(true);
+                }
                 updateStartupCheck("settings", { status: "running" });
             }
 
@@ -659,6 +693,9 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                             }
                             : null
                     );
+                }
+                if (reason === "init") {
+                    warmStartupRef.current = false;
                 }
                 setIsLoading(false);
             }

@@ -4,6 +4,8 @@ import UniversalApp from "@/ui/UniversalApp";
 import DialogApp from "@/ui/DialogApp";
 import GroupExplorerApp from "@/modules/crm/GroupExplorerApp";
 
+const WARM_BOOT_STORAGE_KEY = "iccc_warm_boot_v1";
+
 // Decide which UI to render based on URL param:
 // - taskpane: main sidebar
 // - dialog: Office Dialog UI (Create/Add/Edit)
@@ -16,6 +18,7 @@ function getView(): string {
 function markMounted() {
   try {
     document.documentElement.dataset.icccMounted = "1";
+    sessionStorage.setItem(WARM_BOOT_STORAGE_KEY, String(Date.now()));
     window.dispatchEvent(new Event("iccc:mounted"));
   } catch {
     // ignore
