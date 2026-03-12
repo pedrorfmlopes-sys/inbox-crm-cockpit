@@ -147,10 +147,13 @@ export type RelevantEmailPayload = {
   messageDateIso?: string;
   sentAtIso?: string;
   receivedAtIso?: string;
+  bodyText?: string;
+  bodyHtml?: string;
   attachments?: Array<{
     name: string;
     contentType?: string;
     size?: number;
+    content?: string;
   }>;
 };
 
@@ -215,6 +218,8 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
   relatedReasons?: RelatedReason[];
   groupId?: string;
   groupName?: string;
+  bodyText?: string;
+  bodyHtml?: string;
   attachments?: Array<{
     name: string;
     contentType?: string;
@@ -388,6 +393,8 @@ function normalizeLinkEntry(link: any): LinkEntry {
 function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
   return {
     ...normalizeLinkEntry(entry),
+    bodyText: String(entry?.bodyText || "").trim(),
+    bodyHtml: String(entry?.bodyHtml || "").trim(),
     relatedRecords: Array.isArray(entry?.relatedRecords)
       ? entry.relatedRecords.map((record: any) => ({
         model: String(record?.model || "").trim(),

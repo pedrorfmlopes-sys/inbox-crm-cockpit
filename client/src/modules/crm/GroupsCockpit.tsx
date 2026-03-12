@@ -278,7 +278,7 @@ function Section({
 }
 
 export const GroupsCockpit: React.FC = () => {
-    const { ctx, attachments, setMsg, settings, activeGroupSelection, setActiveGroupForCurrentEmail } = useCockpit();
+    const { ctx, bodyText, bodyHtml, attachments, setMsg, settings, activeGroupSelection, setActiveGroupForCurrentEmail } = useCockpit();
     const downloadAnchorRef = useRef<HTMLAnchorElement | null>(null);
     const [query, setQuery] = useState("");
     const [groups, setGroups] = useState<LinkGroupEntry[]>([]);
@@ -336,6 +336,8 @@ export const GroupsCockpit: React.FC = () => {
             fromName: String(ctx.fromName || "").trim(),
             receivedAtIso: String(ctx.receivedDateTimeIso || "").trim(),
             messageDateIso: String(ctx.receivedDateTimeIso || "").trim(),
+            bodyText: String(bodyText || "").trim(),
+            bodyHtml: String(bodyHtml || "").trim(),
             attachments: (attachments || []).map((attachment) => ({
                 name: attachment.name,
                 contentType: attachment.contentType,
@@ -343,7 +345,7 @@ export const GroupsCockpit: React.FC = () => {
                 content: String(attachment.content || "").trim(),
             })),
         }),
-        [attachments, ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject]
+        [attachments, bodyHtml, bodyText, ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject]
     );
 
     const hasCurrentEmail = Boolean(

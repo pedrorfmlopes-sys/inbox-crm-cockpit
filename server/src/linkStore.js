@@ -202,6 +202,8 @@ function normalizeEmailInput(input) {
     sentAtIso: normalizeString(input?.sentAtIso),
     messageDateIso: normalizeString(input?.messageDateIso || input?.receivedAtIso || input?.sentAtIso || input?.linkedAt),
     linkedAt: normalizeString(input?.linkedAt),
+    bodyText: normalizeString(input?.bodyText),
+    bodyHtml: normalizeString(input?.bodyHtml),
     ...(attachments.length ? { attachments } : {}),
   };
 }
@@ -497,6 +499,8 @@ function buildEmailListEntry(email, extra = {}) {
     messageDateIso: normalizeString(email?.messageDateIso),
     receivedAtIso: normalizeString(email?.receivedAtIso || email?.messageDateIso),
     sentAtIso: normalizeString(email?.sentAtIso),
+    bodyText: normalizeString(email?.bodyText),
+    bodyHtml: normalizeString(email?.bodyHtml),
     createdAt: normalizeString(email?.createdAt),
     updatedAt: normalizeString(email?.updatedAt),
     attachments: normalizeAttachments(email?.attachments),
@@ -560,6 +564,8 @@ function mapDbGroupMemberRow(row) {
     messageDateIso: normalizeString(row.message_date_iso),
     receivedAtIso: normalizeString(row.received_at_iso),
     sentAtIso: normalizeString(row.sent_at_iso),
+    bodyText: normalizeString(row.body_text),
+    bodyHtml: normalizeString(row.body_html),
     createdAt: normalizeString(row.created_at),
     updatedAt: normalizeString(row.updated_at),
     attachments: parseAttachmentsJson(row.attachments_json),
@@ -737,8 +743,8 @@ async function upsertDbCustomGroupMember(groupId, email) {
   if (!groupId || !emailKey) return;
   await db.query(
     `INSERT INTO crm_custom_group_members
-       (group_id, email_key, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, attachments_json, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15)
+       (group_id, email_key, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, body_text, body_html, attachments_json, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17)
      ON CONFLICT (group_id, email_key) DO UPDATE SET
        item_id = EXCLUDED.item_id,
        internet_message_id = EXCLUDED.internet_message_id,
@@ -750,6 +756,8 @@ async function upsertDbCustomGroupMember(groupId, email) {
        message_date_iso = EXCLUDED.message_date_iso,
        received_at_iso = EXCLUDED.received_at_iso,
        sent_at_iso = EXCLUDED.sent_at_iso,
+       body_text = EXCLUDED.body_text,
+       body_html = EXCLUDED.body_html,
        attachments_json = EXCLUDED.attachments_json,
        updated_at = EXCLUDED.updated_at`,
     [
@@ -765,6 +773,8 @@ async function upsertDbCustomGroupMember(groupId, email) {
       normalizeString(email?.messageDateIso),
       normalizeString(email?.receivedAtIso),
       normalizeString(email?.sentAtIso),
+      normalizeString(email?.bodyText),
+      normalizeString(email?.bodyHtml),
       JSON.stringify(normalizeAttachments(email?.attachments)),
       normalizeString(email?.createdAt) || nowIso(),
       normalizeString(email?.updatedAt) || nowIso(),
@@ -998,6 +1008,8 @@ async function ensureCustomGroupDb() {
         message_date_iso TEXT,
         received_at_iso TEXT,
         sent_at_iso TEXT,
+        body_text TEXT,
+        body_html TEXT,
         attachments_json JSONB DEFAULT '[]'::jsonb,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1008,6 +1020,16 @@ async function ensureCustomGroupDb() {
     await db.query(`
       ALTER TABLE crm_custom_group_members
       ADD COLUMN IF NOT EXISTS attachments_json JSONB DEFAULT '[]'::jsonb;
+    `);
+
+    await db.query(`
+      ALTER TABLE crm_custom_group_members
+      ADD COLUMN IF NOT EXISTS body_text TEXT;
+    `);
+
+    await db.query(`
+      ALTER TABLE crm_custom_group_members
+      ADD COLUMN IF NOT EXISTS body_html TEXT;
     `);
 
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_members_item_id ON crm_custom_group_members (item_id);`);

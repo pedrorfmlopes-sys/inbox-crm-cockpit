@@ -542,6 +542,33 @@ export async function openGroupExplorer(params: Record<string, string>) {
   }
 }
 
+export async function getEmailBodyHtml(): Promise<string> {
+  clientLog.log("[office] getEmailBodyHtml start");
+  try {
+    const OfficeAny = await ensureOfficeReady();
+    const item: any = OfficeAny?.context?.mailbox?.item;
+    if (!item?.body?.getAsync) return "";
+
+    const p = new Promise<string>((resolve) => {
+      item.body.getAsync("html", (r: any) => {
+        try {
+          if (r?.status === OfficeAny.AsyncResultStatus.Succeeded) resolve(String(r.value ?? ""));
+          else resolve("");
+        } catch {
+          resolve("");
+        }
+      });
+    });
+
+    const result = await withTimeout(p, 4000, "");
+    clientLog.log("[office] getEmailBodyHtml end");
+    return result;
+  } catch (e) {
+    clientLog.error("[office] getEmailBodyHtml error", e);
+    return "";
+  }
+}
+
 /**
  * Subscribe to selection change (when user clicks a different email).
  * IMPORTANT: This must NEVER open dialogs. Only refresh the taskpane state.

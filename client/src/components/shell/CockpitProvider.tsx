@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyText, syncManualGroupCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookMessageContext } from "@/office";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, syncManualGroupCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -62,6 +62,7 @@ export interface CockpitContextType {
     setTab: (tab: CockpitTab) => void;
     ctx: OutlookMessageContext;
     bodyText: string;
+    bodyHtml: string;
     meta: OdooMeta | null;
     links: LinkEntry[];
     attachments: Array<{ name: string; contentType: string; content: string }>;
@@ -131,6 +132,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [tab, setTab] = useState<CockpitTab>("ai");
     const [ctx, setCtx] = useState<OutlookMessageContext>({});
     const [bodyText, setBodyText] = useState<string>("");
+    const [bodyHtml, setBodyHtml] = useState<string>("");
     const [meta, setMeta] = useState<OdooMeta | null>(null);
     const [links, setLinks] = useState<LinkEntry[]>([]);
     const [attachments, setAttachments] = useState<Array<{ name: string; contentType: string; content: string }>>([]);
@@ -461,9 +463,10 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     detail: "A ler o email atual e os anexos disponíveis...",
                 });
             }
-            const [c, b, atts] = await Promise.all([
+            const [c, b, bh, atts] = await Promise.all([
                 getSelectedMessageContext(),
                 getEmailBodyText(),
+                getEmailBodyHtml(),
                 import("@/office").then(m => m.getAttachments())
             ]);
 
@@ -474,6 +477,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             lastItemTokenRef.current = freshTok;
             setCtx(c);
             setBodyText(b);
+            setBodyHtml(bh);
             setAttachments(atts || []);
             if (reason === "init") {
                 const hasEmailContext = Boolean(c.itemId || c.internetMessageId || c.conversationId || c.subject);
@@ -505,6 +509,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 fromName: c.fromName || "",
                 receivedAtIso: c.receivedDateTimeIso || "",
                 messageDateIso: c.receivedDateTimeIso || "",
+                bodyText: b,
+                bodyHtml: bh,
                 attachments: (atts || []).map((attachment) => ({
                     name: attachment.name,
                     contentType: attachment.contentType,
@@ -938,7 +944,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     return (
         <CockpitContext.Provider value={{
-            tab, setTab, ctx, bodyText, attachments, meta, links, msg, setMsg, refreshLinks, isLoading,
+            tab, setTab, ctx, bodyText, bodyHtml, attachments, meta, links, msg, setMsg, refreshLinks, isLoading,
             aiState: currentAiState,
             setAiState,
             files, addFile, removeFile, clearFiles,

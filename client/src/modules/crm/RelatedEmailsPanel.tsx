@@ -86,7 +86,7 @@ function dedupeRecordLinks(entries: LinkEntry[]): LinkEntry[] {
   });
 }
 
-function getCurrentEmailPayload(currentCtx: OutlookMessageContext) {
+function getCurrentEmailPayload(currentCtx: OutlookMessageContext, bodyText = "", bodyHtml = "") {
   return {
     itemId: String(currentCtx.itemId || "").trim(),
     internetMessageId: normalizeMessageId(currentCtx.internetMessageId),
@@ -96,6 +96,8 @@ function getCurrentEmailPayload(currentCtx: OutlookMessageContext) {
     fromName: String(currentCtx.fromName || "").trim(),
     receivedAtIso: String(currentCtx.receivedDateTimeIso || "").trim(),
     messageDateIso: String(currentCtx.receivedDateTimeIso || "").trim(),
+    bodyText: String(bodyText || "").trim(),
+    bodyHtml: String(bodyHtml || "").trim(),
   };
 }
 
@@ -110,6 +112,8 @@ function getRelatedEmailPayload(email: Partial<RelatedEmailEntry>) {
     emailWebLink: String(email.emailWebLink || "").trim(),
     receivedAtIso: String(email.receivedAtIso || email.messageDateIso || "").trim(),
     messageDateIso: String(email.messageDateIso || email.receivedAtIso || "").trim(),
+    bodyText: String(email.bodyText || "").trim(),
+    bodyHtml: String(email.bodyHtml || "").trim(),
     attachments: Array.isArray(email.attachments)
       ? email.attachments
         .map((attachment) => ({
@@ -610,7 +614,7 @@ export function RelatedEmailsPanel({
   onEditRecord: (model: string, recordId: number) => void;
   onStatus: (message: string) => void;
 }) {
-  const { activeGroupSelection, setActiveGroupForCurrentEmail } = useCockpit();
+  const { activeGroupSelection, setActiveGroupForCurrentEmail, bodyText, bodyHtml } = useCockpit();
   const [view, setView] = useState<"context" | "manual">("context");
   const [exploreMode, setExploreMode] = useState<ExploreMode>("records");
   const [manualModel, setManualModel] = useState<SupportedModel>("res.partner");
@@ -635,8 +639,8 @@ export function RelatedEmailsPanel({
   const groupLoadSeq = useRef(0);
 
   const emailPayload = useMemo(
-    () => getCurrentEmailPayload(currentCtx),
-    [currentCtx.itemId, currentCtx.internetMessageId, currentCtx.conversationId, currentCtx.subject, currentCtx.fromEmail, currentCtx.fromName, currentCtx.receivedDateTimeIso]
+    () => getCurrentEmailPayload(currentCtx, bodyText, bodyHtml),
+    [bodyHtml, bodyText, currentCtx.itemId, currentCtx.internetMessageId, currentCtx.conversationId, currentCtx.subject, currentCtx.fromEmail, currentCtx.fromName, currentCtx.receivedDateTimeIso]
   );
   const currentLinkSignature = useMemo(
     () =>
@@ -650,7 +654,7 @@ export function RelatedEmailsPanel({
   const currentContextEmail = useMemo<RelatedEmailEntry | null>(() => {
     if (!hasCurrentEmailIdentity(currentCtx)) return null;
     return {
-      ...getRelatedEmailPayload(currentCtx),
+      ...getCurrentEmailPayload(currentCtx, bodyText, bodyHtml),
       id: `current:${makeRelatedEmailSelectionKey(getCurrentEmailPayload(currentCtx))}`,
       relatedRecords: linkedRecords.map((record) => ({
         model: String(record.model || "").trim(),
@@ -662,7 +666,7 @@ export function RelatedEmailsPanel({
         ? [{ kind: "conversation", groupId: `conversation:${currentCtx.conversationId}`, groupName: "Conversa atual", conversationId: currentCtx.conversationId }]
         : [],
     };
-  }, [currentCtx, linkedRecords]);
+  }, [bodyHtml, bodyText, currentCtx, linkedRecords]);
   const conversationContextItems = useMemo(() => {
     const currentConversationId = String(currentCtx.conversationId || "").trim();
     const items = contextItems.filter((item) => belongsToCurrentConversation(item, currentConversationId));
