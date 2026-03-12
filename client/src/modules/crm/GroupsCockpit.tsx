@@ -30,6 +30,7 @@ type CurrentAttachmentCandidate = {
     size?: number;
     suspectedInline?: boolean;
     sourceLabel?: string;
+    ordinal?: number;
 };
 
 type GroupImageCandidate = CurrentAttachmentCandidate & {
@@ -53,7 +54,17 @@ function formatDate(value: string | undefined): string {
 }
 
 function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
-    return String(email?.id || email?.itemId || email?.internetMessageId || `${email?.conversationId || ""}|${email?.subject || ""}`);
+    const explicit =
+        String(email?.id || "").trim()
+        || String(email?.itemId || "").trim()
+        || normalizeMessageKey(String(email?.internetMessageId || "").trim());
+    if (explicit) return explicit;
+    return [
+        String(email?.conversationId || "").trim(),
+        String(email?.subject || "").trim().toLowerCase(),
+        String(email?.fromEmail || "").trim().toLowerCase(),
+        String(email?.messageDateIso || email?.receivedAtIso || "").trim(),
+    ].join("|");
 }
 
 function makeDocumentKey(document: Partial<GroupDocumentEntry>): string {
@@ -94,13 +105,46 @@ function buildAttachmentKey(emailKey: string, attachment: {
     name?: string;
     contentType?: string;
     size?: number;
+    ordinal?: number;
+    id?: string;
 }): string {
     return [
         normalizeMessageKey(emailKey),
         String(attachment.name || "").trim().toLowerCase(),
         String(attachment.contentType || "").trim().toLowerCase(),
         String(Number(attachment.size || 0) || 0),
+        String(attachment.id || attachment.ordinal || 0),
     ].join("|");
+}
+
+function emailMatchesCurrentContext(email: Partial<RelatedEmailEntry>, ctx: ReturnType<typeof useCockpit>["ctx"]): boolean {
+    const currentItemId = String(ctx.itemId || "").trim();
+    const emailItemId = String(email.itemId || "").trim();
+    if (currentItemId && emailItemId && currentItemId === emailItemId) return true;
+
+    const currentMessageId = normalizeMessageKey(ctx.internetMessageId);
+    const emailMessageId = normalizeMessageKey(email.internetMessageId);
+    if (currentMessageId && emailMessageId && currentMessageId === emailMessageId) return true;
+
+    const currentConversationId = String(ctx.conversationId || "").trim();
+    const emailConversationId = String(email.conversationId || "").trim();
+    const currentSubject = String(ctx.subject || "").trim().toLowerCase();
+    const emailSubject = String(email.subject || "").trim().toLowerCase();
+    const currentFrom = String(ctx.fromEmail || "").trim().toLowerCase();
+    const emailFrom = String(email.fromEmail || "").trim().toLowerCase();
+    const currentDate = String(ctx.receivedDateTimeIso || "").trim();
+    const emailDate = String(email.messageDateIso || email.receivedAtIso || "").trim();
+
+    return Boolean(
+        currentConversationId
+        && emailConversationId
+        && currentConversationId === emailConversationId
+        && currentSubject
+        && emailSubject
+        && currentSubject === emailSubject
+        && (!currentFrom || !emailFrom || currentFrom === emailFrom)
+        && (!currentDate || !emailDate || currentDate === emailDate)
+    );
 }
 
 function normalizeGroupStorageProvider(value: string | undefined): "cloud" | "local" | "onedrive" {
@@ -411,6 +455,7 @@ export const GroupsCockpit: React.FC = () => {
                 size: estimateBase64Size(attachment.content),
                 suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
                 sourceLabel: String(ctx.subject || "").trim(),
+                ordinal: index,
             }))
             .filter((attachment) => attachment.name && attachment.content)
             .sort((a, b) => {
@@ -429,16 +474,10 @@ export const GroupsCockpit: React.FC = () => {
         return map;
     }, [attachmentFlags]);
 
-    const selectedEmailMatchesCurrent = useMemo(() => {
-        if (!selectedEmail) return false;
-        const currentItemId = String(ctx.itemId || "").trim();
-        const selectedItemId = String(selectedEmail.itemId || "").trim();
-        if (currentItemId && selectedItemId && currentItemId === selectedItemId) return true;
-        const currentMessageId = normalizeMessageKey(ctx.internetMessageId);
-        const selectedMessageId = normalizeMessageKey(selectedEmail.internetMessageId);
-        if (currentMessageId && selectedMessageId && currentMessageId === selectedMessageId) return true;
-        return false;
-    }, [ctx.internetMessageId, ctx.itemId, selectedEmail]);
+    const selectedEmailMatchesCurrent = useMemo(
+        () => (selectedEmail ? emailMatchesCurrentContext(selectedEmail, ctx) : false),
+        [ctx, selectedEmail]
+    );
 
     const selectedEmailAttachmentCandidates = useMemo<CurrentAttachmentCandidate[]>(() => {
         if (!selectedEmail || !Array.isArray(selectedEmail.attachments) || !selectedEmail.attachments.length) return [];
@@ -457,6 +496,7 @@ export const GroupsCockpit: React.FC = () => {
                 size: Number(attachment.size || 0) || undefined,
                 suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
                 sourceLabel: String(selectedEmail.subject || "").trim(),
+                ordinal: index,
             }))
             .filter((attachment) => attachment.name)
             .sort((a, b) => {
@@ -478,24 +518,27 @@ export const GroupsCockpit: React.FC = () => {
         const rows: GroupImageCandidate[] = [];
         for (const email of selectedEmailsForImageManager) {
             const emailKey = makeEmailKey(email);
-            const useCurrentContent = selectedEmailMatchesCurrent && makeEmailKey(selectedEmail || {}) === emailKey;
+            const useCurrentContent = emailMatchesCurrentContext(email, ctx);
             const sourceAttachments = useCurrentContent
-                ? currentAttachmentCandidates.map((attachment) => ({
+                ? currentAttachmentCandidates.map((attachment, index) => ({
                     name: attachment.name,
                     contentType: attachment.contentType,
                     size: attachment.size,
                     content: attachment.content,
                     suspectedInline: attachment.suspectedInline,
                     sourceLabel: attachment.sourceLabel,
+                    id: attachment.id,
+                    ordinal: attachment.ordinal ?? index,
                 }))
                 : Array.isArray(email.attachments)
-                    ? email.attachments.map((attachment) => ({
+                    ? email.attachments.map((attachment, index) => ({
                         name: attachment.name,
                         contentType: attachment.contentType,
                         size: attachment.size,
                         content: "",
                         suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
                         sourceLabel: email.subject || "",
+                        ordinal: index,
                     }))
                     : [];
 
@@ -515,11 +558,18 @@ export const GroupsCockpit: React.FC = () => {
                     suspectedInline: Boolean(attachment.suspectedInline),
                     sourceLabel: String(attachment.sourceLabel || email.subject || "").trim(),
                     disposition,
+                    ordinal: attachment.ordinal,
                 });
             }
         }
-        return rows.sort((a, b) => a.name.localeCompare(b.name, "pt-PT"));
-    }, [attachmentFlagMap, currentAttachmentCandidates, selectedEmail, selectedEmailMatchesCurrent, selectedEmailsForImageManager]);
+        return rows.sort((a, b) => {
+            const nameDelta = a.name.localeCompare(b.name, "pt-PT");
+            if (nameDelta !== 0) return nameDelta;
+            const subjectDelta = String(a.emailSubject || "").localeCompare(String(b.emailSubject || ""), "pt-PT");
+            if (subjectDelta !== 0) return subjectDelta;
+            return String(a.attachmentKey).localeCompare(String(b.attachmentKey), "pt-PT");
+        });
+    }, [attachmentFlagMap, ctx, currentAttachmentCandidates, selectedEmailsForImageManager]);
 
     const filteredImageManagerCandidates = useMemo(() => {
         return imageManagerCandidates.filter((attachment) => {
