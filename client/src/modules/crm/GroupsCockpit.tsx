@@ -19,6 +19,7 @@ import {
 } from "@/api";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { addBase64AttachmentToCompose, openGroupExplorer, openLinkedOutlookEmail } from "@/office";
+import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 
@@ -215,11 +216,13 @@ function IconButton({
 function Section({
     title,
     subtitle,
+    helpText,
     actions,
     children,
 }: {
     title: string;
     subtitle?: string;
+    helpText?: string;
     actions?: React.ReactNode;
     children: React.ReactNode;
 }) {
@@ -227,7 +230,10 @@ function Section({
         <section style={styles.section}>
             <div style={styles.sectionHeader}>
                 <div style={styles.sectionTitleWrap}>
-                    <div style={styles.sectionTitle}>{title}</div>
+                    <div style={styles.titleRow}>
+                        <div style={styles.sectionTitle}>{title}</div>
+                        {helpText ? <HelpHint text={helpText} title={`Ajuda: ${title}`} /> : null}
+                    </div>
                     {subtitle ? <div style={styles.sectionSubtitle}>{subtitle}</div> : null}
                 </div>
                 {actions ? <div style={styles.sectionActions}>{actions}</div> : null}
@@ -886,6 +892,7 @@ export const GroupsCockpit: React.FC = () => {
             <Section
                 title="Grupos"
                 subtitle="Pesquisa grupos existentes ou cria um novo no mesmo campo."
+                helpText='Pesquisa um grupo pelo nome ou usa "/" para ver todos. O botão "+" cria um grupo novo.'
                 actions={
                     <>
                         <IconButton
@@ -1018,6 +1025,7 @@ export const GroupsCockpit: React.FC = () => {
 
             <Section
                 title="Emails"
+                helpText="Mostra os emails ligados ao grupo. Podes ligar o email aberto, abrir um email ou marcar varios para gerir imagens."
                 actions={
                     <>
                         <IconButton
@@ -1104,6 +1112,7 @@ export const GroupsCockpit: React.FC = () => {
             <Section
                 title="Documentos e acoes"
                 subtitle={selectedGroup ? "Documentos guardados no grupo e anexos disponiveis do email aberto." : "Seleciona um grupo para começar a gerir documentos."}
+                helpText="Aqui escolhes a origem dos anexos, guardas ficheiros no grupo e geres os documentos que ja foram registados."
                 actions={
                     <>
                         <IconButton
@@ -1174,7 +1183,10 @@ export const GroupsCockpit: React.FC = () => {
                         ) : null}
                         <div style={styles.documentSubsection}>
                             <div style={styles.documentHeaderRow}>
-                                <div style={styles.documentSubTitle}>Anexos de origem</div>
+                                <div style={styles.subTitleRow}>
+                                    <div style={styles.documentSubTitle}>Anexos de origem</div>
+                                    <HelpHint text="Escolhe se queres ver anexos do email aberto no Outlook ou do email selecionado acima." title="Ajuda: Anexos de origem" />
+                                </div>
                                 <div style={styles.sourceSwitch}>
                                     <button
                                         type="button"
@@ -1243,7 +1255,10 @@ export const GroupsCockpit: React.FC = () => {
                         </div>
 
                         <div style={styles.documentSubsection}>
-                            <div style={styles.documentSubTitle}>Documentos guardados</div>
+                            <div style={styles.subTitleRow}>
+                                <div style={styles.documentSubTitle}>Documentos guardados</div>
+                                <HelpHint text="Sao os ficheiros ja guardados neste grupo. Podes descarregar, anexar ou remover." title="Ajuda: Documentos guardados" />
+                            </div>
                             <div style={styles.scrollPaneBottom}>
                                 {documentsLoading && !groupDocuments.length ? (
                                     <PanelState compact tone="info" title="A carregar documentos" description="A listar os documentos já guardados neste grupo." />
@@ -1287,7 +1302,10 @@ export const GroupsCockpit: React.FC = () => {
                     <div style={styles.modalShell}>
                         <div style={styles.modalHeader}>
                             <div style={styles.modalTitleWrap}>
-                                <div style={styles.sectionTitle}>Imagens dos emails</div>
+                                <div style={styles.titleRow}>
+                                    <div style={styles.sectionTitle}>Imagens dos emails</div>
+                                    <HelpHint text="Seleciona imagens dos emails marcados, faz preview quando existir conteudo e decide guardar ou dispensar." title="Ajuda: Imagens dos emails" />
+                                </div>
                                 <div style={styles.sectionSubtitle}>
                                     {selectedGroup ? `Grupo ${selectedGroup.name} · ${selectedEmailsForImageManager.length} email(s) selecionado(s)` : "Seleciona um grupo"}
                                 </div>
@@ -1316,7 +1334,10 @@ export const GroupsCockpit: React.FC = () => {
 
                         <div style={styles.modalGrid}>
                             <div style={styles.modalColumn}>
-                                <div style={styles.documentSubTitle}>Imagens disponiveis</div>
+                                <div style={styles.subTitleRow}>
+                                    <div style={styles.documentSubTitle}>Imagens disponiveis</div>
+                                    <HelpHint text="Lista as imagens ativas, dispensaveis ou todas, conforme o filtro escolhido." title="Ajuda: Imagens disponiveis" />
+                                </div>
                                 <div style={styles.modalScrollPane}>
                                     {!filteredImageManagerCandidates.length ? (
                                         <PanelState compact tone="info" title="Sem imagens para mostrar" description="Seleciona emails com imagens ou muda o filtro para ver as que marcaste como dispensaveis." />
@@ -1343,7 +1364,10 @@ export const GroupsCockpit: React.FC = () => {
                             </div>
 
                             <div style={styles.modalColumn}>
-                                <div style={styles.documentSubTitle}>Preview</div>
+                                <div style={styles.subTitleRow}>
+                                    <div style={styles.documentSubTitle}>Preview</div>
+                                    <HelpHint text="Seleciona uma unica imagem para a rever aqui antes de guardar ou dispensar." title="Ajuda: Preview" />
+                                </div>
                                 <div style={styles.modalPreviewPane}>
                                     {!singleSelectedImage ? (
                                         <PanelState compact tone="info" title="Seleciona uma imagem" description="Escolhe uma única imagem para a rever aqui antes de guardar ou dispensar." />
@@ -1393,6 +1417,12 @@ const styles: Record<string, React.CSSProperties> = {
     sectionTitleWrap: {
         display: "grid",
         gap: "2px",
+        minWidth: 0,
+    },
+    titleRow: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "5px",
         minWidth: 0,
     },
     sectionTitle: {
@@ -1536,6 +1566,12 @@ const styles: Record<string, React.CSSProperties> = {
         textTransform: "uppercase",
         letterSpacing: "0.04em",
         color: "#42526E",
+    },
+    subTitleRow: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "5px",
+        minWidth: 0,
     },
     documentHeaderRow: {
         display: "flex",

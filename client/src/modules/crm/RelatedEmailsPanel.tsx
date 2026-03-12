@@ -15,6 +15,7 @@ import {
 } from "@/api";
 import { openLinkedOutlookEmail, type OutlookMessageContext } from "@/office";
 import { type CockpitSettingsV1 } from "@/settings";
+import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 
@@ -149,6 +150,7 @@ function hasCurrentEmailIdentity(currentCtx: OutlookMessageContext): boolean {
 function CompactSection({
   title,
   subtitle,
+  helpText,
   count,
   defaultOpen = true,
   actions,
@@ -156,6 +158,7 @@ function CompactSection({
 }: {
   title: string;
   subtitle?: string;
+  helpText?: string;
   count?: string | number;
   defaultOpen?: boolean;
   actions?: React.ReactNode;
@@ -168,7 +171,10 @@ function CompactSection({
         <button type="button" style={styles.compactToggle} onClick={() => setOpen((value) => !value)} title={open ? "Recolher secao" : "Expandir secao"}>
           {open ? <Icons.ArrowUp size={11} /> : <Icons.ArrowDown size={11} />}
           <span style={styles.compactHeaderText}>
-            <span style={styles.compactTitle}>{title}</span>
+            <span style={styles.titleRow}>
+              <span style={styles.compactTitle}>{title}</span>
+              {helpText ? <HelpHint text={helpText} title={`Ajuda: ${title}`} /> : null}
+            </span>
             {subtitle ? <span style={styles.compactSubtitle}>{subtitle}</span> : null}
           </span>
         </button>
@@ -776,6 +782,7 @@ export function RelatedEmailsPanel({
         <CompactSection
           title="Conversa atual"
           subtitle="Seleciona em lote os emails desta conversa para os ligar a um grupo manual."
+          helpText="Marca emails da mesma conversa e liga-os em lote a um grupo manual."
           count={contextLoading ? "..." : conversationContextItems.length}
           defaultOpen={false}
           actions={<IconActionButton title="Atualizar conversa" onClick={() => setContextReloadToken((value) => value + 1)} icon={<Icons.RefreshCw size={12} />} />}
@@ -807,6 +814,7 @@ export function RelatedEmailsPanel({
         <CompactSection
           title="Relacionados agora"
           subtitle="Uniao de contexto Odoo, conversa Outlook e grupos manuais."
+          helpText="Mostra outros emails relacionados com o email aberto, juntando conversa, grupos e Odoo."
           count={contextLoading ? "..." : contextItems.length}
           actions={<IconActionButton title="Atualizar contexto" onClick={() => setContextReloadToken((value) => value + 1)} icon={<Icons.RefreshCw size={12} />} />}
         >
@@ -821,7 +829,7 @@ export function RelatedEmailsPanel({
           )}
         </CompactSection>
 
-        <CompactSection title="Ligacoes Odoo atuais" subtitle="Registos Odoo ligados ao email aberto." count={linkedRecords.length} defaultOpen={false}>
+        <CompactSection title="Ligacoes Odoo atuais" subtitle="Registos Odoo ligados ao email aberto." helpText="Aqui ves os registos Odoo que ja estao ligados ao email aberto." count={linkedRecords.length} defaultOpen={false}>
           {linkedRecords.length ? (
             <div style={styles.tagRow}>
               {linkedRecords.map((record) => (
@@ -835,7 +843,7 @@ export function RelatedEmailsPanel({
           )}
         </CompactSection>
 
-        <CompactSection title="Grupos manuais" subtitle="Liga emails entre si mesmo quando nao existe processo Odoo." count={customGroups.length}>
+        <CompactSection title="Grupos manuais" subtitle="Liga emails entre si mesmo quando nao existe processo Odoo." helpText="Cria grupos manuais para juntar emails que nao dependem de um registo Odoo." count={customGroups.length}>
           <div style={styles.groupManager}>
             <GroupSearchPicker selected={selectedGroup} onSelect={setSelectedGroup} />
             <div style={styles.inlineActionRow}>
@@ -886,7 +894,7 @@ export function RelatedEmailsPanel({
           </div>
         ) : null}
 
-        <CompactSection title="Emails do registo" subtitle="Historico persistido para a entidade escolhida." count={manualLoading ? "..." : manualItems.length}>
+        <CompactSection title="Emails do registo" subtitle="Historico persistido para a entidade escolhida." helpText="Lista os emails ligados ao registo Odoo que escolheste." count={manualLoading ? "..." : manualItems.length}>
           {manualLoading ? (
             <PanelState tone="loading" title="A carregar emails relacionados" description="Estamos a procurar emails ligados a este registo." compact />
           ) : manualError ? (
@@ -929,7 +937,7 @@ export function RelatedEmailsPanel({
           </div>
         ) : null}
 
-        <CompactSection title="Emails do grupo" subtitle="Vista manual para bundles de emails sem Odoo." count={groupLoading ? "..." : groupItems.length}>
+        <CompactSection title="Emails do grupo" subtitle="Vista manual para bundles de emails sem Odoo." helpText="Mostra os emails ligados ao grupo manual selecionado." count={groupLoading ? "..." : groupItems.length}>
           {groupLoading ? (
             <PanelState tone="loading" title="A carregar grupo" description="Estamos a reunir os emails deste grupo." compact />
           ) : groupError ? (
@@ -948,7 +956,10 @@ export function RelatedEmailsPanel({
     <div style={styles.section}>
       <div style={styles.header}>
         <div style={styles.headerLead}>
-          <span style={styles.headerTitle}>Emails relacionados</span>
+          <span style={styles.titleRow}>
+            <span style={styles.headerTitle}>Emails relacionados</span>
+            <HelpHint text="Explora emails ligados ao contexto atual por conversa, grupos manuais e registos Odoo." title="Ajuda: Emails relacionados" />
+          </span>
           <span style={styles.headerHint}>Modelo central de contexto, conversa e grupos.</span>
         </div>
         <div style={styles.headerActions}>
@@ -976,6 +987,7 @@ const styles: Record<string, React.CSSProperties> = {
   section: { border: "1px solid #DFE1E6", borderRadius: "10px", overflow: "hidden", background: "#FFFFFF" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap", padding: "7px 9px", background: "#F7F8FA", borderBottom: "1px solid #DFE1E6" },
   headerLead: { display: "grid", gap: "1px", minWidth: 0 },
+  titleRow: { display: "inline-flex", alignItems: "center", gap: "5px", minWidth: 0 },
   headerTitle: { fontSize: "11px", fontWeight: 800, color: "#172B4D", textTransform: "uppercase", letterSpacing: "0.05em" },
   headerHint: { display: "none" },
   headerActions: { display: "flex", gap: "5px", flexWrap: "wrap" },
