@@ -808,9 +808,11 @@ app.post("/api/odoo/link-email", async (req, res) => {
       internetMessageId ? `<p style="margin: 0 0 4px 0;"><b>ID:</b> <code>${escapeHtml(internetMessageId)}</code></p>` : "",
       emailWebLink ? `<p style="margin: 0 0 4px 0;"><a href="${escapeHtml(emailWebLink)}" target="_blank" rel="noreferrer" style="color: #0078d4; text-decoration: none;">Ver no Outlook</a></p>` : "",
       `</div>`,
-      normalizedEmailBody ? `<blockquote style="margin: 0; padding: 0 0 0 12px; border-left: 1px solid #ccc; color: #333;">` : "",
-      normalizedEmailBody,
-      normalizedEmailBody ? `</blockquote>` : "",
+      normalizedEmailBody.html
+        ? (normalizedEmailBody.isRichHtml
+          ? `<div style="margin: 0; color: #333; overflow-x: auto;">${normalizedEmailBody.html}</div>`
+          : `<blockquote style="margin: 0; padding: 0 0 0 12px; border-left: 1px solid #ccc; color: #333;">${normalizedEmailBody.html}</blockquote>`)
+        : "",
       `</div>`
     ].filter(Boolean).join("\n");
 
@@ -1137,10 +1139,47 @@ function normalizeStoredDocumentMimeType(value, name) {
   return "application/octet-stream";
 }
 
+function sanitizeEmailHtmlForOdoo(html) {
+  let cleaned = String(html || "").trim();
+  if (!cleaned) return "";
+
+  const bodyMatch = cleaned.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  if (bodyMatch?.[1]) cleaned = bodyMatch[1];
+
+  cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, "");
+  cleaned = cleaned.replace(/<(script|style|meta|link|title|head|xml|svg|canvas|noscript|iframe)[^>]*>[\s\S]*?<\/\1>/gi, "");
+  cleaned = cleaned.replace(/<img\b[^>]*>/gi, "");
+  cleaned = cleaned.replace(/<picture\b[^>]*>[\s\S]*?<\/picture>/gi, "");
+  cleaned = cleaned.replace(/<source\b[^>]*>/gi, "");
+  cleaned = cleaned.replace(/<\/?(o:p|v:[^>\s]+|w:[^>\s]+)\b[^>]*>/gi, "");
+
+  // Remove common signature wrappers while keeping the rest of the email HTML intact.
+  cleaned = cleaned.replace(/<(div|table|section)[^>]*(?:class|id)=["'][^"']*(?:gmail_signature|signature|x_signature|moz-signature|apple-mail-signature)[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi, "");
+
+  // Strip risky handlers and javascript: links, but keep inline table/text formatting.
+  cleaned = cleaned.replace(/\s+on[a-z]+\s*=\s*(['"]).*?\1/gi, "");
+  cleaned = cleaned.replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, "");
+  cleaned = cleaned.replace(/\s(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi, "");
+
+  cleaned = cleaned.replace(/<(\/?)(html|body)\b[^>]*>/gi, "");
+  cleaned = cleaned.replace(/(?:<div>\s*<\/div>|<p>\s*<\/p>|<span>\s*<\/span>)+/gi, "");
+  cleaned = cleaned.trim();
+
+  return cleaned;
+}
+
 function normalizeEmailBodyForOdoo(bodyHtml, bodyText) {
+  const richHtml = sanitizeEmailHtmlForOdoo(bodyHtml);
+  if (richHtml) {
+    return { html: richHtml, isRichHtml: true };
+  }
+
   const fromHtml = htmlToReadableText(bodyHtml);
   const fromText = String(bodyText || "").trim();
-  return plainTextToHtml(fromHtml || fromText);
+  return {
+    html: plainTextToHtml(fromHtml || fromText),
+    isRichHtml: false,
+  };
 }
 
 const host = process.env.HOST || "0.0.0.0"; // force IPv4 bind
