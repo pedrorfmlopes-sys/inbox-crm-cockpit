@@ -721,9 +721,19 @@ export function RelatedEmailsPanel({
     const preferredId =
       activeGroupSelection.emailKey === currentEmailIdentityKey
         ? String(activeGroupSelection.groupId || "").trim()
-        : String(customGroups[0]?.id || "").trim();
-    const nextGroup = customGroups.find((group) => group.id === preferredId) || null;
-    setSelectedGroup((current) => (current?.id === nextGroup?.id ? current : nextGroup));
+        : "";
+    setSelectedGroup((current) => {
+      if (preferredId) {
+        if (current?.id === preferredId) return current;
+        return customGroups.find((group) => group.id === preferredId) || current || null;
+      }
+
+      if (current?.id) {
+        return customGroups.find((group) => group.id === current.id) || current;
+      }
+
+      return null;
+    });
   }, [activeGroupSelection, contextGroups, currentEmailIdentityKey]);
 
   useEffect(() => {
