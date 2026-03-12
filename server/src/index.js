@@ -983,6 +983,38 @@ app.get("/api/links/groups/:groupId/documents", async (req, res) => {
   }
 });
 
+app.get("/api/links/groups/:groupId/documents/:documentId/content", async (req, res) => {
+  try {
+    const groupId = String(req.params.groupId || "").trim();
+    const documentId = String(req.params.documentId || "").trim();
+    const download = String(req.query.download || "").trim() === "1";
+    const documents = await listDocumentsByGroup(groupId);
+    const document = Array.isArray(documents)
+      ? documents.find((entry) => String(entry?.id || "").trim() === documentId)
+      : null;
+
+    if (!document?.contentBase64) {
+      return res.status(404).json({ ok: false, error: "group_document_not_found" });
+    }
+
+    const contentType = normalizeStoredDocumentMimeType(document.contentType, document.name);
+    const fileName = String(document.name || "documento").replace(/["\r\n]/g, "_");
+    const buffer = Buffer.from(String(document.contentBase64 || "").replace(/^data:[^,]+,/, ""), "base64");
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Length", String(buffer.length));
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader(
+      "Content-Disposition",
+      `${download ? "attachment" : "inline"}; filename="${fileName}"`
+    );
+    return res.send(buffer);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_document_content_failed", details: String(e?.message || e) });
+  }
+});
+
 app.get("/api/links/groups/:groupId/attachment-flags", async (req, res) => {
   try {
     const flags = await listAttachmentFlagsByGroup(req.params.groupId);
@@ -1084,6 +1116,22 @@ function plainTextToHtml(text) {
     .split(/\n{2,}/)
     .map((block) => `<p style="margin: 0 0 10px 0;">${escapeHtml(block).replace(/\n/g, "<br/>")}</p>`)
     .join("\n");
+}
+
+function normalizeStoredDocumentMimeType(value, name) {
+  const raw = String(value || "").trim().toLowerCase();
+  const fileName = String(name || "").trim().toLowerCase();
+  if (raw === "application/x-pdf" || (!raw && /\.pdf$/.test(fileName))) return "application/pdf";
+  if (raw === "image/jpg") return "image/jpeg";
+  if (raw) return raw;
+  if (/\.docx$/.test(fileName)) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (/\.doc$/.test(fileName)) return "application/msword";
+  if (/\.xlsx$/.test(fileName)) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (/\.xls$/.test(fileName)) return "application/vnd.ms-excel";
+  if (/\.pptx$/.test(fileName)) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  if (/\.ppt$/.test(fileName)) return "application/vnd.ms-powerpoint";
+  if (/\.txt$/.test(fileName)) return "text/plain; charset=utf-8";
+  return "application/octet-stream";
 }
 
 function normalizeEmailBodyForOdoo(bodyHtml, bodyText) {

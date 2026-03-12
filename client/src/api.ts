@@ -564,6 +564,17 @@ export async function getGroupDocuments(groupId: string): Promise<GroupDocumentE
   return Array.isArray(response?.documents) ? response.documents : [];
 }
 
+export function getGroupDocumentContentUrl(groupId: string, documentId: string, options?: { download?: boolean }): string {
+  const normalizedGroupId = encodeURIComponent(String(groupId || "").trim());
+  const normalizedDocumentId = encodeURIComponent(String(documentId || "").trim());
+  const url = new URL(
+    `/api/links/groups/${normalizedGroupId}/documents/${normalizedDocumentId}/content`,
+    window.location.origin
+  );
+  if (options?.download) url.searchParams.set("download", "1");
+  return url.toString();
+}
+
 export async function getGroupAttachmentFlags(groupId: string): Promise<GroupAttachmentFlagEntry[]> {
   const params = new URLSearchParams();
   params.set("_ts", String(Date.now()));

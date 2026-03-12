@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteGroupDocument,
+  getGroupDocumentContentUrl,
   getGroupDocuments,
   getGroupEmails,
   listLinkGroups,
@@ -23,6 +24,7 @@ type PreviewMode = "email" | "document";
 type PreviewState =
   | { kind: "image"; dataUrl: string }
   | { kind: "pdf"; dataUrl: string }
+  | { kind: "office"; url: string }
   | { kind: "text"; text: string }
   | { kind: "unsupported" };
 type EmailAttachmentEntry = NonNullable<RelatedEmailEntry["attachments"]>[number];
@@ -199,22 +201,59 @@ function getEmailTimestamp(email: RelatedEmailEntry): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function inferDocumentKind(document: GroupDocumentEntry): "image" | "pdf" | "text" | "unsupported" {
+function inferDocumentKind(document: GroupDocumentEntry): "image" | "pdf" | "office" | "text" | "unsupported" {
   const name = String(document.name || "").toLowerCase();
   const type = normalizeDocumentMimeType(document.contentType, document.name);
-  if (!stripDataUrlPrefix(document.contentBase64)) return "unsupported";
   if (type.startsWith("image/") || /\.(png|jpe?g|gif|bmp|webp|svg)$/.test(name)) return "image";
   if (type.includes("pdf") || /\.pdf$/.test(name)) return "pdf";
+  if (
+    type === "application/msword"
+    || type === "application/vnd.ms-excel"
+    || type === "application/vnd.ms-powerpoint"
+    || type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    || type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    || type === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    || /\.(docx?|xlsx?|pptx?)$/.test(name)
+  ) {
+    return "office";
+  }
+  if (!stripDataUrlPrefix(document.contentBase64)) return "unsupported";
   if (type.startsWith("text/") || type.includes("json") || type.includes("xml") || type.includes("csv") || /\.(txt|md|json|xml|csv|log|ya?ml)$/.test(name)) return "text";
   return "unsupported";
 }
 
-function buildDocumentPreview(document: GroupDocumentEntry | null): PreviewState | null {
-  if (!document?.contentBase64) return null;
+function canUseOfficeWebViewer(): boolean {
+  try {
+    const url = new URL(window.location.origin);
+    const hostname = String(url.hostname || "").trim().toLowerCase();
+    return Boolean(
+      /^https?:$/i.test(url.protocol)
+      && hostname
+      && hostname !== "localhost"
+      && hostname !== "127.0.0.1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildOfficePreviewUrl(groupId: string, document: GroupDocumentEntry | null): string {
+  if (!groupId || !document?.id || !canUseOfficeWebViewer()) return "";
+  const sourceUrl = getGroupDocumentContentUrl(groupId, document.id);
+  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
+}
+
+function buildDocumentPreview(groupId: string, document: GroupDocumentEntry | null): PreviewState | null {
+  if (!document) return null;
+  const kind = inferDocumentKind(document);
+  if (kind === "office") {
+    const url = buildOfficePreviewUrl(groupId, document);
+    return url ? { kind, url } : { kind: "unsupported" };
+  }
+  if (!document.contentBase64) return null;
   const base64 = stripDataUrlPrefix(document.contentBase64);
   if (!base64) return null;
   const dataUrl = `data:${normalizeDocumentMimeType(document.contentType, document.name)};base64,${base64}`;
-  const kind = inferDocumentKind(document);
   if (kind === "image") return { kind, dataUrl };
   if (kind === "pdf") return { kind, dataUrl };
   if (kind === "text") {
@@ -474,7 +513,10 @@ export default function GroupExplorerApp(): JSX.Element {
     return mergeEmailAttachments(persisted, liveCurrentAttachments);
   }, [liveCurrentAttachments, liveCurrentContext, selectedEmail]);
 
-  const selectedDocumentPreview = useMemo(() => buildDocumentPreview(selectedDocument), [selectedDocument]);
+  const selectedDocumentPreview = useMemo(
+    () => buildDocumentPreview(selectedGroupId, selectedDocument),
+    [selectedDocument, selectedGroupId]
+  );
   const selectedEmailPreviewHtml = useMemo(
     () => buildEmailPreviewHtml(selectedEmail, selectedEmailAttachments),
     [selectedEmail, selectedEmailAttachments]
@@ -849,10 +891,18 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
               <div style={styles.previewFrame}><img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} /></div>
             ) : selectedDocumentPreview?.kind === "pdf" ? (
               <div style={styles.previewFrame}><iframe title={selectedDocument.name} src={selectedDocumentPreview.dataUrl} style={styles.previewIframe} /></div>
+            ) : selectedDocumentPreview?.kind === "office" ? (
+              <div style={styles.previewFrame}>
+                <iframe
+                  title={selectedDocument.name}
+                  src={selectedDocumentPreview.url}
+                  style={styles.previewIframe}
+                />
+              </div>
             ) : selectedDocumentPreview?.kind === "text" ? (
               <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre>
             ) : (
-              <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode ser descarregado ou anexado, mas ainda nao tem preview interno para este formato." />
+              <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode ser descarregado ou anexado. Alguns formatos Office podem exigir URL publica para preview." />
             )}
           </section>
         </div>
