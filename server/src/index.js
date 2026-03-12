@@ -17,6 +17,7 @@ import {
   deleteDocumentFromGroup,
   deleteCustomGroup,
   getRelatedEmails,
+  listAttachmentFlagsByGroup,
   listDocumentsByGroup,
   listCustomGroups,
   listEmailsByGroup,
@@ -24,6 +25,7 @@ import {
   listLinksByRecord,
   removeEmailFromGroup,
   registerRelevantEmail,
+  saveAttachmentFlagsToGroup,
   saveDocumentsToGroup,
   updateCustomGroup,
 } from "./linkStore.js";
@@ -978,6 +980,26 @@ app.get("/api/links/groups/:groupId/documents", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_documents_failed", details: String(e?.message || e) });
+  }
+});
+
+app.get("/api/links/groups/:groupId/attachment-flags", async (req, res) => {
+  try {
+    const flags = await listAttachmentFlagsByGroup(req.params.groupId);
+    return res.json({ ok: true, flags });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_attachment_flags_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/:groupId/attachment-flags", async (req, res) => {
+  try {
+    const result = await saveAttachmentFlagsToGroup(req.params.groupId, req.body || {});
+    return res.json(result);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_attachment_flags_save_failed", details: String(e?.message || e) });
   }
 });
 

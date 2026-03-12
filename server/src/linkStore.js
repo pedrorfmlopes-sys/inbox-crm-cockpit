@@ -90,6 +90,7 @@ function createEmptyStore() {
     entityLinks: {},
     emailEntityLinks: {},
     groupDocuments: {},
+    groupAttachmentFlags: {},
   };
 }
 
@@ -282,7 +283,21 @@ function hydrateStore(raw) {
   store.entityLinks = source.entityLinks && typeof source.entityLinks === "object" ? source.entityLinks : {};
   store.emailEntityLinks = source.emailEntityLinks && typeof source.emailEntityLinks === "object" ? source.emailEntityLinks : {};
   store.groupDocuments = source.groupDocuments && typeof source.groupDocuments === "object" ? source.groupDocuments : {};
+  store.groupAttachmentFlags = source.groupAttachmentFlags && typeof source.groupAttachmentFlags === "object" ? source.groupAttachmentFlags : {};
   return store;
+}
+
+function normalizeAttachmentFlagInput(input = {}) {
+  return {
+    attachmentKey: normalizeString(input?.attachmentKey),
+    emailKey: normalizeString(input?.emailKey),
+    attachmentName: normalizeString(input?.attachmentName),
+    contentType: normalizeString(input?.contentType),
+    size: Number(input?.size || 0) || 0,
+    disposition: normalizeString(input?.disposition) || "dismissed",
+    createdAt: normalizeString(input?.createdAt) || nowIso(),
+    updatedAt: normalizeString(input?.updatedAt) || nowIso(),
+  };
 }
 
 function upsertConversationIndex(store, conversationId, emailId) {
@@ -571,6 +586,20 @@ function mapDbGroupDocumentRow(row) {
   });
 }
 
+function mapDbGroupAttachmentFlagRow(row) {
+  if (!row) return null;
+  return normalizeAttachmentFlagInput({
+    attachmentKey: row.attachment_key,
+    emailKey: row.email_key,
+    attachmentName: row.attachment_name,
+    contentType: row.content_type,
+    size: row.size_bytes,
+    disposition: row.disposition,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
 async function upsertDbCustomGroup(group) {
   if (!db.isEnabled()) return;
   await db.query(
@@ -637,6 +666,49 @@ async function upsertDbGroupDocument(groupId, input) {
       doc.updatedAt,
     ]
   );
+}
+
+async function upsertDbGroupAttachmentFlag(groupId, input) {
+  if (!db.isEnabled()) return;
+  const gid = normalizeString(groupId);
+  const flag = normalizeAttachmentFlagInput(input);
+  if (!gid || !flag.attachmentKey) return;
+
+  await db.query(
+    `INSERT INTO crm_custom_group_attachment_flags
+      (group_id, attachment_key, email_key, attachment_name, content_type, size_bytes, disposition, created_at, updated_at)
+     VALUES
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (group_id, attachment_key) DO UPDATE SET
+      email_key = EXCLUDED.email_key,
+      attachment_name = EXCLUDED.attachment_name,
+      content_type = EXCLUDED.content_type,
+      size_bytes = EXCLUDED.size_bytes,
+      disposition = EXCLUDED.disposition,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      gid,
+      flag.attachmentKey,
+      flag.emailKey,
+      flag.attachmentName,
+      flag.contentType,
+      flag.size,
+      flag.disposition,
+      flag.createdAt,
+      flag.updatedAt,
+    ]
+  );
+}
+
+async function listDbGroupAttachmentFlags(groupId) {
+  if (!db.isEnabled()) return [];
+  const gid = normalizeString(groupId);
+  if (!gid) return [];
+  const result = await db.query(
+    `SELECT * FROM crm_custom_group_attachment_flags WHERE group_id = $1 ORDER BY updated_at DESC, created_at DESC`,
+    [gid]
+  );
+  return (result?.rows || []).map(mapDbGroupAttachmentFlagRow).filter(Boolean);
 }
 
 async function listDbGroupDocuments(groupId) {
@@ -964,6 +1036,23 @@ async function ensureCustomGroupDb() {
 
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_documents_group_id ON crm_custom_group_documents (group_id);`);
 
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS crm_custom_group_attachment_flags (
+        group_id TEXT NOT NULL REFERENCES crm_custom_groups(id) ON DELETE CASCADE,
+        attachment_key TEXT NOT NULL,
+        email_key TEXT,
+        attachment_name TEXT NOT NULL,
+        content_type TEXT,
+        size_bytes INTEGER DEFAULT 0,
+        disposition TEXT NOT NULL DEFAULT 'dismissed',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (group_id, attachment_key)
+      );
+    `);
+
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_attachment_flags_group_id ON crm_custom_group_attachment_flags (group_id);`);
+
     const store = readState();
     const customGroups = Object.values(store.groups || {}).filter((group) => group?.kind === CUSTOM_GROUP_KIND);
     for (const group of customGroups) {
@@ -974,6 +1063,9 @@ async function ensureCustomGroupDb() {
       }
       for (const doc of store.groupDocuments[group.id] || []) {
         await upsertDbGroupDocument(group.id, doc);
+      }
+      for (const flag of store.groupAttachmentFlags[group.id] || []) {
+        await upsertDbGroupAttachmentFlag(group.id, flag);
       }
     }
   })().catch((error) => {
@@ -1321,6 +1413,7 @@ export async function deleteCustomGroup(groupId) {
   }
   delete store.groupMembers[gid];
   delete store.groupDocuments[gid];
+  delete store.groupAttachmentFlags[gid];
   delete store.groups[gid];
   writeStore(store);
 
@@ -1395,6 +1488,74 @@ export async function listDocumentsByGroup(groupId) {
   }
 
   return fileRows.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+}
+
+export async function listAttachmentFlagsByGroup(groupId) {
+  const store = readState();
+  const gid = normalizeString(groupId);
+  const fileRows = Array.isArray(store.groupAttachmentFlags?.[gid])
+    ? store.groupAttachmentFlags[gid].map((entry) => normalizeAttachmentFlagInput(entry)).filter((entry) => entry.attachmentKey)
+    : [];
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      const dbRows = await listDbGroupAttachmentFlags(gid);
+      const merged = new Map();
+      for (const flag of [...fileRows, ...dbRows]) {
+        if (!flag?.attachmentKey) continue;
+        merged.set(flag.attachmentKey, flag);
+      }
+      return Array.from(merged.values()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Attachment Flag Query Error, falling back to central file store:", error.message);
+      else console.error("[linkStore] DB Attachment Flag Query Error, falling back to central file store:", error);
+    }
+  }
+
+  return fileRows.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+}
+
+export async function saveAttachmentFlagsToGroup(groupId, input) {
+  const store = readState();
+  const gid = normalizeString(groupId);
+  const group = store.groups[gid];
+  if (!gid || !group || group.kind !== CUSTOM_GROUP_KIND) throw new Error("Grupo inválido.");
+
+  const entries = Array.isArray(input?.entries)
+    ? input.entries.map((entry) => normalizeAttachmentFlagInput(entry)).filter((entry) => entry.attachmentKey)
+    : [];
+  if (!entries.length) return { ok: true, flags: await listAttachmentFlagsByGroup(gid) };
+
+  const current = Array.isArray(store.groupAttachmentFlags[gid])
+    ? store.groupAttachmentFlags[gid].map((entry) => normalizeAttachmentFlagInput(entry))
+    : [];
+  const byKey = new Map(current.map((entry) => [entry.attachmentKey, entry]));
+  for (const entry of entries) {
+    byKey.set(entry.attachmentKey, {
+      ...byKey.get(entry.attachmentKey),
+      ...entry,
+      updatedAt: nowIso(),
+      createdAt: byKey.get(entry.attachmentKey)?.createdAt || entry.createdAt || nowIso(),
+    });
+  }
+  store.groupAttachmentFlags[gid] = Array.from(byKey.values()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+  if (store.groups[gid]) store.groups[gid].updatedAt = nowIso();
+  writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      for (const entry of entries) {
+        await upsertDbGroupAttachmentFlag(gid, entry);
+      }
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Attachment Flag Save Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Attachment Flag Save Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return { ok: true, flags: await listAttachmentFlagsByGroup(gid) };
 }
 
 export async function saveDocumentsToGroup(groupId, input) {

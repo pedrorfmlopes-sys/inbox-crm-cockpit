@@ -4,11 +4,14 @@ import {
     createLinkGroup,
     deleteLinkGroup,
     deleteGroupDocument,
+    getGroupAttachmentFlags,
     getGroupEmails,
     getGroupDocuments,
     listLinkGroups,
     removeEmailFromLinkGroup,
+    saveGroupAttachmentFlags,
     saveGroupDocuments,
+    type GroupAttachmentFlagEntry,
     type GroupDocumentEntry,
     type LinkGroupEntry,
     type RelatedEmailEntry,
@@ -27,6 +30,13 @@ type CurrentAttachmentCandidate = {
     size?: number;
     suspectedInline?: boolean;
     sourceLabel?: string;
+};
+
+type GroupImageCandidate = CurrentAttachmentCandidate & {
+    attachmentKey: string;
+    emailKey: string;
+    emailSubject?: string;
+    disposition?: string;
 };
 
 function formatDate(value: string | undefined): string {
@@ -71,6 +81,26 @@ function sanitizePathSegment(value: string): string {
 
 function normalizeMessageKey(value: string | undefined): string {
     return String(value || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+}
+
+function isImageAttachment(name: string | undefined, contentType: string | undefined): boolean {
+    const lowerType = String(contentType || "").trim().toLowerCase();
+    if (lowerType.startsWith("image/")) return true;
+    const lowerName = String(name || "").trim().toLowerCase();
+    return [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"].some((ext) => lowerName.endsWith(ext));
+}
+
+function buildAttachmentKey(emailKey: string, attachment: {
+    name?: string;
+    contentType?: string;
+    size?: number;
+}): string {
+    return [
+        normalizeMessageKey(emailKey),
+        String(attachment.name || "").trim().toLowerCase(),
+        String(attachment.contentType || "").trim().toLowerCase(),
+        String(Number(attachment.size || 0) || 0),
+    ].join("|");
 }
 
 function normalizeGroupStorageProvider(value: string | undefined): "cloud" | "local" | "onedrive" {
@@ -171,20 +201,27 @@ export const GroupsCockpit: React.FC = () => {
     const [selectedGroupId, setSelectedGroupId] = useState("");
     const [selectedEmailKey, setSelectedEmailKey] = useState("");
     const [selectedDocumentId, setSelectedDocumentId] = useState("");
+    const [selectedGroupEmailKeys, setSelectedGroupEmailKeys] = useState<string[]>([]);
     const [groupEmails, setGroupEmails] = useState<RelatedEmailEntry[]>([]);
     const [groupDocuments, setGroupDocuments] = useState<GroupDocumentEntry[]>([]);
+    const [attachmentFlags, setAttachmentFlags] = useState<GroupAttachmentFlagEntry[]>([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
     const [emailsLoading, setEmailsLoading] = useState(false);
     const [documentsLoading, setDocumentsLoading] = useState(false);
+    const [attachmentFlagsLoading, setAttachmentFlagsLoading] = useState(false);
     const [groupsError, setGroupsError] = useState<string | null>(null);
     const [emailsError, setEmailsError] = useState<string | null>(null);
     const [documentsError, setDocumentsError] = useState<string | null>(null);
+    const [attachmentFlagsError, setAttachmentFlagsError] = useState<string | null>(null);
     const [busyAction, setBusyAction] = useState(false);
     const [reloadToken, setReloadToken] = useState(0);
     const [emailsExpanded, setEmailsExpanded] = useState(true);
     const [documentsExpanded, setDocumentsExpanded] = useState(true);
     const [documentDetailsExpanded, setDocumentDetailsExpanded] = useState(false);
     const [attachmentSource, setAttachmentSource] = useState<"current" | "selected">("current");
+    const [imageManagerOpen, setImageManagerOpen] = useState(false);
+    const [imageFilter, setImageFilter] = useState<"active" | "dismissed" | "all">("active");
+    const [selectedImageKeys, setSelectedImageKeys] = useState<string[]>([]);
 
     const selectedGroup = useMemo(
         () => groups.find((group) => group.id === selectedGroupId) || null,
@@ -320,6 +357,35 @@ export const GroupsCockpit: React.FC = () => {
         };
     }, [selectedGroupId, reloadToken]);
 
+    useEffect(() => {
+        if (!selectedGroupId) {
+            setAttachmentFlags([]);
+            setAttachmentFlagsError(null);
+            setAttachmentFlagsLoading(false);
+            return;
+        }
+        let cancelled = false;
+        setAttachmentFlagsLoading(true);
+        setAttachmentFlagsError(null);
+        getGroupAttachmentFlags(selectedGroupId)
+            .then((flags) => {
+                if (cancelled) return;
+                setAttachmentFlags(flags || []);
+            })
+            .catch((error: any) => {
+                if (cancelled) return;
+                setAttachmentFlags([]);
+                setAttachmentFlagsError(error?.message || "Nao foi possivel carregar as regras das imagens.");
+            })
+            .finally(() => {
+                if (!cancelled) setAttachmentFlagsLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedGroupId, reloadToken]);
+
     const selectedEmail = useMemo(
         () => groupEmails.find((email) => makeEmailKey(email) === selectedEmailKey) || groupEmails[0] || null,
         [groupEmails, selectedEmailKey]
@@ -329,6 +395,11 @@ export const GroupsCockpit: React.FC = () => {
         () => groupDocuments.find((document) => makeDocumentKey(document) === selectedDocumentId) || groupDocuments[0] || null,
         [groupDocuments, selectedDocumentId]
     );
+
+    useEffect(() => {
+        const validKeys = new Set(groupEmails.map((email) => makeEmailKey(email)));
+        setSelectedGroupEmailKeys((current) => current.filter((key) => validKeys.has(key)));
+    }, [groupEmails]);
 
     const currentAttachmentCandidates = useMemo<CurrentAttachmentCandidate[]>(() => {
         return (attachments || [])
@@ -348,6 +419,15 @@ export const GroupsCockpit: React.FC = () => {
                 return a.name.localeCompare(b.name, "pt-PT");
             });
     }, [attachments, ctx.subject]);
+
+    const attachmentFlagMap = useMemo(() => {
+        const map = new Map<string, GroupAttachmentFlagEntry>();
+        for (const flag of attachmentFlags || []) {
+            const key = String(flag?.attachmentKey || "").trim();
+            if (key) map.set(key, flag);
+        }
+        return map;
+    }, [attachmentFlags]);
 
     const selectedEmailMatchesCurrent = useMemo(() => {
         if (!selectedEmail) return false;
@@ -386,7 +466,84 @@ export const GroupsCockpit: React.FC = () => {
             });
     }, [currentAttachmentCandidates, selectedEmail, selectedEmailMatchesCurrent]);
 
-    const visibleAttachmentCandidates = attachmentSource === "selected" ? selectedEmailAttachmentCandidates : currentAttachmentCandidates;
+    const selectedEmailsForImageManager = useMemo(() => {
+        const selectedKeys = new Set(selectedGroupEmailKeys);
+        if (selectedKeys.size) {
+            return groupEmails.filter((email) => selectedKeys.has(makeEmailKey(email)));
+        }
+        return selectedEmail ? [selectedEmail] : [];
+    }, [groupEmails, selectedEmail, selectedGroupEmailKeys]);
+
+    const imageManagerCandidates = useMemo<GroupImageCandidate[]>(() => {
+        const rows: GroupImageCandidate[] = [];
+        for (const email of selectedEmailsForImageManager) {
+            const emailKey = makeEmailKey(email);
+            const useCurrentContent = selectedEmailMatchesCurrent && makeEmailKey(selectedEmail || {}) === emailKey;
+            const sourceAttachments = useCurrentContent
+                ? currentAttachmentCandidates.map((attachment) => ({
+                    name: attachment.name,
+                    contentType: attachment.contentType,
+                    size: attachment.size,
+                    content: attachment.content,
+                    suspectedInline: attachment.suspectedInline,
+                    sourceLabel: attachment.sourceLabel,
+                }))
+                : Array.isArray(email.attachments)
+                    ? email.attachments.map((attachment) => ({
+                        name: attachment.name,
+                        contentType: attachment.contentType,
+                        size: attachment.size,
+                        content: "",
+                        suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
+                        sourceLabel: email.subject || "",
+                    }))
+                    : [];
+
+            for (const attachment of sourceAttachments) {
+                if (!isImageAttachment(attachment.name, attachment.contentType)) continue;
+                const attachmentKey = buildAttachmentKey(emailKey, attachment);
+                const disposition = attachmentFlagMap.get(attachmentKey)?.disposition || "active";
+                rows.push({
+                    id: `${emailKey}:${attachment.name}`,
+                    attachmentKey,
+                    emailKey,
+                    emailSubject: email.subject,
+                    name: String(attachment.name || "").trim(),
+                    contentType: String(attachment.contentType || "").trim(),
+                    content: String((attachment as any).content || "").trim(),
+                    size: Number(attachment.size || 0) || undefined,
+                    suspectedInline: Boolean(attachment.suspectedInline),
+                    sourceLabel: String(attachment.sourceLabel || email.subject || "").trim(),
+                    disposition,
+                });
+            }
+        }
+        return rows.sort((a, b) => a.name.localeCompare(b.name, "pt-PT"));
+    }, [attachmentFlagMap, currentAttachmentCandidates, selectedEmail, selectedEmailMatchesCurrent, selectedEmailsForImageManager]);
+
+    const filteredImageManagerCandidates = useMemo(() => {
+        return imageManagerCandidates.filter((attachment) => {
+            if (imageFilter === "active") return attachment.disposition !== "dismissed";
+            if (imageFilter === "dismissed") return attachment.disposition === "dismissed";
+            return true;
+        });
+    }, [imageFilter, imageManagerCandidates]);
+
+    const selectedImageCandidates = useMemo(
+        () => filteredImageManagerCandidates.filter((attachment) => selectedImageKeys.includes(attachment.attachmentKey)),
+        [filteredImageManagerCandidates, selectedImageKeys]
+    );
+
+    const singleSelectedImage = selectedImageCandidates.length === 1 ? selectedImageCandidates[0] : null;
+
+    const visibleAttachmentCandidates = (attachmentSource === "selected" ? selectedEmailAttachmentCandidates : currentAttachmentCandidates)
+        .filter((attachment) => {
+            const sourceKey = attachmentSource === "selected"
+                ? makeEmailKey(selectedEmail || {})
+                : String(ctx.itemId || ctx.internetMessageId || ctx.conversationId || "").trim();
+            const attachmentKey = buildAttachmentKey(sourceKey, attachment);
+            return attachmentFlagMap.get(attachmentKey)?.disposition !== "dismissed";
+        });
     const savableAttachmentCandidates = visibleAttachmentCandidates.filter((attachment) => Boolean(attachment.content));
     const currentEmailIdentity = useMemo(
         () => [String(ctx.itemId || "").trim(), normalizeMessageKey(ctx.internetMessageId), String(ctx.conversationId || "").trim()].join("|"),
@@ -406,6 +563,11 @@ export const GroupsCockpit: React.FC = () => {
     useEffect(() => {
         setAttachmentSource("current");
     }, [currentEmailIdentity]);
+
+    useEffect(() => {
+        const valid = new Set(filteredImageManagerCandidates.map((attachment) => attachment.attachmentKey));
+        setSelectedImageKeys((current) => current.filter((key) => valid.has(key)));
+    }, [filteredImageManagerCandidates]);
 
     async function refreshGroupsAndEmails() {
         setReloadToken((value) => value + 1);
@@ -503,6 +665,66 @@ export const GroupsCockpit: React.FC = () => {
         }
     }
 
+    function toggleGroupEmailSelection(email: RelatedEmailEntry) {
+        const key = makeEmailKey(email);
+        setSelectedGroupEmailKeys((current) =>
+            current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key]
+        );
+    }
+
+    function toggleImageSelection(attachmentKey: string) {
+        setSelectedImageKeys((current) =>
+            current.includes(attachmentKey)
+                ? current.filter((entry) => entry !== attachmentKey)
+                : [...current, attachmentKey]
+        );
+    }
+
+    function openImageManager() {
+        if (!selectedGroup) return;
+        if (!selectedEmailsForImageManager.length) {
+            setMsg("Seleciona primeiro um ou mais emails do grupo para gerir as imagens.");
+            return;
+        }
+        setSelectedImageKeys([]);
+        setImageFilter("active");
+        setImageManagerOpen(true);
+    }
+
+    async function handleSaveImageFlags(entries: GroupAttachmentFlagEntry[]) {
+        if (!selectedGroup || !entries.length) return;
+        const result = await saveGroupAttachmentFlags(selectedGroup.id, { entries });
+        setAttachmentFlags(result.flags || []);
+        setReloadToken((value) => value + 1);
+    }
+
+    async function markSelectedImagesAs(disposition: "dismissed" | "active") {
+        if (!selectedGroup || !selectedImageCandidates.length) return;
+        setBusyAction(true);
+        try {
+            await handleSaveImageFlags(
+                selectedImageCandidates.map((attachment) => ({
+                    attachmentKey: attachment.attachmentKey,
+                    emailKey: attachment.emailKey,
+                    attachmentName: attachment.name,
+                    contentType: attachment.contentType,
+                    size: attachment.size,
+                    disposition,
+                }))
+            );
+            setMsg(
+                disposition === "dismissed"
+                    ? `${selectedImageCandidates.length} imagem(ns) marcada(s) como dispensavel.`
+                    : `${selectedImageCandidates.length} imagem(ns) reativada(s).`
+            );
+            setSelectedImageKeys([]);
+        } catch (error: any) {
+            setMsg(error?.message || "Nao foi possivel atualizar o estado das imagens.");
+        } finally {
+            setBusyAction(false);
+        }
+    }
+
     async function handleSaveAttachmentsToGroup(candidates: CurrentAttachmentCandidate[]) {
         if (!selectedGroup || !candidates.length) return;
         if (!documentsEnabled) {
@@ -538,6 +760,16 @@ export const GroupsCockpit: React.FC = () => {
         } finally {
             setBusyAction(false);
         }
+    }
+
+    async function handleSaveSelectedImages() {
+        const savable = selectedImageCandidates.filter((attachment) => attachment.content);
+        if (!savable.length) {
+            setMsg("As imagens selecionadas ainda nao têm conteudo disponivel para guardar a partir deste email.");
+            return;
+        }
+        await handleSaveAttachmentsToGroup(savable);
+        setSelectedImageKeys([]);
     }
 
     async function handleDeleteDocument(document: GroupDocumentEntry) {
@@ -750,6 +982,12 @@ export const GroupsCockpit: React.FC = () => {
                             disabled={!selectedGroup || emailsLoading || busyAction}
                         />
                         <IconButton
+                            title={selectedGroup && (selectedGroupEmailKeys.length || selectedEmail) ? "Gerir imagens dos emails selecionados" : "Seleciona emails do grupo para gerir imagens"}
+                            icon={<Icons.Files size={13} />}
+                            onClick={selectedGroup ? openImageManager : undefined}
+                            disabled={!selectedGroup || busyAction}
+                        />
+                        <IconButton
                             title={emailsExpanded ? "Recolher emails" : "Expandir emails"}
                             icon={emailsExpanded ? <Icons.ArrowUp size={10} /> : <Icons.ArrowDown size={10} />}
                             onClick={() => setEmailsExpanded((value) => !value)}
@@ -760,30 +998,46 @@ export const GroupsCockpit: React.FC = () => {
             >
                 {selectedGroup ? <div style={styles.sectionMetaHint}>Grupo: {selectedGroup.name}</div> : null}
                 {emailsError ? <div style={styles.errorText}>{emailsError}</div> : null}
+                {selectedGroup && groupEmails.length ? (
+                    <div style={styles.bulkSelectionRow}>
+                        <button type="button" style={styles.bulkMiniBtn} onClick={() => setSelectedGroupEmailKeys(groupEmails.map((email) => makeEmailKey(email)))}>Todos</button>
+                        <button type="button" style={styles.bulkMiniBtn} onClick={() => setSelectedGroupEmailKeys([])} disabled={!selectedGroupEmailKeys.length}>Limpar</button>
+                        <span style={styles.sectionMetaHint}>{selectedGroupEmailKeys.length || (selectedEmail ? 1 : 0)} email(s) para imagens</span>
+                    </div>
+                ) : null}
                 {emailsExpanded ? <div style={styles.scrollPaneMiddle}>
                     {!selectedGroup ? <PanelState compact tone="info" title="Nenhum grupo selecionado" description="Escolhe um grupo acima para ver ou gerir os emails." /> : null}
                     {selectedGroup && emailsLoading && !groupEmails.length ? <PanelState compact tone="info" title="A carregar emails" description="A listar os emails ligados ao grupo." /> : null}
                     {selectedGroup && !emailsLoading && !groupEmails.length ? <PanelState compact tone="info" title="Grupo sem emails" description="Podes associar o email atualmente aberto com o botao de ligacao." /> : null}
                     {groupEmails.map((email) => {
                         const active = makeEmailKey(email) === makeEmailKey(selectedEmail || {});
+                        const bulkSelected = selectedGroupEmailKeys.includes(makeEmailKey(email));
                         const attachmentCount = Array.isArray(email.attachments) ? email.attachments.length : 0;
                         const canOpen = Boolean(email.itemId || email.emailWebLink);
                         return (
                             <div key={makeEmailKey(email)} style={active ? styles.emailRowActive : styles.emailRow}>
-                                <button
-                                    type="button"
-                                    style={styles.emailSelectArea}
-                                    onClick={() => setSelectedEmailKey(makeEmailKey(email))}
-                                    title={buildEmailHoverText(email)}
-                                >
-                                    <div style={styles.emailSubject}>{email.subject || "(sem assunto)"}</div>
-                                    <div style={styles.emailTagRow}>
-                                        {attachmentCount ? <span style={styles.metaTag} title={`${attachmentCount} anexo(s)`}>{attachmentCount}</span> : null}
-                                        {Array.isArray(email.relatedRecords) && email.relatedRecords.length ? (
-                                            <span style={styles.metaTag} title={`${email.relatedRecords.length} registo(s) Odoo`}>{email.relatedRecords.length}</span>
-                                        ) : null}
-                                    </div>
-                                </button>
+                                <label style={styles.groupEmailSelectWrap}>
+                                    <input
+                                        type="checkbox"
+                                        checked={bulkSelected}
+                                        onChange={() => toggleGroupEmailSelection(email)}
+                                        style={styles.groupEmailCheckbox}
+                                    />
+                                    <button
+                                        type="button"
+                                        style={styles.emailSelectArea}
+                                        onClick={() => setSelectedEmailKey(makeEmailKey(email))}
+                                        title={buildEmailHoverText(email)}
+                                    >
+                                        <div style={styles.emailSubject}>{email.subject || "(sem assunto)"}</div>
+                                        <div style={styles.emailTagRow}>
+                                            {attachmentCount ? <span style={styles.metaTag} title={`${attachmentCount} anexo(s)`}>{attachmentCount}</span> : null}
+                                            {Array.isArray(email.relatedRecords) && email.relatedRecords.length ? (
+                                                <span style={styles.metaTag} title={`${email.relatedRecords.length} registo(s) Odoo`}>{email.relatedRecords.length}</span>
+                                            ) : null}
+                                        </div>
+                                    </button>
+                                </label>
                                 <div style={styles.emailActions}>
                                     <IconButton title={canOpen ? "Abrir email" : "Sem abertura direta disponivel"} icon={<Icons.MessageSquare size={10} />} onClick={canOpen ? () => void handleOpenEmail(email) : undefined} disabled={!canOpen} />
                                     <IconButton title="Abrir explorador neste email" icon={<Icons.ExternalLink size={10} />} onClick={() => void handleOpenExplorer({ emailKey: makeEmailKey(email) })} disabled={busyAction} />
@@ -975,6 +1229,87 @@ export const GroupsCockpit: React.FC = () => {
                 ) : null}
                 {selectedGroup && !documentsExpanded ? <div style={styles.collapsedHint}>Documentos recolhidos</div> : null}
             </Section>
+
+            {imageManagerOpen ? (
+                <div style={styles.modalBackdrop}>
+                    <div style={styles.modalShell}>
+                        <div style={styles.modalHeader}>
+                            <div style={styles.modalTitleWrap}>
+                                <div style={styles.sectionTitle}>Imagens dos emails</div>
+                                <div style={styles.sectionSubtitle}>
+                                    {selectedGroup ? `Grupo ${selectedGroup.name} · ${selectedEmailsForImageManager.length} email(s) selecionado(s)` : "Seleciona um grupo"}
+                                </div>
+                            </div>
+                            <div style={styles.sectionActions}>
+                                <IconButton title="Fechar gestor de imagens" icon={<Icons.ArrowDown size={11} />} onClick={() => setImageManagerOpen(false)} />
+                            </div>
+                        </div>
+
+                        <div style={styles.modalToolbar}>
+                            <div style={styles.sourceSwitch}>
+                                <button type="button" style={imageFilter === "active" ? styles.sourceBtnActive : styles.sourceBtn} onClick={() => setImageFilter("active")}>Ativas</button>
+                                <button type="button" style={imageFilter === "dismissed" ? styles.sourceBtnActive : styles.sourceBtn} onClick={() => setImageFilter("dismissed")}>Dispensaveis</button>
+                                <button type="button" style={imageFilter === "all" ? styles.sourceBtnActive : styles.sourceBtn} onClick={() => setImageFilter("all")}>Todas</button>
+                            </div>
+                            <div style={styles.bulkActionRow}>
+                                <button type="button" style={styles.bulkMiniBtn} onClick={() => setSelectedImageKeys(filteredImageManagerCandidates.map((attachment) => attachment.attachmentKey))} disabled={!filteredImageManagerCandidates.length}>Selecionar todas</button>
+                                <button type="button" style={styles.bulkMiniBtn} onClick={() => setSelectedImageKeys([])} disabled={!selectedImageKeys.length}>Limpar</button>
+                                <button type="button" style={styles.bulkMiniBtn} onClick={() => void handleSaveSelectedImages()} disabled={!selectedImageCandidates.some((attachment) => attachment.content) || busyAction}>Guardar</button>
+                                <button type="button" style={styles.bulkMiniBtn} onClick={() => void markSelectedImagesAs("dismissed")} disabled={!selectedImageKeys.length || busyAction}>Dispensar</button>
+                                <button type="button" style={styles.bulkMiniBtn} onClick={() => void markSelectedImagesAs("active")} disabled={!selectedImageKeys.length || busyAction}>Reativar</button>
+                            </div>
+                        </div>
+
+                        {attachmentFlagsError ? <div style={styles.errorText}>{attachmentFlagsError}</div> : null}
+
+                        <div style={styles.modalGrid}>
+                            <div style={styles.modalColumn}>
+                                <div style={styles.documentSubTitle}>Imagens disponiveis</div>
+                                <div style={styles.modalScrollPane}>
+                                    {!filteredImageManagerCandidates.length ? (
+                                        <PanelState compact tone="info" title="Sem imagens para mostrar" description="Seleciona emails com imagens ou muda o filtro para ver as que marcaste como dispensaveis." />
+                                    ) : filteredImageManagerCandidates.map((attachment) => {
+                                        const selected = selectedImageKeys.includes(attachment.attachmentKey);
+                                        return (
+                                            <label key={attachment.attachmentKey} style={selected ? styles.imageCandidateActive : styles.imageCandidate}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selected}
+                                                    onChange={() => toggleImageSelection(attachment.attachmentKey)}
+                                                    style={styles.groupEmailCheckbox}
+                                                />
+                                                <div style={styles.imageCandidateCopy} title={[attachment.name, attachment.emailSubject, attachment.contentType, formatBytes(attachment.size), attachment.disposition === "dismissed" ? "Dispensavel" : ""].filter(Boolean).join("\n")}>
+                                                    <div style={styles.documentName}>{attachment.name}</div>
+                                                    <div style={styles.documentMiniMeta}>
+                                                        {attachment.emailSubject || "(sem assunto)"}{attachment.content ? "" : " · sem preview"}
+                                                    </div>
+                                                </div>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div style={styles.modalColumn}>
+                                <div style={styles.documentSubTitle}>Preview</div>
+                                <div style={styles.modalPreviewPane}>
+                                    {!singleSelectedImage ? (
+                                        <PanelState compact tone="info" title="Seleciona uma imagem" description="Escolhe uma única imagem para a rever aqui antes de guardar ou dispensar." />
+                                    ) : !singleSelectedImage.content ? (
+                                        <PanelState compact tone="info" title="Preview indisponivel" description="Esta imagem foi registada a partir do email do grupo, mas o binario nao esta acessivel no add-in atual." />
+                                    ) : (
+                                        <img
+                                            src={`data:${singleSelectedImage.contentType || "image/png"};base64,${singleSelectedImage.content}`}
+                                            alt={singleSelectedImage.name}
+                                            style={styles.imagePreview}
+                                        />
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
         </div>
     );
 };
@@ -1253,6 +1588,16 @@ const styles: Record<string, React.CSSProperties> = {
         gap: "6px",
         alignItems: "start",
     },
+    groupEmailSelectWrap: {
+        display: "flex",
+        gap: "7px",
+        alignItems: "flex-start",
+        minWidth: 0,
+    },
+    groupEmailCheckbox: {
+        marginTop: "2px",
+        flexShrink: 0,
+    },
     emailSelectArea: {
         border: "none",
         background: "transparent",
@@ -1301,6 +1646,21 @@ const styles: Record<string, React.CSSProperties> = {
         alignItems: "center",
         gap: "6px",
         flexWrap: "wrap",
+    },
+    bulkSelectionRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        flexWrap: "wrap",
+    },
+    bulkMiniBtn: {
+        border: panelBorder,
+        borderRadius: "999px",
+        background: "#FFFFFF",
+        color: "#42526E",
+        fontSize: "9px",
+        padding: "2px 7px",
+        cursor: "pointer",
     },
     actionHint: {
         fontSize: "9px",
@@ -1434,5 +1794,113 @@ const styles: Record<string, React.CSSProperties> = {
         overflow: "auto",
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
+    },
+    modalBackdrop: {
+        position: "fixed",
+        inset: 0,
+        background: "rgba(9, 30, 66, 0.34)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "14px",
+        zIndex: 40,
+    },
+    modalShell: {
+        width: "min(720px, 100%)",
+        maxHeight: "min(86vh, 760px)",
+        background: "#FFFFFF",
+        borderRadius: "12px",
+        border: panelBorder,
+        boxShadow: "0 18px 40px rgba(9, 30, 66, 0.24)",
+        display: "grid",
+        gap: "8px",
+        padding: "10px",
+        minWidth: 0,
+    },
+    modalHeader: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start",
+        gap: "8px",
+    },
+    modalTitleWrap: {
+        display: "grid",
+        gap: "2px",
+        minWidth: 0,
+    },
+    modalToolbar: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: "8px",
+        flexWrap: "wrap",
+    },
+    modalGrid: {
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 0.9fr)",
+        gap: "10px",
+        minHeight: 0,
+    },
+    modalColumn: {
+        display: "grid",
+        gap: "6px",
+        minHeight: 0,
+    },
+    modalScrollPane: {
+        border: panelBorder,
+        borderRadius: "8px",
+        background: "#FAFBFC",
+        padding: "6px",
+        display: "grid",
+        gap: "6px",
+        overflowY: "auto",
+        maxHeight: "46vh",
+        minHeight: "200px",
+    },
+    modalPreviewPane: {
+        border: panelBorder,
+        borderRadius: "8px",
+        background: "#FAFBFC",
+        padding: "8px",
+        display: "grid",
+        placeItems: "center",
+        minHeight: "200px",
+    },
+    imageCandidate: {
+        border: panelBorder,
+        borderRadius: "8px",
+        background: "#FFFFFF",
+        padding: "6px 7px",
+        display: "grid",
+        gridTemplateColumns: "auto 1fr",
+        gap: "7px",
+        alignItems: "start",
+        minWidth: 0,
+        cursor: "pointer",
+    },
+    imageCandidateActive: {
+        border: "1px solid #0747A6",
+        borderRadius: "8px",
+        background: "#E9F2FF",
+        padding: "6px 7px",
+        display: "grid",
+        gridTemplateColumns: "auto 1fr",
+        gap: "7px",
+        alignItems: "start",
+        minWidth: 0,
+        cursor: "pointer",
+    },
+    imageCandidateCopy: {
+        display: "grid",
+        gap: "2px",
+        minWidth: 0,
+    },
+    imagePreview: {
+        maxWidth: "100%",
+        maxHeight: "44vh",
+        objectFit: "contain",
+        borderRadius: "6px",
+        background: "#FFFFFF",
+        display: "block",
     },
 };

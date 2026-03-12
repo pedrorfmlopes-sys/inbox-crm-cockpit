@@ -184,6 +184,17 @@ export type GroupDocumentEntry = {
   updatedAt?: string;
 };
 
+export type GroupAttachmentFlagEntry = {
+  attachmentKey: string;
+  emailKey?: string;
+  attachmentName?: string;
+  contentType?: string;
+  size?: number;
+  disposition?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type RelatedReason =
   | {
     kind: "entity";
@@ -533,6 +544,27 @@ export async function getGroupDocuments(groupId: string): Promise<GroupDocumentE
   params.set("_ts", String(Date.now()));
   const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/documents?${params.toString()}`);
   return Array.isArray(response?.documents) ? response.documents : [];
+}
+
+export async function getGroupAttachmentFlags(groupId: string): Promise<GroupAttachmentFlagEntry[]> {
+  const params = new URLSearchParams();
+  params.set("_ts", String(Date.now()));
+  const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/attachment-flags?${params.toString()}`);
+  return Array.isArray(response?.flags) ? response.flags : [];
+}
+
+export async function saveGroupAttachmentFlags(
+  groupId: string,
+  payload: { entries: GroupAttachmentFlagEntry[] }
+): Promise<{ ok: boolean; flags: GroupAttachmentFlagEntry[] }> {
+  const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}/attachment-flags`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return {
+    ok: Boolean(response?.ok),
+    flags: Array.isArray(response?.flags) ? response.flags : [],
+  };
 }
 
 export async function saveGroupDocuments(

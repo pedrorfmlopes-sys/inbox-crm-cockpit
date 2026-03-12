@@ -97,6 +97,49 @@ function getCurrentEmailPayload(currentCtx: OutlookMessageContext) {
   };
 }
 
+function getRelatedEmailPayload(email: Partial<RelatedEmailEntry>) {
+  return {
+    itemId: String(email.itemId || "").trim(),
+    internetMessageId: normalizeMessageId(email.internetMessageId),
+    conversationId: String(email.conversationId || "").trim(),
+    subject: String(email.subject || "").trim(),
+    fromEmail: String(email.fromEmail || "").trim(),
+    fromName: String(email.fromName || "").trim(),
+    emailWebLink: String(email.emailWebLink || "").trim(),
+    receivedAtIso: String(email.receivedAtIso || email.messageDateIso || "").trim(),
+    messageDateIso: String(email.messageDateIso || email.receivedAtIso || "").trim(),
+    attachments: Array.isArray(email.attachments)
+      ? email.attachments
+        .map((attachment) => ({
+          name: String(attachment?.name || "").trim(),
+          contentType: String(attachment?.contentType || "").trim(),
+          size: Number(attachment?.size || 0) || undefined,
+        }))
+        .filter((attachment) => attachment.name)
+      : [],
+  };
+}
+
+function makeRelatedEmailSelectionKey(email: Partial<RelatedEmailEntry>): string {
+  return [
+    String(email.itemId || "").trim(),
+    normalizeMessageId(email.internetMessageId),
+    String(email.conversationId || "").trim(),
+    String(email.subject || "").trim().toLowerCase(),
+    String(email.messageDateIso || email.receivedAtIso || "").trim(),
+  ].join("|");
+}
+
+function belongsToCurrentConversation(email: RelatedEmailEntry, currentConversationId: string): boolean {
+  const normalizedConversationId = String(currentConversationId || "").trim();
+  if (!normalizedConversationId) return false;
+  if (String(email.conversationId || "").trim() === normalizedConversationId) return true;
+  return Array.isArray(email.relatedReasons)
+    && email.relatedReasons.some(
+      (reason: any) => reason?.kind === "conversation" && String(reason?.conversationId || "").trim() === normalizedConversationId
+    );
+}
+
 function hasCurrentEmailIdentity(currentCtx: OutlookMessageContext): boolean {
   const payload = getCurrentEmailPayload(currentCtx);
   return Boolean(payload.itemId || payload.internetMessageId || payload.conversationId);
@@ -419,6 +462,7 @@ export function RelatedEmailsPanel({
   const [newGroupName, setNewGroupName] = useState("");
   const [groupActionBusy, setGroupActionBusy] = useState(false);
   const [contextReloadToken, setContextReloadToken] = useState(0);
+  const [selectedContextEmailKeys, setSelectedContextEmailKeys] = useState<string[]>([]);
   const contextLoadSeq = useRef(0);
   const manualLoadSeq = useRef(0);
   const groupLoadSeq = useRef(0);
@@ -436,10 +480,37 @@ export function RelatedEmailsPanel({
     [currentLinks]
   );
   const linkedRecords = useMemo(() => dedupeRecordLinks(currentLinks), [currentLinks]);
+  const currentContextEmail = useMemo<RelatedEmailEntry | null>(() => {
+    if (!hasCurrentEmailIdentity(currentCtx)) return null;
+    return {
+      ...getRelatedEmailPayload(currentCtx),
+      id: `current:${makeRelatedEmailSelectionKey(getCurrentEmailPayload(currentCtx))}`,
+      relatedRecords: linkedRecords.map((record) => ({
+        model: String(record.model || "").trim(),
+        recordId: Number(record.recordId || record.resId || 0),
+        recordName: String(record.recordName || record.name || "").trim(),
+      })).filter((record) => record.model && record.recordId),
+      relatedGroups: [],
+      relatedReasons: currentCtx.conversationId
+        ? [{ kind: "conversation", groupId: `conversation:${currentCtx.conversationId}`, groupName: "Conversa atual", conversationId: currentCtx.conversationId }]
+        : [],
+    };
+  }, [currentCtx, linkedRecords]);
+  const conversationContextItems = useMemo(() => {
+    const currentConversationId = String(currentCtx.conversationId || "").trim();
+    const items = contextItems.filter((item) => belongsToCurrentConversation(item, currentConversationId));
+    return currentContextEmail ? [currentContextEmail, ...items] : items;
+  }, [contextItems, currentContextEmail, currentCtx.conversationId]);
+  const conversationSelectedCount = selectedContextEmailKeys.length;
   const selectedRecordUrl = useMemo(() => {
     if (!selectedRecord) return "";
     return buildRecordUrl(settings, meta, manualModel, selectedRecord.id);
   }, [manualModel, meta, selectedRecord, settings]);
+
+  useEffect(() => {
+    const validKeys = new Set(conversationContextItems.map((item) => makeRelatedEmailSelectionKey(item)));
+    setSelectedContextEmailKeys((current) => current.filter((key) => validKeys.has(key)));
+  }, [conversationContextItems]);
 
   useEffect(() => {
     setSelectedRecord(null);
@@ -567,6 +638,72 @@ export function RelatedEmailsPanel({
     }
   }
 
+  function toggleContextSelection(item: RelatedEmailEntry) {
+    const key = makeRelatedEmailSelectionKey(item);
+    setSelectedContextEmailKeys((current) =>
+      current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key]
+    );
+  }
+
+  function selectAllConversationEmails() {
+    setSelectedContextEmailKeys(conversationContextItems.map((item) => makeRelatedEmailSelectionKey(item)));
+  }
+
+  function clearConversationSelection() {
+    setSelectedContextEmailKeys([]);
+  }
+
+  async function linkSelectedConversationEmailsToGroup(group: LinkGroupEntry) {
+    if (!group?.id) return;
+    const selectedItems = conversationContextItems.filter((item) => selectedContextEmailKeys.includes(makeRelatedEmailSelectionKey(item)));
+    if (!selectedItems.length) {
+      onStatus("Seleciona primeiro os emails da conversa que queres ligar ao grupo.");
+      return;
+    }
+
+    setGroupActionBusy(true);
+    try {
+      for (const item of selectedItems) {
+        await addEmailToLinkGroup(group.id, getRelatedEmailPayload(item));
+      }
+      setSelectedGroup(group);
+      setContextReloadToken((value) => value + 1);
+      onStatus(`${selectedItems.length} email(s) ligados ao grupo "${group.name}".`);
+    } catch (error: any) {
+      onStatus(error?.message || "Nao foi possivel ligar os emails selecionados ao grupo.");
+    } finally {
+      setGroupActionBusy(false);
+    }
+  }
+
+  async function createGroupAndLinkSelectedConversationEmails() {
+    const name = String(newGroupName || "").trim();
+    if (!name) return;
+    setGroupActionBusy(true);
+    try {
+      const group = await createLinkGroup({ name });
+      setSelectedGroup(group);
+      setNewGroupName("");
+      const selectedItems = conversationContextItems.filter((item) => selectedContextEmailKeys.includes(makeRelatedEmailSelectionKey(item)));
+      if (selectedItems.length) {
+        for (const item of selectedItems) {
+          await addEmailToLinkGroup(group.id, getRelatedEmailPayload(item));
+        }
+        onStatus(`Grupo "${group.name}" criado e ligado a ${selectedItems.length} email(s).`);
+      } else if (hasCurrentEmailIdentity(currentCtx)) {
+        await addEmailToLinkGroup(group.id, emailPayload);
+        onStatus(`Grupo "${group.name}" criado e ligado ao email atual.`);
+      } else {
+        onStatus(`Grupo "${group.name}" criado.`);
+      }
+      setContextReloadToken((value) => value + 1);
+    } catch (error: any) {
+      onStatus(error?.message || "Nao foi possivel criar o grupo.");
+    } finally {
+      setGroupActionBusy(false);
+    }
+  }
+
   function renderRelatedList(items: RelatedEmailEntry[], emptyTitle: string, emptyDescription: string) {
     if (!items.length) {
       return <PanelState tone="empty" title={emptyTitle} description={emptyDescription} compact />;
@@ -587,6 +724,44 @@ export function RelatedEmailsPanel({
     );
   }
 
+  function renderConversationSelectionList() {
+    if (!conversationContextItems.length) {
+      return <PanelState tone="empty" title="Sem emails desta conversa" description="Quando existirem outros emails da mesma conversa, vao aparecer aqui para selecao em lote." compact />;
+    }
+
+    return (
+      <div style={styles.listShell}>
+        {conversationContextItems.map((item) => {
+          const key = makeRelatedEmailSelectionKey(item);
+          const checked = selectedContextEmailKeys.includes(key);
+          const attachmentCount = Array.isArray(item.attachments) ? item.attachments.length : 0;
+          const isCurrent = currentContextEmail ? key === makeRelatedEmailSelectionKey(currentContextEmail) : false;
+          const hasOutlookOpen = Boolean(item.itemId || item.emailWebLink);
+          return (
+            <div key={`context-select:${key}`} style={checked ? styles.emailCardSelected : styles.emailCard}>
+              <div style={styles.emailHeaderRow}>
+                <label style={styles.contextSelectWrap} title={buildEmailHoverText(item)}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleContextSelection(item)} style={styles.contextCheckbox} />
+                  <div style={styles.emailBodyCopy}>
+                    <div style={styles.emailSubject}>{item.subject || "(sem assunto)"}</div>
+                    <div style={styles.emailBadgeRow}>
+                      {isCurrent ? <span style={styles.metaTag} title="Email aberto no Outlook">Atual</span> : null}
+                      {formatDate(item.messageDateIso || item.receivedAtIso) ? <span style={styles.metaTag}>{formatDate(item.messageDateIso || item.receivedAtIso)}</span> : null}
+                      {attachmentCount ? <span style={styles.metaTag} title={`${attachmentCount} anexo(s)`}>{attachmentCount}</span> : null}
+                    </div>
+                  </div>
+                </label>
+                <div style={styles.rowActions}>
+                  <IconActionButton title={hasOutlookOpen ? "Abrir email no Outlook" : "Sem abertura direta disponivel"} onClick={hasOutlookOpen ? () => handleOpenEmail(item) : undefined} icon={<Icons.MessageSquare size={12} />} tone="primary" disabled={!hasOutlookOpen} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   function renderContextView() {
     const customGroups = contextGroups.filter((group) => group.kind === "custom");
     return (
@@ -596,6 +771,37 @@ export function RelatedEmailsPanel({
           <div style={styles.metricMini}><span style={styles.metricMiniValue}>{linkedRecords.length}</span><span style={styles.metricMiniLabel}>registos Odoo</span></div>
           <div style={styles.metricMini}><span style={styles.metricMiniValue}>{contextGroups.length}</span><span style={styles.metricMiniLabel}>grupos ativos</span></div>
         </div>
+
+        <CompactSection
+          title="Conversa atual"
+          subtitle="Seleciona em lote os emails desta conversa para os ligar a um grupo manual."
+          count={contextLoading ? "..." : conversationContextItems.length}
+          defaultOpen={false}
+          actions={<IconActionButton title="Atualizar conversa" onClick={() => setContextReloadToken((value) => value + 1)} icon={<Icons.RefreshCw size={12} />} />}
+        >
+          {!hasCurrentEmailIdentity(currentCtx) ? (
+            <PanelState tone="info" title="Sem email selecionado" description="Abre um email no Outlook para carregar a conversa atual." compact />
+          ) : contextLoading ? (
+            <PanelState tone="loading" title="A carregar conversa" description="Estamos a reunir os emails desta conversa." compact />
+          ) : (
+            <>
+              <div style={styles.bulkManager}>
+                <GroupSearchPicker selected={selectedGroup} onSelect={setSelectedGroup} />
+                <div style={styles.inlineActionRow}>
+                  <input style={styles.pickerInput} value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="Novo grupo..." />
+                  <IconActionButton title="Criar grupo e ligar selecionados" onClick={createGroupAndLinkSelectedConversationEmails} icon={<Icons.Plus size={12} />} tone="primary" disabled={groupActionBusy || !String(newGroupName || "").trim()} />
+                  <IconActionButton title="Ligar emails selecionados ao grupo escolhido" onClick={selectedGroup ? () => linkSelectedConversationEmailsToGroup(selectedGroup) : undefined} icon={<Icons.Link size={12} />} disabled={groupActionBusy || !selectedGroup || !conversationSelectedCount} />
+                </div>
+                <div style={styles.bulkActionRow}>
+                  <button type="button" style={styles.bulkTextBtn} onClick={selectAllConversationEmails} disabled={!conversationContextItems.length}>Selecionar todos</button>
+                  <button type="button" style={styles.bulkTextBtn} onClick={clearConversationSelection} disabled={!conversationSelectedCount}>Limpar</button>
+                  <span style={styles.selectedHint}>{conversationSelectedCount} selecionado(s)</span>
+                </div>
+              </div>
+              {renderConversationSelectionList()}
+            </>
+          )}
+        </CompactSection>
 
         <CompactSection
           title="Relacionados agora"
@@ -814,9 +1020,15 @@ const styles: Record<string, React.CSSProperties> = {
   selectedCardBody: { display: "grid", gap: "2px", minWidth: 0, flex: "1 1 180px" },
   selectedCardLabel: { fontSize: "9px", fontWeight: 800, color: "#6B778C", textTransform: "uppercase", letterSpacing: "0.05em" },
   selectedCardTitle: { fontSize: "11px", fontWeight: 600, color: "#172B4D", lineHeight: 1.25, wordBreak: "break-word" },
+  bulkManager: { display: "grid", gap: "8px", marginBottom: "8px" },
+  bulkActionRow: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px" },
+  bulkTextBtn: { border: "1px solid #DFE1E6", background: "#FFFFFF", color: "#172B4D", borderRadius: "999px", padding: "4px 8px", fontSize: "10px", fontWeight: 700, cursor: "pointer" },
   listShell: { display: "grid", gap: "6px", maxHeight: "310px", overflowY: "auto", paddingRight: "2px" },
   emailCard: { border: "1px solid #DFE1E6", borderRadius: "10px", padding: "7px 8px", display: "grid", gap: "5px", background: "#FFFFFF" },
+  emailCardSelected: { border: "1px solid #4C9AFF", borderRadius: "10px", padding: "7px 8px", display: "grid", gap: "5px", background: "#F7FBFF" },
   emailHeaderRow: { display: "flex", justifyContent: "space-between", gap: "6px", alignItems: "flex-start" },
+  contextSelectWrap: { display: "flex", gap: "8px", alignItems: "flex-start", minWidth: 0, flex: "1 1 auto", cursor: "pointer" },
+  contextCheckbox: { marginTop: "2px", flexShrink: 0 },
   emailBodyCopy: { display: "grid", gap: "3px", minWidth: 0, flex: "1 1 auto" },
   emailSubject: { fontSize: "10.5px", fontWeight: 600, color: "#172B4D", lineHeight: 1.24, wordBreak: "break-word" },
   emailBadgeRow: { display: "flex", gap: "4px", flexWrap: "wrap", alignItems: "center" },
