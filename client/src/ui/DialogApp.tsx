@@ -131,7 +131,7 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
 
   if (!data || !data.summary.length) {
     if (loading) return (
-      <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: "1px dashed #d6def2", background: "rgba(255,255,255,0.4)" }}>
+      <div style={{ padding: 10, borderRadius: 12, border: "1px dashed #d6def2", background: "rgba(255,255,255,0.42)" }}>
         <div style={{ fontSize: 10, fontWeight: 800, color: "#2563eb", marginBottom: 4, display: "flex", alignItems: "center", gap: "6px" }}>
           <Icons.RefreshCw size={10} className="animate-spin" />
           ASSISTENTE IA • A ANALISAR...
@@ -140,7 +140,7 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
     );
 
     return (
-      <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: "1px solid #d6def2", background: "rgba(255,255,255,0.4)", backdropFilter: "blur(12px)" }}>
+      <div style={{ padding: 10, borderRadius: 12, border: "1px solid #d6def2", background: "rgba(255,255,255,0.42)", backdropFilter: "blur(12px)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
             <Icons.Sparkles size={12} color="#2563eb" />
@@ -160,7 +160,7 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
   }
 
   return (
-    <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: "1px solid #d6def2", background: "rgba(255,255,255,0.4)", backdropFilter: "blur(12px)" }}>
+    <div style={{ padding: 10, borderRadius: 12, border: "1px solid #d6def2", background: "rgba(255,255,255,0.42)", backdropFilter: "blur(12px)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <Icons.Sparkles size={12} color="#2563eb" />
@@ -185,12 +185,12 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
           {data.actions.map((act: string, i: number) => (
             <button
               key={i}
-              style={S.primaryBtn}
+              style={S.compactPrimaryBtn}
               onClick={() => onAddAction(act, "project.task")}
               title="Criar tarefa"
             >
               <Icons.Plus size={10} />
-              {act.length > 12 ? act.substring(0, 11) + ".." : act.toUpperCase()}
+              {act.length > 16 ? act.substring(0, 15) + ".." : act}
             </button>
           ))}
         </div>
@@ -448,6 +448,28 @@ function sanitizeEmailHtmlForOdooClient(html?: string) {
   return cleaned;
 }
 
+function buildDescriptionEditorHtml(emailHtml?: string, emailText?: string, currentValue?: string) {
+  const existing = String(currentValue || "").trim();
+  if (existing) {
+    const cleanedExisting = sanitizeEmailHtmlForOdooClient(existing);
+    if (cleanedExisting) return cleanedExisting;
+    const existingText = htmlToReadableTextClient(existing);
+    return plainTextToHtmlClient(existingText || existing);
+  }
+
+  const cleanedEmailHtml = sanitizeEmailHtmlForOdooClient(emailHtml);
+  if (cleanedEmailHtml) return cleanedEmailHtml;
+
+  return plainTextToHtmlClient(emailText);
+}
+
+function normalizeDescriptionEditorHtml(raw?: string) {
+  const cleaned = sanitizeEmailHtmlForOdooClient(raw);
+  if (cleaned) return cleaned;
+  const fallbackText = htmlToReadableTextClient(raw);
+  return plainTextToHtmlClient(fallbackText);
+}
+
 function normalizeMimeLabel(value: string) {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) return "";
@@ -505,6 +527,87 @@ function formatBytes(value: any) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function RichHtmlEditor({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+}) {
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    const normalized = String(value || "");
+    if (document.activeElement === el) return;
+    if (el.innerHTML !== normalized) {
+      el.innerHTML = normalized;
+    }
+  }, [value]);
+
+  const run = (command: string, commandValue?: string) => {
+    editorRef.current?.focus();
+    document.execCommand(command, false, commandValue);
+    const next = normalizeDescriptionEditorHtml(editorRef.current?.innerHTML || "");
+    onChange(next);
+  };
+
+  const handleLink = () => {
+    const url = window.prompt("URL do link");
+    if (!url) return;
+    run("createLink", url);
+  };
+
+  const handleReset = () => {
+    onChange("");
+    if (editorRef.current) editorRef.current.innerHTML = "";
+  };
+
+  const isEmpty = !htmlToReadableTextClient(value);
+
+  return (
+    <div style={S.editorCard}>
+      <div style={S.editorToolbar}>
+        <button type="button" style={S.editorToolBtn} onMouseDown={(e) => e.preventDefault()} onClick={() => run("bold")} title="Negrito">
+          B
+        </button>
+        <button type="button" style={S.editorToolBtn} onMouseDown={(e) => e.preventDefault()} onClick={() => run("italic")} title="Italico">
+          I
+        </button>
+        <button type="button" style={S.editorToolBtn} onMouseDown={(e) => e.preventDefault()} onClick={() => run("underline")} title="Sublinhado">
+          U
+        </button>
+        <button type="button" style={S.editorToolBtn} onMouseDown={(e) => e.preventDefault()} onClick={() => run("insertUnorderedList")} title="Lista">
+          •
+        </button>
+        <button type="button" style={S.editorToolBtn} onMouseDown={(e) => e.preventDefault()} onClick={() => run("insertOrderedList")} title="Lista numerada">
+          1.
+        </button>
+        <button type="button" style={S.editorToolBtn} onMouseDown={(e) => e.preventDefault()} onClick={handleLink} title="Link">
+          Link
+        </button>
+        <button type="button" style={S.editorToolBtn} onMouseDown={(e) => e.preventDefault()} onClick={handleReset} title="Limpar">
+          Limpar
+        </button>
+      </div>
+      <div style={S.editorSurfaceWrap}>
+        {isEmpty ? <div style={S.editorPlaceholder}>{placeholder}</div> : null}
+        <div
+          ref={editorRef}
+          style={S.editorSurface}
+          contentEditable
+          suppressContentEditableWarning
+          onInput={() => onChange(normalizeDescriptionEditorHtml(editorRef.current?.innerHTML || ""))}
+          onBlur={() => onChange(normalizeDescriptionEditorHtml(editorRef.current?.innerHTML || ""))}
+        />
+      </div>
+    </div>
+  );
 }
 
 function buildOdooPreviewHtml({
@@ -582,7 +685,8 @@ function buildLinkPayloadForRecord(
   description: string,
 ) {
   const fallbackText = String(emailText || htmlToReadableTextClient(ctx.bodyHtml) || "").trim();
-  const safeDescription = String(description || "").trim();
+  const safeDescriptionHtml = normalizeDescriptionEditorHtml(description);
+  const safeDescriptionText = htmlToReadableTextClient(safeDescriptionHtml);
   let bodyHtml = "";
   let bodyText = "";
 
@@ -599,7 +703,8 @@ function buildLinkPayloadForRecord(
       break;
     case "description":
     default:
-      bodyText = safeDescription || fallbackText;
+      bodyHtml = safeDescriptionHtml || plainTextToHtmlClient(fallbackText);
+      bodyText = safeDescriptionText || fallbackText;
       break;
   }
 
@@ -931,6 +1036,7 @@ type TypeaheadPickerProps = {
   pickedName: string;
   onPick: (it: any) => void;
   extraDomain?: (q: string) => any[];
+  compact?: boolean;
 };
 
 function TypeaheadPicker({
@@ -943,6 +1049,7 @@ function TypeaheadPicker({
   pickedName,
   onPick,
   extraDomain,
+  compact = false,
 }: TypeaheadPickerProps) {
   const [q, setQ] = useState("");
   const [items, setItems] = useState<any[]>([]);
@@ -988,7 +1095,7 @@ function TypeaheadPicker({
   }, [q]);
 
   return (
-    <div style={{ marginTop: 10, position: "relative" }}>
+    <div style={{ marginTop: compact ? 0 : 10, position: "relative" }}>
       <label style={S.labBlock}>{label}</label>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1013,7 +1120,7 @@ function TypeaheadPicker({
 
         {pickedId ? (
           <button
-            className="jira-ghost-button" style={S.btn2}
+            className="jira-ghost-button" style={compact ? S.compactActionBtn : S.btn2}
             onClick={() => {
               onPick({ id: null, name: "" });
               setQ("");
@@ -1031,7 +1138,7 @@ function TypeaheadPicker({
         )}
       </div>
 
-      {pickedId ? (
+      {pickedId && !compact ? (
         <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
           Selecionado: {pickedName} (#{pickedId})
         </div>
@@ -1060,6 +1167,136 @@ function TypeaheadPicker({
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function CompactTypeCard({ value }: { value: string }) {
+  return (
+    <div style={S.metaCard}>
+      <div style={S.metaCardLabel}>TIPO</div>
+      <div style={S.metaCardValue}>{value}</div>
+    </div>
+  );
+}
+
+function CompactDualPickerCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={S.metaCardLarge}>
+      <div style={S.metaCardLabel}>{title}</div>
+      <div style={S.compactFieldStack}>{children}</div>
+    </div>
+  );
+}
+
+function DescriptionWorkspace({
+  title,
+  hint,
+  value,
+  onChange,
+  placeholder,
+  emailHtml,
+  emailText,
+}: {
+  title: string;
+  hint: string;
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+  emailHtml?: string;
+  emailText?: string;
+}) {
+  return (
+    <div style={S.descriptionCard}>
+      <div style={S.sectionHeaderRow}>
+        <div>
+          <div style={S.sectionTitle}>{title}</div>
+          <div style={S.sectionHint}>{hint}</div>
+        </div>
+        <button
+          type="button"
+          style={S.compactActionBtn}
+          onClick={() => onChange(buildDescriptionEditorHtml(emailHtml, emailText))}
+          title="Usar o corpo do email"
+        >
+          Usar email
+        </button>
+      </div>
+      <RichHtmlEditor value={value} onChange={onChange} placeholder={placeholder} />
+    </div>
+  );
+}
+
+function CompactOdooContentEditor(props: {
+  mode: Mode;
+  publishState: OdooPublishState;
+  onPublishChange: (next: OdooPublishState) => void;
+  selectedAttachmentCount: number;
+  totalAttachmentCount: number;
+}) {
+  return (
+    <div style={S.odooEditorCard}>
+      <div style={S.odooEditorHeader}>
+        <div>
+          <div style={S.odooEditorTitle}>CONTEUDO ODOO</div>
+          <div style={S.odooEditorHint}>Descricao = editor acima. Chatter = historico do email no Odoo.</div>
+        </div>
+      </div>
+
+      <div style={S.odooEditorGrid}>
+        <label style={S.odooToggleRow}>
+          <input
+            type="checkbox"
+            checked={props.publishState.postToChatter}
+            onChange={(e) => props.onPublishChange({ ...props.publishState, postToChatter: e.target.checked })}
+          />
+          <span>{props.mode === "edit" ? "Adicionar mensagem no chatter" : "Publicar email no chatter"}</span>
+        </label>
+
+        <div style={S.odooEditorSelectWrap}>
+          <span style={S.odooEditorMiniLab}>Origem</span>
+          <select
+            style={S.sel}
+            value={props.publishState.chatterMode}
+            disabled={!props.publishState.postToChatter}
+            onChange={(e) => props.onPublishChange({ ...props.publishState, chatterMode: e.target.value as OdooPublishMode })}
+          >
+            <option value="html">HTML original</option>
+            <option value="text">Texto limpo</option>
+            <option value="description">Descricao</option>
+            <option value="custom">Personalizado</option>
+          </select>
+        </div>
+      </div>
+
+      {props.publishState.postToChatter && props.publishState.chatterMode === "custom" ? (
+        <textarea
+          style={{ ...S.ta, minHeight: 88, marginTop: 10 }}
+          value={props.publishState.customText}
+          onChange={(e) => props.onPublishChange({ ...props.publishState, customText: e.target.value })}
+          placeholder="Mensagem curta para o chatter..."
+        />
+      ) : (
+        <div style={S.odooMiniSummary}>
+          {props.publishState.postToChatter
+            ? `O email vai para o chatter em modo ${props.publishState.chatterMode === "html" ? "HTML original" : props.publishState.chatterMode === "text" ? "Texto limpo" : props.publishState.chatterMode === "description" ? "Descricao" : "Personalizado"}.`
+            : "O email sera apenas ligado ao registo, sem nova mensagem no chatter."}
+        </div>
+      )}
+
+      <div style={S.odooAttachmentHint}>
+        {props.selectedAttachmentCount > 0
+          ? `${props.selectedAttachmentCount} anexo(s) selecionado(s) seguem para o registo no Odoo.`
+          : props.totalAttachmentCount > 0
+            ? "Seleciona abaixo os anexos que queres associar ao registo."
+            : "Este email nao tem anexos disponiveis nesta fase."}
+      </div>
     </div>
   );
 }
@@ -1395,8 +1632,10 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   const [pendingSubtasks, setPendingSubtasks] = useState<string[]>([]);
 
   useEffect(() => {
-    if (mode === "new" && fullBody) setDescription(fullBody);
-  }, [mode, fullBody]);
+    if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
+      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody));
+    }
+  }, [mode, ctx.bodyHtml, fullBody, description]);
 
   useEffect(() => {
     if (mode !== "edit" || !editId) return;
@@ -1506,18 +1745,36 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
   return (
     <div>
       <OdooMemoryCheck partnerId={projectId} projectId={projectId} fromEmail={fromEmail} />
-      <div style={S.row}><label style={S.lab}>NOME</label><input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da tarefa" /></div>
-      <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
-      <TypeaheadPicker label="PROJETO" placeholder="Pesquisar projeto..." model="project.project" pickedId={projectId} pickedName={projectName} onPick={(item: any) => { const id = item?.id ?? null; setProjectId(id); setProjectName(id ? (item.display_name || item.name || `#${id}`) : ""); if (!id) { setStageId(null); setStageName(""); } }} />
-      <TypeaheadPicker label="RESPONSAVEL" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name", "email"]} pickedId={assigneeId} pickedName={assigneeName} onPick={(item: any) => { const id = item?.id ?? null; setAssigneeId(id); setAssigneeName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+      <div style={S.formTopGrid}>
+        <div style={S.subjectCard}>
+          <div style={S.metaCardLabel}>ASSUNTO</div>
+          <input style={S.headerInput} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da tarefa" />
+        </div>
+        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+      </div>
+      <div style={S.formMetaGrid}>
+        <CompactTypeCard value="Tarefa" />
+        <CompactDualPickerCard title="PROJETO E RESPONSAVEL">
+          <TypeaheadPicker compact label="PROJETO" placeholder="Pesquisar projeto..." model="project.project" pickedId={projectId} pickedName={projectName} onPick={(item: any) => { const id = item?.id ?? null; setProjectId(id); setProjectName(id ? (item.display_name || item.name || `#${id}`) : ""); if (!id) { setStageId(null); setStageName(""); } }} />
+          <TypeaheadPicker compact label="RESPONSAVEL" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name", "email"]} pickedId={assigneeId} pickedName={assigneeName} onPick={(item: any) => { const id = item?.id ?? null; setAssigneeId(id); setAssigneeName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+        </CompactDualPickerCard>
+      </div>
       <div style={S.grid2}>
         <PickerStatic label="ETAPA" pickedId={stageId} pickedName={stageName} items={stagePick} onPick={(item: any) => { setStageId(item.id); setStageName(item.name || item.display_name || `#${item.id}`); }} placeholder={projectId ? "Escolher etapa..." : "Etapa (opcional)"} />
         <div style={S.row}><label style={S.lab}>PRAZO</label><input style={S.input} type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} /></div>
       </div>
       <div style={S.row}><label style={S.lab}>SUBTAREFA</label><input type="checkbox" checked={isSub} onChange={(e) => { setIsSub(e.target.checked); if (!e.target.checked) { setParentId(null); setParentName(""); } }} /></div>
       {isSub ? <TypeaheadPicker label="PARENT TASK" placeholder={projectId ? "Pesquisar tarefa (filtra por projeto)..." : "Pesquisar tarefa (global)..."} model="project.task" fields={["id", "name", "display_name", "project_id"]} pickedId={parentId} pickedName={parentName} extraDomain={(query) => { const domain: any[] = []; if (projectId) domain.push(["project_id", "=", projectId]); if (query?.trim()) domain.push(["name", "ilike", query.trim()]); return domain; }} onPick={(item: any) => { const id = item?.id ?? null; setParentId(id); setParentName(id ? (item.display_name || item.name || `#${id}`) : ""); }} /> : null}
-      <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Descricao / notas..." /></div>
-      <OdooContentEditor mode={mode} subject={ctx.subject} fromName={ctx.fromName} fromEmail={ctx.fromEmail} receivedAtIso={ctx.receivedAtIso} emailWebLink={ctx.emailWebLink} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} attachments={emailAtts || []} selectedAttachments={selectedAtts} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <DescriptionWorkspace
+        title="DESCRICAO"
+        hint="Edita aqui a descricao estruturada da tarefa. Esta area alimenta a coluna esquerda do Odoo."
+        value={description}
+        onChange={setDescription}
+        placeholder="Descricao e notas da tarefa..."
+        emailHtml={ctx.bodyHtml}
+        emailText={fullBody}
+      />
+      <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
@@ -1534,8 +1791,10 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
   const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
 
   useEffect(() => {
-    if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
-  }, [mode, ctx.bodyHtml, fullBody]);
+    if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
+      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody));
+    }
+  }, [mode, ctx.bodyHtml, fullBody, description]);
 
   useEffect(() => {
     if (mode !== "edit" || !editId) return;
@@ -1617,12 +1876,30 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
   return (
     <div>
       <OdooMemoryCheck partnerId={partnerId} fromEmail={fromEmail} />
-      <div style={S.row}><label style={S.lab}>NOME</label><input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do projeto" /></div>
-      <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
-      <TypeaheadPicker label="CLIENTE" placeholder="Pesquisar contacto/empresa..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
-      <TypeaheadPicker label="GESTOR" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name", "email"]} pickedId={managerId} pickedName={managerName} onPick={(item: any) => { const id = item?.id ?? null; setManagerId(id); setManagerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
-      <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notas do projeto..." /></div>
-      <OdooContentEditor mode={mode} subject={ctx.subject} fromName={ctx.fromName} fromEmail={ctx.fromEmail} receivedAtIso={ctx.receivedAtIso} emailWebLink={ctx.emailWebLink} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} attachments={emailAtts || []} selectedAttachments={selectedAtts} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <div style={S.formTopGrid}>
+        <div style={S.subjectCard}>
+          <div style={S.metaCardLabel}>ASSUNTO</div>
+          <input style={S.headerInput} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do projeto" />
+        </div>
+        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+      </div>
+      <div style={S.formMetaGrid}>
+        <CompactTypeCard value="Projeto" />
+        <CompactDualPickerCard title="CLIENTE E RESPONSAVEL">
+          <TypeaheadPicker compact label="CLIENTE" placeholder="Pesquisar contacto/empresa..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+          <TypeaheadPicker compact label="RESPONSAVEL" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name", "email"]} pickedId={managerId} pickedName={managerName} onPick={(item: any) => { const id = item?.id ?? null; setManagerId(id); setManagerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+        </CompactDualPickerCard>
+      </div>
+      <DescriptionWorkspace
+        title="DESCRICAO"
+        hint="Prepara aqui a descricao limpa e formatada do projeto. Esta area alimenta a coluna esquerda do Odoo."
+        value={description}
+        onChange={setDescription}
+        placeholder="Edita aqui a descricao do projeto..."
+        emailHtml={ctx.bodyHtml}
+        emailText={fullBody}
+      />
+      <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
@@ -1648,8 +1925,10 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   const leadTypeOptions = useMemo(() => Array.isArray(leadTypeField?.selection) ? leadTypeField.selection : [], [leadTypeField]);
 
   useEffect(() => {
-    if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
-  }, [mode, ctx.bodyHtml, fullBody]);
+    if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
+      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody));
+    }
+  }, [mode, ctx.bodyHtml, fullBody, description]);
 
   useEffect(() => {
     let alive = true;
@@ -1764,18 +2043,38 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   return (
     <div>
       <OdooMemoryCheck partnerId={partnerId} fromEmail={fromEmail} />
-      <div style={S.row}><label style={S.lab}>NOME LEAD</label><input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do lead" /></div>
-      <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
-      <div style={S.row}><label style={S.lab}>CONTACTO</label><input style={S.input} value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Nome do contacto" /></div>
-      <div style={S.row}><label style={S.lab}>EMAIL</label><input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@..." /></div>
+      <div style={S.formTopGrid}>
+        <div style={S.subjectCard}>
+          <div style={S.metaCardLabel}>ASSUNTO</div>
+          <input style={S.headerInput} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do lead" />
+        </div>
+        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+      </div>
+      <div style={S.formMetaGrid}>
+        <CompactTypeCard value="Lead" />
+        <CompactDualPickerCard title="CLIENTE E RESPONSAVEL">
+          <TypeaheadPicker compact label="EMPRESA" placeholder="Pesquisar res.partner..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+          <TypeaheadPicker compact label="ETAPA" placeholder="Pesquisar etapa do lead..." model="crm.stage" fields={["id", "name"]} pickedId={stageId} pickedName={stageName} onPick={(item: any) => { const id = item?.id ?? null; setStageId(id); setStageName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+        </CompactDualPickerCard>
+      </div>
+      <div style={S.grid2}>
+        <div style={S.row}><label style={S.lab}>CONTACTO</label><input style={S.input} value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Nome do contacto" /></div>
+        <div style={S.row}><label style={S.lab}>EMAIL</label><input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@..." /></div>
+      </div>
       <div style={S.row}><label style={S.lab}>TELEFONE</label><input style={S.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone" /></div>
       {leadTypeLoading && <div style={S.row}><label style={S.lab}>TIPO DE LEAD</label><select style={S.sel} value="" disabled><option value="">A carregar tipo de lead...</option></select></div>}
       {!leadTypeLoading && !!leadTypeField && <div style={S.row}><label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label><select style={S.sel} value={leadTypeValue} onChange={(e) => setLeadTypeValue(e.target.value)}><option value="">Selecionar...</option>{leadTypeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>}
       {!leadTypeLoading && !leadTypeField && <div style={S.row}><label style={S.lab}>TIPO DE LEAD</label><select style={S.sel} value="" disabled><option value="">{leadTypeError || "Tipo de Lead indisponivel"}</option></select></div>}
-      <TypeaheadPicker label="EMPRESA" placeholder="Pesquisar res.partner..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
-      <TypeaheadPicker label="ETAPA" placeholder="Pesquisar etapa do lead..." model="crm.stage" fields={["id", "name"]} pickedId={stageId} pickedName={stageName} onPick={(item: any) => { const id = item?.id ?? null; setStageId(id); setStageName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
-      <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notas do lead..." /></div>
-      <OdooContentEditor mode={mode} subject={ctx.subject} fromName={ctx.fromName} fromEmail={ctx.fromEmail} receivedAtIso={ctx.receivedAtIso} emailWebLink={ctx.emailWebLink} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} attachments={emailAtts || []} selectedAttachments={selectedAtts} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <DescriptionWorkspace
+        title="DESCRICAO"
+        hint="Edita aqui o resumo estruturado do lead. Esta area alimenta a descricao do registo."
+        value={description}
+        onChange={setDescription}
+        placeholder="Resumo e notas do lead..."
+        emailHtml={ctx.bodyHtml}
+        emailText={fullBody}
+      />
+      <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
@@ -1982,8 +2281,10 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
   const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
 
   useEffect(() => {
-    if (mode === "new" && (ctx.bodyHtml || fullBody)) setDescription(ctx.bodyHtml || fullBody);
-  }, [mode, ctx.bodyHtml, fullBody]);
+    if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
+      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody));
+    }
+  }, [mode, ctx.bodyHtml, fullBody, description]);
 
   useEffect(() => {
     if (mode !== "edit" || !editId) return;
@@ -2004,6 +2305,15 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
       }
     })();
   }, [editId, mode, onStatus]);
+
+  function handleAddAiAction(title: string) {
+    setDescription((prev) => {
+      const current = htmlToReadableTextClient(prev).trim();
+      const nextText = current ? `${current}\n\n- ${title}` : `- ${title}`;
+      return buildDescriptionEditorHtml(undefined, nextText);
+    });
+    onStatus(`Sugestao IA adicionada: ${title}`);
+  }
 
   async function save() {
     try {
@@ -2048,18 +2358,38 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
 
   return (
     <div>
-      <div style={S.row}><label style={S.lab}>TITULO</label><input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Titulo do ticket" /></div>
-      <TypeaheadPicker label="CONTACTO" placeholder="Pesquisar res.partner..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+      <div style={S.formTopGrid}>
+        <div style={S.subjectCard}>
+          <div style={S.metaCardLabel}>ASSUNTO</div>
+          <input style={S.headerInput} value={name} onChange={(e) => setName(e.target.value)} placeholder="Titulo do ticket" />
+        </div>
+        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+      </div>
+      <div style={S.formMetaGrid}>
+        <CompactTypeCard value="Ticket" />
+        <CompactDualPickerCard title="CONTACTO E RESPONSAVEL">
+          <TypeaheadPicker compact label="CONTACTO" placeholder="Pesquisar res.partner..." model="res.partner" pickedId={partnerId} pickedName={partnerName} onPick={(item: any) => { const id = item?.id ?? null; setPartnerId(id); setPartnerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+          <TypeaheadPicker compact label="RESPONSAVEL" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name"]} pickedId={assigneeId} pickedName={assigneeName} onPick={(item: any) => { const id = item?.id ?? null; setAssigneeId(id); setAssigneeName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+        </CompactDualPickerCard>
+      </div>
       <div style={S.grid2}>
         <TypeaheadPicker label="EQUIPA" placeholder="Pesquisar equipa..." model="helpdesk.team" fields={["id", "name"]} pickedId={teamId} pickedName={teamName} onPick={(item: any) => { const id = item?.id ?? null; setTeamId(id); setTeamName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
-        <TypeaheadPicker label="RESPONSAVEL" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name"]} pickedId={assigneeId} pickedName={assigneeName} onPick={(item: any) => { const id = item?.id ?? null; setAssigneeId(id); setAssigneeName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
+        <div />
       </div>
       <div style={S.grid2}>
         <TypeaheadPicker label="ETAPA" placeholder="Pesquisar etapa do ticket..." model="helpdesk.stage" fields={["id", "name"]} pickedId={stageId} pickedName={stageName} onPick={(item: any) => { const id = item?.id ?? null; setStageId(id); setStageName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
         <div style={S.row}><label style={S.lab}>PRIORIDADE</label><select style={S.sel} value={priority} onChange={(e) => setPriority(e.target.value)}><option value="0">Baixa</option><option value="1">Media</option><option value="2">Alta</option><option value="3">Urgente</option></select></div>
       </div>
-      <div style={{ marginTop: 12 }}><label style={S.labBlock}>DESCRICAO</label><textarea style={S.ta} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Detalhes do ticket..." /></div>
-      <OdooContentEditor mode={mode} subject={ctx.subject} fromName={ctx.fromName} fromEmail={ctx.fromEmail} receivedAtIso={ctx.receivedAtIso} emailWebLink={ctx.emailWebLink} emailHtml={ctx.bodyHtml} emailText={fullBody} description={description} onDescriptionChange={setDescription} publishState={publishState} onPublishChange={setPublishState} attachments={emailAtts || []} selectedAttachments={selectedAtts} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
+      <DescriptionWorkspace
+        title="DESCRICAO"
+        hint="Edita aqui a descricao estruturada do ticket. O chatter fica separado e controlado abaixo."
+        value={description}
+        onChange={setDescription}
+        placeholder="Detalhes e contexto do ticket..."
+        emailHtml={ctx.bodyHtml}
+        emailText={fullBody}
+      />
+      <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
     </div>
@@ -2238,6 +2568,25 @@ const S: Record<string, React.CSSProperties> = {
   bannerVal: { fontSize: 13, color: "#172B4D", minWidth: 0, wordBreak: "break-all" },
 
   formCard: { background: "rgba(255,255,255,0.55)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.4)", borderRadius: "12px", padding: "16px", marginBottom: 12 },
+  formTopGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1.25fr) minmax(280px, 0.75fr)", gap: 12, alignItems: "stretch", marginBottom: 12 },
+  formMetaGrid: { display: "grid", gridTemplateColumns: "180px minmax(0, 1fr)", gap: 12, alignItems: "stretch", marginBottom: 12 },
+  subjectCard: { border: "1px solid #d6def2", borderRadius: 12, background: "rgba(255,255,255,0.55)", padding: 10, display: "flex", flexDirection: "column", gap: 6, minHeight: 78 },
+  metaCard: { border: "1px solid #d6def2", borderRadius: 12, background: "rgba(255,255,255,0.55)", padding: 10, display: "flex", flexDirection: "column", gap: 8, minHeight: 78 },
+  metaCardLarge: { border: "1px solid #d6def2", borderRadius: 12, background: "rgba(255,255,255,0.55)", padding: 10, display: "flex", flexDirection: "column", gap: 8, minHeight: 78 },
+  metaCardLabel: { fontSize: 10, fontWeight: 700, color: "#6B778C", textTransform: "uppercase", letterSpacing: "0.04em" },
+  metaCardValue: { fontSize: 18, fontWeight: 700, color: "#172B4D" },
+  compactFieldStack: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "start" },
+  headerInput: { width: "100%", padding: "8px 10px", border: "2px solid #DFE1E6", borderRadius: 8, color: "#172B4D", background: "#FAFBFC", fontSize: 16, fontWeight: 600, outline: "none" },
+  descriptionCard: { marginTop: 12, border: "1px solid #d6def2", borderRadius: 12, background: "rgba(255,255,255,0.55)", padding: 12 },
+  sectionHeaderRow: { display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 8 },
+  sectionTitle: { fontSize: 11, fontWeight: 800, color: "#2563eb", textTransform: "uppercase" },
+  sectionHint: { fontSize: 11, color: "#5E6C84", marginTop: 2 },
+  editorCard: { border: "1px solid #d6def2", borderRadius: 10, background: "#fff", overflow: "hidden" },
+  editorToolbar: { display: "flex", gap: 6, flexWrap: "wrap", padding: "8px", borderBottom: "1px solid #E6ECF7", background: "#F8FAFF" },
+  editorToolBtn: { border: "1px solid #d6def2", borderRadius: 8, background: "#fff", color: "#253858", minWidth: 34, height: 28, padding: "0 8px", fontSize: 11, fontWeight: 600, cursor: "pointer" },
+  editorSurfaceWrap: { position: "relative", minHeight: 260 },
+  editorSurface: { minHeight: 260, padding: 12, color: "#172B4D", background: "#fff", fontSize: 13, lineHeight: 1.55, outline: "none", overflow: "auto" },
+  editorPlaceholder: { position: "absolute", left: 12, top: 12, color: "#7A869A", fontSize: 13, pointerEvents: "none" },
 
   footer: {
     padding: "12px 20px",
@@ -2258,7 +2607,7 @@ const S: Record<string, React.CSSProperties> = {
 
   sel: { padding: "6px 8px", border: "1px solid #DFE1E6", borderRadius: 3, color: "#172B4D", background: "#FAFBFC", fontSize: 13, height: "32px", outline: "none" },
   input: { width: "100%", padding: "6px 8px", border: "2px solid #DFE1E6", borderRadius: 3, color: "#172B4D", background: "#FAFBFC", fontSize: 13, height: "32px", outline: "none" },
-  ta: { width: "100%", minHeight: 80, padding: "8px", border: "2px solid #DFE1E6", borderRadius: 3, resize: "vertical", color: "#172B4D", background: "#FAFBFC", fontSize: 13, outline: "none" },
+  ta: { width: "100%", minHeight: 80, padding: "8px", border: "2px solid #DFE1E6", borderRadius: 8, resize: "vertical", color: "#172B4D", background: "#FAFBFC", fontSize: 13, outline: "none" },
   odooEditorCard: { marginTop: 12, padding: "12px", borderRadius: 12, border: "1px solid #d6def2", background: "rgba(255,255,255,0.55)" },
   odooEditorHeader: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" },
   odooEditorTitle: { fontSize: 11, fontWeight: 800, color: "#2563eb", textTransform: "uppercase" },
@@ -2267,6 +2616,7 @@ const S: Record<string, React.CSSProperties> = {
   odooToggleRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#172B4D", fontWeight: 600 },
   odooEditorSelectWrap: { display: "flex", flexDirection: "column", gap: 4 },
   odooEditorMiniLab: { fontSize: 10, fontWeight: 700, color: "#6B778C", textTransform: "uppercase" },
+  odooMiniSummary: { marginTop: 10, padding: "9px 11px", borderRadius: 10, border: "1px solid #d6def2", background: "#F7F9FC", fontSize: 11, color: "#253858", lineHeight: 1.45 },
   odooPreviewBox: { marginTop: 10, padding: "10px 12px", borderRadius: 10, border: "1px solid #d6def2", background: "#F7F9FC", fontSize: 12, color: "#253858", lineHeight: 1.45, whiteSpace: "pre-wrap" },
   odooHtmlPreview: { marginTop: 10, padding: "12px", borderRadius: 10, border: "1px solid #d6def2", background: "#FFFFFF", color: "#172B4D", fontSize: 12, lineHeight: 1.5, maxHeight: 260, overflow: "auto" },
   odooAttachmentHint: { marginTop: 8, fontSize: 11, color: "#5E6C84" },
@@ -2278,16 +2628,16 @@ const S: Record<string, React.CSSProperties> = {
   odooAttachmentPreviewText: { fontSize: 11, color: "#253858", lineHeight: 1.35, background: "#fff", borderRadius: 8, padding: 8, minHeight: 88, overflow: "hidden" },
   odooAttachmentPreviewFallback: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: 88, borderRadius: 8, background: "#fff", fontSize: 12, fontWeight: 700, color: "#5E6C84" },
   odooAttachmentPreviewMeta: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10, color: "#6B778C" },
-  attachmentCardGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "8px", marginTop: "4px" },
-  attachmentPreviewCard: { border: "1px solid #d6def2", borderRadius: 10, background: "#F7F9FC", padding: "8px", display: "flex", flexDirection: "column", gap: 6, minHeight: 148, cursor: "pointer", textAlign: "left" as const },
+  attachmentCardGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(126px, 1fr))", gap: "8px", marginTop: "4px" },
+  attachmentPreviewCard: { border: "1px solid #d6def2", borderRadius: 10, background: "#F7F9FC", padding: "8px", display: "flex", flexDirection: "column", gap: 6, minHeight: 118, cursor: "pointer", textAlign: "left" as const },
   attachmentPreviewCardActive: { border: "1px solid #2563eb", boxShadow: "0 0 0 2px rgba(37,99,235,0.12) inset", background: "#EEF4FF" },
   attachmentPreviewHeader: { display: "flex", alignItems: "center", gap: 6 },
   attachmentPreviewCheck: { width: 16, height: 16, borderRadius: 999, border: "1px solid #c3d4f4", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#2563eb", flexShrink: 0 },
-  attachmentPreviewName: { fontSize: 11, fontWeight: 700, color: "#172B4D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  attachmentPreviewBody: { borderRadius: 8, background: "#fff", minHeight: 88, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" },
-  attachmentPreviewImage: { width: "100%", height: 88, objectFit: "contain" },
-  attachmentPreviewFrame: { width: "100%", height: 88, border: "none" },
-  attachmentPreviewText: { fontSize: 11, color: "#253858", lineHeight: 1.35, padding: 8 },
+  attachmentPreviewName: { fontSize: 10, fontWeight: 700, color: "#172B4D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  attachmentPreviewBody: { borderRadius: 8, background: "#fff", minHeight: 64, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" },
+  attachmentPreviewImage: { width: "100%", height: 64, objectFit: "contain" },
+  attachmentPreviewFrame: { width: "100%", height: 64, border: "none" },
+  attachmentPreviewText: { fontSize: 10, color: "#253858", lineHeight: 1.3, padding: 6 },
   attachmentPreviewFallback: { fontSize: 12, fontWeight: 700, color: "#5E6C84" },
   attachmentPreviewMeta: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10, color: "#6B778C" },
 
@@ -2295,8 +2645,8 @@ const S: Record<string, React.CSSProperties> = {
 
   btn: {
     boxSizing: "border-box",
-    width: "94px", minWidth: "94px", maxWidth: "94px",
-    height: "26px", minHeight: "26px", maxHeight: "26px",
+    width: "auto", minWidth: "78px", maxWidth: "140px",
+    height: "24px", minHeight: "24px", maxHeight: "24px",
     borderRadius: "16px",
     border: "1px solid rgba(0, 80, 180, 0.4)",
     backdropFilter: "blur(12px)",
@@ -2306,10 +2656,10 @@ const S: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     gap: "5px",
     padding: "0 8px",
-    fontSize: "10px",
-    fontWeight: 800,
+    fontSize: "9px",
+    fontWeight: 600,
     lineHeight: 1,
-    textTransform: "uppercase",
+    textTransform: "none",
     cursor: "pointer",
     flexShrink: 0,
     margin: 0,
@@ -2320,21 +2670,21 @@ const S: Record<string, React.CSSProperties> = {
   },
   btn2: {
     boxSizing: "border-box",
-    width: "94px", minWidth: "94px", maxWidth: "94px",
-    height: "26px", minHeight: "26px", maxHeight: "26px",
+    width: "auto", minWidth: "78px", maxWidth: "140px",
+    height: "24px", minHeight: "24px", maxHeight: "24px",
     borderRadius: "16px",
     border: "1px solid rgba(200, 210, 230, 0.6)",
     backdropFilter: "blur(12px)",
     WebkitBackdropFilter: "blur(12px)",
     display: "flex",
     alignItems: "center",
-    justifyContent: "flex-start",
+    justifyContent: "center",
     gap: "5px",
     padding: "0 8px",
-    fontSize: "10px",
-    fontWeight: 800,
+    fontSize: "9px",
+    fontWeight: 600,
     lineHeight: 1,
-    textTransform: "uppercase",
+    textTransform: "none",
     cursor: "pointer",
     flexShrink: 0,
     margin: 0,
@@ -2345,21 +2695,21 @@ const S: Record<string, React.CSSProperties> = {
   },
   btn3: {
     boxSizing: "border-box",
-    width: "94px", minWidth: "94px", maxWidth: "94px",
-    height: "26px", minHeight: "26px", maxHeight: "26px",
+    width: "auto", minWidth: "78px", maxWidth: "140px",
+    height: "24px", minHeight: "24px", maxHeight: "24px",
     borderRadius: "16px",
     border: "1px solid rgba(200, 210, 230, 0.6)",
     backdropFilter: "blur(12px)",
     WebkitBackdropFilter: "blur(12px)",
     display: "flex",
     alignItems: "center",
-    justifyContent: "flex-start",
+    justifyContent: "center",
     gap: "5px",
     padding: "0 8px",
-    fontSize: "10px",
-    fontWeight: 800,
+    fontSize: "9px",
+    fontWeight: 600,
     lineHeight: 1,
-    textTransform: "uppercase",
+    textTransform: "none",
     cursor: "pointer",
     flexShrink: 0,
     margin: 0,
@@ -2373,8 +2723,8 @@ const S: Record<string, React.CSSProperties> = {
 
   primaryBtn: {
     boxSizing: "border-box",
-    width: "94px", minWidth: "94px", maxWidth: "94px",
-    height: "26px", minHeight: "26px", maxHeight: "26px",
+    width: "auto", minWidth: "78px", maxWidth: "140px",
+    height: "24px", minHeight: "24px", maxHeight: "24px",
     borderRadius: "16px",
     border: "1px solid rgba(0, 80, 180, 0.4)",
     backdropFilter: "blur(12px)",
@@ -2384,10 +2734,10 @@ const S: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     gap: "5px",
     padding: "0 8px",
-    fontSize: "10px",
-    fontWeight: 800,
+    fontSize: "9px",
+    fontWeight: 600,
     lineHeight: 1,
-    textTransform: "uppercase",
+    textTransform: "none",
     cursor: "pointer",
     flexShrink: 0,
     margin: 0,
@@ -2398,21 +2748,21 @@ const S: Record<string, React.CSSProperties> = {
   },
   secondaryBtn: {
     boxSizing: "border-box",
-    width: "94px", minWidth: "94px", maxWidth: "94px",
-    height: "26px", minHeight: "26px", maxHeight: "26px",
+    width: "auto", minWidth: "78px", maxWidth: "140px",
+    height: "24px", minHeight: "24px", maxHeight: "24px",
     borderRadius: "16px",
     border: "1px solid rgba(200, 210, 230, 0.6)",
     backdropFilter: "blur(12px)",
     WebkitBackdropFilter: "blur(12px)",
     display: "flex",
     alignItems: "center",
-    justifyContent: "flex-start",
+    justifyContent: "center",
     gap: "5px",
     padding: "0 8px",
-    fontSize: "10px",
-    fontWeight: 800,
+    fontSize: "9px",
+    fontWeight: 600,
     lineHeight: 1,
-    textTransform: "uppercase",
+    textTransform: "none",
     cursor: "pointer",
     flexShrink: 0,
     margin: 0,
@@ -2420,6 +2770,46 @@ const S: Record<string, React.CSSProperties> = {
     background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
     color: "#172B4D",
     boxShadow: "0 4px 10px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06)",
+  },
+  compactPrimaryBtn: {
+    boxSizing: "border-box",
+    minWidth: "64px",
+    height: "22px",
+    borderRadius: "14px",
+    border: "1px solid rgba(0, 80, 180, 0.28)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "4px",
+    padding: "0 8px",
+    fontSize: "9px",
+    fontWeight: 600,
+    lineHeight: 1,
+    cursor: "pointer",
+    outline: "none",
+    background: "linear-gradient(180deg, rgba(80,160,255,0.95) 0%, rgba(0,100,210,0.85) 100%)",
+    color: "#FFFFFF",
+    boxShadow: "0 3px 8px rgba(0,100,210,0.25), inset 0 1px 0 rgba(255,255,255,0.5)",
+  },
+  compactActionBtn: {
+    boxSizing: "border-box",
+    minWidth: "64px",
+    height: "22px",
+    borderRadius: "14px",
+    border: "1px solid rgba(200, 210, 230, 0.6)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "4px",
+    padding: "0 8px",
+    fontSize: "9px",
+    fontWeight: 600,
+    lineHeight: 1,
+    cursor: "pointer",
+    outline: "none",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
+    color: "#172B4D",
+    boxShadow: "0 3px 8px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,1)",
   },
 
   pickList: {
