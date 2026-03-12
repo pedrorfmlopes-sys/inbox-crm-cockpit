@@ -19,6 +19,7 @@ import "../../global.css";
 type EmailSortMode = "date_desc" | "date_asc" | "subject_asc" | "subject_desc";
 type EmailAttachmentFilter = "all" | "with" | "without";
 type DocumentFilterMode = "all" | "selected_email";
+type PreviewMode = "email" | "document";
 type PreviewState =
   | { kind: "image"; dataUrl: string }
   | { kind: "pdf"; dataUrl: string }
@@ -126,6 +127,56 @@ function buildDocumentPreview(document: GroupDocumentEntry | null): PreviewState
   return { kind: "unsupported" };
 }
 
+function sanitizeEmailHtml(html: string | undefined): string {
+  const raw = String(html || "").trim();
+  if (!raw) return "";
+  return raw
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/\son\w+=(["']).*?\1/gi, "")
+    .replace(/\sjavascript:/gi, " ");
+}
+
+function buildEmailPreviewHtml(email: RelatedEmailEntry | null): string {
+  const safeHtml = sanitizeEmailHtml(email?.bodyHtml);
+  if (safeHtml) {
+    return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: light; }
+      html, body { margin: 0; padding: 0; background: #ffffff; color: #172b4d; font: 14px/1.45 'Segoe UI', sans-serif; }
+      body { padding: 16px; }
+      img { max-width: 100%; height: auto; }
+      table { max-width: 100%; }
+      pre { white-space: pre-wrap; word-break: break-word; }
+      blockquote { margin-left: 0; padding-left: 12px; border-left: 3px solid #dbeafe; color: #42526e; }
+    </style>
+  </head>
+  <body>${safeHtml}</body>
+</html>`;
+  }
+
+  const safeText = String(email?.bodyText || "").trim();
+  if (!safeText) return "";
+  const escaped = safeText
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body { margin: 0; padding: 0; background: #ffffff; color: #172b4d; font: 14px/1.5 'Segoe UI', sans-serif; }
+      body { padding: 16px; }
+      pre { white-space: pre-wrap; word-break: break-word; font: inherit; margin: 0; }
+    </style>
+  </head>
+  <body><pre>${escaped}</pre></body>
+</html>`;
+}
+
 function matchesSelectedEmail(document: GroupDocumentEntry, email: RelatedEmailEntry | null): boolean {
   if (!email) return false;
   const keys = new Set([
@@ -184,6 +235,7 @@ export default function GroupExplorerApp(): JSX.Element {
   const [dateTo, setDateTo] = useState("");
   const [documentFilterMode, setDocumentFilterMode] = useState<DocumentFilterMode>("all");
   const [documentSearch, setDocumentSearch] = useState("");
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("document");
 
   useEffect(() => {
     (async () => {
@@ -294,6 +346,8 @@ export default function GroupExplorerApp(): JSX.Element {
   );
 
   const selectedDocumentPreview = useMemo(() => buildDocumentPreview(selectedDocument), [selectedDocument]);
+  const selectedEmailPreviewHtml = useMemo(() => buildEmailPreviewHtml(selectedEmail), [selectedEmail]);
+  const selectedEmailHasPreview = Boolean(String(selectedEmail?.bodyHtml || "").trim() || String(selectedEmail?.bodyText || "").trim());
   const selectedProvider = useMemo(() => providerLabel(selectedDocument?.storageProvider || groupDocuments[0]?.storageProvider), [groupDocuments, selectedDocument]);
 
   useEffect(() => {
@@ -307,6 +361,16 @@ export default function GroupExplorerApp(): JSX.Element {
       setSelectedDocumentId("");
     }
   }, [filteredDocuments, selectedDocumentId]);
+
+  useEffect(() => {
+    if (selectedDocument) {
+      setPreviewMode("document");
+      return;
+    }
+    if (selectedEmailHasPreview) {
+      setPreviewMode("email");
+    }
+  }, [selectedDocument, selectedEmailHasPreview, selectedEmailKey]);
 
   async function refreshCurrentGroup() {
     if (!selectedGroupId) return;
@@ -545,18 +609,59 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
           <section style={styles.previewPanel}>
             <div style={styles.sectionHeaderCompact}>
               <div style={styles.sectionTitle}>Preview</div>
-              {selectedDocument ? (
-                <div style={styles.sectionActions}>
+              <div style={styles.sectionActions}>
+                <div style={styles.previewTabs}>
+                  <button
+                    type="button"
+                    style={previewMode === "email" ? styles.previewTabActive : styles.previewTab}
+                    onClick={() => setPreviewMode("email")}
+                    disabled={!selectedEmailHasPreview}
+                    title={selectedEmailHasPreview ? "Ver preview do email selecionado" : "Este email ainda nao tem corpo guardado"}
+                  >
+                    Email
+                  </button>
+                  <button
+                    type="button"
+                    style={previewMode === "document" ? styles.previewTabActive : styles.previewTab}
+                    onClick={() => setPreviewMode("document")}
+                    disabled={!selectedDocument}
+                    title={selectedDocument ? "Ver preview do documento selecionado" : "Seleciona um documento"}
+                  >
+                    Documento
+                  </button>
+                </div>
+                {selectedDocument ? (
+                  <>
                   <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(selectedDocument)} disabled={!selectedDocument.contentBase64} title="Download"><Icons.Download size={10} /></button>
                   <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(selectedDocument)} disabled={!selectedDocument.contentBase64} title="Anexar ao email"><Icons.Upload size={10} /></button>
-                </div>
-              ) : null}
+                  </>
+                ) : null}
+              </div>
             </div>
-            {!selectedDocument ? <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe um documento para abrir o preview." /> : null}
-            {selectedDocument && selectedDocumentPreview?.kind === "image" ? <div style={styles.previewFrame}><img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} /></div> : null}
-            {selectedDocument && selectedDocumentPreview?.kind === "pdf" ? <div style={styles.previewFrame}><iframe title={selectedDocument.name} src={selectedDocumentPreview.dataUrl} style={styles.previewIframe} /></div> : null}
-            {selectedDocument && selectedDocumentPreview?.kind === "text" ? <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre> : null}
-            {selectedDocument && (!selectedDocumentPreview || selectedDocumentPreview.kind === "unsupported") ? <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode ser descarregado ou anexado, mas ainda nao tem preview interno para este formato." /> : null}
+            {previewMode === "email" ? (
+              selectedEmailHasPreview ? (
+                <div style={styles.previewFrame}>
+                  <iframe
+                    title={selectedEmail?.subject || "Preview do email"}
+                    srcDoc={selectedEmailPreviewHtml}
+                    sandbox=""
+                    style={styles.previewIframe}
+                  />
+                </div>
+              ) : (
+                <PanelState compact tone="info" title="Preview do email indisponivel" description="Este email ainda nao tem corpo HTML ou texto guardado para preview." />
+              )
+            ) : !selectedDocument ? (
+              <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe um documento para abrir o preview." />
+            ) : selectedDocumentPreview?.kind === "image" ? (
+              <div style={styles.previewFrame}><img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} /></div>
+            ) : selectedDocumentPreview?.kind === "pdf" ? (
+              <div style={styles.previewFrame}><iframe title={selectedDocument.name} src={selectedDocumentPreview.dataUrl} style={styles.previewIframe} /></div>
+            ) : selectedDocumentPreview?.kind === "text" ? (
+              <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre>
+            ) : (
+              <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode ser descarregado ou anexado, mas ainda nao tem preview interno para este formato." />
+            )}
           </section>
         </div>
       ) : null}
@@ -597,6 +702,9 @@ const styles: Record<string, React.CSSProperties> = {
   sectionHeaderCompact: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" },
   sectionTitle: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#0f172a" },
   sectionActions: { display: "inline-flex", gap: 4, alignItems: "center" },
+  previewTabs: { display: "inline-flex", gap: 4, alignItems: "center", marginRight: 4 },
+  previewTab: { borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#fff", color: "#42526E", padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" },
+  previewTabActive: { borderRadius: 999, border: "1px solid rgba(37, 99, 235, 0.22)", background: "#dbeafe", color: "#1d4ed8", padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" },
   filterGridEmails: { display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) repeat(4, minmax(0, 0.7fr))", gap: 6, alignItems: "end" },
   filterGridDocuments: { display: "grid", gridTemplateColumns: "minmax(120px, 0.6fr) minmax(0, 1.4fr)", gap: 6, alignItems: "end" },
   filterField: { display: "grid", gap: 3, minWidth: 0 },
