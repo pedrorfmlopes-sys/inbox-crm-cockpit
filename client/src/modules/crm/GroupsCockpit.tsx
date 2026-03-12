@@ -339,9 +339,12 @@ export const GroupsCockpit: React.FC = () => {
             bodyText: String(bodyText || "").trim(),
             bodyHtml: String(bodyHtml || "").trim(),
             attachments: (attachments || []).map((attachment) => ({
+                id: attachment.id,
                 name: attachment.name,
                 contentType: attachment.contentType,
-                size: estimateBase64Size(attachment.content),
+                size: attachment.size || estimateBase64Size(attachment.content),
+                isInline: attachment.isInline,
+                contentId: attachment.contentId,
                 content: String(attachment.content || "").trim(),
             })),
         }),

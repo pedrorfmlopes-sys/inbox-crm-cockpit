@@ -86,7 +86,20 @@ function dedupeRecordLinks(entries: LinkEntry[]): LinkEntry[] {
   });
 }
 
-function getCurrentEmailPayload(currentCtx: OutlookMessageContext, bodyText = "", bodyHtml = "") {
+function getCurrentEmailPayload(
+  currentCtx: OutlookMessageContext,
+  bodyText = "",
+  bodyHtml = "",
+  attachments: Array<{
+    id?: string;
+    name: string;
+    contentType?: string;
+    size?: number;
+    isInline?: boolean;
+    contentId?: string;
+    content?: string;
+  }> = []
+) {
   return {
     itemId: String(currentCtx.itemId || "").trim(),
     internetMessageId: normalizeMessageId(currentCtx.internetMessageId),
@@ -98,6 +111,22 @@ function getCurrentEmailPayload(currentCtx: OutlookMessageContext, bodyText = ""
     messageDateIso: String(currentCtx.receivedDateTimeIso || "").trim(),
     bodyText: String(bodyText || "").trim(),
     bodyHtml: String(bodyHtml || "").trim(),
+    attachments: Array.isArray(attachments)
+      ? attachments
+        .map((attachment) => ({
+          id: String(attachment?.id || "").trim() || undefined,
+          name: String(attachment?.name || "").trim(),
+          contentType: String(attachment?.contentType || "").trim(),
+          size: Number(attachment?.size || 0) || undefined,
+          isInline: Boolean(attachment?.isInline),
+          contentId: String(attachment?.contentId || "").trim() || undefined,
+          content:
+            attachment?.isInline || String(attachment?.contentType || "").trim().toLowerCase().startsWith("image/")
+              ? String(attachment?.content || "").trim()
+              : "",
+        }))
+        .filter((attachment) => attachment.name)
+      : [],
   };
 }
 
@@ -117,9 +146,12 @@ function getRelatedEmailPayload(email: Partial<RelatedEmailEntry>) {
     attachments: Array.isArray(email.attachments)
       ? email.attachments
         .map((attachment) => ({
+          id: String(attachment?.id || "").trim() || undefined,
           name: String(attachment?.name || "").trim(),
           contentType: String(attachment?.contentType || "").trim(),
           size: Number(attachment?.size || 0) || undefined,
+          isInline: Boolean(attachment?.isInline),
+          contentId: String(attachment?.contentId || "").trim() || undefined,
           content: String(attachment?.content || "").trim(),
         }))
         .filter((attachment) => attachment.name)
@@ -614,7 +646,7 @@ export function RelatedEmailsPanel({
   onEditRecord: (model: string, recordId: number) => void;
   onStatus: (message: string) => void;
 }) {
-  const { activeGroupSelection, setActiveGroupForCurrentEmail, bodyText, bodyHtml } = useCockpit();
+  const { activeGroupSelection, setActiveGroupForCurrentEmail, bodyText, bodyHtml, attachments } = useCockpit();
   const [view, setView] = useState<"context" | "manual">("context");
   const [exploreMode, setExploreMode] = useState<ExploreMode>("records");
   const [manualModel, setManualModel] = useState<SupportedModel>("res.partner");
@@ -639,8 +671,8 @@ export function RelatedEmailsPanel({
   const groupLoadSeq = useRef(0);
 
   const emailPayload = useMemo(
-    () => getCurrentEmailPayload(currentCtx, bodyText, bodyHtml),
-    [bodyHtml, bodyText, currentCtx.itemId, currentCtx.internetMessageId, currentCtx.conversationId, currentCtx.subject, currentCtx.fromEmail, currentCtx.fromName, currentCtx.receivedDateTimeIso]
+    () => getCurrentEmailPayload(currentCtx, bodyText, bodyHtml, attachments),
+    [attachments, bodyHtml, bodyText, currentCtx.itemId, currentCtx.internetMessageId, currentCtx.conversationId, currentCtx.subject, currentCtx.fromEmail, currentCtx.fromName, currentCtx.receivedDateTimeIso]
   );
   const currentLinkSignature = useMemo(
     () =>
@@ -654,8 +686,8 @@ export function RelatedEmailsPanel({
   const currentContextEmail = useMemo<RelatedEmailEntry | null>(() => {
     if (!hasCurrentEmailIdentity(currentCtx)) return null;
     return {
-      ...getCurrentEmailPayload(currentCtx, bodyText, bodyHtml),
-      id: `current:${makeRelatedEmailSelectionKey(getCurrentEmailPayload(currentCtx))}`,
+      ...getCurrentEmailPayload(currentCtx, bodyText, bodyHtml, attachments),
+      id: `current:${makeRelatedEmailSelectionKey(getCurrentEmailPayload(currentCtx, bodyText, bodyHtml, attachments))}`,
       relatedRecords: linkedRecords.map((record) => ({
         model: String(record.model || "").trim(),
         recordId: Number(record.recordId || record.resId || 0),
@@ -666,7 +698,7 @@ export function RelatedEmailsPanel({
         ? [{ kind: "conversation", groupId: `conversation:${currentCtx.conversationId}`, groupName: "Conversa atual", conversationId: currentCtx.conversationId }]
         : [],
     };
-  }, [bodyHtml, bodyText, currentCtx, linkedRecords]);
+  }, [attachments, bodyHtml, bodyText, currentCtx, linkedRecords]);
   const conversationContextItems = useMemo(() => {
     const currentConversationId = String(currentCtx.conversationId || "").trim();
     const items = contextItems.filter((item) => belongsToCurrentConversation(item, currentConversationId));

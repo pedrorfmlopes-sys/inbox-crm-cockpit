@@ -212,9 +212,12 @@ function normalizeAttachments(value) {
   if (!Array.isArray(value)) return [];
   return value
     .map((attachment) => ({
+      id: normalizeString(attachment?.id),
       name: normalizeString(attachment?.name),
       contentType: normalizeString(attachment?.contentType),
       size: Number(attachment?.size || 0) || undefined,
+      isInline: Boolean(attachment?.isInline),
+      contentId: normalizeString(attachment?.contentId),
       content: normalizeBase64Content(attachment?.content),
     }))
     .filter((attachment) => attachment.name);

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, syncManualGroupCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookMessageContext } from "@/office";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, syncManualGroupCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -65,7 +65,7 @@ export interface CockpitContextType {
     bodyHtml: string;
     meta: OdooMeta | null;
     links: LinkEntry[];
-    attachments: Array<{ name: string; contentType: string; content: string }>;
+    attachments: OutlookAttachment[];
     msg: string | null;
     setMsg: (msg: string | null) => void;
     refreshLinks: () => Promise<void>;
@@ -135,7 +135,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [bodyHtml, setBodyHtml] = useState<string>("");
     const [meta, setMeta] = useState<OdooMeta | null>(null);
     const [links, setLinks] = useState<LinkEntry[]>([]);
-    const [attachments, setAttachments] = useState<Array<{ name: string; contentType: string; content: string }>>([]);
+    const [attachments, setAttachments] = useState<OutlookAttachment[]>([]);
     const [msg, setMsg] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -514,6 +514,14 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 attachments: (atts || []).map((attachment) => ({
                     name: attachment.name,
                     contentType: attachment.contentType,
+                    size: attachment.size,
+                    id: attachment.id,
+                    isInline: attachment.isInline,
+                    contentId: attachment.contentId,
+                    content:
+                        attachment.isInline || String(attachment.contentType || "").trim().toLowerCase().startsWith("image/")
+                            ? String(attachment.content || "").trim()
+                            : "",
                 })),
             }).catch(() => {
                 // best-effort central registry only

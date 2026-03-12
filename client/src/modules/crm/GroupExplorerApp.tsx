@@ -9,7 +9,7 @@ import {
   type LinkGroupEntry,
   type RelatedEmailEntry,
 } from "@/api";
-import { addBase64AttachmentToCompose, openLinkedOutlookEmail } from "@/office";
+import { addBase64AttachmentToCompose, getAttachments, getSelectedMessageContext, openLinkedOutlookEmail, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getSettings } from "@/settings";
 import { applySkin } from "@/ui/skins";
 import { PanelState } from "@/ui/PanelState";
@@ -25,6 +25,7 @@ type PreviewState =
   | { kind: "pdf"; dataUrl: string }
   | { kind: "text"; text: string }
   | { kind: "unsupported" };
+type EmailAttachmentEntry = NonNullable<RelatedEmailEntry["attachments"]>[number];
 
 function closeExplorer() {
   try { (window as any).Office?.context?.ui?.messageParent?.("close"); } catch {}
@@ -74,6 +75,14 @@ function normalizeMessageId(value: string | undefined): string {
   return String(value || "").trim().toLowerCase().replace(/[<>\s]/g, "");
 }
 
+function normalizeCidValue(value: string | undefined): string {
+  return String(value || "")
+    .trim()
+    .replace(/^cid:/i, "")
+    .replace(/[<>\s]/g, "")
+    .toLowerCase();
+}
+
 function stripDataUrlPrefix(value: string | undefined): string {
   return String(value || "").trim().replace(/^data:[^,]+,/, "");
 }
@@ -84,6 +93,93 @@ function normalizeDocumentMimeType(value: string | undefined, name: string | und
   if (raw === "application/x-pdf" || (!raw && /\.pdf$/.test(fileName))) return "application/pdf";
   if (raw === "image/jpg") return "image/jpeg";
   return raw || "application/octet-stream";
+}
+
+function normalizeAttachmentMimeType(value: string | undefined, name: string | undefined): string {
+  return normalizeDocumentMimeType(value, name);
+}
+
+function buildAttachmentDataUrl(attachment: Partial<EmailAttachmentEntry & OutlookAttachment>): string {
+  const base64 = stripDataUrlPrefix(attachment?.content);
+  if (!base64) return "";
+  return `data:${normalizeAttachmentMimeType(attachment?.contentType, attachment?.name)};base64,${base64}`;
+}
+
+function attachmentMatchesCid(attachment: Partial<EmailAttachmentEntry & OutlookAttachment>, cid: string): boolean {
+  const normalizedCid = normalizeCidValue(cid);
+  if (!normalizedCid) return false;
+  const normalizedContentId = normalizeCidValue((attachment as any)?.contentId);
+  if (normalizedContentId && normalizedContentId === normalizedCid) return true;
+  const normalizedName = String(attachment?.name || "").trim().toLowerCase();
+  if (!normalizedName) return false;
+  return normalizedCid === normalizedName || normalizedCid.startsWith(`${normalizedName}@`) || normalizedCid.includes(normalizedName);
+}
+
+function mergeEmailAttachments(
+  persistedAttachments: EmailAttachmentEntry[] | undefined,
+  liveAttachments: OutlookAttachment[] | undefined
+): EmailAttachmentEntry[] {
+  const merged = new Map<string, EmailAttachmentEntry>();
+  const addAttachment = (attachment: Partial<EmailAttachmentEntry & OutlookAttachment>) => {
+    const name = String(attachment?.name || "").trim();
+    if (!name) return;
+    const key = [
+      String((attachment as any)?.id || "").trim(),
+      normalizeCidValue((attachment as any)?.contentId),
+      name.toLowerCase(),
+      String(attachment?.contentType || "").trim().toLowerCase(),
+    ].join("|");
+    const current = merged.get(key);
+    const next: EmailAttachmentEntry = {
+      id: String((attachment as any)?.id || current?.id || "").trim() || undefined,
+      name,
+      contentType: String(attachment?.contentType || current?.contentType || "").trim(),
+      size: Number(attachment?.size || current?.size || 0) || undefined,
+      isInline: Boolean((attachment as any)?.isInline ?? current?.isInline),
+      contentId: String((attachment as any)?.contentId || current?.contentId || "").trim() || undefined,
+      content: String(attachment?.content || current?.content || "").trim(),
+    };
+    merged.set(key, next);
+  };
+  (persistedAttachments || []).forEach(addAttachment);
+  (liveAttachments || []).forEach(addAttachment);
+  return Array.from(merged.values());
+}
+
+function emailMatchesCurrentContext(email: Partial<RelatedEmailEntry>, ctx: OutlookMessageContext | null): boolean {
+  if (!ctx) return false;
+  const currentItemId = String(ctx.itemId || "").trim();
+  const emailItemId = String(email.itemId || "").trim();
+  if (currentItemId && emailItemId && currentItemId === emailItemId) return true;
+
+  const currentMessageId = normalizeMessageId(ctx.internetMessageId);
+  const emailMessageId = normalizeMessageId(email.internetMessageId);
+  if (currentMessageId && emailMessageId && currentMessageId === emailMessageId) return true;
+
+  const currentConversationId = String(ctx.conversationId || "").trim();
+  const emailConversationId = String(email.conversationId || "").trim();
+  const currentSubject = String(ctx.subject || "").trim().toLowerCase();
+  const emailSubject = String(email.subject || "").trim().toLowerCase();
+  return Boolean(currentConversationId && emailConversationId && currentConversationId === emailConversationId && currentSubject && currentSubject === emailSubject);
+}
+
+function rewriteEmailHtmlInlineImages(
+  html: string,
+  attachments: EmailAttachmentEntry[] | OutlookAttachment[]
+): string {
+  if (!html) return "";
+  return html
+    .replace(/\b(src|background)=(["'])cid:([^"'<>]+)\2/gi, (match, attr, quote, cid) => {
+      const attachment = (attachments || []).find((entry) => attachmentMatchesCid(entry, cid));
+      const dataUrl = attachment ? buildAttachmentDataUrl(attachment) : "";
+      if (!dataUrl) return `data-iccc-missing-${attr}=${quote}${cid}${quote}`;
+      return `${attr}=${quote}${dataUrl}${quote}`;
+    })
+    .replace(/url\((["']?)cid:([^)"']+)\1\)/gi, (match, quote, cid) => {
+      const attachment = (attachments || []).find((entry) => attachmentMatchesCid(entry, cid));
+      const dataUrl = attachment ? buildAttachmentDataUrl(attachment) : "";
+      return dataUrl ? `url(${quote}${dataUrl}${quote})` : "none";
+    });
 }
 
 function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
@@ -136,8 +232,11 @@ function sanitizeEmailHtml(html: string | undefined): string {
     .replace(/\sjavascript:/gi, " ");
 }
 
-function buildEmailPreviewHtml(email: RelatedEmailEntry | null): string {
-  const safeHtml = sanitizeEmailHtml(email?.bodyHtml);
+function buildEmailPreviewHtml(
+  email: RelatedEmailEntry | null,
+  attachments: EmailAttachmentEntry[] | OutlookAttachment[] = []
+): string {
+  const safeHtml = rewriteEmailHtmlInlineImages(sanitizeEmailHtml(email?.bodyHtml), attachments);
   if (safeHtml) {
     return `<!doctype html>
 <html>
@@ -236,6 +335,8 @@ export default function GroupExplorerApp(): JSX.Element {
   const [documentFilterMode, setDocumentFilterMode] = useState<DocumentFilterMode>("all");
   const [documentSearch, setDocumentSearch] = useState("");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("document");
+  const [liveCurrentContext, setLiveCurrentContext] = useState<OutlookMessageContext | null>(null);
+  const [liveCurrentAttachments, setLiveCurrentAttachments] = useState<OutlookAttachment[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -245,6 +346,26 @@ export default function GroupExplorerApp(): JSX.Element {
       } catch {}
     })();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [ctx, attachments] = await Promise.all([
+          getSelectedMessageContext().catch(() => ({} as OutlookMessageContext)),
+          getAttachments().catch(() => [] as OutlookAttachment[]),
+        ]);
+        if (cancelled) return;
+        setLiveCurrentContext(ctx || null);
+        setLiveCurrentAttachments(Array.isArray(attachments) ? attachments : []);
+      } catch {
+        if (cancelled) return;
+        setLiveCurrentContext(null);
+        setLiveCurrentAttachments([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedEmailKey, selectedGroupId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -345,8 +466,19 @@ export default function GroupExplorerApp(): JSX.Element {
     [filteredDocuments, groupDocuments, selectedDocumentId]
   );
 
+  const selectedEmailAttachments = useMemo(() => {
+    const persisted = Array.isArray(selectedEmail?.attachments) ? selectedEmail.attachments : [];
+    if (!selectedEmail || !emailMatchesCurrentContext(selectedEmail, liveCurrentContext)) {
+      return mergeEmailAttachments(persisted, []);
+    }
+    return mergeEmailAttachments(persisted, liveCurrentAttachments);
+  }, [liveCurrentAttachments, liveCurrentContext, selectedEmail]);
+
   const selectedDocumentPreview = useMemo(() => buildDocumentPreview(selectedDocument), [selectedDocument]);
-  const selectedEmailPreviewHtml = useMemo(() => buildEmailPreviewHtml(selectedEmail), [selectedEmail]);
+  const selectedEmailPreviewHtml = useMemo(
+    () => buildEmailPreviewHtml(selectedEmail, selectedEmailAttachments),
+    [selectedEmail, selectedEmailAttachments]
+  );
   const selectedEmailHasPreview = Boolean(String(selectedEmail?.bodyHtml || "").trim() || String(selectedEmail?.bodyText || "").trim());
   const selectedProvider = useMemo(() => providerLabel(selectedDocument?.storageProvider || groupDocuments[0]?.storageProvider), [groupDocuments, selectedDocument]);
 

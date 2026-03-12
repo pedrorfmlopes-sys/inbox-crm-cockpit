@@ -150,9 +150,12 @@ export type RelevantEmailPayload = {
   bodyText?: string;
   bodyHtml?: string;
   attachments?: Array<{
+    id?: string;
     name: string;
     contentType?: string;
     size?: number;
+    isInline?: boolean;
+    contentId?: string;
     content?: string;
   }>;
 };
@@ -221,9 +224,12 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
   bodyText?: string;
   bodyHtml?: string;
   attachments?: Array<{
+    id?: string;
     name: string;
     contentType?: string;
     size?: number;
+    isInline?: boolean;
+    contentId?: string;
     content?: string;
   }>;
 };
@@ -412,9 +418,12 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
     attachments: Array.isArray(entry?.attachments)
       ? entry.attachments
         .map((attachment: any) => ({
+          id: String(attachment?.id || "").trim() || undefined,
           name: String(attachment?.name || "").trim(),
           contentType: String(attachment?.contentType || "").trim(),
           size: Number(attachment?.size || 0) || undefined,
+          isInline: Boolean(attachment?.isInline),
+          contentId: String(attachment?.contentId || "").trim() || undefined,
           content: String(attachment?.content || "").trim(),
         }))
         .filter((attachment: any) => attachment.name)

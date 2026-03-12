@@ -18,6 +18,16 @@ export type OutlookMessageContext = {
   isCompose?: boolean;
 };
 
+export type OutlookAttachment = {
+  id?: string;
+  name: string;
+  contentType: string;
+  content: string;
+  size?: number;
+  isInline?: boolean;
+  contentId?: string;
+};
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -317,6 +327,17 @@ async function addCategoryToCurrentItem(displayName: string): Promise<void> {
       resolve();
     }
   });
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const slice = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...slice);
+  }
+  return globalThis.btoa(binary);
 }
 
 async function addCategoriesToCurrentItem(displayNames: string[]): Promise<void> {
@@ -780,37 +801,68 @@ export async function addBase64AttachmentToCompose(name: string, contentBase64: 
 
 /**
  * Fetch attachments from the current item.
- * Returns array of { name, contentType, contentBase64 }
+ * Returns array of attachment metadata plus content when available.
  */
-export async function getAttachments(): Promise<Array<{ name: string; contentType: string; content: string }>> {
+export async function getAttachments(): Promise<OutlookAttachment[]> {
   const OfficeAny = await ensureOfficeReady();
   const item = OfficeAny?.context?.mailbox?.item;
 
   if (!item?.attachments) return [];
 
   const attachments = item.attachments;
-  const results: Array<{ name: string; contentType: string; content: string }> = [];
+  const results: OutlookAttachment[] = [];
 
   for (const att of attachments) {
     // Only process file attachments
     if (att.attachmentType === "file") {
       try {
         const content = await new Promise<string>((resolve, reject) => {
-          item.getAttachmentContentAsync(att.id, (result: any) => {
-            if (result.status === OfficeAny.AsyncResultStatus.Succeeded) {
-              // result.value.content is base64
-              // result.value.format is "base64" or "url"
-              resolve(result.value.content);
-            } else {
+          item.getAttachmentContentAsync(att.id, async (result: any) => {
+            if (result.status !== OfficeAny.AsyncResultStatus.Succeeded) {
               reject(new Error(result.error?.message));
+              return;
             }
+
+            const format = String(result?.value?.format || "").trim().toLowerCase();
+            const rawContent = String(result?.value?.content || "").trim();
+            if (!rawContent) {
+              resolve("");
+              return;
+            }
+
+            if (!format || format === "base64") {
+              resolve(rawContent);
+              return;
+            }
+
+            if (format === "url") {
+              try {
+                const response = await fetch(rawContent);
+                if (!response.ok) {
+                  reject(new Error(`Falha ao descarregar conteudo do anexo (${response.status})`));
+                  return;
+                }
+                const buffer = await response.arrayBuffer();
+                resolve(arrayBufferToBase64(buffer));
+                return;
+              } catch (error: any) {
+                reject(error);
+                return;
+              }
+            }
+
+            resolve(rawContent);
           });
         });
 
         results.push({
-          name: att.name,
-          contentType: att.contentType,
-          content: content // base64 string
+          id: String(att.id || "").trim() || undefined,
+          name: String(att.name || "").trim(),
+          contentType: String(att.contentType || "").trim(),
+          size: Number(att.size || 0) || undefined,
+          isInline: Boolean((att as any).isInline),
+          contentId: String((att as any).contentId || "").trim() || undefined,
+          content: content,
         });
       } catch (e) {
         clientLog.error(`[office] Failed to download attachment ${att.name}`, e);
