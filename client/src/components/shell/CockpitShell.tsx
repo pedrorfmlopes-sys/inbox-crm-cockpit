@@ -8,6 +8,7 @@ import { PanelState } from "@/ui/PanelState";
 // Modules
 import { AiCockpit } from "../../modules/ai/AiCockpit";
 import { CrmCockpit } from "../../modules/crm/CrmCockpit";
+import { CrmCockpit2 } from "../../modules/crm/CrmCockpit2";
 import { RelatedCockpit } from "../../modules/crm/RelatedCockpit";
 import { GroupsCockpit } from "../../modules/crm/GroupsCockpit";
 import { FileCockpit } from "../../modules/files/FileCockpit";
@@ -55,6 +56,7 @@ function ShellContent() {
                 {startupNotice ? <StartupNoticeBanner notice={startupNotice} onDismiss={dismissStartupNotice} /> : null}
                 {tab === "ai" && <AiCockpit />}
                 {tab === "crm" && <CrmCockpit />}
+                {tab === "crm2" && <CrmCockpit2 />}
                 {tab === "related" && <RelatedCockpit />}
                 {tab === "groups" && <GroupsCockpit />}
                 {tab === "files" && <FileCockpit />}

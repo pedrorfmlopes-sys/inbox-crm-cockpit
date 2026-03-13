@@ -8,6 +8,7 @@ export const Navigation: React.FC = () => {
     const tabs: { id: CockpitTab; label: string; icon: React.ReactNode }[] = [
         { id: "ai", label: "AI", icon: <Icons.Sparkles size={16} /> },
         { id: "crm", label: "CRM", icon: <Icons.Database size={16} /> },
+        { id: "crm2", label: "CRM 2", icon: <Icons.Database size={16} /> },
         { id: "related", label: "Contexto", icon: <Icons.Link size={16} /> },
         { id: "groups", label: "Grupos", icon: <Icons.Clipboard size={16} /> },
         { id: "files", label: "Files", icon: <Icons.Files size={16} /> },
@@ -24,7 +25,7 @@ export const Navigation: React.FC = () => {
                 >
                     <span style={S.icon}>
                         {t.icon}
-                        {t.id === "crm" && connectionStatus !== "none" && (
+                        {(t.id === "crm" || t.id === "crm2") && connectionStatus !== "none" && (
                             <div
                                 title={granularStatusString}
                                 style={{
