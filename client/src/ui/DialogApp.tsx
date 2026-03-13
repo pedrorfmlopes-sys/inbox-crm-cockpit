@@ -200,6 +200,7 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
 }
 type Mode = "new" | "add" | "edit";
 type Entity = "project.task" | "helpdesk.ticket" | "project.project" | "crm.lead" | "res.partner";
+type DialogUi = "classic" | "v2";
 
 /**
  * VerticalActionCascade: Ultra-compact glossy pill menu (Dialog Version).
@@ -958,6 +959,10 @@ function getMode(): Mode {
   return m === "add" || m === "edit" ? (m as Mode) : "new";
 }
 
+function getDialogUi(): DialogUi {
+  return (qp().get("ui") || "").trim().toLowerCase() === "v2" ? "v2" : "classic";
+}
+
 type Ctx = {
   conversationId: string;
   internetMessageId: string;
@@ -1233,6 +1238,119 @@ function DescriptionWorkspace({
   );
 }
 
+function DialogShellV2({
+  mode,
+  entity,
+  ctx,
+  status,
+  onSelectEntity,
+  children,
+}: {
+  mode: Mode;
+  entity: Entity;
+  ctx: Ctx;
+  status: string | null;
+  onSelectEntity: (next: Entity) => void;
+  children: React.ReactNode;
+}) {
+  const metaTone = status && /erro|falha|indispon/i.test(status) ? "#C25100" : "#0C66E4";
+
+  return (
+    <div style={{ ...S.page, gap: 0 }}>
+      <div style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 10,
+        background: "linear-gradient(180deg, rgba(244,248,255,0.98) 0%, rgba(244,248,255,0.94) 100%)",
+        borderBottom: "1px solid #dbe4f3",
+        padding: "12px 14px 10px",
+        display: "grid",
+        gap: 10,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#5E6C84" }}>
+              CRM 2
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#172B4D", lineHeight: 1.15 }}>
+              {mode === "new" ? "Novo registo" : mode === "edit" ? "Editar registo" : "Ligar existente"}
+            </div>
+            <div style={{ fontSize: 11, color: "#5E6C84", marginTop: 2, lineHeight: 1.4 }}>
+              Editor paralelo para testar uma versao mais limpa do fluxo CRM.
+            </div>
+          </div>
+          <button type="button" style={S.btn3} onClick={closeDialog}>Fechar</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.3fr 0.9fr", gap: 8 }}>
+          <div style={{
+            border: "1px solid #DFE1E6",
+            borderRadius: 10,
+            background: "#FFFFFF",
+            padding: "10px 12px",
+            display: "grid",
+            gap: 4,
+            minWidth: 0,
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#5E6C84", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Assunto de origem
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#172B4D", lineHeight: 1.35 }}>
+              {ctx.subject || "Sem assunto"}
+            </div>
+            <div style={{ fontSize: 11, color: "#42526E" }}>
+              {ctx.fromName ? `${ctx.fromName} <${ctx.fromEmail}>` : (ctx.fromEmail || "Sem remetente")}
+            </div>
+          </div>
+
+          <div style={{
+            border: "1px solid #DFE1E6",
+            borderRadius: 10,
+            background: "#FFFFFF",
+            padding: "10px 12px",
+            display: "grid",
+            gap: 8,
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#5E6C84", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Tipo de registo
+            </div>
+            {mode === "edit" ? (
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#172B4D" }}>{entity}</div>
+            ) : (
+              <VerticalActionCascade current={entity} onSelect={(next) => onSelectEntity(next as Entity)} />
+            )}
+          </div>
+        </div>
+
+        {status ? (
+          <div style={{
+            borderRadius: 10,
+            background: "rgba(12,102,228,0.07)",
+            border: `1px solid ${metaTone === "#C25100" ? "rgba(194,81,0,0.28)" : "rgba(12,102,228,0.18)"}`,
+            color: metaTone,
+            padding: "8px 10px",
+            fontSize: 11,
+            lineHeight: 1.35,
+          }}>
+            {status}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ ...S.scrollBody, paddingTop: 10 }}>
+        <div style={{
+          border: "1px solid #DFE1E6",
+          borderRadius: 12,
+          background: "#FFFFFF",
+          padding: "10px 12px 14px",
+        }}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CompactOdooContentEditor(props: {
   mode: Mode;
   publishState: OdooPublishState;
@@ -1303,6 +1421,7 @@ function CompactOdooContentEditor(props: {
 
 export default function DialogApp() {
   const isDevRuntime = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const dialogUi = getDialogUi();
   const [mode, setMode] = useState<Mode>(() => getMode());
   const [editId, setEditId] = useState<string | null>(() => qp().get("recordId") || null);
   const [ctx, setCtx] = useState<Ctx>(() => getCtxFromQuery());
@@ -1342,8 +1461,10 @@ export default function DialogApp() {
 
   useEffect(() => {
     const b = localStorage.getItem("ic_bridge_body") || "";
+    const h = localStorage.getItem("ic_bridge_html") || "";
     const a = localStorage.getItem("ic_bridge_atts");
     if (b) setFullBody(b);
+    if (h) setCtx((prev) => ({ ...prev, bodyHtml: h }));
     if (a) {
       try { setEmailAtts(JSON.parse(a)); } catch { }
     }
@@ -1442,6 +1563,76 @@ export default function DialogApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const statusAlert = status ? <div style={S.alert}>{status}</div> : null;
+
+  const formContent = (
+    <>
+      {mode === "add" ? (
+        <AddExistingPanel entity={entity} ctx={ctx} onStatus={setStatus} />
+      ) : entity === "project.task" ? (
+        <TaskForm
+          mode={mode}
+          ctx={ctx}
+          editId={editId}
+          fullBody={fullBody}
+          emailAtts={emailAtts}
+          onStatus={setStatus}
+          fromEmail={ctx.fromEmail}
+          apiReady={apiReady}
+        />
+      ) : entity === "project.project" ? (
+        <ProjectForm
+          mode={mode}
+          ctx={ctx}
+          editId={editId}
+          fullBody={fullBody}
+          emailAtts={emailAtts}
+          onStatus={setStatus}
+          fromEmail={ctx.fromEmail}
+          apiReady={apiReady}
+        />
+      ) : entity === "crm.lead" ? (
+        <LeadForm
+          mode={mode}
+          ctx={ctx}
+          editId={editId}
+          fullBody={fullBody}
+          emailAtts={emailAtts}
+          onStatus={setStatus}
+          fromEmail={ctx.fromEmail}
+          apiReady={apiReady}
+        />
+      ) : entity === "res.partner" ? (
+        <ContactHubForm mode={mode} ctx={ctx} editId={editId} onStatus={setStatus} />
+      ) : entity === "helpdesk.ticket" ? (
+        <HelpdeskTicketForm
+          mode={mode}
+          ctx={ctx}
+          editId={editId}
+          fullBody={fullBody}
+          emailAtts={emailAtts}
+          onStatus={setStatus}
+        />
+      ) : (
+        <div style={S.alert}>Este fluxo ainda usa o editor atual.</div>
+      )}
+    </>
+  );
+
+  if (dialogUi === "v2" && mode !== "add") {
+    return (
+      <DialogShellV2
+        mode={mode}
+        entity={entity}
+        ctx={ctx}
+        status={status}
+        onSelectEntity={setEntity}
+      >
+        {formContent}
+      </DialogShellV2>
+    );
+  }
+
 
   return (
     <div style={S.page}>
@@ -1495,56 +1686,8 @@ export default function DialogApp() {
             />
           </div>
 
-          {mode === "add" ? (
-            <AddExistingPanel entity={entity} ctx={ctx} onStatus={setStatus} />
-          ) : entity === "project.task" && (
-            <TaskForm
-              mode={mode}
-              ctx={ctx}
-              editId={editId}
-              fullBody={fullBody}
-              emailAtts={emailAtts}
-              onStatus={setStatus}
-              fromEmail={ctx.fromEmail}
-              apiReady={apiReady}
-            />
-          )}
-          {mode !== "add" && entity === "project.project" && (
-            <ProjectForm
-              mode={mode}
-              ctx={ctx}
-              editId={editId}
-              fullBody={fullBody}
-              emailAtts={emailAtts}
-              onStatus={setStatus}
-              fromEmail={ctx.fromEmail}
-              apiReady={apiReady}
-            />
-          )}
-          {mode !== "add" && entity === "crm.lead" && (
-            <LeadForm
-              mode={mode}
-              ctx={ctx}
-              editId={editId}
-              fullBody={fullBody}
-              emailAtts={emailAtts}
-              onStatus={setStatus}
-              fromEmail={ctx.fromEmail}
-            />
-          )}
-          {mode !== "add" && entity === "res.partner" && <ContactHubForm mode={mode} ctx={ctx} editId={editId} onStatus={setStatus} />}
-          {mode !== "add" && entity === "helpdesk.ticket" && (
-            <HelpdeskTicketForm
-              mode={mode}
-              ctx={ctx}
-              editId={editId}
-              fullBody={fullBody}
-              emailAtts={emailAtts}
-              onStatus={setStatus}
-            />
-          )}
-
-          {status && <div style={S.alert}>{status}</div>}
+          {formContent}
+          {statusAlert}
         </div>
       </div>
 

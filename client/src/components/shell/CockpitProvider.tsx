@@ -5,7 +5,7 @@ import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
 
-export type CockpitTab = "ai" | "crm" | "related" | "groups" | "files" | "settings";
+export type CockpitTab = "ai" | "crm" | "crm2" | "related" | "groups" | "files" | "settings";
 export type StartupCheckStatus = "pending" | "running" | "success" | "warning" | "error";
 
 type StartupCheckId = "settings" | "session" | "email" | "links" | "services";
@@ -135,7 +135,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     function readPersistedTab(): CockpitTab {
         try {
             const raw = sessionStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
-            return raw === "ai" || raw === "crm" || raw === "related" || raw === "groups" || raw === "files" || raw === "settings"
+            return raw === "ai" || raw === "crm" || raw === "crm2" || raw === "related" || raw === "groups" || raw === "files" || raw === "settings"
                 ? raw
                 : "ai";
         } catch {
