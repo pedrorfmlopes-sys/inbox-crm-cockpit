@@ -33,6 +33,11 @@ type CurrentAttachmentCandidate = {
     suspectedInline?: boolean;
     sourceLabel?: string;
     ordinal?: number;
+    sourceEmailKey?: string;
+    sourceItemId?: string;
+    sourceInternetMessageId?: string;
+    sourceConversationId?: string;
+    sourceEmailSubject?: string;
 };
 
 type GroupImageCandidate = CurrentAttachmentCandidate & {
@@ -523,6 +528,11 @@ export const GroupsCockpit: React.FC = () => {
         setSelectedGroupEmailKeys((current) => current.filter((key) => validKeys.has(key)));
     }, [groupEmails]);
 
+    const currentEmailSourceKey = useMemo(
+        () => makeEmailKey(currentEmailPayload as Partial<RelatedEmailEntry>),
+        [currentEmailPayload]
+    );
+
     const currentAttachmentCandidates = useMemo<CurrentAttachmentCandidate[]>(() => {
         return (attachments || [])
             .map((attachment, index) => ({
@@ -534,6 +544,11 @@ export const GroupsCockpit: React.FC = () => {
                 suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
                 sourceLabel: String(ctx.subject || "").trim(),
                 ordinal: index,
+                sourceEmailKey: currentEmailSourceKey,
+                sourceItemId: String(ctx.itemId || "").trim() || undefined,
+                sourceInternetMessageId: normalizeMessageKey(ctx.internetMessageId) || undefined,
+                sourceConversationId: String(ctx.conversationId || "").trim() || undefined,
+                sourceEmailSubject: String(ctx.subject || "").trim() || undefined,
             }))
             .filter((attachment) => attachment.name && attachment.content)
             .sort((a, b) => {
@@ -541,7 +556,7 @@ export const GroupsCockpit: React.FC = () => {
                 if (inlineDelta !== 0) return inlineDelta;
                 return a.name.localeCompare(b.name, "pt-PT");
             });
-    }, [attachments, ctx.subject]);
+    }, [attachments, ctx.conversationId, ctx.internetMessageId, ctx.itemId, ctx.subject, currentEmailSourceKey]);
 
     const attachmentFlagMap = useMemo(() => {
         const map = new Map<string, GroupAttachmentFlagEntry>();
@@ -552,38 +567,6 @@ export const GroupsCockpit: React.FC = () => {
         return map;
     }, [attachmentFlags]);
 
-    const selectedEmailMatchesCurrent = useMemo(
-        () => (selectedEmail ? emailMatchesCurrentContext(selectedEmail, ctx) : false),
-        [ctx, selectedEmail]
-    );
-
-    const selectedEmailAttachmentCandidates = useMemo<CurrentAttachmentCandidate[]>(() => {
-        if (!selectedEmail || !Array.isArray(selectedEmail.attachments) || !selectedEmail.attachments.length) return [];
-        if (selectedEmailMatchesCurrent) {
-            return currentAttachmentCandidates.map((attachment) => ({
-                ...attachment,
-                sourceLabel: selectedEmail.subject || attachment.sourceLabel || "",
-            }));
-        }
-        return selectedEmail.attachments
-            .map((attachment, index) => ({
-                id: `selected:${makeEmailKey(selectedEmail)}:${attachment.name || index}`,
-                name: String(attachment.name || "").trim(),
-                contentType: String(attachment.contentType || "").trim(),
-                content: String(attachment.content || "").trim(),
-                size: Number(attachment.size || 0) || undefined,
-                suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
-                sourceLabel: String(selectedEmail.subject || "").trim(),
-                ordinal: index,
-            }))
-            .filter((attachment) => attachment.name)
-            .sort((a, b) => {
-                const inlineDelta = Number(Boolean(a.suspectedInline)) - Number(Boolean(b.suspectedInline));
-                if (inlineDelta !== 0) return inlineDelta;
-                return a.name.localeCompare(b.name, "pt-PT");
-            });
-    }, [currentAttachmentCandidates, selectedEmail, selectedEmailMatchesCurrent]);
-
     const selectedEmailsForImageManager = useMemo(() => {
         const selectedKeys = new Set(selectedGroupEmailKeys);
         if (selectedKeys.size) {
@@ -591,6 +574,54 @@ export const GroupsCockpit: React.FC = () => {
         }
         return selectedEmail ? [selectedEmail] : [];
     }, [groupEmails, selectedEmail, selectedGroupEmailKeys]);
+
+    const selectedEmailAttachmentCandidates = useMemo<CurrentAttachmentCandidate[]>(() => {
+        const rows: CurrentAttachmentCandidate[] = [];
+        for (const email of selectedEmailsForImageManager) {
+            const emailKey = makeEmailKey(email);
+            const useCurrentContent = emailMatchesCurrentContext(email, ctx);
+            const sourceAttachments = useCurrentContent
+                ? currentAttachmentCandidates.map((attachment) => ({
+                    ...attachment,
+                    sourceLabel: email.subject || attachment.sourceLabel || "",
+                    sourceEmailKey: emailKey,
+                    sourceItemId: String(email.itemId || "").trim() || attachment.sourceItemId,
+                    sourceInternetMessageId: normalizeMessageKey(email.internetMessageId) || attachment.sourceInternetMessageId,
+                    sourceConversationId: String(email.conversationId || "").trim() || attachment.sourceConversationId,
+                    sourceEmailSubject: String(email.subject || "").trim() || attachment.sourceEmailSubject,
+                }))
+                : Array.isArray(email.attachments)
+                    ? email.attachments.map((attachment, index) => ({
+                        id: `selected:${emailKey}:${attachment.name || index}`,
+                        name: String(attachment.name || "").trim(),
+                        contentType: String(attachment.contentType || "").trim(),
+                        content: String(attachment.content || "").trim(),
+                        size: Number(attachment.size || 0) || undefined,
+                        suspectedInline: isLikelyInlineAttachment(attachment.name, attachment.contentType),
+                        sourceLabel: String(email.subject || "").trim(),
+                        ordinal: index,
+                        sourceEmailKey: emailKey,
+                        sourceItemId: String(email.itemId || "").trim() || undefined,
+                        sourceInternetMessageId: normalizeMessageKey(email.internetMessageId) || undefined,
+                        sourceConversationId: String(email.conversationId || "").trim() || undefined,
+                        sourceEmailSubject: String(email.subject || "").trim() || undefined,
+                    }))
+                    : [];
+
+            for (const attachment of sourceAttachments) {
+                if (!attachment.name) continue;
+                rows.push(attachment);
+            }
+        }
+
+        return rows.sort((a, b) => {
+            const labelDelta = String(a.sourceLabel || "").localeCompare(String(b.sourceLabel || ""), "pt-PT");
+            if (labelDelta !== 0) return labelDelta;
+            const inlineDelta = Number(Boolean(a.suspectedInline)) - Number(Boolean(b.suspectedInline));
+            if (inlineDelta !== 0) return inlineDelta;
+            return a.name.localeCompare(b.name, "pt-PT");
+        });
+    }, [ctx, currentAttachmentCandidates, selectedEmailsForImageManager]);
 
     const imageManagerCandidates = useMemo<GroupImageCandidate[]>(() => {
         const rows: GroupImageCandidate[] = [];
@@ -666,9 +697,7 @@ export const GroupsCockpit: React.FC = () => {
 
     const visibleAttachmentCandidates = (attachmentSource === "selected" ? selectedEmailAttachmentCandidates : currentAttachmentCandidates)
         .filter((attachment) => {
-            const sourceKey = attachmentSource === "selected"
-                ? makeEmailKey(selectedEmail || {})
-                : String(ctx.itemId || ctx.internetMessageId || ctx.conversationId || "").trim();
+            const sourceKey = String(attachment.sourceEmailKey || currentEmailSourceKey).trim();
             const attachmentKey = buildAttachmentKey(sourceKey, attachment);
             return attachmentFlagMap.get(attachmentKey)?.disposition !== "dismissed";
         });
@@ -677,7 +706,7 @@ export const GroupsCockpit: React.FC = () => {
         () => [String(ctx.itemId || "").trim(), normalizeMessageKey(ctx.internetMessageId), String(ctx.conversationId || "").trim()].join("|"),
         [ctx.conversationId, ctx.internetMessageId, ctx.itemId]
     );
-    const attachmentListKey = `${attachmentSource}:${currentEmailIdentity}:${selectedEmailKey}`;
+    const attachmentListKey = `${attachmentSource}:${currentEmailIdentity}:${selectedEmailKey}:${selectedGroupEmailKeys.slice().sort().join(",")}`;
 
     const groupFolderHint = useMemo(() => {
         const base = String(settings?.groupStorage.baseFolderPath || "").trim();
@@ -875,11 +904,11 @@ export const GroupsCockpit: React.FC = () => {
                 contentType: attachment.contentType,
                 contentBase64: attachment.content,
                 size: attachment.size,
-                sourceEmailKey: String(ctx.itemId || ctx.internetMessageId || ctx.conversationId || "").trim(),
-                sourceItemId: String(ctx.itemId || "").trim(),
-                sourceInternetMessageId: String(ctx.internetMessageId || "").trim(),
-                sourceConversationId: String(ctx.conversationId || "").trim(),
-                sourceEmailSubject: String(ctx.subject || "").trim(),
+                sourceEmailKey: String(attachment.sourceEmailKey || currentEmailSourceKey).trim(),
+                sourceItemId: String(attachment.sourceItemId || "").trim(),
+                sourceInternetMessageId: String(attachment.sourceInternetMessageId || "").trim(),
+                sourceConversationId: String(attachment.sourceConversationId || "").trim(),
+                sourceEmailSubject: String(attachment.sourceEmailSubject || attachment.sourceLabel || ctx.subject || "").trim(),
                 storageProvider,
                 storageBasePath,
                 storagePathHint: groupFolderHint ? `${groupFolderHint}${groupFolderHint.includes("\\") ? "\\" : "/"}${sanitizePathSegment(attachment.name)}` : "",
@@ -1149,7 +1178,7 @@ export const GroupsCockpit: React.FC = () => {
                     <div style={styles.bulkSelectionRow}>
                         <button type="button" style={styles.bulkMiniBtn} onClick={() => setSelectedGroupEmailKeys(groupEmails.map((email) => makeEmailKey(email)))}>Todos</button>
                         <button type="button" style={styles.bulkMiniBtn} onClick={() => setSelectedGroupEmailKeys([])} disabled={!selectedGroupEmailKeys.length}>Limpar</button>
-                        <span style={styles.sectionMetaHint}>{selectedGroupEmailKeys.length || (selectedEmail ? 1 : 0)} email(s) para imagens</span>
+                        <span style={styles.sectionMetaHint}>{selectedGroupEmailKeys.length || (selectedEmail ? 1 : 0)} email(s) marcados</span>
                     </div>
                 ) : null}
                 {emailsExpanded ? <div style={styles.scrollPaneMiddle}>
@@ -1198,8 +1227,8 @@ export const GroupsCockpit: React.FC = () => {
                     title="Emails"
                     steps={[
                         "Liga o email aberto ao grupo no botao de ligacao.",
-                        "Marca um ou varios emails com as checkboxes para gerir imagens.",
-                        "Usa o icone de ficheiros para abrir o gestor de imagens.",
+                        "Marca um ou varios emails com as checkboxes para usar na gestao de imagens e anexos.",
+                        "Usa o icone de ficheiros para abrir o gestor de imagens ou a origem inferior para rever os anexos desses emails.",
                     ]}
                 />
             </Section>
@@ -1214,10 +1243,10 @@ export const GroupsCockpit: React.FC = () => {
                             title={
                                 selectedGroup && savableAttachmentCandidates.length
                                     ? attachmentSource === "selected"
-                                        ? "Guardar anexos disponiveis do email selecionado no grupo"
+                                        ? "Guardar anexos disponiveis dos emails selecionados no grupo"
                                         : "Guardar todos os anexos do email aberto no grupo"
                                     : attachmentSource === "selected"
-                                        ? "O email selecionado so tem metadados dos anexos nesta fase"
+                                        ? "Os emails selecionados so têm metadados dos anexos nesta fase"
                                         : "Abre um email com anexos para os guardar no grupo"
                             }
                             icon={<Icons.Save size={13} />}
@@ -1280,7 +1309,7 @@ export const GroupsCockpit: React.FC = () => {
                             <div style={styles.documentHeaderRow}>
                                 <div style={styles.subTitleRow}>
                                     <div style={styles.documentSubTitle}>Anexos de origem</div>
-                                    <HelpHint text="Escolhe se queres ver anexos do email aberto no Outlook ou do email selecionado acima." title="Ajuda: Anexos de origem" />
+                                    <HelpHint text="Escolhe se queres ver anexos do email aberto no Outlook ou dos emails marcados acima. Se nada estiver marcado, usa o email ativo na lista." title="Ajuda: Anexos de origem" />
                                 </div>
                                 <div style={styles.sourceSwitch}>
                                     <button
@@ -1295,15 +1324,15 @@ export const GroupsCockpit: React.FC = () => {
                                         type="button"
                                         style={attachmentSource === "selected" ? styles.sourceBtnActive : styles.sourceBtn}
                                         onClick={() => setAttachmentSource("selected")}
-                                        title="Ver anexos do email selecionado na lista acima"
+                                        title="Ver anexos dos emails marcados na lista acima. Se nada estiver marcado, usa o email ativo."
                                     >
-                                        Email selecionado
+                                        Emails selecionados
                                     </button>
                                 </div>
                             </div>
                             <div style={styles.hintText}>
                                 {attachmentSource === "selected"
-                                    ? "Os anexos do email selecionado podem ser revistos aqui. Guardar so fica disponivel quando o conteudo do ficheiro estiver acessivel no add-in."
+                                    ? "Os anexos dos emails marcados podem ser revistos aqui. Guardar so fica disponivel quando o conteudo do ficheiro estiver acessivel no add-in."
                                     : "Nesta fase, os documentos sao guardados diretamente a partir do email que tens aberto no add-in."}
                             </div>
                             <div key={attachmentListKey} style={styles.scrollPaneCandidates}>
@@ -1311,7 +1340,7 @@ export const GroupsCockpit: React.FC = () => {
                                     <PanelState compact tone="info" title="Documentos desativados" description="Ativa os documentos do grupo no topo para guardares anexos." />
                                 ) : null}
                                 {documentsEnabled && !visibleAttachmentCandidates.length ? (
-                                    <PanelState compact tone="info" title="Sem anexos disponiveis" description={attachmentSource === "selected" ? "Seleciona acima um email do grupo que tenha anexos." : "Abre um email com anexos para os poderes guardar neste grupo."} />
+                                    <PanelState compact tone="info" title="Sem anexos disponiveis" description={attachmentSource === "selected" ? "Marca acima um ou varios emails do grupo que tenham anexos. Se nada estiver marcado, usa o email ativo." : "Abre um email com anexos para os poderes guardar neste grupo."} />
                                 ) : null}
                                 {documentsEnabled ? visibleAttachmentCandidates.map((attachment) => (
                                     <div key={attachment.id} style={styles.documentRow}>

@@ -552,10 +552,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     id: attachment.id,
                     isInline: attachment.isInline,
                     contentId: attachment.contentId,
-                    content:
-                        attachment.isInline || String(attachment.contentType || "").trim().toLowerCase().startsWith("image/")
-                            ? String(attachment.content || "").trim()
-                            : "",
+                    content: String(attachment.content || "").trim(),
                 })),
             }).catch(() => {
                 // best-effort central registry only

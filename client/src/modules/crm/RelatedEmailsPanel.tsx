@@ -120,10 +120,7 @@ function getCurrentEmailPayload(
           size: Number(attachment?.size || 0) || undefined,
           isInline: Boolean(attachment?.isInline),
           contentId: String(attachment?.contentId || "").trim() || undefined,
-          content:
-            attachment?.isInline || String(attachment?.contentType || "").trim().toLowerCase().startsWith("image/")
-              ? String(attachment?.content || "").trim()
-              : "",
+          content: String(attachment?.content || "").trim(),
         }))
         .filter((attachment) => attachment.name)
       : [],
@@ -187,6 +184,36 @@ function hasCurrentEmailIdentity(currentCtx: OutlookMessageContext): boolean {
 function buildCurrentEmailIdentityKey(currentCtx: OutlookMessageContext): string {
   const payload = getCurrentEmailPayload(currentCtx);
   return [payload.itemId, payload.internetMessageId, payload.conversationId].join("|");
+}
+
+function relatedEmailMatchesCurrentContext(email: Partial<RelatedEmailEntry>, currentCtx: OutlookMessageContext): boolean {
+  const currentItemId = String(currentCtx.itemId || "").trim();
+  const emailItemId = String(email.itemId || "").trim();
+  if (currentItemId && emailItemId && currentItemId === emailItemId) return true;
+
+  const currentMessageId = normalizeMessageId(currentCtx.internetMessageId);
+  const emailMessageId = normalizeMessageId(email.internetMessageId);
+  if (currentMessageId && emailMessageId && currentMessageId === emailMessageId) return true;
+
+  const currentConversationId = String(currentCtx.conversationId || "").trim();
+  const emailConversationId = String(email.conversationId || "").trim();
+  const currentSubject = String(currentCtx.subject || "").trim().toLowerCase();
+  const emailSubject = String(email.subject || "").trim().toLowerCase();
+  const currentFrom = String(currentCtx.fromEmail || "").trim().toLowerCase();
+  const emailFrom = String(email.fromEmail || "").trim().toLowerCase();
+  const currentDate = String(currentCtx.receivedDateTimeIso || "").trim();
+  const emailDate = String(email.messageDateIso || email.receivedAtIso || "").trim();
+
+  return Boolean(
+    currentConversationId
+    && emailConversationId
+    && currentConversationId === emailConversationId
+    && currentSubject
+    && emailSubject
+    && currentSubject === emailSubject
+    && (!currentFrom || !emailFrom || currentFrom === emailFrom)
+    && (!currentDate || !emailDate || currentDate === emailDate)
+  );
 }
 
 function CompactSection({
@@ -890,7 +917,10 @@ export function RelatedEmailsPanel({
     setGroupActionBusy(true);
     try {
       for (const item of selectedItems) {
-        await addEmailToLinkGroup(group.id, getRelatedEmailPayload(item));
+        const payload = relatedEmailMatchesCurrentContext(item, currentCtx)
+          ? emailPayload
+          : getRelatedEmailPayload(item);
+        await addEmailToLinkGroup(group.id, payload);
       }
       setSelectedGroup(group);
       setActiveGroupForCurrentEmail(group.id);
@@ -915,7 +945,10 @@ export function RelatedEmailsPanel({
       const selectedItems = conversationContextItems.filter((item) => selectedContextEmailKeys.includes(makeRelatedEmailSelectionKey(item)));
       if (selectedItems.length) {
         for (const item of selectedItems) {
-          await addEmailToLinkGroup(group.id, getRelatedEmailPayload(item));
+          const payload = relatedEmailMatchesCurrentContext(item, currentCtx)
+            ? emailPayload
+            : getRelatedEmailPayload(item);
+          await addEmailToLinkGroup(group.id, payload);
         }
         onStatus(`Grupo "${group.name}" criado e ligado a ${selectedItems.length} email(s).`);
       } else if (hasCurrentEmailIdentity(currentCtx)) {
