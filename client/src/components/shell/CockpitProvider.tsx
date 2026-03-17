@@ -512,7 +512,12 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             if (currentToken) {
                 setApiSessionToken(currentToken);
-                const authCheck = await apiCheckAuth();
+                let authCheck: { ok: boolean; meta?: OdooMeta } = { ok: false };
+                try {
+                    authCheck = await apiCheckAuth();
+                } catch (error) {
+                    clientLog("warn", "[Cockpit] apiCheckAuth failed during startup", error);
+                }
                 if (authCheck.ok) {
                     setIsAuthenticated(true);
                     if (authCheck.meta) setMeta(authCheck.meta);
