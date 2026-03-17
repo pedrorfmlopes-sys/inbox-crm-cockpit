@@ -249,12 +249,16 @@ PERFIL DE COMUNICAÇÃO:
 
   if (action === "extract_tasks_json") {
     return (
-      finalRules +
-      `TAREFA: Analisa o email e os anexos e extrai apenas tarefas/ações CONCRETAS e PENDENTES.\n` +
+      `[PAPEL]: És um motor de extração de tarefas. NÃO és um redator de emails.\n` +
+      `[OBJETIVO]: Lê o contexto do email e devolve APENAS um array JSON válido.\n` +
       `REGRAS CRÍTICAS:\n` +
+      `- PROIBIDO escrever saudações, despedidas, HTML, explicações ou texto fora do JSON.\n` +
       `- DEVOLVE APENAS UM ARRAY JSON VÁLIDO.\n` +
+      `- Extrai apenas tarefas/ações CONCRETAS, PENDENTES e ACIONÁVEIS.\n` +
       `- Ignora informação geral ou factos (ex: "O meu NIF é X") - foca em AÇÕES (ex: "Enviar fatura").\n` +
       `- Cada objeto deve ter: "title" (descrição curta da ação), "dueDate" (YYYY-MM-DD), "owner" (quem deve fazer).\n` +
+      `- Se não houver prazo explícito, usa "" em "dueDate".\n` +
+      `- Se não houver responsável explícito, usa "" em "owner".\n` +
       `- Se não houver ações claras para o utilizador ou destinatário, devolve [].\n` +
       `- NÃO incluas texto fora do JSON.\n` +
       `- Exemplo: [{"title": "Ligar ao transitário", "dueDate": "2024-03-01", "owner": "Pedro"}]\n` +

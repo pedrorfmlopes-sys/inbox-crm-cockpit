@@ -46,6 +46,7 @@ export type AiGenerateResponse =
     ok: true;
     html: string;
     text: string;
+    data?: unknown;
     suggestedRecipients?: { to: string[]; cc: string[] };
     suggestedSubject?: string;
   }

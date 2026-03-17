@@ -58,8 +58,28 @@ function htmlToPlainText(html: string): string {
         .trim();
 }
 
-function parseExtractedTasks(rawText: string): Array<{ title: string; dueDate?: string; owner?: string }> {
-    const trimmed = String(rawText || "").trim();
+function normalizeExtractedTasks(rawValue: unknown): Array<{ title: string; dueDate?: string; owner?: string }> {
+    const list = Array.isArray(rawValue)
+        ? rawValue
+        : Array.isArray((rawValue as any)?.tasks)
+            ? (rawValue as any).tasks
+            : [];
+
+    return list
+        .map((task: any) => ({
+            title: String(task?.title || task?.task || task?.name || "").trim(),
+            dueDate: String(task?.dueDate || task?.due || "").trim() || undefined,
+            owner: String(task?.owner || task?.assignee || "").trim() || undefined,
+        }))
+        .filter((task: any) => task.title);
+}
+
+function parseExtractedTasks(rawValue: unknown): Array<{ title: string; dueDate?: string; owner?: string }> {
+    if (Array.isArray(rawValue) || (rawValue && typeof rawValue === "object")) {
+        return normalizeExtractedTasks(rawValue);
+    }
+
+    const trimmed = String(rawValue || "").trim();
     if (!trimmed) return [];
 
     const candidates = [
@@ -82,18 +102,7 @@ function parseExtractedTasks(rawText: string): Array<{ title: string; dueDate?: 
     for (const candidate of candidates) {
         try {
             const parsed = JSON.parse(candidate);
-            const list = Array.isArray(parsed)
-                ? parsed
-                : Array.isArray(parsed?.tasks)
-                    ? parsed.tasks
-                    : [];
-            const normalized = list
-                .map((task: any) => ({
-                    title: String(task?.title || task?.task || task?.name || "").trim(),
-                    dueDate: String(task?.dueDate || task?.due || "").trim() || undefined,
-                    owner: String(task?.owner || task?.assignee || "").trim() || undefined,
-                }))
-                .filter((task: any) => task.title);
+            const normalized = normalizeExtractedTasks(parsed);
             if (normalized.length || Array.isArray(parsed) || Array.isArray(parsed?.tasks)) {
                 return normalized;
             }
@@ -234,7 +243,7 @@ export const AiCockpit: React.FC = () => {
                 return;
             }
 
-            const tasks = parseExtractedTasks(res.text || "");
+            const tasks = parseExtractedTasks((res as any).data ?? res.text ?? "");
             if (tasks.length > 0) {
                 setExtractedTasks(tasks.map((t) => ({ ...t, completed: false })));
                 setShowTaskReview(true);

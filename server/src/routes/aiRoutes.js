@@ -91,6 +91,38 @@ export function createAiRouter() {
   const router = express.Router();
   initBriefingDb(); // Ensure DB table exists
 
+  function tryParseAiJsonPayload(rawText) {
+    const trimmed = String(rawText || "").trim();
+    if (!trimmed) return null;
+
+    const candidates = [
+      trimmed,
+      trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim(),
+    ];
+
+    const arrayStart = trimmed.indexOf("[");
+    const arrayEnd = trimmed.lastIndexOf("]");
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      candidates.push(trimmed.slice(arrayStart, arrayEnd + 1).trim());
+    }
+
+    const objectStart = trimmed.indexOf("{");
+    const objectEnd = trimmed.lastIndexOf("}");
+    if (objectStart >= 0 && objectEnd > objectStart) {
+      candidates.push(trimmed.slice(objectStart, objectEnd + 1).trim());
+    }
+
+    for (const candidate of candidates) {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // try next candidate
+      }
+    }
+
+    return null;
+  }
+
   router.get("/meta", (_req, res) => {
     res.json({ ok: true, ...getAiMeta() });
   });
@@ -183,16 +215,24 @@ export function createAiRouter() {
       // Fallback to last assistant message in history if draftText not provided.
       const lastAssistant = [...history].reverse().find(m => m.role === "assistant" && typeof m.content === "string");
       const currentDraft = String(draftText || lastAssistant?.content || "");
-      const refineInput = action === "refine"
+      const providerInput = action === "refine"
         ? `INSTRUÇÃO DO UTILIZADOR: ${inputText || "Melhora o rascunho"}
 RASCUNHO ATUAL (edita APENAS este texto, não inventar factos/prazos/preços/referências):
 ${currentDraft}`
-        : "ok";
+        : action === "extract_tasks_json"
+          ? "Extrai apenas as tarefas pendentes do contexto acima e devolve apenas um array JSON válido."
+          : action === "extract_contacts"
+            ? "Extrai apenas os emails relevantes do contexto acima."
+            : action === "intent_proposals"
+              ? "Propõe apenas 3 intenções curtas separadas por ponto e vírgula."
+              : action === "summarize_actions"
+                ? "Devolve apenas JSON válido com summary e actions."
+                : "ok";
 
       const result = await aiCreateText({
         mode,
         instructions,
-        input: refineInput,
+        input: providerInput,
         files: action === "refine" ? [] : files,
         history: action === "refine" ? [] : history,
         max_output_tokens: action === "summarize" || action === "tasks" || action === "summarize_actions" ? 800 : 700,
@@ -200,15 +240,7 @@ ${currentDraft}`
         customModels,
       });
 
-      let data = null;
-      if (result.text && (result.text.includes("{") || action === "summarize_actions")) {
-        try {
-          const jsonStr = result.text.substring(result.text.indexOf("{"), result.text.lastIndexOf("}") + 1);
-          data = JSON.parse(jsonStr);
-        } catch (e) {
-          // ignore parsing error
-        }
-      }
+      const data = tryParseAiJsonPayload(result.text);
 
       res.json({
         ok: true,
