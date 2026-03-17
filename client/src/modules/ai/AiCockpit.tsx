@@ -41,9 +41,73 @@ function saveHistory(entries: HistoryEntry[]) {
     } catch { }
 }
 
+function htmlToPlainText(html: string): string {
+    return String(html || "")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/p>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/&amp;/gi, "&")
+        .replace(/&lt;/gi, "<")
+        .replace(/&gt;/gi, ">")
+        .replace(/\r/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .replace(/[ \t]{2,}/g, " ")
+        .trim();
+}
+
+function parseExtractedTasks(rawText: string): Array<{ title: string; dueDate?: string; owner?: string }> {
+    const trimmed = String(rawText || "").trim();
+    if (!trimmed) return [];
+
+    const candidates = [
+        trimmed,
+        trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim(),
+    ];
+
+    const arrayStart = trimmed.indexOf("[");
+    const arrayEnd = trimmed.lastIndexOf("]");
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+        candidates.push(trimmed.slice(arrayStart, arrayEnd + 1).trim());
+    }
+
+    const objectStart = trimmed.indexOf("{");
+    const objectEnd = trimmed.lastIndexOf("}");
+    if (objectStart >= 0 && objectEnd > objectStart) {
+        candidates.push(trimmed.slice(objectStart, objectEnd + 1).trim());
+    }
+
+    for (const candidate of candidates) {
+        try {
+            const parsed = JSON.parse(candidate);
+            const list = Array.isArray(parsed)
+                ? parsed
+                : Array.isArray(parsed?.tasks)
+                    ? parsed.tasks
+                    : [];
+            const normalized = list
+                .map((task: any) => ({
+                    title: String(task?.title || task?.task || task?.name || "").trim(),
+                    dueDate: String(task?.dueDate || task?.due || "").trim() || undefined,
+                    owner: String(task?.owner || task?.assignee || "").trim() || undefined,
+                }))
+                .filter((task: any) => task.title);
+            if (normalized.length || Array.isArray(parsed) || Array.isArray(parsed?.tasks)) {
+                return normalized;
+            }
+        } catch {
+            // try next candidate
+        }
+    }
+
+    return [];
+}
+
 export const AiCockpit: React.FC = () => {
     const isDevRuntime = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-    const { ctx, bodyText, setMsg, aiState, setAiState, files, addFile, clearFiles, settings } = useCockpit() as any;
+    const { ctx, bodyText, bodyHtml, setMsg, aiState, setAiState, files, addFile, clearFiles, settings } = useCockpit() as any;
     const aiManualOnly = settings?.aiManualOnly !== false;
 
     // Local state for immediate typing feel
@@ -137,8 +201,13 @@ export const AiCockpit: React.FC = () => {
     }, [aiManualOnly, emailKey, ctx.conversationId, ctx.isCompose, bodyText]);
 
     async function handleExtractTasksReview() {
-        if (!ctx.conversationId || !bodyText || ctx.isCompose || isExtractingTasks) return;
-        if (bodyText.length < 50) {
+        const effectiveBodyText = String(bodyText || "").trim() || htmlToPlainText(bodyHtml || "");
+        if (!ctx.conversationId || ctx.isCompose || isExtractingTasks) return;
+        if (!effectiveBodyText) {
+            setMsg("O corpo deste email ainda não ficou disponível no Outlook. Tenta novamente dentro de 1-2 segundos.");
+            return;
+        }
+        if (effectiveBodyText.length < 50) {
             setMsg("O email e demasiado curto para detetar tarefas com confianca.");
             return;
         }
@@ -155,24 +224,25 @@ export const AiCockpit: React.FC = () => {
                     from: ctx.fromEmail || "",
                     to: (ctx.toRecipients || []).map((r: any) => r.email),
                     cc: (ctx.ccRecipients || []).map((r: any) => r.email),
-                    bodyText: bodyText || "",
+                    bodyText: effectiveBodyText,
                 } as any
             });
-            if (res.ok) {
-                try {
-                    const json = JSON.parse(res.text.trim());
-                    if (Array.isArray(json) && json.length > 0) {
-                        setExtractedTasks(json.map((t: any) => ({ ...t, completed: false })));
-                        setShowTaskReview(true);
-                    } else {
-                        setExtractedTasks([]);
-                        setShowTaskReview(false);
-                        setMsg("Nao foram encontradas tarefas concretas neste email.");
-                    }
-                } catch {
-                    console.error("Failed to parse tasks JSON:", res.text);
-                    setMsg("A IA devolveu um formato de tarefas invalido.");
-                }
+            if (!res.ok) {
+                setExtractedTasks([]);
+                setShowTaskReview(false);
+                setMsg(res.error || "Erro ao extrair tarefas.");
+                return;
+            }
+
+            const tasks = parseExtractedTasks(res.text || "");
+            if (tasks.length > 0) {
+                setExtractedTasks(tasks.map((t) => ({ ...t, completed: false })));
+                setShowTaskReview(true);
+            } else {
+                console.error("Failed to parse tasks JSON:", res.text);
+                setExtractedTasks([]);
+                setShowTaskReview(false);
+                setMsg("Nao foram encontradas tarefas concretas neste email.");
             }
         } catch (err) {
             console.error("Erro ao extrair tarefas:", err);
