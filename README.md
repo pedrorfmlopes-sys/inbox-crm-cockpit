@@ -29,6 +29,12 @@ npm install
 ```
 Cria `.env` na pasta `server` (copia de `server/.env.example`).
 
+Se o browser/Outlook mostrar `ERR_CERT_DATE_INVALID` ou um aviso de privacidade para `https://localhost:5173`, renova os certificados locais:
+```bash
+npm run certs:verify
+npm run certs:install
+```
+
 ### 2) Execução (HTTPS Local)
 ```bash
 npm run dev

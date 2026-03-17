@@ -399,7 +399,7 @@ export const CrmCockpit: React.FC = () => {
         }
     }
 
-    // Initial check: Extract anchors when email changes
+    // Reset volatile AI state when the email changes.
     useEffect(() => {
         setBriefing(null);   // Reset briefing so old email data doesn't linger
         setAnchors(null);    // Reset anchors
@@ -416,11 +416,13 @@ export const CrmCockpit: React.FC = () => {
             loadOutlookSuggestion(row.email);
         });
         if (ctx.conversationId) {
-            handleScanAnchors();
+            if (settings?.aiManualOnly === false) {
+                handleScanAnchors();
+            }
             loadContact();
             loadEmailInsights();
         }
-    }, [ctx.conversationId, ctx.fromEmail, ctx.toRecipients, ctx.ccRecipients]);
+    }, [ctx.conversationId, ctx.fromEmail, ctx.toRecipients, ctx.ccRecipients, settings?.aiManualOnly]);
 
     async function handleScanAnchors() {
         setIsAnchorsLoading(true);
@@ -584,6 +586,19 @@ export const CrmCockpit: React.FC = () => {
     ].filter(Boolean).join(" | ");
 
     const isInitialLoading = isContextLoading || (links.length === 0 && !odooBaseUrl && !meta);
+    const hasAnchorScan = Boolean(anchors);
+    const anchorProjectName = String(anchors?.projectName || "").trim();
+    const anchorLocation = String(anchors?.location || "").trim();
+    const anchorArticles = Array.isArray(anchors?.refArticles) ? anchors.refArticles.filter(Boolean) : [];
+    const anchorStakeholders = Array.isArray(anchors?.stakeholders) ? anchors.stakeholders.filter(Boolean) : [];
+    const anchorParticipants = Array.isArray(anchors?.participants) ? anchors.participants.filter(Boolean) : [];
+    const hasAnchorData = Boolean(
+        anchorProjectName ||
+        anchorLocation ||
+        anchorArticles.length ||
+        anchorStakeholders.length ||
+        anchorParticipants.length
+    );
     const crmMessageTone = msg && /erro|falha|nÃ£o foi possÃ­vel|nÃ£o configurado/i.test(msg) ? "error" : "info";
 
     return (
@@ -601,8 +616,59 @@ export const CrmCockpit: React.FC = () => {
             />
 
             <div style={S.scrollArea}>
+                {ctx.conversationId && (
+                    <div style={{ ...S.section, padding: "10px", borderColor: "#dbeafe", background: "#f8fbff", marginBottom: "12px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                            <div style={{ fontSize: "10px", fontWeight: 800, color: "#2563eb", textTransform: "uppercase" }}>Analise do Email</div>
+                            <button
+                                onClick={handleScanAnchors}
+                                disabled={isAnchorsLoading}
+                                style={{ background: "none", border: "none", color: "#2563eb", cursor: isAnchorsLoading ? "default" : "pointer", fontSize: "10px", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}
+                                title="Extrair ancoras e verificar protecao"
+                            >
+                                {isAnchorsLoading ? <Icons.RefreshCw size={10} className="animate-spin" /> : <Icons.Sparkles size={10} />}
+                                {hasAnchorScan ? "Atualizar Analise" : "Analisar Email"}
+                            </button>
+                        </div>
+
+                        {isAnchorsLoading ? (
+                            <div style={{ border: "1px dashed #dbeafe", padding: "8px", borderRadius: "6px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+                                    <Icons.Sparkles size={10} color="#2563eb" />
+                                    <span style={{ fontSize: "9px", fontWeight: 700, textTransform: "uppercase", color: "#2563eb" }}>A analisar manualmente...</span>
+                                </div>
+                                <Skeleton width="60%" height="10px" marginBottom="4px" />
+                                <Skeleton width="40%" height="10px" />
+                            </div>
+                        ) : hasAnchorScan ? (
+                            <div style={{ display: "grid", gap: "8px" }}>
+                                <div style={{ fontSize: "11px", color: "#0f172a", lineHeight: "1.4" }}>
+                                    {hasAnchorData
+                                        ? "Analise concluida. Os dados abaixo resultam da ultima execucao manual."
+                                        : "Analise concluida sem sinais relevantes neste email."}
+                                </div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                                    {anchorProjectName ? <span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "999px", background: "#dbeafe", color: "#1d4ed8" }}>Projeto: {anchorProjectName}</span> : null}
+                                    {anchorLocation ? <span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "999px", background: "#e0f2fe", color: "#0369a1" }}>Local: {anchorLocation}</span> : null}
+                                    {anchorArticles.length ? <span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "999px", background: "#ecfeff", color: "#0f766e" }}>Refs: {anchorArticles.slice(0, 3).join(", ")}</span> : null}
+                                    {anchorStakeholders.length ? <span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "999px", background: "#eef2ff", color: "#4338ca" }}>Stakeholders: {anchorStakeholders.slice(0, 2).join(", ")}</span> : null}
+                                    {anchorParticipants.length ? <span style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "999px", background: "#f1f5f9", color: "#334155" }}>Participantes: {anchorParticipants.length}</span> : null}
+                                </div>
+                                <div style={{ fontSize: "10px", color: protection?.isProtected ? "#b45309" : "#64748b" }}>
+                                    {protection?.isProtected
+                                        ? "Protecao detetada. Consulta o banner abaixo para ver os detalhes."
+                                        : "Sem protecao detetada na ultima analise manual."}
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ fontSize: "11px", color: "#475569", lineHeight: "1.45" }}>
+                                A extracao de ancoras deixou de ser automatica. Corre esta analise apenas quando precisares de verificar projeto, artigos, participantes e protecao.
+                            </div>
+                        )}
+                    </div>
+                )}
                 {/* Fingerprint / Anchors Area (Visualized if loading) */}
-                {isAnchorsLoading && (
+                {false && isAnchorsLoading && (
                     <div style={{ marginBottom: "12px", border: "1px dashed #dbeafe", padding: "8px", borderRadius: "6px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
                             <Icons.Sparkles size={10} color="#2563eb" />

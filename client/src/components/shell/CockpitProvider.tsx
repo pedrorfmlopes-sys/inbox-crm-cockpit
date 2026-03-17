@@ -6,6 +6,7 @@ import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
 
 export type CockpitTab = "ai" | "crm" | "crm2" | "related" | "groups" | "files" | "settings";
+export type SettingsPanelSection = "general" | "conns" | "ai" | "persona" | "signature" | "references" | "groups" | "protection";
 export type StartupCheckStatus = "pending" | "running" | "success" | "warning" | "error";
 
 type StartupCheckId = "settings" | "session" | "email" | "links" | "services";
@@ -42,6 +43,14 @@ interface GranularStatusDetails {
     openai: string | null;
     gemini: string | null;
     geminiDetails: GeminiStatusDetails | null;
+}
+
+interface ConnectivitySnapshot {
+    connectionStatus: "none" | "success" | "error";
+    granularStatus: { odoo: boolean | null; openai: boolean | null; gemini: boolean | null };
+    granularStatusDetails: GranularStatusDetails;
+    granularStatusString: string;
+    checkedAt: number;
 }
 
 export interface AiState {
@@ -90,6 +99,9 @@ export interface CockpitContextType {
     startupChecks: StartupCheck[];
     startupNotice: StartupNotice | null;
     dismissStartupNotice: () => void;
+    settingsSection: SettingsPanelSection;
+    setSettingsSection: (section: SettingsPanelSection) => void;
+    openSettingsSection: (section: SettingsPanelSection) => void;
 }
 
 // Export the context so it can be checked or used elsewhere if needed (rare)
@@ -101,6 +113,8 @@ type CockpitContextSingletonHost = typeof globalThis & {
 const G = globalThis as CockpitContextSingletonHost;
 const GK = "__ICCC_COCKPIT_CONTEXT_v1__";
 const ACTIVE_TAB_STORAGE_KEY = "iccc_active_tab_v1";
+const ACTIVE_SETTINGS_SECTION_STORAGE_KEY = "iccc_settings_section_v1";
+const CONNECTIVITY_CACHE_STORAGE_KEY = "iccc_connectivity_status_v1";
 const WARM_BOOT_STORAGE_KEY = "iccc_warm_boot_v1";
 const WARM_BOOT_MAX_AGE_MS = 10 * 60 * 1000;
 const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
@@ -118,6 +132,17 @@ function createStartupChecks(): StartupCheck[] {
     return STARTUP_CHECK_BLUEPRINT.map((check) => ({ ...check, status: "pending" as StartupCheckStatus }));
 }
 
+function isSettingsPanelSection(value: string | null): value is SettingsPanelSection {
+    return value === "general" ||
+        value === "conns" ||
+        value === "ai" ||
+        value === "persona" ||
+        value === "signature" ||
+        value === "references" ||
+        value === "groups" ||
+        value === "protection";
+}
+
 function buildContextEmailKey(ctx: OutlookMessageContext): string {
     return [
         String(ctx.itemId || "").trim(),
@@ -126,12 +151,52 @@ function buildContextEmailKey(ctx: OutlookMessageContext): string {
     ].join("|");
 }
 
+function readPersistedConnectivitySnapshot(): ConnectivitySnapshot | null {
+    try {
+        const raw = localStorage.getItem(CONNECTIVITY_CACHE_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return null;
+        const status = parsed.connectionStatus;
+        if (status !== "none" && status !== "success" && status !== "error") return null;
+        return {
+            connectionStatus: status,
+            granularStatus: {
+                odoo: typeof parsed.granularStatus?.odoo === "boolean" ? parsed.granularStatus.odoo : null,
+                openai: typeof parsed.granularStatus?.openai === "boolean" ? parsed.granularStatus.openai : null,
+                gemini: typeof parsed.granularStatus?.gemini === "boolean" ? parsed.granularStatus.gemini : null,
+            },
+            granularStatusDetails: {
+                openai: typeof parsed.granularStatusDetails?.openai === "string" ? parsed.granularStatusDetails.openai : null,
+                gemini: typeof parsed.granularStatusDetails?.gemini === "string" ? parsed.granularStatusDetails.gemini : null,
+                geminiDetails: parsed.granularStatusDetails?.geminiDetails || null,
+            },
+            granularStatusString: typeof parsed.granularStatusString === "string"
+                ? parsed.granularStatusString
+                : "Odoo: -- | OpenAI: -- | Gemini: --",
+            checkedAt: Number(parsed.checkedAt || 0),
+        };
+    } catch {
+        return null;
+    }
+}
+
+function persistConnectivitySnapshot(snapshot: ConnectivitySnapshot) {
+    try {
+        localStorage.setItem(CONNECTIVITY_CACHE_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch {
+        // ignore persistence failures
+    }
+}
+
 if (!G[GK]) {
     G[GK] = createContext<CockpitContextType | undefined>(undefined);
 }
 export const CockpitContext = G[GK] as React.Context<CockpitContextType | undefined>;
 
 export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    const initialConnectivitySnapshot = readPersistedConnectivitySnapshot();
+
     function readPersistedTab(): CockpitTab {
         try {
             const raw = sessionStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
@@ -140,6 +205,15 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 : "ai";
         } catch {
             return "ai";
+        }
+    }
+
+    function readPersistedSettingsSection(): SettingsPanelSection {
+        try {
+            const raw = sessionStorage.getItem(ACTIVE_SETTINGS_SECTION_STORAGE_KEY);
+            return isSettingsPanelSection(raw) ? raw : "general";
+        } catch {
+            return "general";
         }
     }
 
@@ -154,6 +228,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const warmStartupRef = useRef<boolean>(hasWarmBootHint());
     const [tab, setTab] = useState<CockpitTab>(() => readPersistedTab());
+    const [settingsSection, setSettingsSectionState] = useState<SettingsPanelSection>(() => readPersistedSettingsSection());
     const [ctx, setCtx] = useState<OutlookMessageContext>({});
     const [bodyText, setBodyText] = useState<string>("");
     const [bodyHtml, setBodyHtml] = useState<string>("");
@@ -163,7 +238,9 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [msg, setMsg] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(() => !warmStartupRef.current);
     const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(getCachedSettingsSnapshot()?.odooSessionToken));
-    const [connectionStatus, setConnectionStatus] = useState<"none" | "success" | "error">("none");
+    const [connectionStatus, setConnectionStatus] = useState<"none" | "success" | "error">(
+        () => initialConnectivitySnapshot?.connectionStatus || "none"
+    );
     const [settings, setSettings] = useState<CockpitSettingsV1 | null>(() => getCachedSettingsSnapshot());
     const [activeGroupSelection, setActiveGroupSelection] = useState<{ emailKey: string; groupId: string | null }>({
         emailKey: "",
@@ -268,6 +345,23 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             // ignore storage failures
         }
     }, [tab]);
+
+    useEffect(() => {
+        try {
+            sessionStorage.setItem(ACTIVE_SETTINGS_SECTION_STORAGE_KEY, settingsSection);
+        } catch {
+            // ignore storage failures
+        }
+    }, [settingsSection]);
+
+    const setSettingsSection = (section: SettingsPanelSection) => {
+        setSettingsSectionState(section);
+    };
+
+    const openSettingsSection = (section: SettingsPanelSection) => {
+        setSettingsSectionState(section);
+        setTab("settings");
+    };
 
     // AI History Persistence
     const [aiCache, setAiCache] = useState<Record<string, AiState>>(() => {
@@ -648,23 +742,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             if (reason === "init") {
                 updateStartupCheck("services", {
-                    status: "running",
-                    detail: "A validar Odoo e os motores de IA...",
+                    status: connectionStatus === "error" ? "warning" : "success",
+                    detail: connectionStatus === "none"
+                        ? (s.aiManualOnly === false
+                            ? "Monitorização automática ativa para Odoo e IA."
+                            : "Verificação manual disponível em Settings > Ligações.")
+                        : `Último teste: ${granularStatusString}`,
                 });
-                const connectivity = await checkConnectivity();
-                const failures = connectivity.failures;
-                if (failures.length) {
-                    failures.forEach((failure) => noteStartupIssue(failure, "warning"));
-                    updateStartupCheck("services", {
-                        status: failures.length === 3 ? "error" : "warning",
-                        detail: connectivity.summary,
-                    });
-                } else {
-                    updateStartupCheck("services", {
-                        status: "success",
-                        detail: connectivity.summary,
-                    });
-                }
             }
         } catch (e: any) {
             if (reqId !== ctxLoadSeqRef.current) return;
@@ -702,19 +786,25 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
     }
 
-    const [granularStatus, setGranularStatus] = useState<{ odoo: boolean | null; openai: boolean | null; gemini: boolean | null }>({
-        odoo: null,
-        openai: null,
-        gemini: null
-    });
+    const [granularStatus, setGranularStatus] = useState<{ odoo: boolean | null; openai: boolean | null; gemini: boolean | null }>(
+        () => initialConnectivitySnapshot?.granularStatus || {
+            odoo: null,
+            openai: null,
+            gemini: null
+        }
+    );
 
-    const [granularStatusDetails, setGranularStatusDetails] = useState<GranularStatusDetails>({
-        openai: null,
-        gemini: null,
-        geminiDetails: null
-    });
+    const [granularStatusDetails, setGranularStatusDetails] = useState<GranularStatusDetails>(
+        () => initialConnectivitySnapshot?.granularStatusDetails || {
+            openai: null,
+            gemini: null,
+            geminiDetails: null
+        }
+    );
 
-    const [granularStatusString, setGranularStatusString] = useState<string>("Odoo: -- | OpenAI: -- | Gemini: --");
+    const [granularStatusString, setGranularStatusString] = useState<string>(
+        () => initialConnectivitySnapshot?.granularStatusString || "Odoo: -- | OpenAI: -- | Gemini: --"
+    );
 
     async function checkConnectivity(customModels?: any): Promise<ConnectivityCheckResult> {
         const { odooPing, aiSelftest, getOdooMeta } = await import("@/api");
@@ -765,6 +855,22 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const summary = `Odoo: ${finalOdooOk ? 'OK' : 'Erro'} | OpenAI: ${a.openai?.ok ? 'OK' : 'Erro'} | Gemini: ${a.gemini?.ok ? 'OK' : 'Erro'}`;
             setGranularStatusString(summary);
             setConnectionStatus(finalOdooOk && a.ok ? "success" : "error");
+            persistConnectivitySnapshot({
+                connectionStatus: finalOdooOk && a.ok ? "success" : "error",
+                granularStatus: newStatus,
+                granularStatusDetails: {
+                    openai: a.openai?.error || (a.openai?.ok ? `Model: ${a.openai.modelUsed || 'default'}` : null),
+                    gemini: a.gemini?.error || (a.gemini?.ok ? `Model: ${a.gemini.modelUsed || 'default'}` : null),
+                    geminiDetails: a.gemini?.ok ? {
+                        requested: a.gemini.requestedModel,
+                        sanitized: a.gemini.sanitizedModel,
+                        effective: a.gemini.modelUsed,
+                        provider: a.gemini.providerUsed
+                    } : null
+                },
+                granularStatusString: summary,
+                checkedAt: Date.now(),
+            });
             const failures: string[] = [];
             if (!finalOdooOk) failures.push("A verificação ao Odoo falhou ou devolveu metadata incompleta.");
             if (!a.openai?.ok) failures.push(a.openai?.error || "A verificação OpenAI falhou.");
@@ -777,8 +883,27 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 failures,
             };
         } catch {
+            const failedStatus = {
+                odoo: false,
+                openai: false,
+                gemini: false,
+            };
+            const failedDetails = {
+                openai: "Falha no teste manual.",
+                gemini: "Falha no teste manual.",
+                geminiDetails: null,
+            };
             setConnectionStatus("error");
-            setGranularStatusString("Odoo: Error | AI: Error");
+            setGranularStatus(failedStatus);
+            setGranularStatusDetails(failedDetails);
+            setGranularStatusString("Odoo: Erro | OpenAI: Erro | Gemini: Erro");
+            persistConnectivitySnapshot({
+                connectionStatus: "error",
+                granularStatus: failedStatus,
+                granularStatusDetails: failedDetails,
+                granularStatusString: "Odoo: Erro | OpenAI: Erro | Gemini: Erro",
+                checkedAt: Date.now(),
+            });
             return {
                 odooOk: false,
                 openaiOk: false,
@@ -789,16 +914,16 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
     }
 
-    // Heartbeat logic
     useEffect(() => {
-        const interval = setInterval(() => {
-            console.log("[Cockpit] Heartbeat: Checking connectivity...");
-            // Use current settings if available in state or just fallback to server config
-            checkConnectivity();
-        }, 5 * 60 * 1000); // 5 minutes
+        if (settings?.aiManualOnly !== false) return;
 
-        return () => clearInterval(interval);
-    }, []);
+        void checkConnectivity();
+        const intervalId = window.setInterval(() => {
+            void checkConnectivity();
+        }, 5 * 60 * 1000);
+
+        return () => window.clearInterval(intervalId);
+    }, [settings?.aiManualOnly]);
 
     useEffect(() => {
         loadContextAndLinks('init');
@@ -973,7 +1098,6 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 odooSessionToken: resp.token
             });
             await loadContextAndLinks('login-success');
-            await checkConnectivity();
         } else {
             throw new Error(resp.message);
         }
@@ -1000,6 +1124,9 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             startupChecks,
             startupNotice: startupNoticeDismissed ? null : startupNoticeState,
             dismissStartupNotice: () => setStartupNoticeDismissed(true),
+            settingsSection,
+            setSettingsSection,
+            openSettingsSection,
         }}>
             {children}
         </CockpitContext.Provider>

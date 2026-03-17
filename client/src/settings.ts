@@ -84,6 +84,9 @@ export type CockpitSettingsV1 = {
   // Freeform notes/instructions that the AI should always consider
   aiKnowledge: string[];
 
+  // When true, blocks automatic AI runs and keeps the app in on-demand mode.
+  aiManualOnly: boolean;
+
   // Persona & Style Mimic
   userRole?: string;
   styleContext?: string;
@@ -174,6 +177,7 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     "de-DE": 260,
   },
   aiKnowledge: [],
+  aiManualOnly: true,
   userRole: "",
   styleContext: "",
   styleExamples: "",
@@ -344,6 +348,7 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
     signatureImageUrl: { ...(base.signatureImageUrl || {}), ...((incoming as any).signatureImageUrl || {}) },
     signatureImageMaxWidth: { ...(base.signatureImageMaxWidth || {}), ...((incoming as any).signatureImageMaxWidth || {}) },
     aiKnowledge: Array.isArray(incoming.aiKnowledge) ? incoming.aiKnowledge : base.aiKnowledge,
+    aiManualOnly: typeof incoming.aiManualOnly === "boolean" ? incoming.aiManualOnly : base.aiManualOnly,
     referenceCodes: {
       ...base.referenceCodes,
       ...((incoming as any).referenceCodes || {}),

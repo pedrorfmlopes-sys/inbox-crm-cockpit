@@ -70,7 +70,7 @@ function OdooMemoryCheck({ partnerId, projectId, fromEmail }: { partnerId?: numb
 /**
  * AiAssistant: Analyzes bodyText to provide summary and actions.
  */
-function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction: (title: string, type: string) => void }) {
+function AiAssistant({ bodyText, onAddAction, manualOnly }: { bodyText: string, onAddAction: (title: string, type: string) => void, manualOnly: boolean }) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<{ summary: string[], actions: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -123,10 +123,15 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
   };
 
   useEffect(() => {
-    // Auto-trigger apenas se tivermos corpo e ainda não tivermos analisado
-    if (bodyText && !data && !loading) {
+    if (!manualOnly && bodyText && !data && !loading) {
       analyze();
     }
+  }, [bodyText, data, loading, manualOnly]);
+
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    setLoading(false);
   }, [bodyText]);
 
   if (!data || !data.summary.length) {
@@ -146,14 +151,15 @@ function AiAssistant({ bodyText, onAddAction }: { bodyText: string, onAddAction:
             <Icons.Sparkles size={12} color="#2563eb" />
             <div style={{ fontSize: 10, fontWeight: 800, color: "#2563eb", textTransform: "uppercase" }}>Assistente IA</div>
           </div>
-          <button style={S.secondaryBtn} onClick={analyze} title="Reanalisar o conteúdo">
+          <button style={S.secondaryBtn} onClick={analyze} title={manualOnly ? "Analisar o conteudo" : "Reanalisar o conteudo"}>
             <Icons.RefreshCw size={10} />
-            REANALISAR
+            {data ? "REANALISAR" : "ANALISAR"}
           </button>
         </div>
         <div style={{ fontSize: 11, color: bodyText ? "#BF2600" : "#777" }}>
-          {bodyText ? "⚠️ Clique em Reanalisar para processar o email." : "ℹ️ O conteúdo do email ainda não foi carregado."}
+          {bodyText ? (manualOnly ? "Clique em Analisar para processar o email." : "A analise automatica esta ativa para este formulario.") : "O conteudo do email ainda nao foi carregado."}
         </div>
+        {bodyText && manualOnly && <div style={{ fontSize: 10, color: "#5E6C84", marginTop: 6 }}>A analise agora corre apenas por clique manual.</div>}
         {error && <div style={{ fontSize: 10, color: "#BF2600", marginTop: 8 }}><b>ERRO:</b> {error}</div>}
       </div>
     );
@@ -1431,6 +1437,7 @@ export default function DialogApp() {
   });
   const [status, setStatus] = useState<string | null>(null);
   const [apiReady, setApiReady] = useState(false);
+  const [aiManualOnly, setAiManualOnly] = useState(true);
 
   const [fullBody, setFullBody] = useState("");
   const [emailAtts, setEmailAtts] = useState<any[]>([]);
@@ -1473,6 +1480,7 @@ export default function DialogApp() {
     (async () => {
       try {
         const st = await getSettings();
+        setAiManualOnly(st.aiManualOnly !== false);
         if (st.odooSessionToken) {
           setApiSessionToken(st.odooSessionToken);
         }
@@ -1487,6 +1495,7 @@ export default function DialogApp() {
     (async () => {
       try {
         const st = await getSettings();
+        setAiManualOnly(st.aiManualOnly !== false);
         if (st.odooSessionToken) {
           setApiSessionToken(st.odooSessionToken);
           const pingResult = await odooPing();
@@ -1892,7 +1901,7 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
           <div style={S.metaCardLabel}>ASSUNTO</div>
           <input style={S.headerInput} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da tarefa" />
         </div>
-        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} manualOnly={aiManualOnly} />
       </div>
       <div style={S.formMetaGrid}>
         <CompactTypeCard value="Tarefa" />
@@ -2023,7 +2032,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
           <div style={S.metaCardLabel}>ASSUNTO</div>
           <input style={S.headerInput} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do projeto" />
         </div>
-        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} manualOnly={aiManualOnly} />
       </div>
       <div style={S.formMetaGrid}>
         <CompactTypeCard value="Projeto" />
@@ -2190,7 +2199,7 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
           <div style={S.metaCardLabel}>ASSUNTO</div>
           <input style={S.headerInput} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do lead" />
         </div>
-        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} manualOnly={aiManualOnly} />
       </div>
       <div style={S.formMetaGrid}>
         <CompactTypeCard value="Lead" />
@@ -2505,7 +2514,7 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }
           <div style={S.metaCardLabel}>ASSUNTO</div>
           <input style={S.headerInput} value={name} onChange={(e) => setName(e.target.value)} placeholder="Titulo do ticket" />
         </div>
-        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} />
+        <AiAssistant bodyText={fullBody} onAddAction={handleAddAiAction} manualOnly={aiManualOnly} />
       </div>
       <div style={S.formMetaGrid}>
         <CompactTypeCard value="Ticket" />

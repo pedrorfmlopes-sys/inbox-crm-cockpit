@@ -3,7 +3,7 @@ import { CockpitTab, useCockpit } from "@/components/shell/CockpitProvider";
 import * as Icons from "../../ui/icons";
 
 export const Navigation: React.FC = () => {
-    const { tab, setTab, connectionStatus, granularStatusString } = useCockpit();
+    const { tab, setTab, connectionStatus, granularStatusString, openSettingsSection } = useCockpit();
 
     const tabs: { id: CockpitTab; label: string; icon: React.ReactNode }[] = [
         { id: "ai", label: "AI", icon: <Icons.Sparkles size={16} /> },
@@ -17,27 +17,37 @@ export const Navigation: React.FC = () => {
 
     return (
         <div style={S.navWrapper}>
-            {tabs.map((t) => (
-                <button
-                    key={t.id}
-                    style={tab === t.id ? S.tabActive : S.tab}
-                    onClick={() => setTab(t.id)}
-                >
-                    <span style={S.icon}>
-                        {t.icon}
-                        {(t.id === "crm" || t.id === "crm2") && connectionStatus !== "none" && (
-                            <div
-                                title={granularStatusString}
+            {tabs.map((t) => {
+                const isSettings = t.id === "settings";
+                const statusColor = connectionStatus === "success" ? "#36b37e" : "#ff5630";
+                return (
+                    <div key={t.id} style={S.tabSlot}>
+                        <button
+                            style={tab === t.id ? S.tabActive : S.tab}
+                            onClick={() => setTab(t.id)}
+                        >
+                            <span style={S.icon}>{t.icon}</span>
+                            <span style={S.label}>{t.label}</span>
+                        </button>
+
+                        {isSettings && connectionStatus !== "none" && (
+                            <button
+                                type="button"
+                                title={`Abrir Ligações. ${granularStatusString}`}
+                                aria-label="Abrir ligações"
                                 style={{
-                                    ...S.statusDot,
-                                    background: connectionStatus === "success" ? "#36b37e" : "#ff5630"
+                                    ...S.settingsStatusDotBtn,
+                                    background: statusColor,
+                                }}
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    openSettingsSection("conns");
                                 }}
                             />
                         )}
-                    </span>
-                    <span style={S.label}>{t.label}</span>
-                </button>
-            ))}
+                    </div>
+                );
+            })}
         </div>
     );
 };
@@ -54,6 +64,11 @@ const S: Record<string, React.CSSProperties> = {
         borderTop: "1px solid var(--iccc-card-border)",
         boxShadow: "0 -2px 10px rgba(0,0,0,0.05)",
         zIndex: 1000,
+    },
+    tabSlot: {
+        flex: 1,
+        position: "relative",
+        display: "flex",
     },
     tab: {
         flex: 1,
@@ -95,13 +110,16 @@ const S: Record<string, React.CSSProperties> = {
         textTransform: "uppercase",
         letterSpacing: "0.01em",
     },
-    statusDot: {
+    settingsStatusDotBtn: {
         position: "absolute",
-        top: "-2px",
-        right: "-4px",
-        width: "6px",
-        height: "6px",
+        top: "8px",
+        right: "14px",
+        width: "11px",
+        height: "11px",
         borderRadius: "50%",
-        border: "1px solid white",
+        border: "2px solid var(--iccc-card-bg)",
+        boxShadow: "0 2px 6px rgba(0,0,0,0.18)",
+        cursor: "pointer",
+        padding: 0,
     },
 };

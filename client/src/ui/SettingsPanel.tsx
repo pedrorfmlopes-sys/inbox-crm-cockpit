@@ -21,7 +21,6 @@ import { aiListModels } from "../api";
 import { PanelState, type PanelStateTone } from "./PanelState";
 import { previewReferenceCode } from "../referenceCodes";
 
-type Section = "general" | "conns" | "ai" | "persona" | "signature" | "references" | "groups" | "protection";
 type StatusNotice = { tone: PanelStateTone; title: string; description?: string };
 type StatusValue = StatusNotice | string | null;
 
@@ -97,10 +96,10 @@ function localeShort(loc: AppLocale): string {
 }
 
 export function SettingsPanel(): JSX.Element {
+  const { settingsSection: section, setSettingsSection: setSection } = useCockpit();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<StatusValue>(null);
-  const [section, setSection] = useState<Section>("general");
   const [model, setModel] = useState<CockpitSettingsV1 | null>(null);
 
   // local-only uploaded signature images (dataURL), per locale
@@ -482,6 +481,18 @@ export function SettingsPanel(): JSX.Element {
 
           {section === "ai" && (
             <div style={{ display: "grid", gap: 16 }}>
+              <label style={S.toggleRow}>
+                <input
+                  type="checkbox"
+                  checked={model.aiManualOnly !== false}
+                  onChange={(e) => setModel({ ...model, aiManualOnly: e.target.checked })}
+                />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>IA apenas manual</div>
+                  <div style={S.hint}>Quando ativo, a app so usa IA por clique explicito. Quando desligado, voltam as analises automaticas onde existirem.</div>
+                </div>
+              </label>
+
               <div>
                 <div style={S.fieldLabel}>Base de Conhecimento</div>
                 <div style={{ ...S.hint, marginBottom: 8 }}>Identifica factos, regras ou dados da empresa que a IA deve saber (ex: NIF, IBAN, Morada).</div>

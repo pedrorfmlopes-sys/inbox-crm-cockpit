@@ -6,6 +6,8 @@
     "server"
   ],
   "scripts": {
+    "certs:install": "npx office-addin-dev-certs install",
+    "certs:verify": "npx office-addin-dev-certs verify",
     "dev": "concurrently -n UI,API -c auto \"npm -w client run dev\" \"npm -w server run dev\"",
     "build": "npm -w client run build && npm -w server run build",
     "start": "node server/src/index.js",

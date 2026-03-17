@@ -44,6 +44,7 @@ function saveHistory(entries: HistoryEntry[]) {
 export const AiCockpit: React.FC = () => {
     const isDevRuntime = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
     const { ctx, bodyText, setMsg, aiState, setAiState, files, addFile, clearFiles, settings } = useCockpit() as any;
+    const aiManualOnly = settings?.aiManualOnly !== false;
 
     // Local state for immediate typing feel
     // Initialized from context, but NOT synced on every render to avoid loops
@@ -54,6 +55,7 @@ export const AiCockpit: React.FC = () => {
     const [isFetchingIntents, setIsFetchingIntents] = useState(false);
     const [isFetchingBriefing, setIsFetchingBriefing] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
+    const [isExtractingContacts, setIsExtractingContacts] = useState(false);
     const [briefingExpanded, setBriefingExpanded] = useState(false);
     const [debugLog, setDebugLog] = useState("");
 
@@ -115,163 +117,177 @@ export const AiCockpit: React.FC = () => {
         setHistory(loadHistory().filter(h => h.emailKey === emailKey));
     }, [ctx.conversationId, emailKey]);
 
-    // Automated Task Extraction in Read Mode (with Persistence)
     useEffect(() => {
-        // Only clear tasks if the conversation changed
-        // We don't clear when entering Compose if we already have tasks for this email
-        if (!ctx.conversationId || !bodyText) {
-            setExtractedTasks([]);
-            setShowTaskReview(false);
+        setBriefing(null);
+        setBriefingExpanded(false);
+        setSuggestedContacts([]);
+        setExtractedTasks([]);
+        setShowTaskReview(false);
+        setContactSearch("");
+        setIntentSearch("");
+    }, [emailKey]);
+
+    useEffect(() => {
+        if (aiManualOnly || !ctx.conversationId || ctx.isCompose) return;
+
+        void handleFetchBriefing(false);
+        void handleFetchIntents(false);
+        if (bodyText) void handleExtractContacts(false);
+        if ((bodyText || "").length >= 50) void handleExtractTasksReview();
+    }, [aiManualOnly, emailKey, ctx.conversationId, ctx.isCompose, bodyText]);
+
+    async function handleExtractTasksReview() {
+        if (!ctx.conversationId || !bodyText || ctx.isCompose || isExtractingTasks) return;
+        if (bodyText.length < 50) {
+            setMsg("O email e demasiado curto para detetar tarefas com confianca.");
             return;
         }
 
-        // If we are already in Compose, we don't trigger a new extraction automatically
-        // but we keep what was found in Read mode.
-        if (ctx.isCompose) return;
-
-        // If we already have tasks and the review is shown, don't re-extract
-        if (extractedTasks.length > 0 && showTaskReview) return;
-
-        // Smart Filter: Skip very short emails (likely unrelated to tasks)
-        if (bodyText.length < 50) return;
-
-        const extractTasks = async () => {
-            setIsExtractingTasks(true);
-            try {
-                const res = await aiGenerate({
-                    action: "extract_tasks_json" as any,
-                    mode: "fast",
-                    locale: (aiState.locale || "auto") as any,
-                    tone: "neutro",
-                    email: {
-                        subject: ctx.subject || "",
-                        from: ctx.fromEmail || "",
-                        to: (ctx.toRecipients || []).map((r: any) => r.email),
-                        cc: (ctx.ccRecipients || []).map((r: any) => r.email),
-                        bodyText: bodyText || "",
-                    } as any
-                });
-                if (res.ok) {
-                    try {
-                        const json = JSON.parse(res.text.trim());
-                        if (Array.isArray(json) && json.length > 0) {
-                            setExtractedTasks(json.map(t => ({ ...t, completed: false })));
-                            setShowTaskReview(true);
-                        }
-                    } catch {
-                        console.error("Failed to parse tasks JSON:", res.text);
+        setIsExtractingTasks(true);
+        try {
+            const res = await aiGenerate({
+                action: "extract_tasks_json" as any,
+                mode: "fast",
+                locale: (aiState.locale || "auto") as any,
+                tone: "neutro",
+                email: {
+                    subject: ctx.subject || "",
+                    from: ctx.fromEmail || "",
+                    to: (ctx.toRecipients || []).map((r: any) => r.email),
+                    cc: (ctx.ccRecipients || []).map((r: any) => r.email),
+                    bodyText: bodyText || "",
+                } as any
+            });
+            if (res.ok) {
+                try {
+                    const json = JSON.parse(res.text.trim());
+                    if (Array.isArray(json) && json.length > 0) {
+                        setExtractedTasks(json.map((t: any) => ({ ...t, completed: false })));
+                        setShowTaskReview(true);
+                    } else {
+                        setExtractedTasks([]);
+                        setShowTaskReview(false);
+                        setMsg("Nao foram encontradas tarefas concretas neste email.");
                     }
+                } catch {
+                    console.error("Failed to parse tasks JSON:", res.text);
+                    setMsg("A IA devolveu um formato de tarefas invalido.");
                 }
-            } catch (err) {
-                console.error("Erro ao extrair tarefas:", err);
-            } finally {
-                setIsExtractingTasks(false);
             }
-        };
-
-        const timer = setTimeout(extractTasks, 1500); // Delay to ensure context is ready
-        return () => clearTimeout(timer);
-    }, [ctx.conversationId, ctx.isCompose, bodyText]);
-
-    // Automated Intent Proposals
-    useEffect(() => {
-        if (!ctx.conversationId || ctx.isCompose) {
-            setAiState({ smartReplies: [] });
-            return;
+        } catch (err) {
+            console.error("Erro ao extrair tarefas:", err);
+            setMsg("Erro ao extrair tarefas.");
+        } finally {
+            setIsExtractingTasks(false);
         }
+    }
 
-        const fetchIntents = async () => {
-            setIsFetchingIntents(true);
-            try {
-                const settings = await getSettings();
-                const res = await aiGenerate({
-                    action: "intent_proposals", // This was explicitly "intent_proposals"
-                    mode: "fast",
-                    locale: (settings.replyLanguage || "pt-PT") as any, // This was from settings
-                    tone: settings.tone || "neutro", // This was from settings
-                    email: {
-                        subject: ctx.subject || "",
-                        from: ctx.fromEmail || "",
-                        to: (ctx.toRecipients || []).map((r: any) => r.email),
-                        cc: (ctx.ccRecipients || []).map((r: any) => r.email),
-                        bodyText: bodyText || "",
-                        bodyScope: settings.bodyScope || "main" // Added this line
-                    },
-                    // inputText, knowledge, history, files are not used for intent_proposals
-                    // and would require 'action', 'extraPrompt', 'prompt', 'isRefining' to be defined.
-                    // Keeping the original structure for intent_proposals and adding briefing.
-                    briefing: briefing, // Pass the briefing for isolation
-                    persona: {
-                        userRole: settings.userRole,
-                        styleContext: settings.styleContext,
-                        styleExamples: settings.styleExamples,
-                    }
-                });
-                if (res.ok) {
-                    const intents = res.text.split(";").map(i => i.trim()).filter(Boolean);
-                    setAiState({ smartReplies: intents });
+    async function handleFetchIntents(force = false) {
+        if (!ctx.conversationId || ctx.isCompose || isFetchingIntents) return;
+        if (!force && aiState.smartReplies.length > 0) return;
+
+        setIsFetchingIntents(true);
+        try {
+            const nextSettings = await getSettings();
+            const res = await aiGenerate({
+                action: "intent_proposals",
+                mode: "fast",
+                locale: (nextSettings.replyLanguage || "pt-PT") as any,
+                tone: nextSettings.tone || "neutro",
+                email: {
+                    subject: ctx.subject || "",
+                    from: ctx.fromEmail || "",
+                    to: (ctx.toRecipients || []).map((r: any) => r.email),
+                    cc: (ctx.ccRecipients || []).map((r: any) => r.email),
+                    bodyText: bodyText || "",
+                    bodyScope: nextSettings.bodyScope || "main"
+                },
+                briefing: briefing,
+                persona: {
+                    userRole: nextSettings.userRole,
+                    styleContext: nextSettings.styleContext,
+                    styleExamples: nextSettings.styleExamples,
                 }
-            } catch (err) {
-                console.error("Erro ao obter intenções:", err);
-            } finally {
-                setIsFetchingIntents(false);
+            });
+            if (res.ok) {
+                const intents = res.text.split(";").map((item) => item.trim()).filter(Boolean);
+                setAiState({ smartReplies: intents });
+                if (!intents.length) setMsg("Nao surgiram sugestoes rapidas para este email.");
             }
-        };
+        } catch (err) {
+            console.error("Erro ao obter intencoes:", err);
+            setMsg("Erro ao obter sugestoes rapidas.");
+        } finally {
+            setIsFetchingIntents(false);
+        }
+    }
 
-        fetchIntents();
-    }, [ctx.conversationId, ctx.isCompose]);
+    async function handleFetchBriefing(force = false) {
+        if (!ctx.conversationId || ctx.isCompose || isFetchingBriefing) return;
+        if (!force && briefing) return;
 
-    // Automated Briefing on Conversation Change
-    useEffect(() => {
-        if (!ctx.conversationId || ctx.isCompose) return;
-
-        const fetchBriefing = async () => {
-            try {
-                setIsFetchingBriefing(true);
-                const { aiGenerateBriefing } = await import("@/api");
-                const res = await aiGenerateBriefing(bodyText || "", [], {}, ctx.conversationId);
-                if (res.ok) {
-                    setBriefing(res.summary);
-                }
-            } catch (err) {
-                console.error("Erro ao obter briefing:", err);
-            } finally {
-                setIsFetchingBriefing(false);
+        try {
+            setIsFetchingBriefing(true);
+            const { aiGenerateBriefing } = await import("@/api");
+            const res = await aiGenerateBriefing(bodyText || "", [], {}, ctx.conversationId);
+            if (res.ok) {
+                setBriefing(res.summary || "");
             }
-        };
+        } catch (err) {
+            console.error("Erro ao obter briefing:", err);
+            setMsg("Erro ao gerar briefing.");
+        } finally {
+            setIsFetchingBriefing(false);
+        }
+    }
 
-        fetchBriefing();
-    }, [ctx.conversationId, ctx.isCompose, bodyText]);
+    async function handleExtractContacts(force = false) {
+        if (!bodyText || ctx.isCompose || isExtractingContacts) return;
+        if (!force && suggestedContacts.length > 0) return;
 
-    // Extract contacts from body text when it changes
-    useEffect(() => {
-        if (!bodyText || ctx.isCompose) return;
-
-        const extractContacts = async () => {
-            try {
-                const res = await aiGenerate({
-                    action: "extract_contacts" as any,
-                    mode: "fast",
-                    locale: (aiState.locale || "auto") as any,
-                    tone: "neutro",
-                    email: {
-                        bodyText,
-                        subject: "",
-                        from: "",
-                        to: [],
-                        cc: []
-                    } as any
-                });
-                if (res.ok && res.text) {
-                    const emails = res.text.split(";").map(e => e.trim()).filter(Boolean);
-                    setSuggestedContacts(emails);
-                }
-            } catch (err) {
-                console.error("Erro ao extrair contactos:", err);
+        setIsExtractingContacts(true);
+        try {
+            const res = await aiGenerate({
+                action: "extract_contacts" as any,
+                mode: "fast",
+                locale: (aiState.locale || "auto") as any,
+                tone: "neutro",
+                email: {
+                    bodyText,
+                    subject: "",
+                    from: "",
+                    to: [],
+                    cc: []
+                } as any
+            });
+            if (res.ok && res.text) {
+                const emails = res.text.split(";").map((item) => item.trim()).filter(Boolean);
+                setSuggestedContacts(emails);
+                if (!emails.length) setMsg("Nao foram detetados contactos adicionais neste email.");
             }
-        };
-        extractContacts();
-    }, [bodyText, ctx.isCompose]);
+        } catch (err) {
+            console.error("Erro ao extrair contactos:", err);
+            setMsg("Erro ao extrair contactos.");
+        } finally {
+            setIsExtractingContacts(false);
+        }
+    }
+
+    function toggleIntentsMenu() {
+        const nextOpen = activeMenu !== "intents";
+        setActiveMenu(nextOpen ? "intents" : null);
+        if (nextOpen && !aiState.smartReplies.length) {
+            void handleFetchIntents(true);
+        }
+    }
+
+    function toggleContactsMenu() {
+        const nextOpen = activeMenu !== "contacts";
+        setActiveMenu(nextOpen ? "contacts" : null);
+        if (nextOpen && !suggestedContacts.length) {
+            void handleExtractContacts(true);
+        }
+    }
 
     // Sync draft defaults from context OR persistent aiState
     useEffect(() => {
@@ -1023,27 +1039,52 @@ export const AiCockpit: React.FC = () => {
             `}</style>
 
             {/* 30-Second Briefing Card */}
-            {briefing && !isFetchingBriefing && (
+            {isFetchingBriefing && (
+                <div style={{ ...S.briefingCard, background: "rgba(0,0,0,0.02)", borderStyle: "dashed" }}>
+                    <div style={S.skeletonText}>
+                        <Icons.RotateCcw size={10} style={{ animation: "spin 1s linear infinite" }} />
+                        A gerar briefing do thread...
+                    </div>
+                </div>
+            )}
+
+            {!ctx.isCompose && ctx.conversationId && !isFetchingBriefing && briefing && (
                 <div style={S.briefingCard}>
                     <div style={S.briefingHeader}>
                         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                             <Icons.Sparkles size={12} color="#1e40af" />
                             <span>30-Second Briefing</span>
                         </div>
-                        <button
-                            onClick={() => setBriefingExpanded(!briefingExpanded)}
-                            style={{
-                                ...S.actionBtn,
-                                height: "18px",
-                                padding: "0 8px",
-                                background: "rgba(59, 130, 246, 0.1)",
-                                borderRadius: "10px",
-                                color: "#1e40af",
-                                fontSize: "9px"
-                            }}
-                        >
-                            {briefingExpanded ? "Recolher" : "Expandir"}
-                        </button>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <button
+                                onClick={() => { void handleFetchBriefing(true); }}
+                                style={{
+                                    ...S.actionBtn,
+                                    height: "18px",
+                                    padding: "0 8px",
+                                    background: "rgba(59, 130, 246, 0.08)",
+                                    borderRadius: "10px",
+                                    color: "#1e40af",
+                                    fontSize: "9px"
+                                }}
+                            >
+                                Atualizar
+                            </button>
+                            <button
+                                onClick={() => setBriefingExpanded(!briefingExpanded)}
+                                style={{
+                                    ...S.actionBtn,
+                                    height: "18px",
+                                    padding: "0 8px",
+                                    background: "rgba(59, 130, 246, 0.1)",
+                                    borderRadius: "10px",
+                                    color: "#1e40af",
+                                    fontSize: "9px"
+                                }}
+                            >
+                                {briefingExpanded ? "Recolher" : "Expandir"}
+                            </button>
+                        </div>
                     </div>
                     <div
                         style={{
@@ -1057,11 +1098,24 @@ export const AiCockpit: React.FC = () => {
                 </div>
             )}
 
-            {isFetchingBriefing && (
-                <div style={{ ...S.briefingCard, background: "rgba(0,0,0,0.02)", borderStyle: "dashed" }}>
-                    <div style={S.skeletonText}>
-                        <Icons.RotateCcw size={10} style={{ animation: "spin 1s linear infinite" }} />
-                        A gerar briefing do thread...
+            {aiManualOnly && !ctx.isCompose && ctx.conversationId && !isFetchingBriefing && !briefing && (
+                <div style={{ ...S.briefingCard, background: "rgba(59, 130, 246, 0.04)", borderStyle: "dashed" }}>
+                    <div style={S.briefingHeader}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <Icons.Sparkles size={12} color="#1e40af" />
+                            <span>30-Second Briefing</span>
+                        </div>
+                    </div>
+                    <div style={{ ...S.briefingContent, fontSize: "10px", color: "#475569" }}>
+                        O resumo deixou de ser automatico. Gera-o apenas quando precisares.
+                    </div>
+                    <div style={{ display: "flex", marginTop: "6px" }}>
+                        <button
+                            onClick={() => { void handleFetchBriefing(true); }}
+                            style={{ ...S.actionBtnPrimary, fontSize: "10px" }}
+                        >
+                            Gerar briefing
+                        </button>
                     </div>
                 </div>
             )}
@@ -1094,8 +1148,30 @@ export const AiCockpit: React.FC = () => {
                 </div>
             )}
 
+            {aiManualOnly && !ctx.isCompose && ctx.conversationId && !isExtractingTasks && extractedTasks.length === 0 && (
+                <div style={{ ...S.briefingCard, background: "rgba(16, 185, 129, 0.03)", borderStyle: "dashed", borderColor: "rgba(16, 185, 129, 0.2)" }}>
+                    <div style={{ ...S.briefingHeader, color: "#047857" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <Icons.Clipboard size={12} />
+                            <span>Tarefas do Email</span>
+                        </div>
+                    </div>
+                    <div style={{ ...S.briefingContent, fontSize: "10px", color: "#065f46" }}>
+                        A deteccao de tarefas passou para manual. Corre apenas quando quiseres rever acionaveis.
+                    </div>
+                    <div style={{ display: "flex", marginTop: "6px" }}>
+                        <button
+                            onClick={() => { void handleExtractTasksReview(); }}
+                            style={{ ...S.actionBtnPrimary, fontSize: "10px", color: "#059669" }}
+                        >
+                            Detetar tarefas
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* AI Task Extraction Review */}
-            {showTaskReview && extractedTasks.length > 0 && (
+            {extractedTasks.length > 0 && (
                 <div style={{ ...S.draftCard, border: "1px solid #10b981", background: "#f0fdf4", marginBottom: "8px" }}>
                     <div style={{ ...S.draftHeader, background: "#dcfce7", color: "#065f46" }} onClick={() => setShowTaskReview(!showTaskReview)}>
                         <Icons.Clipboard size={12} />
@@ -1138,6 +1214,12 @@ export const AiCockpit: React.FC = () => {
                             </div>
                             <div style={{ display: "flex", gap: "8px", marginTop: "8px", borderTop: "1px solid rgba(16, 185, 129, 0.1)", paddingTop: "8px" }}>
                                 <button
+                                    style={{ ...S.actionBtn, fontSize: "10px", color: "#059669" }}
+                                    onClick={() => { void handleExtractTasksReview(); }}
+                                >
+                                    Atualizar
+                                </button>
+                                <button
                                     style={{ ...S.actionBtnPrimary, color: "#059669", display: "flex", alignItems: "center" }}
                                     onClick={() => {
                                         const checklist = extractedTasks
@@ -1155,7 +1237,7 @@ export const AiCockpit: React.FC = () => {
                                     style={{ ...S.actionBtn, fontSize: "10px", marginLeft: "auto" }}
                                     onClick={() => setShowTaskReview(false)}
                                 >
-                                    Ignorar
+                                    Recolher
                                 </button>
                             </div>
                         </div>
@@ -1454,7 +1536,7 @@ export const AiCockpit: React.FC = () => {
                             justifyContent: "flex-start",
                             padding: isNarrow ? "0 6px" : "0 8px"
                         }}
-                        onClick={() => setActiveMenu(activeMenu === "intents" ? null : "intents")}
+                        onClick={toggleIntentsMenu}
                         disabled={isFetchingIntents}
                         title="Sugestões de Resposta da IA (DICAS)"
                         aria-label="Sugestões de Resposta da IA (DICAS)"
@@ -1469,6 +1551,15 @@ export const AiCockpit: React.FC = () => {
 
                     {activeMenu === "intents" && (
                         <div style={{ ...S.cascadeMenu, width: "160px" }}>
+                            <div style={{ display: "flex", justifyContent: "flex-end", padding: "6px 8px 0" }}>
+                                <button
+                                    style={{ ...S.actionBtn, fontSize: "9px" }}
+                                    onClick={() => { void handleFetchIntents(true); }}
+                                    disabled={isFetchingIntents}
+                                >
+                                    Atualizar
+                                </button>
+                            </div>
                             <div style={{ padding: "4px 8px" }}>
                                 <div style={{ ...S.chatInputWrapper, padding: "0 6px", background: "#fff", height: "24px" }}>
                                     <input
@@ -1480,6 +1571,12 @@ export const AiCockpit: React.FC = () => {
                                     />
                                 </div>
                             </div>
+
+                            {isFetchingIntents && (
+                                <div style={{ ...S.hint, padding: "6px 10px", textAlign: "center", fontSize: "10px" }}>
+                                    A gerar sugestoes...
+                                </div>
+                            )}
 
                             {aiState.smartReplies
                                 .filter((i: string) => !intentSearch || i.toLowerCase().includes(intentSearch.toLowerCase()))
@@ -1522,16 +1619,29 @@ export const AiCockpit: React.FC = () => {
                             justifyContent: "flex-start",
                             padding: isNarrow ? "0 6px" : "0 8px"
                         }}
-                        onClick={() => setActiveMenu(activeMenu === "contacts" ? null : "contacts")}
+                        onClick={toggleContactsMenu}
                         title="Contactos Sugeridos (LISTA)"
                         aria-label="Contactos Sugeridos (LISTA)"
                     >
-                        <Icons.User size={11} style={{ opacity: 0.6 }} />
+                        {isExtractingContacts ? (
+                            <Icons.RotateCcw size={11} style={{ animation: "spin 1s linear infinite", opacity: 0.6 }} />
+                        ) : (
+                            <Icons.User size={11} style={{ opacity: 0.6 }} />
+                        )}
                         {!isNarrow && <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 400 }}>LISTA</span>}
                     </button>
 
                     {activeMenu === "contacts" && (
                         <div style={{ ...S.cascadeMenu, width: "180px", left: "0" }}>
+                            <div style={{ display: "flex", justifyContent: "flex-end", padding: "6px 8px 0" }}>
+                                <button
+                                    style={{ ...S.actionBtn, fontSize: "9px" }}
+                                    onClick={() => { void handleExtractContacts(true); }}
+                                    disabled={isExtractingContacts}
+                                >
+                                    Atualizar
+                                </button>
+                            </div>
                             <div style={{ padding: "4px 8px" }}>
                                 <div style={{ ...S.chatInputWrapper, padding: "0 6px", background: "#fff", height: "24px" }}>
                                     <input
@@ -1543,6 +1653,12 @@ export const AiCockpit: React.FC = () => {
                                     />
                                 </div>
                             </div>
+
+                            {isExtractingContacts && (
+                                <div style={{ ...S.hint, padding: "6px 10px", textAlign: "center", fontSize: "10px" }}>
+                                    A detetar contactos...
+                                </div>
+                            )}
 
                             {/* Suggested from Email Context */}
                             {suggestedContacts.length > 0 && suggestedContacts
