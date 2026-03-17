@@ -2235,6 +2235,8 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
   const [name, setName] = useState(ctx.fromName || ctx.subject || "");
   const [email, setEmail] = useState(ctx.fromEmail || "");
   const [phone, setPhone] = useState("");
+  const [partnerKind, setPartnerKind] = useState<"person" | "company">("person");
+  const [vat, setVat] = useState("");
 
   const participants = useMemo(() => {
     const out: Array<{ role: string; name: string; email: string }> = [];
@@ -2261,12 +2263,14 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
     if (mode !== "edit" || !editId) return;
     (async () => {
       try {
-        const rows = await readOdoo("res.partner", [editId], ["name", "email", "phone"]);
+        const rows = await readOdoo("res.partner", [editId], ["name", "email", "phone", "company_type", "vat"]);
         const r = rows?.[0];
         if (!r) return;
         setName(r.name || "");
         setEmail(r.email || "");
         setPhone(r.phone || "");
+        setPartnerKind(r.company_type === "company" ? "company" : "person");
+        setVat(String(r.vat || "").trim());
       } catch (e: any) {
         onStatus(e?.message ?? String(e));
       }
@@ -2294,21 +2298,105 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
     })();
   }, [participants]);
 
+  function normalizeVat(raw: string) {
+    return String(raw || "").trim().toUpperCase().replace(/\s+/g, "");
+  }
+
+  async function findExistingCompanyByVat(rawVat: string) {
+    const cleanVat = normalizeVat(rawVat);
+    if (!cleanVat) return null;
+
+    const domains: any[] = [
+      [["company_type", "=", "company"], ["vat", "=", cleanVat]],
+    ];
+    if (/^\d{9}$/.test(cleanVat)) {
+      domains.push([["company_type", "=", "company"], ["vat", "=", `PT${cleanVat}`]]);
+    } else if (/^PT\d{9}$/.test(cleanVat)) {
+      domains.push([["company_type", "=", "company"], ["vat", "=", cleanVat.slice(2)]]);
+    }
+
+    for (const domain of domains) {
+      try {
+        const rows = await searchOdooDomain("res.partner", domain, ["id", "name", "display_name", "vat"], 1);
+        if (rows?.length) return rows[0];
+      } catch {
+        // ignore duplicate lookup errors
+      }
+    }
+
+    return null;
+  }
+
   async function saveMain() {
     try {
+      const cleanName = String(name || "").trim();
+      const cleanEmail = String(email || "").trim();
+      const cleanPhone = String(phone || "").trim();
+      const cleanVat = normalizeVat(vat);
+      const isCompany = partnerKind === "company";
+
+      if (isCompany && !cleanName) {
+        onStatus("Indica o nome da empresa.");
+        return;
+      }
+      if (isCompany && !cleanVat) {
+        onStatus("Indica o NIF da empresa.");
+        return;
+      }
+
       if (mode === "edit") {
-        await writeOdoo("res.partner", editId, { name: name || email || "Contacto", email, phone });
+        const values: any = {
+          name: cleanName || cleanEmail || (isCompany ? "Empresa" : "Contacto"),
+          email: cleanEmail || false,
+          phone: cleanPhone || false,
+          company_type: partnerKind,
+          is_company: isCompany,
+          vat: isCompany ? cleanVat : false,
+        };
+        await writeOdoo("res.partner", editId, values);
         onStatus("Atualizado ✅");
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
-      const id = await createOdoo("res.partner", { name: name || email || "Contacto", email, phone });
+      if (isCompany) {
+        const existingCompany = await findExistingCompanyByVat(cleanVat);
+        if (existingCompany?.id) {
+          const display = existingCompany.display_name || existingCompany.name || `#${existingCompany.id}`;
+          await linkEmailToRecord({
+            conversationId: ctx.conversationId,
+            model: "res.partner",
+            recordId: existingCompany.id,
+            recordName: display,
+            internetMessageId: ctx.internetMessageId,
+            itemId: ctx.itemId,
+            subject: ctx.subject,
+            fromEmail: ctx.fromEmail,
+            fromName: ctx.fromName,
+            receivedAtIso: ctx.receivedAtIso,
+            emailWebLink: ctx.emailWebLink,
+          });
+          onStatus(`Empresa já existente ligada: ${display} ✅`);
+          setTimeout(() => closeDialog(), 500);
+          return;
+        }
+      }
+
+      const values: any = {
+        name: cleanName || cleanEmail || (isCompany ? `Empresa ${cleanVat}` : "Contacto"),
+        company_type: partnerKind,
+        is_company: isCompany,
+      };
+      if (cleanEmail) values.email = cleanEmail;
+      if (cleanPhone) values.phone = cleanPhone;
+      if (isCompany) values.vat = cleanVat;
+
+      const id = await createOdoo("res.partner", values);
       await linkEmailToRecord({
         conversationId: ctx.conversationId,
         model: "res.partner",
         recordId: id,
-        recordName: name || email,
+        recordName: cleanName || cleanEmail || (isCompany ? `Empresa ${cleanVat}` : `#${id}`),
         internetMessageId: ctx.internetMessageId,
         itemId: ctx.itemId,
         subject: ctx.subject,
@@ -2359,13 +2447,47 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
   return (
     <div>
       <div style={S.row}>
-        <label style={S.lab}>NOME</label>
-        <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do contacto" />
+        <label style={S.lab}>TIPO</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" style={partnerKind === "person" ? S.btn : S.btn2} onClick={() => setPartnerKind("person")}>
+            Pessoa
+          </button>
+          <button type="button" style={partnerKind === "company" ? S.btn : S.btn2} onClick={() => setPartnerKind("company")}>
+            Empresa
+          </button>
+        </div>
       </div>
 
       <div style={S.row}>
+        <label style={S.lab}>{partnerKind === "company" ? "EMPRESA" : "NOME"}</label>
+        <input
+          style={S.input}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={partnerKind === "company" ? "Nome da empresa" : "Nome do contacto"}
+        />
+      </div>
+
+      {partnerKind === "company" ? (
+        <div style={S.row}>
+          <label style={S.lab}>NIF</label>
+          <input
+            style={S.input}
+            value={vat}
+            onChange={(e) => setVat(e.target.value)}
+            placeholder="NIF da empresa"
+          />
+        </div>
+      ) : null}
+
+      <div style={S.row}>
         <label style={S.lab}>EMAIL</label>
-        <input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@..." />
+        <input
+          style={S.input}
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder={partnerKind === "company" ? "geral@empresa.pt (opcional)" : "email@..."}
+        />
       </div>
 
       <div style={S.row}>
