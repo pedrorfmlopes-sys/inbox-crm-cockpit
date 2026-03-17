@@ -88,88 +88,100 @@ function normalizeRecipients(arr: any): Recipient[] {
 }
 
 export async function getOutlookContext(): Promise<OutlookMessageContext> {
-  const OfficeAny = await ensureOfficeReady();
+  try {
+    const OfficeAny = await ensureOfficeReady();
 
-  const item = OfficeAny?.context?.mailbox?.item;
-  if (!item) {
-    clientLog.warn("[office] mailbox.item is empty");
+    const item = OfficeAny?.context?.mailbox?.item;
+    if (!item) {
+      clientLog.warn("[office] mailbox.item is empty");
+      return {};
+    }
+
+    const getAsyncValue = async (obj: any, coercer: (v: any) => string): Promise<string> => {
+      if (!obj?.getAsync) return "";
+      const p = new Promise<string>((resolve) => {
+        try {
+          obj.getAsync((r: any) => {
+            try {
+              if (r?.status === OfficeAny.AsyncResultStatus.Succeeded) resolve(coercer(r.value));
+              else resolve("");
+            } catch { resolve(""); }
+          });
+        } catch { resolve(""); }
+      });
+      return await withTimeout(p, 2000, "");
+    };
+
+    const getSubject = async (): Promise<string> => {
+      const s = item.subject;
+      if (typeof s === "string") return s;
+      // Compose: subject is an object with getAsync/setAsync
+      return await getAsyncValue(s, (v) => String(v ?? ""));
+    };
+
+    const getRecipients = async (recips: any): Promise<Recipient[]> => {
+      if (Array.isArray(recips)) return normalizeRecipients(recips);
+      // Compose: recipients are an object with getAsync/addAsync
+      if (recips?.getAsync) {
+        const raw = await new Promise<any[]>((resolve) => {
+          try {
+            recips.getAsync((r: any) => {
+              try {
+                if (r?.status === OfficeAny.AsyncResultStatus.Succeeded && Array.isArray(r.value)) resolve(r.value);
+                else resolve([]);
+              } catch {
+                resolve([]);
+              }
+            });
+          } catch {
+            resolve([]);
+          }
+        });
+        return normalizeRecipients(raw);
+      }
+      return [];
+    };
+
+    const subject = await getSubject();
+
+    // From is only reliable in Read. In Compose it may be missing/unsupported.
+    const from = item.from;
+    const fromEmail = from?.emailAddress ? String(from.emailAddress) : "";
+    const fromName = from?.displayName ? String(from.displayName) : "";
+
+    const conversationId = typeof item.conversationId === "string" ? item.conversationId : "";
+    const internetMessageId = typeof item.internetMessageId === "string" ? item.internetMessageId : "";
+
+    const itemId = typeof item.itemId === "string" ? item.itemId : "";
+
+    const receivedDateTimeIso = item.dateTimeCreated ? new Date(item.dateTimeCreated).toISOString() : "";
+
+    const toRecipients = await getRecipients(item.to);
+    const ccRecipients = await getRecipients(item.cc);
+
+    let isCompose = false;
+    try {
+      isCompose = await isComposeMode();
+    } catch {
+      isCompose = false;
+    }
+
+    return {
+      subject,
+      fromEmail,
+      fromName,
+      conversationId,
+      internetMessageId,
+      itemId,
+      receivedDateTimeIso,
+      toRecipients,
+      ccRecipients,
+      isCompose,
+    };
+  } catch (error) {
+    clientLog.error("[office] getOutlookContext error", error);
     return {};
   }
-
-  const getAsyncValue = async (obj: any, coercer: (v: any) => string): Promise<string> => {
-    if (!obj?.getAsync) return "";
-    const p = new Promise<string>((resolve) => {
-      try {
-        obj.getAsync((r: any) => {
-          try {
-            if (r?.status === OfficeAny.AsyncResultStatus.Succeeded) resolve(coercer(r.value));
-            else resolve("");
-          } catch { resolve(""); }
-        });
-      } catch { resolve(""); }
-    });
-    return await withTimeout(p, 2000, "");
-  };
-
-  const getSubject = async (): Promise<string> => {
-    const s = item.subject;
-    if (typeof s === "string") return s;
-    // Compose: subject is an object with getAsync/setAsync
-    return await getAsyncValue(s, (v) => String(v ?? ""));
-  };
-
-  const getRecipients = async (recips: any): Promise<Recipient[]> => {
-    if (Array.isArray(recips)) return normalizeRecipients(recips);
-    // Compose: recipients are an object with getAsync/addAsync
-    if (recips?.getAsync) {
-      const raw = await new Promise<any[]>((resolve) => {
-        try {
-          recips.getAsync((r: any) => {
-            try {
-              if (r?.status === OfficeAny.AsyncResultStatus.Succeeded && Array.isArray(r.value)) resolve(r.value);
-              else resolve([]);
-            } catch {
-              resolve([]);
-            }
-          });
-        } catch {
-          resolve([]);
-        }
-      });
-      return normalizeRecipients(raw);
-    }
-    return [];
-  };
-
-  const subject = await getSubject();
-
-  // From is only reliable in Read. In Compose it may be missing/unsupported.
-  const from = item.from;
-  const fromEmail = from?.emailAddress ? String(from.emailAddress) : "";
-  const fromName = from?.displayName ? String(from.displayName) : "";
-
-  const conversationId = typeof item.conversationId === "string" ? item.conversationId : "";
-  const internetMessageId = typeof item.internetMessageId === "string" ? item.internetMessageId : "";
-
-  const itemId = typeof item.itemId === "string" ? item.itemId : "";
-
-  const receivedDateTimeIso = item.dateTimeCreated ? new Date(item.dateTimeCreated).toISOString() : "";
-
-  const toRecipients = await getRecipients(item.to);
-  const ccRecipients = await getRecipients(item.cc);
-
-  return {
-    subject,
-    fromEmail,
-    fromName,
-    conversationId,
-    internetMessageId,
-    itemId,
-    receivedDateTimeIso,
-    toRecipients,
-    ccRecipients,
-    isCompose: await isComposeMode(),
-  };
 }
 
 
@@ -872,73 +884,78 @@ export async function addBase64AttachmentToCompose(name: string, contentBase64: 
  * Returns array of attachment metadata plus content when available.
  */
 export async function getAttachments(): Promise<OutlookAttachment[]> {
-  const OfficeAny = await ensureOfficeReady();
-  const item = OfficeAny?.context?.mailbox?.item;
+  try {
+    const OfficeAny = await ensureOfficeReady();
+    const item = OfficeAny?.context?.mailbox?.item;
 
-  if (!item?.attachments) return [];
+    if (!item?.attachments) return [];
 
-  const attachments = item.attachments;
-  const results: OutlookAttachment[] = [];
+    const attachments = item.attachments;
+    const results: OutlookAttachment[] = [];
 
-  for (const att of attachments) {
-    // Only process file attachments
-    if (att.attachmentType === "file") {
-      try {
-        const content = await new Promise<string>((resolve, reject) => {
-          item.getAttachmentContentAsync(att.id, async (result: any) => {
-            if (result.status !== OfficeAny.AsyncResultStatus.Succeeded) {
-              reject(new Error(result.error?.message));
-              return;
-            }
-
-            const format = String(result?.value?.format || "").trim().toLowerCase();
-            const rawContent = String(result?.value?.content || "").trim();
-            if (!rawContent) {
-              resolve("");
-              return;
-            }
-
-            if (!format || format === "base64") {
-              resolve(rawContent);
-              return;
-            }
-
-            if (format === "url") {
-              try {
-                const response = await fetch(rawContent);
-                if (!response.ok) {
-                  reject(new Error(`Falha ao descarregar conteudo do anexo (${response.status})`));
-                  return;
-                }
-                const buffer = await response.arrayBuffer();
-                resolve(arrayBufferToBase64(buffer));
-                return;
-              } catch (error: any) {
-                reject(error);
+    for (const att of attachments) {
+      // Only process file attachments
+      if (att.attachmentType === "file") {
+        try {
+          const content = await new Promise<string>((resolve, reject) => {
+            item.getAttachmentContentAsync(att.id, async (result: any) => {
+              if (result.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+                reject(new Error(result.error?.message));
                 return;
               }
-            }
 
-            resolve(rawContent);
+              const format = String(result?.value?.format || "").trim().toLowerCase();
+              const rawContent = String(result?.value?.content || "").trim();
+              if (!rawContent) {
+                resolve("");
+                return;
+              }
+
+              if (!format || format === "base64") {
+                resolve(rawContent);
+                return;
+              }
+
+              if (format === "url") {
+                try {
+                  const response = await fetch(rawContent);
+                  if (!response.ok) {
+                    reject(new Error(`Falha ao descarregar conteudo do anexo (${response.status})`));
+                    return;
+                  }
+                  const buffer = await response.arrayBuffer();
+                  resolve(arrayBufferToBase64(buffer));
+                  return;
+                } catch (error: any) {
+                  reject(error);
+                  return;
+                }
+              }
+
+              resolve(rawContent);
+            });
           });
-        });
 
-        results.push({
-          id: String(att.id || "").trim() || undefined,
-          name: String(att.name || "").trim(),
-          contentType: String(att.contentType || "").trim(),
-          size: Number(att.size || 0) || undefined,
-          isInline: Boolean((att as any).isInline),
-          contentId: String((att as any).contentId || "").trim() || undefined,
-          content: content,
-        });
-      } catch (e) {
-        clientLog.error(`[office] Failed to download attachment ${att.name}`, e);
+          results.push({
+            id: String(att.id || "").trim() || undefined,
+            name: String(att.name || "").trim(),
+            contentType: String(att.contentType || "").trim(),
+            size: Number(att.size || 0) || undefined,
+            isInline: Boolean((att as any).isInline),
+            contentId: String((att as any).contentId || "").trim() || undefined,
+            content: content,
+          });
+        } catch (e) {
+          clientLog.error(`[office] Failed to download attachment ${att.name}`, e);
+        }
       }
     }
-  }
 
-  return results;
+    return results;
+  } catch (error) {
+    clientLog.error("[office] getAttachments error", error);
+    return [];
+  }
 }
 
 export async function openLinkedOutlookEmail(target: { itemId?: string; emailWebLink?: string }): Promise<boolean> {

@@ -591,12 +591,20 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     detail: "A ler o email atual e os anexos disponíveis...",
                 });
             }
-            const [c, b, bh, atts] = await Promise.all([
+            const emailLoadLabels = ["context", "body-text", "body-html", "attachments"] as const;
+            const emailLoadResults = await Promise.allSettled([
                 getSelectedMessageContext(),
                 getEmailBodyText(),
                 getEmailBodyHtml(),
-                import("@/office").then(m => m.getAttachments())
+                import("@/office").then((m) => m.getAttachments()),
             ]);
+            const c: OutlookMessageContext = emailLoadResults[0].status === "fulfilled" ? emailLoadResults[0].value : {};
+            const b = emailLoadResults[1].status === "fulfilled" ? emailLoadResults[1].value : "";
+            const bh = emailLoadResults[2].status === "fulfilled" ? emailLoadResults[2].value : "";
+            const atts: OutlookAttachment[] = emailLoadResults[3].status === "fulfilled" ? emailLoadResults[3].value : [];
+            const emailLoadFailures = emailLoadResults.flatMap((result, index) => (
+                result.status === "rejected" ? [emailLoadLabels[index]] : []
+            ));
 
             if (reqId !== ctxLoadSeqRef.current) return;
 
@@ -607,17 +615,31 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setBodyText(b);
             setBodyHtml(bh);
             setAttachments(atts || []);
+            if (emailLoadFailures.length) {
+                clientLog("warn", "[Cockpit] partial email bootstrap load", { failures: emailLoadFailures });
+            }
             if (reason === "init") {
                 const hasEmailContext = Boolean(c.itemId || c.internetMessageId || c.conversationId || c.subject);
-                if (hasEmailContext) {
+                if (hasEmailContext && !emailLoadFailures.length) {
                     updateStartupCheck("email", {
                         status: "success",
                         detail: c.subject
                             ? `Email pronto: ${c.subject}`
                             : "Contexto do email atual carregado.",
                     });
+                } else if (hasEmailContext) {
+                    updateStartupCheck("email", {
+                        status: "warning",
+                        detail: c.subject
+                            ? `Email carregado com dados parciais: ${c.subject}`
+                            : "O email abriu com alguns dados ainda por sincronizar.",
+                    });
+                } else if (emailLoadFailures.length) {
+                    updateStartupCheck("email", {
+                        status: "warning",
+                        detail: "O Outlook ainda não disponibilizou o email completo. Vamos continuar e tentar novamente em segundo plano.",
+                    });
                 } else {
-                    noteStartupIssue("Não foi possível identificar um email aberto. Algumas áreas podem abrir vazias.");
                     updateStartupCheck("email", {
                         status: "warning",
                         detail: "Sem email aberto ou contexto Outlook incompleto.",
