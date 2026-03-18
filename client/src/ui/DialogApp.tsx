@@ -4,7 +4,6 @@ import {
   linkEmailToRecord,
   odooPing,
   readOdoo,
-  searchCompanies,
   searchOdoo,
   searchOdooDomain,
   setApiSessionToken,
@@ -1172,10 +1171,16 @@ function TypeaheadPicker({
         </div>
       ) : null}
 
-      {open && (items?.length || busy) ? (
+      {open && (items?.length || busy || !!error || !pickedId) ? (
         <div style={S.pickList}>
           {busy && !items.length ? (
             <div style={{ padding: 10, color: "#777", fontSize: 12 }}>A procurar…</div>
+          ) : null}
+
+          {!busy && !error && !items.length ? (
+            <div style={{ padding: 10, color: "#777", fontSize: 12 }}>
+              {String(q || "").trim() ? "Sem resultados." : "Escreve para pesquisar."}
+            </div>
           ) : null}
 
           {items.map((it: any) => (
@@ -2372,6 +2377,13 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
     return item?.display_name || item?.name || (id ? `#${id}` : "");
   }
 
+  async function loadCompanyOptions(query: string) {
+    const q = normalizeText(query);
+    if (!q) return [];
+    const rows = await searchOdoo("res.partner", q, 15);
+    return (Array.isArray(rows) ? rows : []).filter((row: any) => String(row?.company_type || "").toLowerCase() === "company");
+  }
+
   async function findExistingCompanyByVat(rawVat: string) {
     const cleanVat = normalizeVat(rawVat);
     if (!cleanVat) return null;
@@ -2584,7 +2596,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
             fields={["id", "name", "display_name", "vat", "email"]}
             pickedId={parentCompanyId}
             pickedName={parentCompanyName}
-            loadItems={searchCompanies}
+            loadItems={loadCompanyOptions}
             onPick={(item: any) => {
               const id = Number(item?.id) || null;
               setParentCompanyId(id);

@@ -471,7 +471,7 @@ app.get("/api/odoo/search", async (req, res) => {
 
     if (model === "res.partner") {
       domain = isEmpty ? [] : ["|", ["name", "ilike", q], ["email", "ilike", q]];
-      fields = ["name", "email", "phone", "mobile", "display_name"];
+      fields = ["name", "email", "phone", "mobile", "display_name", "company_type"];
     } else if (model === "crm.lead") {
       domain = isEmpty ? [] : ["|", ["name", "ilike", q], ["email_from", "ilike", q]];
       fields = ["name", "display_name", "email_from", "partner_id"];
@@ -550,7 +550,7 @@ function buildSearchSpec(model, q) {
 
   if (model === "res.partner") {
     domain = isEmpty ? [] : ["|", ["name", "ilike", q], ["email", "ilike", q]];
-    fields = ["name", "email", "phone", "mobile", "display_name"];
+    fields = ["name", "email", "phone", "mobile", "display_name", "company_type"];
   } else if (model === "res.country") {
     domain = isEmpty ? [] : [["name", "ilike", q]];
     fields = ["name", "display_name"];
