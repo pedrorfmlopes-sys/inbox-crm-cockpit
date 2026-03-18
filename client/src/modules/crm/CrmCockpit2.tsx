@@ -462,34 +462,41 @@ export const CrmCockpit2: React.FC = () => {
                     </button>
                 </div>
 
-                <div style={S.heroGrid}>
-                    <div style={S.primaryCard}>
-                        <div style={S.cardLabel}>Contacto principal</div>
-                        <div style={S.primaryName}>{primaryName || "Sem contacto identificado"}</div>
-                        <div style={S.primaryMeta}>{ctx.fromEmail || "Sem email"}</div>
-                        {primaryRole ? <div style={S.primaryMinor}>{primaryRole}</div> : null}
-                        {primaryCompany ? <div style={S.primaryMinor}>{primaryCompany}</div> : null}
-                        <div style={S.contactActions}>
-                            <button
-                                type="button"
-                                style={S.primaryAction}
-                                onClick={() => {
-                                    if (primaryPartner?.id) openDialog("edit", { model: "res.partner", recordId: String(primaryPartner.id) });
-                                    else openDialog("new", { model: "res.partner" });
-                                }}
-                            >
-                                {primaryPartner?.id ? "Editar contacto" : "Criar contacto"}
-                            </button>
-                            <button
-                                type="button"
-                                style={S.secondaryAction}
-                                onClick={() => openOdooRecord("res.partner", Number(primaryPartner?.id || 0) || undefined)}
-                                disabled={!settings?.odooUrl && !meta?.baseUrl && !meta?.webBaseUrl && !meta?.url}
-                            >
-                                Odoo
-                            </button>
+                <div
+                    style={{
+                        ...S.heroGrid,
+                        gridTemplateColumns: activeParticipant ? "minmax(0, 1fr)" : S.heroGrid.gridTemplateColumns,
+                    }}
+                >
+                    {!activeParticipant ? (
+                        <div style={S.primaryCard}>
+                            <div style={S.cardLabel}>Contacto principal</div>
+                            <div style={S.primaryName}>{primaryName || "Sem contacto identificado"}</div>
+                            <div style={S.primaryMeta}>{ctx.fromEmail || "Sem email"}</div>
+                            {primaryRole ? <div style={S.primaryMinor}>{primaryRole}</div> : null}
+                            {primaryCompany ? <div style={S.primaryMinor}>{primaryCompany}</div> : null}
+                            <div style={S.contactActions}>
+                                <button
+                                    type="button"
+                                    style={S.primaryAction}
+                                    onClick={() => {
+                                        if (primaryPartner?.id) openDialog("edit", { model: "res.partner", recordId: String(primaryPartner.id) });
+                                        else openDialog("new", { model: "res.partner" });
+                                    }}
+                                >
+                                    {primaryPartner?.id ? "Editar contacto" : "Criar contacto"}
+                                </button>
+                                <button
+                                    type="button"
+                                    style={S.secondaryAction}
+                                    onClick={() => openOdooRecord("res.partner", Number(primaryPartner?.id || 0) || undefined)}
+                                    disabled={!settings?.odooUrl && !meta?.baseUrl && !meta?.webBaseUrl && !meta?.url}
+                                >
+                                    Odoo
+                                </button>
+                            </div>
                         </div>
-                    </div>
+                    ) : null}
 
                     <div style={S.subjectCard}>
                         <div style={S.cardLabel}>Email atual</div>
@@ -503,6 +510,7 @@ export const CrmCockpit2: React.FC = () => {
                 </div>
             </section>
 
+            {!activeParticipant ? (
             <section style={S.quickCreateCard}>
                 <div style={S.sectionHead}>
                     <div>
@@ -528,6 +536,7 @@ export const CrmCockpit2: React.FC = () => {
                     ))}
                 </div>
             </section>
+            ) : null}
 
             <section style={S.sectionCard}>
                 <div style={S.sectionHead}>
@@ -880,13 +889,15 @@ export const CrmCockpit2: React.FC = () => {
                                                 description={activeRelationSection ? "A pesquisa nao devolveu registos nesta colecao." : "Esta colecao deixou de estar disponivel."}
                                             />
                                         ) : (
-                                            <div style={S.participantLinksList}>
+                                            <div style={S.collectionList}>
                                                 {filteredRelationItems.map((item) => (
-                                                    <div key={`${item.model}:${item.recordId}`} style={S.participantLinkCard}>
-                                                        <div style={S.participantLinkTitle}>{item.title || `#${item.recordId}`}</div>
-                                                        {item.meta ? <div style={S.participantLinkMeta}><span>{item.meta}</span></div> : null}
-                                                        {item.secondary ? <div style={S.participantLinkMeta}><span>{item.secondary}</span></div> : null}
-                                                        <div style={S.linkedActions}>
+                                                    <div key={`${item.model}:${item.recordId}`} style={S.collectionRow}>
+                                                        <div style={S.collectionRowMain}>
+                                                            <div style={S.collectionRowTitle}>{item.title || `#${item.recordId}`}</div>
+                                                            {item.meta ? <div style={S.collectionRowMeta}>{item.meta}</div> : null}
+                                                            {item.secondary ? <div style={S.collectionRowMeta}>{item.secondary}</div> : null}
+                                                        </div>
+                                                        <div style={S.collectionRowActions}>
                                                             {canOpenCrm2Editor(item.model) ? (
                                                                 <button
                                                                     type="button"
@@ -916,16 +927,17 @@ export const CrmCockpit2: React.FC = () => {
                                             description="Nao encontrei emails ligados com os filtros atuais."
                                         />
                                     ) : (
-                                        <div style={S.participantLinksList}>
+                                        <div style={S.collectionList}>
                                             {filteredStorageLinks.map((entry, index) => (
-                                                <div key={`${entry.conversationId || entry.itemId || entry.subject || "link"}:${index}`} style={S.participantLinkCard}>
-                                                    <div style={S.detailKicker}>Ligacao {index + 1}</div>
-                                                    <div style={S.participantLinkTitle}>{entry.subject || "Email sem assunto"}</div>
-                                                    <div style={S.participantLinkMeta}>
-                                                        <span>{formatLinkMoment(entry)}</span>
-                                                        {entry.fromEmail ? <span>{entry.fromEmail}</span> : null}
+                                                <div key={`${entry.conversationId || entry.itemId || entry.subject || "link"}:${index}`} style={S.collectionRow}>
+                                                    <div style={S.collectionRowMain}>
+                                                        <div style={S.collectionRowTitle}>{entry.subject || "Email sem assunto"}</div>
+                                                        <div style={S.collectionRowMeta}>
+                                                            {`Ligacao ${index + 1} - ${formatLinkMoment(entry)}`}
+                                                            {entry.fromEmail ? ` - ${entry.fromEmail}` : ""}
+                                                        </div>
                                                     </div>
-                                                    <div style={S.linkedActions}>
+                                                    <div style={S.collectionRowActions}>
                                                         {(entry.emailWebLink || entry.url) ? (
                                                             <button
                                                                 type="button"
@@ -954,6 +966,7 @@ export const CrmCockpit2: React.FC = () => {
                 </div>
             </section>
 
+            {!activeParticipant ? (
             <section style={S.sectionCard}>
                 <div style={S.sectionHead}>
                     <div>
@@ -1003,7 +1016,9 @@ export const CrmCockpit2: React.FC = () => {
                     </div>
                 )}
             </section>
+            ) : null}
 
+            {!activeParticipant ? (
             <section style={S.sectionCard}>
                 <div style={S.sectionHead}>
                     <div>
@@ -1015,6 +1030,7 @@ export const CrmCockpit2: React.FC = () => {
                     </button>
                 </div>
             </section>
+            ) : null}
         </div>
     );
 };
@@ -1228,11 +1244,11 @@ const S: Record<string, React.CSSProperties> = {
         border: "1px solid #DFE1E6",
         borderRadius: 10,
         background: "#F7F8FA",
-        padding: "10px 12px",
+        padding: "6px 10px",
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
-        gap: 12,
+        gap: 10,
         width: "100%",
         textAlign: "left",
         cursor: "pointer",
@@ -1255,22 +1271,22 @@ const S: Record<string, React.CSSProperties> = {
         flexShrink: 0,
     },
     participantName: {
-        fontSize: 12,
+        fontSize: 11,
         fontWeight: 700,
         color: "#172B4D",
     },
     participantEmail: {
-        fontSize: 11,
+        fontSize: 10,
         color: "#42526E",
     },
     participantBadge: {
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        minWidth: 36,
+        minWidth: 32,
         borderRadius: 999,
-        padding: "3px 8px",
-        fontSize: 10,
+        padding: "2px 7px",
+        fontSize: 9,
         fontWeight: 800,
         background: "#DFE1E6",
         color: "#42526E",
@@ -1375,9 +1391,9 @@ const S: Record<string, React.CSSProperties> = {
         border: "1px solid #DFE1E6",
         borderRadius: 8,
         background: "#F7F8FA",
-        padding: "8px 10px",
+        padding: "6px 8px",
         display: "grid",
-        gap: 4,
+        gap: 2,
         textAlign: "left",
         cursor: "pointer",
     },
@@ -1388,7 +1404,7 @@ const S: Record<string, React.CSSProperties> = {
         gap: 8,
     },
     participantCompactCardTitle: {
-        fontSize: 12,
+        fontSize: 11,
         fontWeight: 800,
         color: "#172B4D",
     },
@@ -1403,11 +1419,11 @@ const S: Record<string, React.CSSProperties> = {
         textAlign: "center",
     },
     participantCompactCardCopy: {
-        fontSize: 11,
-        lineHeight: 1.4,
+        fontSize: 10,
+        lineHeight: 1.25,
         color: "#5E6C84",
         display: "-webkit-box",
-        WebkitLineClamp: 2,
+        WebkitLineClamp: 1,
         WebkitBoxOrient: "vertical",
         overflow: "hidden",
     },
@@ -1416,6 +1432,41 @@ const S: Record<string, React.CSSProperties> = {
         gridTemplateColumns: "minmax(0, 1fr) repeat(2, minmax(108px, auto))",
         gap: 8,
         alignItems: "end",
+    },
+    collectionList: {
+        display: "grid",
+        gap: 0,
+        borderTop: "1px solid #DFE1E6",
+    },
+    collectionRow: {
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) auto",
+        gap: 10,
+        alignItems: "center",
+        padding: "10px 0",
+        borderBottom: "1px solid #DFE1E6",
+    },
+    collectionRowMain: {
+        minWidth: 0,
+        display: "grid",
+        gap: 4,
+    },
+    collectionRowTitle: {
+        fontSize: 12,
+        fontWeight: 700,
+        color: "#172B4D",
+        lineHeight: 1.3,
+    },
+    collectionRowMeta: {
+        fontSize: 10,
+        color: "#5E6C84",
+        lineHeight: 1.35,
+    },
+    collectionRowActions: {
+        display: "flex",
+        gap: 8,
+        flexWrap: "wrap",
+        justifyContent: "flex-end",
     },
     participantSearchInput: {
         border: "1px solid #DFE1E6",
