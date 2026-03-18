@@ -162,6 +162,7 @@ export function SettingsPanel(): JSX.Element {
     if (section === "signature") return "Assinatura";
     if (section === "references") return "Codigos de Referencia";
     if (section === "groups") return "Grupos";
+    if (section === "crm2layout") return "CRM2 / Odoo Layout";
     return "Proteção (O Moat)";
   }, [section]);
 
@@ -326,6 +327,9 @@ export function SettingsPanel(): JSX.Element {
           </button>
           <button style={section === "groups" ? S.sideItemOn : S.sideItem} onClick={() => setSection("groups")}>
             Grupos
+          </button>
+          <button style={section === "crm2layout" ? S.sideItemOn : S.sideItem} onClick={() => setSection("crm2layout")}>
+            CRM2
           </button>
           <button style={section === "protection" ? S.sideItemOn : S.sideItem} onClick={() => setSection("protection")}>
             Proteção
@@ -1094,6 +1098,13 @@ export function SettingsPanel(): JSX.Element {
             </div>
           )}
 
+          {section === "crm2layout" && (
+            <Crm2LayoutSettings
+              model={model}
+              setModel={setModel}
+            />
+          )}
+
           {section === ("protection" as any) && (
             <ProtectionSettings />
           )}
@@ -1292,6 +1303,218 @@ const S: Record<string, React.CSSProperties> = {
   note: { fontSize: 11, color: "var(--iccc-text-muted)" },
   error: { fontSize: 11, color: "#ef4444" },
 };
+
+function Crm2LayoutSettings({
+  model,
+  setModel,
+}: {
+  model: CockpitSettingsV1;
+  setModel: React.Dispatch<React.SetStateAction<CockpitSettingsV1 | null>>;
+}) {
+  const layout = model.crm2OdooLayout;
+  const project = layout.project;
+
+  function updateLayout<K extends keyof CockpitSettingsV1["crm2OdooLayout"]>(
+    key: K,
+    value: CockpitSettingsV1["crm2OdooLayout"][K],
+  ) {
+    setModel((prev) =>
+      prev
+        ? {
+            ...prev,
+            crm2OdooLayout: {
+              ...prev.crm2OdooLayout,
+              [key]: value,
+            },
+          }
+        : prev,
+    );
+  }
+
+  function updateProject<K extends keyof CockpitSettingsV1["crm2OdooLayout"]["project"]>(
+    key: K,
+    value: CockpitSettingsV1["crm2OdooLayout"]["project"][K],
+  ) {
+    setModel((prev) =>
+      prev
+        ? {
+            ...prev,
+            crm2OdooLayout: {
+              ...prev.crm2OdooLayout,
+              project: {
+                ...prev.crm2OdooLayout.project,
+                [key]: value,
+              },
+            },
+          }
+        : prev,
+    );
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <PanelState
+        compact
+        tone="info"
+        title="Estrategia de escrita do CRM2 no Odoo"
+        description="Define se o CRM2 escreve tudo na descricao do projeto ou se usa um layout estruturado com campos/abas preparados no Odoo Studio."
+      />
+
+      <Field label="Modo de escrita">
+        <select
+          style={S.select}
+          value={layout.mode}
+          onChange={(e) => updateLayout("mode", e.target.value === "structured_project" ? "structured_project" : "description_only")}
+        >
+          <option value="description_only">Descricao apenas (fallback universal)</option>
+          <option value="structured_project">Projeto com campos/abas proprias</option>
+        </select>
+        <div style={S.hint}>
+          Usa "Descricao apenas" para tenants sem personalizacao. Usa "Projeto com campos/abas proprias" quando o cliente tiver preparado o Odoo Studio.
+        </div>
+      </Field>
+
+      <label style={S.toggleRow}>
+        <input
+          type="checkbox"
+          checked={layout.includeAnchorIndex}
+          onChange={(e) => updateLayout("includeAnchorIndex", e.target.checked)}
+        />
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Criar indice de emails/posts</div>
+          <div style={S.hint}>No modo estruturado, o historico pode abrir com um resumo navegavel dos emails da conversa.</div>
+        </div>
+      </label>
+
+      <label style={S.toggleRow}>
+        <input
+          type="checkbox"
+          checked={layout.showBackToTopLinks}
+          onChange={(e) => updateLayout("showBackToTopLinks", e.target.checked)}
+        />
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Mostrar links "Voltar ao topo"</div>
+          <div style={S.hint}>Ajuda a navegar historicos longos quando estivermos a escrever resumos e blocos por email no Odoo.</div>
+        </div>
+      </label>
+
+      <div style={S.referenceCard}>
+        <div style={S.fieldLabel}>Perfil estruturado recomendado para projetos</div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <Field label="Modelo Odoo alvo">
+            <input
+              style={{ ...S.input, background: "rgba(0,0,0,0.03)" }}
+              value={project.model}
+              readOnly
+            />
+          </Field>
+
+          <Field label="Campo base da descricao">
+            <input
+              style={S.input}
+              value={project.descriptionField}
+              onChange={(e) => updateProject("descriptionField", e.target.value.trim())}
+              placeholder="description"
+            />
+          </Field>
+
+          <Field label="Campo de informacao fixa">
+            <input
+              style={S.input}
+              value={project.fixedInfoField}
+              onChange={(e) => updateProject("fixedInfoField", e.target.value.trim())}
+              placeholder="x_studio_iccc_project_brief"
+            />
+          </Field>
+
+          <Field label="Campo de historico">
+            <input
+              style={S.input}
+              value={project.historyField}
+              onChange={(e) => updateProject("historyField", e.target.value.trim())}
+              placeholder="x_studio_iccc_project_history"
+            />
+          </Field>
+
+          <Field label="Campo de documentos">
+            <input
+              style={S.input}
+              value={project.documentsField}
+              onChange={(e) => updateProject("documentsField", e.target.value.trim())}
+              placeholder="x_studio_iccc_project_documents"
+            />
+          </Field>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            <Field label="Tab: informacao fixa">
+              <input
+                style={S.input}
+                value={project.fixedInfoTabLabel}
+                onChange={(e) => updateProject("fixedInfoTabLabel", e.target.value)}
+                placeholder="Informacao fixa"
+              />
+            </Field>
+
+            <Field label="Tab: historico">
+              <input
+                style={S.input}
+                value={project.historyTabLabel}
+                onChange={(e) => updateProject("historyTabLabel", e.target.value)}
+                placeholder="Historico"
+              />
+            </Field>
+
+            <Field label="Tab: documentos">
+              <input
+                style={S.input}
+                value={project.documentsTabLabel}
+                onChange={(e) => updateProject("documentsTabLabel", e.target.value)}
+                placeholder="Documentos"
+              />
+            </Field>
+          </div>
+
+          <label style={S.toggleRow}>
+            <input
+              type="checkbox"
+              checked={project.fallbackToDescription}
+              onChange={(e) => updateProject("fallbackToDescription", e.target.checked)}
+            />
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Fallback automatico para descricao</div>
+              <div style={S.hint}>Se faltar algum campo customizado no cliente, o CRM2 continua a funcionar e escreve no campo base da descricao.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div style={S.referenceCard}>
+        <div style={S.fieldLabel}>Resumo atual</div>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={S.hint}>
+            Modo ativo: <b>{layout.mode === "structured_project" ? "Projeto com campos/abas proprias" : "Descricao apenas"}</b>
+          </div>
+          <div style={S.hint}>
+            Modelo alvo: <b>{project.model}</b>
+          </div>
+          <div style={S.hint}>
+            Campo base: <b>{project.descriptionField || "Por definir"}</b>
+          </div>
+          <div style={S.hint}>
+            Estrutura recomendada: <b>{project.fixedInfoField || "?"}</b> / <b>{project.historyField || "?"}</b> / <b>{project.documentsField || "?"}</b>
+          </div>
+        </div>
+      </div>
+
+      <PanelState
+        compact
+        tone="warning"
+        title="Fase 1 concluida: schema e preferencias"
+        description="Na fase seguinte vamos validar no proprio Odoo se estes campos existem, mostrar o que falta no Studio e ativar o comportamento real do CRM2 por modo."
+      />
+    </div>
+  );
+}
 
 function ProtectionSettings() {
   const [data, setData] = useState<string[][]>([]);

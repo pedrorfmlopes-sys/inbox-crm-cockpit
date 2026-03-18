@@ -24,6 +24,7 @@ export type ReferenceEntityKey = "lead" | "project" | "task" | "ticket";
 export type ReferenceCounterMode = "per_type" | "global";
 export type ReferenceCodePosition = "prefix" | "suffix";
 export type GroupStorageProvider = "cloud" | "local" | "onedrive" | "disabled";
+export type Crm2OdooLayoutMode = "description_only" | "structured_project";
 
 export type ReferenceCodeSettings = {
   enabled: boolean;
@@ -43,6 +44,25 @@ export type GroupStorageSettings = {
   autoCreateFolderOnGroupCreate: boolean;
   ignoreInlineAttachments: boolean;
   suggestedViewer: "system" | "inline";
+};
+
+export type Crm2ProjectStructuredLayoutSettings = {
+  model: "project.project";
+  descriptionField: string;
+  fixedInfoField: string;
+  historyField: string;
+  documentsField: string;
+  fixedInfoTabLabel: string;
+  historyTabLabel: string;
+  documentsTabLabel: string;
+  fallbackToDescription: boolean;
+};
+
+export type Crm2OdooLayoutSettings = {
+  mode: Crm2OdooLayoutMode;
+  includeAnchorIndex: boolean;
+  showBackToTopLinks: boolean;
+  project: Crm2ProjectStructuredLayoutSettings;
 };
 
 export type CockpitSettingsV1 = {
@@ -129,6 +149,9 @@ export type CockpitSettingsV1 = {
 
   // Group document storage configuration
   groupStorage: GroupStorageSettings;
+
+  // CRM2 Odoo layout strategy for multi-company deployments
+  crm2OdooLayout: Crm2OdooLayoutSettings;
 };
 
 const KEY_API_BASE = "apiBaseUrl";
@@ -234,6 +257,22 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     ignoreInlineAttachments: true,
     suggestedViewer: "inline",
   },
+  crm2OdooLayout: {
+    mode: "description_only",
+    includeAnchorIndex: true,
+    showBackToTopLinks: true,
+    project: {
+      model: "project.project",
+      descriptionField: "description",
+      fixedInfoField: "x_studio_iccc_project_brief",
+      historyField: "x_studio_iccc_project_history",
+      documentsField: "x_studio_iccc_project_documents",
+      fixedInfoTabLabel: "Informacao fixa",
+      historyTabLabel: "Historico",
+      documentsTabLabel: "Documentos",
+      fallbackToDescription: true,
+    },
+  },
 };
 
 function normalizeGroupStorageProvider(value: unknown): GroupStorageProvider {
@@ -245,6 +284,11 @@ function normalizeGroupStorageProvider(value: unknown): GroupStorageProvider {
     return "cloud";
   }
   return "cloud";
+}
+
+function normalizeCrm2OdooLayoutMode(value: unknown): Crm2OdooLayoutMode {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "structured_project" ? "structured_project" : "description_only";
 }
 
 function hasOffice(): boolean {
@@ -369,6 +413,25 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
       ...base.groupStorage,
       ...((incoming as any).groupStorage || {}),
       provider: normalizeGroupStorageProvider(((incoming as any).groupStorage || {}).provider ?? base.groupStorage.provider),
+    },
+    crm2OdooLayout: {
+      ...base.crm2OdooLayout,
+      ...((incoming as any).crm2OdooLayout || {}),
+      mode: normalizeCrm2OdooLayoutMode(((incoming as any).crm2OdooLayout || {}).mode ?? base.crm2OdooLayout.mode),
+      includeAnchorIndex: typeof ((incoming as any).crm2OdooLayout || {}).includeAnchorIndex === "boolean"
+        ? ((incoming as any).crm2OdooLayout || {}).includeAnchorIndex
+        : base.crm2OdooLayout.includeAnchorIndex,
+      showBackToTopLinks: typeof ((incoming as any).crm2OdooLayout || {}).showBackToTopLinks === "boolean"
+        ? ((incoming as any).crm2OdooLayout || {}).showBackToTopLinks
+        : base.crm2OdooLayout.showBackToTopLinks,
+      project: {
+        ...base.crm2OdooLayout.project,
+        ...(((incoming as any).crm2OdooLayout || {}).project || {}),
+        model: "project.project",
+        fallbackToDescription: typeof ((((incoming as any).crm2OdooLayout || {}).project || {}).fallbackToDescription) === "boolean"
+          ? (((incoming as any).crm2OdooLayout || {}).project || {}).fallbackToDescription
+          : base.crm2OdooLayout.project.fallbackToDescription,
+      },
     },
   };
 
