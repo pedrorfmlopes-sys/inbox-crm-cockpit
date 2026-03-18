@@ -367,9 +367,7 @@ app.get("/api/odoo/companies/search", async (req, res) => {
 
     try {
       const odoo = await getOdooCached(req);
-      const domain = q
-        ? ["&", ["company_type", "=", "company"], "|", ["name", "ilike", q], ["vat", "ilike", q]]
-        : [["company_type", "=", "company"]];
+      const domain = [["company_type", "=", "company"], ...(q ? [["name", "ilike", q]] : [])];
       const companies = await safeSearchReadCompat(odoo, "res.partner", domain, PARTNER_PREFERRED_READ_FIELDS, 10);
       return res.json({ ok: true, results: companies || [] });
     } catch (e) {

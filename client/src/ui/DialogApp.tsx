@@ -4,6 +4,7 @@ import {
   linkEmailToRecord,
   odooPing,
   readOdoo,
+  searchCompanies,
   searchOdoo,
   searchOdooDomain,
   setApiSessionToken,
@@ -1047,6 +1048,7 @@ type TypeaheadPickerProps = {
   pickedName: string;
   onPick: (it: any) => void;
   extraDomain?: (q: string) => any[];
+  loadItems?: (q: string) => Promise<any[]>;
   compact?: boolean;
 };
 
@@ -1060,20 +1062,26 @@ function TypeaheadPicker({
   pickedName,
   onPick,
   extraDomain,
+  loadItems,
   compact = false,
 }: TypeaheadPickerProps) {
   const [q, setQ] = useState("");
   const [items, setItems] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const debounceRef = useRef<number | null>(null);
 
   const effectiveText = pickedId ? pickedName : q;
 
   async function load(query: string) {
     setBusy(true);
+    setError("");
     try {
-      if (extraDomain) {
+      if (loadItems) {
+        const rows = await loadItems(query);
+        setItems(Array.isArray(rows) ? rows : []);
+      } else if (extraDomain) {
         const domain = extraDomain(query);
         const rows = await searchOdooDomain(model, domain, fields, limit);
         setItems(Array.isArray(rows) ? rows : []);
@@ -1081,6 +1089,9 @@ function TypeaheadPicker({
         const rows = await searchOdoo(model, query, limit);
         setItems(Array.isArray(rows) ? rows : []);
       }
+    } catch (e: any) {
+      setItems([]);
+      setError(e?.message ?? String(e));
     } finally {
       setBusy(false);
     }
@@ -1152,6 +1163,12 @@ function TypeaheadPicker({
       {pickedId && !compact ? (
         <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
           Selecionado: {pickedName} (#{pickedId})
+        </div>
+      ) : null}
+
+      {error ? (
+        <div style={{ marginTop: 6, fontSize: 11, color: "#BF2600" }}>
+          {error}
         </div>
       ) : null}
 
@@ -2355,12 +2372,6 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
     return item?.display_name || item?.name || (id ? `#${id}` : "");
   }
 
-  function buildCompanySearchDomain(query: string) {
-    const q = normalizeText(query);
-    if (!q) return [["company_type", "=", "company"]];
-    return ["&", ["company_type", "=", "company"], "|", ["name", "ilike", q], ["vat", "ilike", q]];
-  }
-
   async function findExistingCompanyByVat(rawVat: string) {
     const cleanVat = normalizeVat(rawVat);
     if (!cleanVat) return null;
@@ -2573,7 +2584,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
             fields={["id", "name", "display_name", "vat", "email"]}
             pickedId={parentCompanyId}
             pickedName={parentCompanyName}
-            extraDomain={buildCompanySearchDomain}
+            loadItems={searchCompanies}
             onPick={(item: any) => {
               const id = Number(item?.id) || null;
               setParentCompanyId(id);
