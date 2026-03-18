@@ -601,7 +601,12 @@ type UploadedRecordAttachment = {
 };
 
 type ProjectLayoutSettings = CockpitSettingsV1["crm2OdooLayout"];
+type StructuredLayoutTarget = "project" | "lead";
+type StructuredLayoutModel = "project.project" | "crm.lead";
 type ProjectLayoutRuntime = {
+  target: StructuredLayoutTarget;
+  model: StructuredLayoutModel;
+  entityLabel: "Projeto" | "Lead";
   mode: ProjectLayoutSettings["mode"];
   descriptionField: string;
   fixedInfoField: string | null;
@@ -616,20 +621,28 @@ type ProjectLayoutRuntime = {
   structuredActive: boolean;
 };
 
-const DEFAULT_PROJECT_LAYOUT_RUNTIME: ProjectLayoutRuntime = {
-  mode: "description_only",
-  descriptionField: "description",
-  fixedInfoField: null,
-  historyField: null,
-  documentsField: null,
-  fixedInfoTabLabel: "Informacao fixa",
-  historyTabLabel: "Historico",
-  documentsTabLabel: "Documentos",
-  includeAnchorIndex: true,
-  showBackToTopLinks: true,
-  fallbackToDescription: true,
-  structuredActive: false,
-};
+function getDefaultStructuredLayoutRuntime(target: StructuredLayoutTarget): ProjectLayoutRuntime {
+  return {
+    target,
+    model: target === "lead" ? "crm.lead" : "project.project",
+    entityLabel: target === "lead" ? "Lead" : "Projeto",
+    mode: "description_only",
+    descriptionField: "description",
+    fixedInfoField: null,
+    historyField: null,
+    documentsField: null,
+    fixedInfoTabLabel: "Informacao fixa",
+    historyTabLabel: "Historico",
+    documentsTabLabel: "Documentos",
+    includeAnchorIndex: true,
+    showBackToTopLinks: true,
+    fallbackToDescription: true,
+    structuredActive: false,
+  };
+}
+
+const DEFAULT_PROJECT_LAYOUT_RUNTIME = getDefaultStructuredLayoutRuntime("project");
+const DEFAULT_LEAD_LAYOUT_RUNTIME = getDefaultStructuredLayoutRuntime("lead");
 
 function escapeRegExp(value: string) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -671,14 +684,15 @@ function fieldTypeMatches(meta: OdooFieldMeta | null, acceptedTypes: string[]) {
   return acceptedTypes.includes(String(meta.type || "").trim());
 }
 
-async function resolveProjectFieldName(
+async function resolveStructuredFieldName(
+  model: StructuredLayoutModel,
   candidate: string,
   acceptedTypes: string[],
   fallbackFieldName?: string,
 ) {
   const normalizedCandidate = String(candidate || "").trim();
   if (normalizedCandidate) {
-    const candidateMeta = await getOdooFieldMetaSafe("project.project", normalizedCandidate);
+    const candidateMeta = await getOdooFieldMetaSafe(model, normalizedCandidate);
     if (fieldTypeMatches(candidateMeta, acceptedTypes)) {
       return normalizedCandidate;
     }
@@ -686,7 +700,7 @@ async function resolveProjectFieldName(
 
   const normalizedFallback = String(fallbackFieldName || "").trim();
   if (normalizedFallback && normalizedFallback !== normalizedCandidate) {
-    const fallbackMeta = await getOdooFieldMetaSafe("project.project", normalizedFallback);
+    const fallbackMeta = await getOdooFieldMetaSafe(model, normalizedFallback);
     if (fieldTypeMatches(fallbackMeta, acceptedTypes)) {
       return normalizedFallback;
     }
@@ -695,33 +709,41 @@ async function resolveProjectFieldName(
   return null;
 }
 
-async function resolveProjectLayoutRuntime(layout?: ProjectLayoutSettings): Promise<ProjectLayoutRuntime> {
-  const project = layout?.project;
+async function resolveProjectLayoutRuntime(
+  layout: ProjectLayoutSettings | undefined,
+  target: StructuredLayoutTarget = "project",
+): Promise<ProjectLayoutRuntime> {
+  const config = target === "lead" ? layout?.lead : layout?.project;
+  const defaults = getDefaultStructuredLayoutRuntime(target);
   const includeAnchorIndex = layout?.includeAnchorIndex !== false;
   const showBackToTopLinks = layout?.showBackToTopLinks !== false;
-  const fallbackToDescription = project?.fallbackToDescription !== false;
-  const descriptionField = await resolveProjectFieldName(
-    project?.descriptionField || "description",
+  const fallbackToDescription = config?.fallbackToDescription !== false;
+  const descriptionField = await resolveStructuredFieldName(
+    defaults.model,
+    config?.descriptionField || "description",
     ["html", "text", "char"],
     "description",
   );
-  const fixedInfoField = await resolveProjectFieldName(project?.fixedInfoField || "", ["html", "text"]);
+  const fixedInfoField = await resolveStructuredFieldName(defaults.model, config?.fixedInfoField || "", ["html", "text"]);
   const historyField = layout?.mode === "structured_project"
-    ? await resolveProjectFieldName(project?.historyField || "", ["html", "text"])
+    ? await resolveStructuredFieldName(defaults.model, config?.historyField || "", ["html", "text"])
     : null;
   const documentsField = layout?.mode === "structured_project"
-    ? await resolveProjectFieldName(project?.documentsField || "", ["html", "text"])
+    ? await resolveStructuredFieldName(defaults.model, config?.documentsField || "", ["html", "text"])
     : null;
 
   return {
+    target,
+    model: defaults.model,
+    entityLabel: defaults.entityLabel,
     mode: layout?.mode === "structured_project" ? "structured_project" : "description_only",
     descriptionField: descriptionField || "description",
     fixedInfoField,
     historyField,
     documentsField,
-    fixedInfoTabLabel: String(project?.fixedInfoTabLabel || DEFAULT_PROJECT_LAYOUT_RUNTIME.fixedInfoTabLabel).trim() || DEFAULT_PROJECT_LAYOUT_RUNTIME.fixedInfoTabLabel,
-    historyTabLabel: String(project?.historyTabLabel || DEFAULT_PROJECT_LAYOUT_RUNTIME.historyTabLabel).trim() || DEFAULT_PROJECT_LAYOUT_RUNTIME.historyTabLabel,
-    documentsTabLabel: String(project?.documentsTabLabel || DEFAULT_PROJECT_LAYOUT_RUNTIME.documentsTabLabel).trim() || DEFAULT_PROJECT_LAYOUT_RUNTIME.documentsTabLabel,
+    fixedInfoTabLabel: String(config?.fixedInfoTabLabel || defaults.fixedInfoTabLabel).trim() || defaults.fixedInfoTabLabel,
+    historyTabLabel: String(config?.historyTabLabel || defaults.historyTabLabel).trim() || defaults.historyTabLabel,
+    documentsTabLabel: String(config?.documentsTabLabel || defaults.documentsTabLabel).trim() || defaults.documentsTabLabel,
     includeAnchorIndex,
     showBackToTopLinks,
     fallbackToDescription,
@@ -932,11 +954,11 @@ function buildProjectDocumentsSectionHtml(
   ].filter(Boolean).join("");
 }
 
-async function readProjectFieldValue(recordId: number, fieldName: string | null) {
+async function readStructuredFieldValue(model: StructuredLayoutModel, recordId: number, fieldName: string | null) {
   const normalizedFieldName = String(fieldName || "").trim();
   if (!recordId || !normalizedFieldName) return "";
   try {
-    const rows = await readOdoo("project.project", [recordId], [normalizedFieldName]);
+    const rows = await readOdoo(model, [recordId], [normalizedFieldName]);
     return String(rows?.[0]?.[normalizedFieldName] || "");
   } catch {
     return "";
@@ -956,7 +978,7 @@ async function syncConversationToProjectStructuredLayout(
   const conversationKey = getProjectConversationKey(ctx);
 
   if (runtime.historyField) {
-    const currentHistory = await readProjectFieldValue(recordId, runtime.historyField);
+    const currentHistory = await readStructuredFieldValue(runtime.model, recordId, runtime.historyField);
     const nextHistory = upsertProjectLayoutSectionHtml(
       currentHistory,
       "history",
@@ -970,7 +992,7 @@ async function syncConversationToProjectStructuredLayout(
   }
 
   if (runtime.documentsField && attachments.length) {
-    const currentDocuments = await readProjectFieldValue(recordId, runtime.documentsField);
+    const currentDocuments = await readStructuredFieldValue(runtime.model, recordId, runtime.documentsField);
     const nextDocuments = upsertProjectLayoutSectionHtml(
       currentDocuments,
       "documents",
@@ -988,13 +1010,13 @@ async function syncConversationToProjectStructuredLayout(
   }
 
   try {
-    await writeOdoo("project.project", recordId, updates);
+    await writeOdoo(runtime.model, recordId, updates);
     return { ok: true, usedFallback: false };
   } catch (error) {
-    console.error("Erro ao sincronizar layout estruturado do projeto", recordId, error);
+    console.error("Erro ao sincronizar layout estruturado", runtime.model, recordId, error);
     if (runtime.fallbackToDescription) {
       const ok = await syncConversationDescriptionToRecord(
-        "project.project",
+        runtime.model,
         recordId,
         description,
         ctx,
@@ -2524,7 +2546,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
         const descriptionValue = record?.[projectLayout.descriptionField];
         if (descriptionValue) setDescription(String(descriptionValue));
         if (projectLayout.fixedInfoField) {
-          const fixedInfoValue = await readProjectFieldValue(Number(editId), projectLayout.fixedInfoField);
+          const fixedInfoValue = await readStructuredFieldValue(projectLayout.model, Number(editId), projectLayout.fixedInfoField);
           if (fixedInfoValue) setFixedInfo(String(fixedInfoValue));
         }
       } catch (error: any) {
@@ -2721,13 +2743,31 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   const [stageId, setStageId] = useState<number | null>(null);
   const [stageName, setStageName] = useState("");
   const [description, setDescription] = useState("");
+  const [fixedInfo, setFixedInfo] = useState("");
   const [leadTypeField, setLeadTypeField] = useState<OdooFieldMeta | null>(null);
   const [leadTypeLoading, setLeadTypeLoading] = useState(true);
   const [leadTypeError, setLeadTypeError] = useState<string | null>(null);
   const [leadTypeValue, setLeadTypeValue] = useState("");
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
   const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
+  const [leadLayout, setLeadLayout] = useState<ProjectLayoutRuntime | null>(null);
   const leadTypeOptions = useMemo(() => Array.isArray(leadTypeField?.selection) ? leadTypeField.selection : [], [leadTypeField]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const settings = await getSettings();
+        const runtime = await resolveProjectLayoutRuntime(settings.crm2OdooLayout, "lead");
+        if (alive) setLeadLayout(runtime);
+      } catch {
+        if (alive) setLeadLayout(DEFAULT_LEAD_LAYOUT_RUNTIME);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
@@ -2758,15 +2798,15 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   }, [apiReady]);
 
   useEffect(() => {
-    if (mode !== "edit" || !editId) return;
+    if (mode !== "edit" || !editId || !leadLayout) return;
     (async () => {
       try {
         let rows: any[] | null = null;
-        const baseFields = ["name", "contact_name", "email_from", "phone", "partner_id", "stage_id", LEAD_TYPE_FIELD_NAME];
+        const baseFields = ["name", "contact_name", "email_from", "phone", "partner_id", "stage_id", LEAD_TYPE_FIELD_NAME, leadLayout.descriptionField];
         try {
-          rows = await readOdoo("crm.lead", [editId], [...baseFields, "description"]);
+          rows = await readOdoo("crm.lead", [editId], Array.from(new Set(baseFields.filter(Boolean))));
         } catch {
-          rows = await readOdoo("crm.lead", [editId], baseFields);
+          rows = await readOdoo("crm.lead", [editId], ["name", "contact_name", "email_from", "phone", "partner_id", "stage_id", LEAD_TYPE_FIELD_NAME]);
         }
         const record = rows?.[0];
         if (!record) return;
@@ -2776,16 +2816,26 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         setPhone(record.phone || "");
         if (record.partner_id) { setPartnerId(record.partner_id[0]); setPartnerName(record.partner_id[1]); }
         if (record.stage_id) { setStageId(record.stage_id[0]); setStageName(record.stage_id[1]); }
-        if (record.description) setDescription(String(record.description));
+        const descriptionValue = record?.[leadLayout.descriptionField];
+        if (descriptionValue) setDescription(String(descriptionValue));
+        if (leadLayout.fixedInfoField) {
+          const fixedInfoValue = await readStructuredFieldValue(leadLayout.model, Number(editId), leadLayout.fixedInfoField);
+          if (fixedInfoValue) setFixedInfo(String(fixedInfoValue));
+        }
         setLeadTypeValue(String(record[LEAD_TYPE_FIELD_NAME] || ""));
       } catch (error: any) {
         onStatus(error?.message ?? String(error));
       }
     })();
-  }, [apiReady, editId, mode, onStatus]);
+  }, [apiReady, editId, leadLayout, mode, onStatus]);
 
   async function save() {
     try {
+      const activeLayout = leadLayout || await (async () => {
+        const settings = await getSettings();
+        return await resolveProjectLayoutRuntime(settings.crm2OdooLayout, "lead");
+      })();
+
       let values: any = {
         name: name || `Lead: ${ctx.subject || "sem assunto"}`,
         contact_name: contactName || "",
@@ -2794,42 +2844,69 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       if (phone) values.phone = phone;
       if (partnerId) values.partner_id = partnerId;
       if (stageId) values.stage_id = stageId;
-      if (description) values.description = description;
+      if (description) values[activeLayout.descriptionField] = description;
+      if (activeLayout.fixedInfoField && fixedInfo) values[activeLayout.fixedInfoField] = fixedInfo;
       values[LEAD_TYPE_FIELD_NAME] = leadTypeValue || false;
 
       if (mode === "edit") {
         try {
-          await writeOdoo("crm.lead", editId, values);
+          await writeOdoo(activeLayout.model, editId, values);
         } catch {
           const fallbackValues = { ...values };
-          delete fallbackValues.description;
-          await writeOdoo("crm.lead", editId, fallbackValues);
+          delete fallbackValues[activeLayout.descriptionField];
+          await writeOdoo(activeLayout.model, editId, fallbackValues);
         }
         let uploadedAttachments: UploadedRecordAttachment[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          uploadedAttachments = await uploadSelectedAttachmentsToRecord("crm.lead", Number(editId), emailAtts || [], selectedAtts);
+          uploadedAttachments = await uploadSelectedAttachmentsToRecord(activeLayout.model, Number(editId), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", Number(editId), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, activeLayout.model, Number(editId), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
         }
-        const descriptionSynced = await syncConversationDescriptionToRecord("crm.lead", Number(editId), description, ctx, uploadedAttachments);
-        onStatus(descriptionSynced ? "Atualizado OK" : "Atualizado, mas a descricao nao foi enriquecida com os anexos.");
+        const syncResult = activeLayout.structuredActive
+          ? await syncConversationToProjectStructuredLayout(Number(editId), activeLayout, ctx, publishState, fullBody, description, uploadedAttachments)
+          : {
+            ok: await syncConversationDescriptionToRecord(activeLayout.model, Number(editId), description, ctx, uploadedAttachments, activeLayout.descriptionField),
+            usedFallback: false,
+          };
+        onStatus(
+          syncResult.ok
+            ? syncResult.usedFallback
+              ? "Atualizado OK, com fallback para a descricao base."
+              : activeLayout.structuredActive
+                ? "Atualizado OK no layout estruturado."
+                : "Atualizado OK"
+            : "Atualizado, mas o historico/documentos nao foram sincronizados."
+        );
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
       values = await withReferenceCode("crm.lead", values);
-      const id = await createOdoo("crm.lead", values);
+      const id = await createOdoo(activeLayout.model, values);
       let uploadedAttachments: UploadedRecordAttachment[] = [];
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        uploadedAttachments = await uploadSelectedAttachmentsToRecord("crm.lead", id, emailAtts || [], selectedAtts);
+        uploadedAttachments = await uploadSelectedAttachmentsToRecord(activeLayout.model, id, emailAtts || [], selectedAtts);
       }
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, activeLayout.model, id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
 
-      const descriptionSynced = await syncConversationDescriptionToRecord("crm.lead", id, description, ctx, uploadedAttachments);
-      onStatus(descriptionSynced ? "Criado com sucesso" : "Criado, mas a descricao nao foi enriquecida com os anexos.");
+      const syncResult = activeLayout.structuredActive
+        ? await syncConversationToProjectStructuredLayout(id, activeLayout, ctx, publishState, fullBody, description, uploadedAttachments)
+        : {
+          ok: await syncConversationDescriptionToRecord(activeLayout.model, id, description, ctx, uploadedAttachments, activeLayout.descriptionField),
+          usedFallback: false,
+        };
+      onStatus(
+        syncResult.ok
+          ? syncResult.usedFallback
+            ? "Criado com sucesso, com fallback para a descricao base."
+            : activeLayout.structuredActive
+              ? "Criado com sucesso no layout estruturado."
+              : "Criado com sucesso"
+          : "Criado, mas o historico/documentos nao foram sincronizados."
+      );
       setTimeout(() => closeDialog(), 500);
     } catch (error: any) {
       onStatus(error?.message ?? String(error));
@@ -2865,6 +2942,39 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
           <TypeaheadPicker compact label="ETAPA" placeholder="Pesquisar etapa do lead..." model="crm.stage" fields={["id", "name"]} pickedId={stageId} pickedName={stageName} onPick={(item: any) => { const id = item?.id ?? null; setStageId(id); setStageName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
         </CompactDualPickerCard>
       </div>
+      {leadLayout ? (
+        <div style={S.metaCardLarge}>
+          <div style={S.metaCardLabel}>LAYOUT ODOO ATIVO</div>
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={S.metaRowItem}>
+              <span style={S.metaRowLabel}>Modo</span>
+              <span style={S.metaRowValue}>{leadLayout.mode === "structured_project" ? "Estruturado" : "Descricao apenas"}</span>
+            </div>
+            <div style={S.metaRowItem}>
+              <span style={S.metaRowLabel}>Descricao</span>
+              <span style={S.metaRowValue}>{leadLayout.descriptionField}</span>
+            </div>
+            {leadLayout.fixedInfoField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Informacao fixa</span>
+                <span style={S.metaRowValue}>{leadLayout.fixedInfoField}</span>
+              </div>
+            ) : null}
+            {leadLayout.historyField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Historico</span>
+                <span style={S.metaRowValue}>{leadLayout.historyField}</span>
+              </div>
+            ) : null}
+            {leadLayout.documentsField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Documentos</span>
+                <span style={S.metaRowValue}>{leadLayout.documentsField}</span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <div style={S.grid2}>
         <div style={S.row}><label style={S.lab}>CONTACTO</label><input style={S.input} value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Nome do contacto" /></div>
         <div style={S.row}><label style={S.lab}>EMAIL</label><input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@..." /></div>
@@ -2874,8 +2984,10 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       {!leadTypeLoading && !!leadTypeField && <div style={S.row}><label style={S.lab}>{(leadTypeField.string || "Tipo de Lead").toUpperCase()}</label><select style={S.sel} value={leadTypeValue} onChange={(e) => setLeadTypeValue(e.target.value)}><option value="">Selecionar...</option>{leadTypeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>}
       {!leadTypeLoading && !leadTypeField && <div style={S.row}><label style={S.lab}>TIPO DE LEAD</label><select style={S.sel} value="" disabled><option value="">{leadTypeError || "Tipo de Lead indisponivel"}</option></select></div>}
       <DescriptionWorkspace
-        title="DESCRICAO"
-        hint="Edita aqui o resumo estruturado do lead. Esta area alimenta a descricao do registo."
+        title={leadLayout?.structuredActive ? "DESCRICAO BASE" : "DESCRICAO"}
+        hint={leadLayout?.structuredActive
+          ? `Este editor alimenta o campo ${leadLayout.descriptionField}. O historico segue para ${leadLayout.historyField || leadLayout.historyTabLabel} e os anexos para ${leadLayout.documentsField || leadLayout.documentsTabLabel}.`
+          : "Edita aqui o resumo estruturado do lead. Esta area alimenta a descricao do registo."}
         value={description}
         onChange={setDescription}
         placeholder="Resumo e notas do lead..."
@@ -2888,6 +3000,20 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
           setSelectedAtts((prev) => Array.from(new Set([...prev, ...suggested])));
         }}
       />
+      {leadLayout?.fixedInfoField ? (
+        <DescriptionWorkspace
+          title="INFORMACAO FIXA"
+          hint={`Este editor alimenta o campo ${leadLayout.fixedInfoField}. Usa-o para contexto, qualificacao e regras que devem ficar sempre preservadas no topo do lead.`}
+          value={fixedInfo}
+          onChange={setFixedInfo}
+          placeholder="Escreve aqui a informacao permanente do lead..."
+          onUseEmail={() => {
+            if (!description) return;
+            setFixedInfo(description);
+          }}
+          actionLabel="Duplicar base"
+        />
+      ) : null}
       <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>

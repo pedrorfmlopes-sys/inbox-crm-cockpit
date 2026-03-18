@@ -1312,11 +1312,26 @@ function Crm2LayoutSettings({
   setModel: React.Dispatch<React.SetStateAction<CockpitSettingsV1 | null>>;
 }) {
   const layout = model.crm2OdooLayout;
-  const project = layout.project;
   const pdfGuideHref = "/docs/inbox-cockpit-crm2-odoo-studio-setup.pdf";
+  const [layoutTarget, setLayoutTarget] = useState<"project" | "lead">("project");
   const [isValidating, setIsValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [validation, setValidation] = useState<Crm2LayoutValidationResult | null>(null);
+  const targetConfig = layoutTarget === "lead" ? layout.lead : layout.project;
+  const targetLabel = layoutTarget === "lead" ? "Lead" : "Projeto";
+  const targetPluralLabel = layoutTarget === "lead" ? "leads" : "projetos";
+  const targetModeLabel = layout.mode === "structured_project" ? `${targetLabel} com campos/abas proprias` : "Descricao apenas";
+  const targetGuideDefaults = layoutTarget === "lead"
+    ? {
+        fixedInfoField: "x_studio_iccc_lead_brief",
+        historyField: "x_studio_iccc_lead_history",
+        documentsField: "x_studio_iccc_lead_documents",
+      }
+    : {
+        fixedInfoField: "x_studio_iccc_project_brief",
+        historyField: "x_studio_iccc_project_history",
+        documentsField: "x_studio_iccc_project_documents",
+      };
 
   function updateLayout<K extends keyof CockpitSettingsV1["crm2OdooLayout"]>(
     key: K,
@@ -1335,7 +1350,7 @@ function Crm2LayoutSettings({
     );
   }
 
-  function updateProject<K extends keyof CockpitSettingsV1["crm2OdooLayout"]["project"]>(
+  function updateTargetConfig<K extends keyof CockpitSettingsV1["crm2OdooLayout"]["project"]>(
     key: K,
     value: CockpitSettingsV1["crm2OdooLayout"]["project"][K],
   ) {
@@ -1345,8 +1360,8 @@ function Crm2LayoutSettings({
             ...prev,
             crm2OdooLayout: {
               ...prev.crm2OdooLayout,
-              project: {
-                ...prev.crm2OdooLayout.project,
+              [layoutTarget]: {
+                ...prev.crm2OdooLayout[layoutTarget],
                 [key]: value,
               },
             },
@@ -1359,7 +1374,7 @@ function Crm2LayoutSettings({
     setIsValidating(true);
     setValidationError(null);
     try {
-      const result = await validateCrm2OdooLayout(layout);
+      const result = await validateCrm2OdooLayout(layout, layoutTarget);
       setValidation(result);
     } catch (error: any) {
       setValidation(null);
@@ -1375,12 +1390,12 @@ function Crm2LayoutSettings({
         compact
         tone="info"
         title="Estrategia de escrita do CRM2 no Odoo"
-        description="Define se o CRM2 escreve tudo na descricao do projeto ou se usa um layout estruturado com campos/abas preparados no Odoo Studio."
+        description="Define se o CRM2 escreve tudo na descricao base ou se usa um layout estruturado com campos/abas preparados no Odoo Studio por entidade."
       />
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={S.hint}>
-          Valida campos, tipos e presença na vista form do projeto antes de ativares o modo estruturado em produção.
+          Valida campos, tipos e presenca na vista form do modelo alvo antes de ativares o modo estruturado em producao.
         </div>
         <button
           type="button"
@@ -1392,6 +1407,31 @@ function Crm2LayoutSettings({
         </button>
       </div>
 
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          style={layoutTarget === "project" ? S.btn : S.btnGhost}
+          onClick={() => {
+            setLayoutTarget("project");
+            setValidation(null);
+            setValidationError(null);
+          }}
+        >
+          Projetos
+        </button>
+        <button
+          type="button"
+          style={layoutTarget === "lead" ? S.btn : S.btnGhost}
+          onClick={() => {
+            setLayoutTarget("lead");
+            setValidation(null);
+            setValidationError(null);
+          }}
+        >
+          Leads
+        </button>
+      </div>
+
       <Field label="Modo de escrita">
         <select
           style={S.select}
@@ -1399,10 +1439,10 @@ function Crm2LayoutSettings({
           onChange={(e) => updateLayout("mode", e.target.value === "structured_project" ? "structured_project" : "description_only")}
         >
           <option value="description_only">Descricao apenas (fallback universal)</option>
-          <option value="structured_project">Projeto com campos/abas proprias</option>
+          <option value="structured_project">Layout estruturado com campos/abas proprias</option>
         </select>
         <div style={S.hint}>
-          Usa "Descricao apenas" para tenants sem personalizacao. Usa "Projeto com campos/abas proprias" quando o cliente tiver preparado o Odoo Studio.
+          Usa "Descricao apenas" para tenants sem personalizacao. Usa "Layout estruturado" quando o cliente tiver preparado o Odoo Studio para {targetPluralLabel}.
         </div>
       </Field>
 
@@ -1431,12 +1471,12 @@ function Crm2LayoutSettings({
       </label>
 
       <div style={S.referenceCard}>
-        <div style={S.fieldLabel}>Perfil estruturado recomendado para projetos</div>
+        <div style={S.fieldLabel}>Perfil estruturado recomendado para {targetPluralLabel}</div>
         <div style={{ display: "grid", gap: 10 }}>
           <Field label="Modelo Odoo alvo">
             <input
               style={{ ...S.input, background: "rgba(0,0,0,0.03)" }}
-              value={project.model}
+              value={targetConfig.model}
               readOnly
             />
           </Field>
@@ -1444,8 +1484,8 @@ function Crm2LayoutSettings({
           <Field label="Campo base da descricao">
             <input
               style={S.input}
-              value={project.descriptionField}
-              onChange={(e) => updateProject("descriptionField", e.target.value.trim())}
+              value={targetConfig.descriptionField}
+              onChange={(e) => updateTargetConfig("descriptionField", e.target.value.trim())}
               placeholder="description"
             />
           </Field>
@@ -1453,27 +1493,27 @@ function Crm2LayoutSettings({
           <Field label="Campo de informacao fixa">
             <input
               style={S.input}
-              value={project.fixedInfoField}
-              onChange={(e) => updateProject("fixedInfoField", e.target.value.trim())}
-              placeholder="x_studio_iccc_project_brief"
+              value={targetConfig.fixedInfoField}
+              onChange={(e) => updateTargetConfig("fixedInfoField", e.target.value.trim())}
+              placeholder={targetGuideDefaults.fixedInfoField}
             />
           </Field>
 
           <Field label="Campo de historico">
             <input
               style={S.input}
-              value={project.historyField}
-              onChange={(e) => updateProject("historyField", e.target.value.trim())}
-              placeholder="x_studio_iccc_project_history"
+              value={targetConfig.historyField}
+              onChange={(e) => updateTargetConfig("historyField", e.target.value.trim())}
+              placeholder={targetGuideDefaults.historyField}
             />
           </Field>
 
           <Field label="Campo de documentos">
             <input
               style={S.input}
-              value={project.documentsField}
-              onChange={(e) => updateProject("documentsField", e.target.value.trim())}
-              placeholder="x_studio_iccc_project_documents"
+              value={targetConfig.documentsField}
+              onChange={(e) => updateTargetConfig("documentsField", e.target.value.trim())}
+              placeholder={targetGuideDefaults.documentsField}
             />
           </Field>
 
@@ -1481,8 +1521,8 @@ function Crm2LayoutSettings({
             <Field label="Tab: informacao fixa">
               <input
                 style={S.input}
-                value={project.fixedInfoTabLabel}
-                onChange={(e) => updateProject("fixedInfoTabLabel", e.target.value)}
+                value={targetConfig.fixedInfoTabLabel}
+                onChange={(e) => updateTargetConfig("fixedInfoTabLabel", e.target.value)}
                 placeholder="Informacao fixa"
               />
             </Field>
@@ -1490,8 +1530,8 @@ function Crm2LayoutSettings({
             <Field label="Tab: historico">
               <input
                 style={S.input}
-                value={project.historyTabLabel}
-                onChange={(e) => updateProject("historyTabLabel", e.target.value)}
+                value={targetConfig.historyTabLabel}
+                onChange={(e) => updateTargetConfig("historyTabLabel", e.target.value)}
                 placeholder="Historico"
               />
             </Field>
@@ -1499,8 +1539,8 @@ function Crm2LayoutSettings({
             <Field label="Tab: documentos">
               <input
                 style={S.input}
-                value={project.documentsTabLabel}
-                onChange={(e) => updateProject("documentsTabLabel", e.target.value)}
+                value={targetConfig.documentsTabLabel}
+                onChange={(e) => updateTargetConfig("documentsTabLabel", e.target.value)}
                 placeholder="Documentos"
               />
             </Field>
@@ -1509,12 +1549,12 @@ function Crm2LayoutSettings({
           <label style={S.toggleRow}>
             <input
               type="checkbox"
-              checked={project.fallbackToDescription}
-              onChange={(e) => updateProject("fallbackToDescription", e.target.checked)}
+              checked={targetConfig.fallbackToDescription}
+              onChange={(e) => updateTargetConfig("fallbackToDescription", e.target.checked)}
             />
             <div>
               <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Fallback automatico para descricao</div>
-              <div style={S.hint}>Se faltar algum campo customizado no cliente, o CRM2 continua a funcionar e escreve no campo base da descricao.</div>
+              <div style={S.hint}>Se faltar algum campo customizado no cliente, o CRM2 continua a funcionar e escreve no campo base da descricao de {targetPluralLabel}.</div>
             </div>
           </label>
         </div>
@@ -1524,16 +1564,16 @@ function Crm2LayoutSettings({
         <div style={S.fieldLabel}>Resumo atual</div>
         <div style={{ display: "grid", gap: 6 }}>
           <div style={S.hint}>
-            Modo ativo: <b>{layout.mode === "structured_project" ? "Projeto com campos/abas proprias" : "Descricao apenas"}</b>
+            Modo ativo: <b>{targetModeLabel}</b>
           </div>
           <div style={S.hint}>
-            Modelo alvo: <b>{project.model}</b>
+            Modelo alvo: <b>{targetConfig.model}</b>
           </div>
           <div style={S.hint}>
-            Campo base: <b>{project.descriptionField || "Por definir"}</b>
+            Campo base: <b>{targetConfig.descriptionField || "Por definir"}</b>
           </div>
           <div style={S.hint}>
-            Estrutura recomendada: <b>{project.fixedInfoField || "?"}</b> / <b>{project.historyField || "?"}</b> / <b>{project.documentsField || "?"}</b>
+            Estrutura recomendada: <b>{targetConfig.fixedInfoField || "?"}</b> / <b>{targetConfig.historyField || "?"}</b> / <b>{targetConfig.documentsField || "?"}</b>
           </div>
         </div>
       </div>
@@ -1541,11 +1581,11 @@ function Crm2LayoutSettings({
       <div style={S.referenceCard}>
         <div style={S.fieldLabel}>Checklist Odoo Studio</div>
         <div style={{ display: "grid", gap: 8 }}>
-          <div style={S.hint}><b>1.</b> Abrir o Studio num registo de projeto e editar a vista de <b>{project.model}</b>.</div>
-          <div style={S.hint}><b>2.</b> Confirmar que o campo base <b>{project.descriptionField || "description"}</b> existe e fica visivel no formulario.</div>
-          <div style={S.hint}><b>3.</b> Criar o campo <b>{project.fixedInfoField || "x_studio_iccc_project_brief"}</b> para informacao fixa, de preferencia HTML.</div>
-          <div style={S.hint}><b>4.</b> Criar o campo <b>{project.historyField || "x_studio_iccc_project_history"}</b> para historico e o campo <b>{project.documentsField || "x_studio_iccc_project_documents"}</b> para documentos.</div>
-          <div style={S.hint}><b>5.</b> Adicionar as abas <b>{project.fixedInfoTabLabel || "Informacao fixa"}</b>, <b>{project.historyTabLabel || "Historico"}</b> e <b>{project.documentsTabLabel || "Documentos"}</b>, colocando um campo por aba.</div>
+          <div style={S.hint}><b>1.</b> Abrir o Studio num registo de {targetLabel.toLowerCase()} e editar a vista de <b>{targetConfig.model}</b>.</div>
+          <div style={S.hint}><b>2.</b> Confirmar que o campo base <b>{targetConfig.descriptionField || "description"}</b> existe e fica visivel no formulario.</div>
+          <div style={S.hint}><b>3.</b> Criar o campo <b>{targetConfig.fixedInfoField || targetGuideDefaults.fixedInfoField}</b> para informacao fixa, de preferencia HTML.</div>
+          <div style={S.hint}><b>4.</b> Criar o campo <b>{targetConfig.historyField || targetGuideDefaults.historyField}</b> para historico e o campo <b>{targetConfig.documentsField || targetGuideDefaults.documentsField}</b> para documentos.</div>
+          <div style={S.hint}><b>5.</b> Adicionar as abas <b>{targetConfig.fixedInfoTabLabel || "Informacao fixa"}</b>, <b>{targetConfig.historyTabLabel || "Historico"}</b> e <b>{targetConfig.documentsTabLabel || "Documentos"}</b>, colocando um campo por aba.</div>
           <div style={S.hint}><b>6.</b> Guardar o Studio, voltar ao cockpit e correr <b>Validar configuracao Odoo</b>.</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
@@ -1557,7 +1597,7 @@ function Crm2LayoutSettings({
           </a>
         </div>
         <div style={{ ...S.hint, marginTop: 8 }}>
-          O PDF foi pensado para onboarding multiempresa. Se o cliente usar nomes tecnicos diferentes, basta alinhar esses nomes nesta secao antes de validar.
+          O PDF foi pensado para onboarding multiempresa. A versao atual e mais detalhada para projetos, mas a mesma logica aplica-se aos leads: basta alinhar os nomes tecnicos nesta secao antes de validar.
         </div>
       </div>
 
@@ -1576,7 +1616,7 @@ function Crm2LayoutSettings({
             compact
             tone={validation.ready ? "success" : validation.summary.error > 0 ? "error" : "warning"}
             title={validation.ready ? "Layout pronto para uso" : "Layout requer ajustes no Odoo Studio"}
-            description={`Modelo ${validation.model}. ${validation.summary.ok} ok, ${validation.summary.warning} aviso(s), ${validation.summary.error} erro(s).`}
+            description={`Modelo ${validation.model}. ${validation.summary.ok} ok, ${validation.summary.warning} aviso(s), ${validation.summary.error} erro(s). Alvo validado: ${validation.target === "lead" ? "Lead" : "Projeto"}.`}
           />
 
           <div style={S.referenceCard}>
@@ -1645,7 +1685,7 @@ function Crm2LayoutSettings({
         compact
         tone="warning"
         title="Proxima fase do CRM2"
-        description="Os settings ja definem a estrategia e a validacao no Odoo Studio. O passo seguinte e ligar o DialogApp e o fluxo de escrita do CRM2 a estes modos, com fallback real por empresa."
+        description="Os settings ja definem a estrategia e a validacao no Odoo Studio para projetos e leads. O passo seguinte e ligar o DialogApp e o fluxo de escrita do CRM2 a estes modos, com fallback real por empresa."
       />
     </div>
   );

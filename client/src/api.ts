@@ -402,6 +402,7 @@ export type Crm2LayoutValidationCheck = {
 
 export type Crm2LayoutValidationResult = {
   ok: boolean;
+  target?: "project" | "lead";
   mode: "description_only" | "structured_project";
   model: string;
   ready: boolean;
@@ -420,10 +421,11 @@ export type Crm2LayoutValidationResult = {
 
 export async function validateCrm2OdooLayout(
   layout: CockpitSettingsV1["crm2OdooLayout"],
+  target: "project" | "lead" = "project",
 ): Promise<Crm2LayoutValidationResult> {
   return await requestJSON(`/api/odoo/layout/validate`, {
     method: "POST",
-    body: JSON.stringify({ layout }),
+    body: JSON.stringify({ layout, target }),
   });
 }
 

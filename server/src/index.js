@@ -638,11 +638,13 @@ function createLayoutCheck({
 app.post("/api/odoo/layout/validate", async (req, res) => {
   try {
     const layout = req.body?.layout || {};
+    const target = String(req.body?.target || "project").trim() === "lead" ? "lead" : "project";
     const mode = String(layout?.mode || "description_only").trim() === "structured_project"
       ? "structured_project"
       : "description_only";
-    const project = layout?.project || {};
-    const model = String(project?.model || "project.project").trim() || "project.project";
+    const targetConfig = layout?.[target] || {};
+    const modelFallback = target === "lead" ? "crm.lead" : "project.project";
+    const model = String(targetConfig?.model || modelFallback).trim() || modelFallback;
 
     if (!modelAllowed(model)) {
       return res.status(400).json({ ok: false, error: "invalid_model", message: `Model not allowed: ${model}` });
@@ -776,7 +778,7 @@ app.post("/api/odoo/layout/validate", async (req, res) => {
     validateField({
       key: "descriptionField",
       label: "Campo base da descricao",
-      configuredName: project.descriptionField,
+      configuredName: targetConfig.descriptionField,
       expectedTypes: ["html", "text", "char"],
       recommendedType: "html",
     });
@@ -785,21 +787,21 @@ app.post("/api/odoo/layout/validate", async (req, res) => {
       validateField({
         key: "fixedInfoField",
         label: "Campo de informacao fixa",
-        configuredName: project.fixedInfoField,
+        configuredName: targetConfig.fixedInfoField,
         expectedTypes: ["html", "text"],
         recommendedType: "html",
       });
       validateField({
         key: "historyField",
         label: "Campo de historico",
-        configuredName: project.historyField,
+        configuredName: targetConfig.historyField,
         expectedTypes: ["html", "text"],
         recommendedType: "html",
       });
       validateField({
         key: "documentsField",
         label: "Campo de documentos",
-        configuredName: project.documentsField,
+        configuredName: targetConfig.documentsField,
         expectedTypes: ["html", "text"],
         recommendedType: "html",
       });
@@ -807,17 +809,17 @@ app.post("/api/odoo/layout/validate", async (req, res) => {
       validateTab({
         key: "fixedInfoTabLabel",
         label: "Aba de informacao fixa",
-        configuredName: project.fixedInfoTabLabel,
+        configuredName: targetConfig.fixedInfoTabLabel,
       });
       validateTab({
         key: "historyTabLabel",
         label: "Aba de historico",
-        configuredName: project.historyTabLabel,
+        configuredName: targetConfig.historyTabLabel,
       });
       validateTab({
         key: "documentsTabLabel",
         label: "Aba de documentos",
-        configuredName: project.documentsTabLabel,
+        configuredName: targetConfig.documentsTabLabel,
       });
     }
 
@@ -830,6 +832,7 @@ app.post("/api/odoo/layout/validate", async (req, res) => {
 
     return res.json({
       ok: true,
+      target,
       mode,
       model,
       ready: summary.error === 0,
@@ -1058,7 +1061,13 @@ function cleanValuesForModel(model, values) {
 
   const clean = {};
   for (const [k, v] of Object.entries(values)) {
-    if (allowedByModel.has(k) || (model === "crm.lead" && (/^x_/i.test(k) || /(^|_)(lead_type|tipo_de_lead|tipo_lead)$/.test(k) || /tipo.*lead/i.test(k)))) clean[k] = v;
+    if (
+      allowedByModel.has(k) ||
+      (model === "project.project" && /^x_/i.test(k)) ||
+      (model === "crm.lead" && (/^x_/i.test(k) || /(^|_)(lead_type|tipo_de_lead|tipo_lead)$/.test(k) || /tipo.*lead/i.test(k)))
+    ) {
+      clean[k] = v;
+    }
   }
 
   // Normalize M2M for project.task user_ids

@@ -1,4 +1,4 @@
-import{a as n}from"./index-CNy36P_W.js";async function a(o,e){const t=`
+import{a as n}from"./index-DAnSsoiI.js";async function a(o,e){const t=`
 OUTLOOK RECENT HISTORY:
 ${o.outlookHistory||"No recent history."}
 

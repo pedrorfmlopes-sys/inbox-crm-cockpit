@@ -46,8 +46,8 @@ export type GroupStorageSettings = {
   suggestedViewer: "system" | "inline";
 };
 
-export type Crm2ProjectStructuredLayoutSettings = {
-  model: "project.project";
+export type Crm2StructuredLayoutSettings<TModel extends string> = {
+  model: TModel;
   descriptionField: string;
   fixedInfoField: string;
   historyField: string;
@@ -58,11 +58,15 @@ export type Crm2ProjectStructuredLayoutSettings = {
   fallbackToDescription: boolean;
 };
 
+export type Crm2ProjectStructuredLayoutSettings = Crm2StructuredLayoutSettings<"project.project">;
+export type Crm2LeadStructuredLayoutSettings = Crm2StructuredLayoutSettings<"crm.lead">;
+
 export type Crm2OdooLayoutSettings = {
   mode: Crm2OdooLayoutMode;
   includeAnchorIndex: boolean;
   showBackToTopLinks: boolean;
   project: Crm2ProjectStructuredLayoutSettings;
+  lead: Crm2LeadStructuredLayoutSettings;
 };
 
 export type CockpitSettingsV1 = {
@@ -272,6 +276,17 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
       documentsTabLabel: "Documentos",
       fallbackToDescription: true,
     },
+    lead: {
+      model: "crm.lead",
+      descriptionField: "description",
+      fixedInfoField: "x_studio_iccc_lead_brief",
+      historyField: "x_studio_iccc_lead_history",
+      documentsField: "x_studio_iccc_lead_documents",
+      fixedInfoTabLabel: "Informacao fixa",
+      historyTabLabel: "Historico",
+      documentsTabLabel: "Documentos",
+      fallbackToDescription: true,
+    },
   },
 };
 
@@ -431,6 +446,14 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
         fallbackToDescription: typeof ((((incoming as any).crm2OdooLayout || {}).project || {}).fallbackToDescription) === "boolean"
           ? (((incoming as any).crm2OdooLayout || {}).project || {}).fallbackToDescription
           : base.crm2OdooLayout.project.fallbackToDescription,
+      },
+      lead: {
+        ...base.crm2OdooLayout.lead,
+        ...(((incoming as any).crm2OdooLayout || {}).lead || {}),
+        model: "crm.lead",
+        fallbackToDescription: typeof ((((incoming as any).crm2OdooLayout || {}).lead || {}).fallbackToDescription) === "boolean"
+          ? (((incoming as any).crm2OdooLayout || {}).lead || {}).fallbackToDescription
+          : base.crm2OdooLayout.lead.fallbackToDescription,
       },
     },
   };
