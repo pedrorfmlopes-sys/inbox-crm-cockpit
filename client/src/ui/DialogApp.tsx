@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   createOdoo,
+  getOdooFieldMeta,
   linkEmailToRecord,
   odooPing,
   readOdoo,
@@ -15,7 +16,7 @@ import {
 
 import DebugPanel from "@/ui/DebugPanel";
 import { prepareReferencedRecordName } from "@/referenceCodes";
-import { getSettings } from "@/settings";
+import { getSettings, type CockpitSettingsV1 } from "@/settings";
 import { applySkin } from "@/ui/skins";
 import * as Icons from "./icons"; // Import icons symmetrically with CrmCockpit
 
@@ -599,8 +600,194 @@ type UploadedRecordAttachment = {
   isInline?: boolean;
 };
 
+type ProjectLayoutSettings = CockpitSettingsV1["crm2OdooLayout"];
+type ProjectLayoutRuntime = {
+  mode: ProjectLayoutSettings["mode"];
+  descriptionField: string;
+  fixedInfoField: string | null;
+  historyField: string | null;
+  documentsField: string | null;
+  fixedInfoTabLabel: string;
+  historyTabLabel: string;
+  documentsTabLabel: string;
+  includeAnchorIndex: boolean;
+  showBackToTopLinks: boolean;
+  fallbackToDescription: boolean;
+  structuredActive: boolean;
+};
+
+const DEFAULT_PROJECT_LAYOUT_RUNTIME: ProjectLayoutRuntime = {
+  mode: "description_only",
+  descriptionField: "description",
+  fixedInfoField: null,
+  historyField: null,
+  documentsField: null,
+  fixedInfoTabLabel: "Informacao fixa",
+  historyTabLabel: "Historico",
+  documentsTabLabel: "Documentos",
+  includeAnchorIndex: true,
+  showBackToTopLinks: true,
+  fallbackToDescription: true,
+  structuredActive: false,
+};
+
 function escapeRegExp(value: string) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function escapeAttributeClient(value: string) {
+  return escapeHtmlClient(value).replace(/"/g, "&quot;");
+}
+
+function getProjectConversationKey(ctx: Ctx) {
+  return String(ctx.conversationId || ctx.internetMessageId || ctx.itemId || "current").trim() || "current";
+}
+
+function buildProjectLayoutAnchorId(kind: "history" | "documents", conversationKey: string) {
+  const safe = String(conversationKey || "current")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || "current";
+  return `iccc-${kind}-${safe}`;
+}
+
+function buildProjectLayoutTopId(kind: "history" | "documents") {
+  return `iccc-${kind}-top`;
+}
+
+async function getOdooFieldMetaSafe(model: string, fieldName: string) {
+  const normalizedFieldName = String(fieldName || "").trim();
+  if (!normalizedFieldName) return null;
+  try {
+    return await getOdooFieldMeta(model, normalizedFieldName);
+  } catch {
+    return null;
+  }
+}
+
+function fieldTypeMatches(meta: OdooFieldMeta | null, acceptedTypes: string[]) {
+  if (!meta?.type) return false;
+  return acceptedTypes.includes(String(meta.type || "").trim());
+}
+
+async function resolveProjectFieldName(
+  candidate: string,
+  acceptedTypes: string[],
+  fallbackFieldName?: string,
+) {
+  const normalizedCandidate = String(candidate || "").trim();
+  if (normalizedCandidate) {
+    const candidateMeta = await getOdooFieldMetaSafe("project.project", normalizedCandidate);
+    if (fieldTypeMatches(candidateMeta, acceptedTypes)) {
+      return normalizedCandidate;
+    }
+  }
+
+  const normalizedFallback = String(fallbackFieldName || "").trim();
+  if (normalizedFallback && normalizedFallback !== normalizedCandidate) {
+    const fallbackMeta = await getOdooFieldMetaSafe("project.project", normalizedFallback);
+    if (fieldTypeMatches(fallbackMeta, acceptedTypes)) {
+      return normalizedFallback;
+    }
+  }
+
+  return null;
+}
+
+async function resolveProjectLayoutRuntime(layout?: ProjectLayoutSettings): Promise<ProjectLayoutRuntime> {
+  const project = layout?.project;
+  const includeAnchorIndex = layout?.includeAnchorIndex !== false;
+  const showBackToTopLinks = layout?.showBackToTopLinks !== false;
+  const fallbackToDescription = project?.fallbackToDescription !== false;
+  const descriptionField = await resolveProjectFieldName(
+    project?.descriptionField || "description",
+    ["html", "text", "char"],
+    "description",
+  );
+  const fixedInfoField = await resolveProjectFieldName(project?.fixedInfoField || "", ["html", "text"]);
+  const historyField = layout?.mode === "structured_project"
+    ? await resolveProjectFieldName(project?.historyField || "", ["html", "text"])
+    : null;
+  const documentsField = layout?.mode === "structured_project"
+    ? await resolveProjectFieldName(project?.documentsField || "", ["html", "text"])
+    : null;
+
+  return {
+    mode: layout?.mode === "structured_project" ? "structured_project" : "description_only",
+    descriptionField: descriptionField || "description",
+    fixedInfoField,
+    historyField,
+    documentsField,
+    fixedInfoTabLabel: String(project?.fixedInfoTabLabel || DEFAULT_PROJECT_LAYOUT_RUNTIME.fixedInfoTabLabel).trim() || DEFAULT_PROJECT_LAYOUT_RUNTIME.fixedInfoTabLabel,
+    historyTabLabel: String(project?.historyTabLabel || DEFAULT_PROJECT_LAYOUT_RUNTIME.historyTabLabel).trim() || DEFAULT_PROJECT_LAYOUT_RUNTIME.historyTabLabel,
+    documentsTabLabel: String(project?.documentsTabLabel || DEFAULT_PROJECT_LAYOUT_RUNTIME.documentsTabLabel).trim() || DEFAULT_PROJECT_LAYOUT_RUNTIME.documentsTabLabel,
+    includeAnchorIndex,
+    showBackToTopLinks,
+    fallbackToDescription,
+    structuredActive: layout?.mode === "structured_project" && Boolean(historyField || documentsField),
+  };
+}
+
+function parseDialogHtmlDocument(html?: string) {
+  return new DOMParser().parseFromString(`<!doctype html><html><body>${String(html || "").trim()}</body></html>`, "text/html");
+}
+
+function upsertProjectLayoutSectionHtml(
+  existingHtml: string,
+  kind: "history" | "documents",
+  conversationKey: string,
+  sectionHtml: string,
+  options: Pick<ProjectLayoutRuntime, "includeAnchorIndex" | "showBackToTopLinks">,
+) {
+  const doc = parseDialogHtmlDocument(existingHtml);
+  const body = doc.body;
+
+  Array.from(body.querySelectorAll(`section[data-icc-layout-kind="${kind}"]`)).forEach((node) => {
+    if (node.getAttribute("data-icc-conversation") === conversationKey) {
+      node.remove();
+    }
+  });
+  Array.from(body.querySelectorAll(`[data-icc-layout-index="${kind}"]`)).forEach((node) => node.remove());
+  Array.from(body.querySelectorAll(`[data-icc-layout-top="${kind}"]`)).forEach((node) => node.remove());
+
+  if (sectionHtml) {
+    body.insertAdjacentHTML("afterbegin", sectionHtml);
+  }
+
+  const topId = buildProjectLayoutTopId(kind);
+  if (options.includeAnchorIndex || options.showBackToTopLinks) {
+    body.insertAdjacentHTML("afterbegin", `<div id="${escapeAttributeClient(topId)}" data-icc-layout-top="${kind}"></div>`);
+  }
+
+  if (options.includeAnchorIndex) {
+    const entries = Array.from(body.querySelectorAll(`section[data-icc-layout-kind="${kind}"]`))
+      .map((node) => ({
+        id: String(node.getAttribute("id") || "").trim(),
+        title: String(node.getAttribute("data-icc-title") || "").trim(),
+      }))
+      .filter((entry) => entry.id && entry.title);
+
+    if (entries.length) {
+      const linksHtml = entries
+        .map((entry) => `<a href="#${escapeAttributeClient(entry.id)}" style="display:inline-block;margin:0 8px 8px 0;color:#1D4ED8;text-decoration:none;font-weight:700;">${escapeHtmlClient(entry.title)}</a>`)
+        .join("");
+      const indexHtml = [
+        `<nav data-icc-layout-index="${kind}" style="margin:0 0 12px 0;padding:12px;border:1px solid #D8E2F2;border-radius:12px;background:#F8FAFF;">`,
+        `<div style="font-size:11px;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;color:#2563EB;margin-bottom:8px;">${kind === "history" ? "Indice do historico" : "Indice de documentos"}</div>`,
+        `<div style="font-size:11px;line-height:1.5;">${linksHtml}</div>`,
+        `</nav>`,
+      ].join("");
+      const topMarker = body.querySelector(`[data-icc-layout-top="${kind}"]`);
+      if (topMarker) {
+        topMarker.insertAdjacentHTML("afterend", indexHtml);
+      } else {
+        body.insertAdjacentHTML("afterbegin", indexHtml);
+      }
+    }
+  }
+
+  return body.innerHTML.trim();
 }
 
 function buildOdooAttachmentContentUrl(attachmentId: number, download = false) {
@@ -667,16 +854,156 @@ function buildDescriptionForRecord(descriptionHtml: string, ctx: Ctx, attachment
   return [baseHtml, attachmentSection].filter(Boolean).join("\n");
 }
 
-async function syncConversationDescriptionToRecord(model: string, recordId: number, descriptionHtml: string, ctx: Ctx, attachments: UploadedRecordAttachment[]) {
+async function syncConversationDescriptionToRecord(
+  model: string,
+  recordId: number,
+  descriptionHtml: string,
+  ctx: Ctx,
+  attachments: UploadedRecordAttachment[],
+  fieldName = "description",
+) {
   if (!attachments.length) return true;
   const enrichedDescription = buildDescriptionForRecord(descriptionHtml, ctx, attachments);
   if (!enrichedDescription) return true;
   try {
-    await writeOdoo(model, recordId, { description: enrichedDescription });
+    await writeOdoo(model, recordId, { [fieldName]: enrichedDescription });
     return true;
   } catch (error) {
     console.error("Erro ao sincronizar descricao enriquecida", model, recordId, error);
     return false;
+  }
+}
+
+function buildProjectHistorySectionHtml(
+  ctx: Ctx,
+  publishState: OdooPublishState,
+  fullBody: string,
+  description: string,
+  runtime: Pick<ProjectLayoutRuntime, "showBackToTopLinks">,
+) {
+  const conversationKey = getProjectConversationKey(ctx);
+  const anchorId = buildProjectLayoutAnchorId("history", conversationKey);
+  const topId = buildProjectLayoutTopId("history");
+  const title = String(ctx.subject || `Email ${ctx.receivedAtIso || conversationKey}`).trim();
+  const previewHtml = buildOdooPreviewHtml({
+    subject: ctx.subject,
+    fromName: ctx.fromName,
+    fromEmail: ctx.fromEmail,
+    receivedAtIso: ctx.receivedAtIso,
+    emailWebLink: ctx.emailWebLink,
+    publishState: { ...publishState, postToChatter: true },
+    emailHtml: ctx.bodyHtml,
+    emailText: fullBody,
+    description,
+  });
+
+  return [
+    `<section data-icc-layout-kind="history" data-icc-conversation="${escapeAttributeClient(conversationKey)}" data-icc-title="${escapeAttributeClient(title)}" id="${escapeAttributeClient(anchorId)}" style="margin-bottom:12px;padding:12px;border:1px solid #D8E2F2;border-radius:12px;background:#FFFFFF;">`,
+    `<div style="font-size:11px;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;color:#2563EB;margin-bottom:8px;">${escapeHtmlClient(title)}</div>`,
+    previewHtml,
+    runtime.showBackToTopLinks
+      ? `<div style="margin-top:10px;font-size:11px;"><a href="#${escapeAttributeClient(topId)}" style="color:#1D4ED8;text-decoration:none;font-weight:700;">Voltar ao topo</a></div>`
+      : "",
+    `</section>`,
+  ].filter(Boolean).join("");
+}
+
+function buildProjectDocumentsSectionHtml(
+  ctx: Ctx,
+  attachments: UploadedRecordAttachment[],
+  runtime: Pick<ProjectLayoutRuntime, "showBackToTopLinks">,
+) {
+  const attachmentSection = buildDescriptionAttachmentSectionHtml(ctx, attachments);
+  if (!attachmentSection) return "";
+
+  const conversationKey = getProjectConversationKey(ctx);
+  const anchorId = buildProjectLayoutAnchorId("documents", conversationKey);
+  const topId = buildProjectLayoutTopId("documents");
+  const title = String(ctx.subject || `Documentos ${ctx.receivedAtIso || conversationKey}`).trim();
+
+  return [
+    `<section data-icc-layout-kind="documents" data-icc-conversation="${escapeAttributeClient(conversationKey)}" data-icc-title="${escapeAttributeClient(title)}" id="${escapeAttributeClient(anchorId)}" style="margin-bottom:12px;padding:12px;border:1px solid #D8E2F2;border-radius:12px;background:#FFFFFF;">`,
+    `<div style="font-size:11px;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;color:#2563EB;margin-bottom:8px;">${escapeHtmlClient(title)}</div>`,
+    attachmentSection,
+    runtime.showBackToTopLinks
+      ? `<div style="margin-top:10px;font-size:11px;"><a href="#${escapeAttributeClient(topId)}" style="color:#1D4ED8;text-decoration:none;font-weight:700;">Voltar ao topo</a></div>`
+      : "",
+    `</section>`,
+  ].filter(Boolean).join("");
+}
+
+async function readProjectFieldValue(recordId: number, fieldName: string | null) {
+  const normalizedFieldName = String(fieldName || "").trim();
+  if (!recordId || !normalizedFieldName) return "";
+  try {
+    const rows = await readOdoo("project.project", [recordId], [normalizedFieldName]);
+    return String(rows?.[0]?.[normalizedFieldName] || "");
+  } catch {
+    return "";
+  }
+}
+
+async function syncConversationToProjectStructuredLayout(
+  recordId: number,
+  runtime: ProjectLayoutRuntime,
+  ctx: Ctx,
+  publishState: OdooPublishState,
+  fullBody: string,
+  description: string,
+  attachments: UploadedRecordAttachment[],
+) {
+  const updates: Record<string, string> = {};
+  const conversationKey = getProjectConversationKey(ctx);
+
+  if (runtime.historyField) {
+    const currentHistory = await readProjectFieldValue(recordId, runtime.historyField);
+    const nextHistory = upsertProjectLayoutSectionHtml(
+      currentHistory,
+      "history",
+      conversationKey,
+      buildProjectHistorySectionHtml(ctx, publishState, fullBody, description, runtime),
+      runtime,
+    );
+    if (nextHistory && nextHistory !== currentHistory) {
+      updates[runtime.historyField] = nextHistory;
+    }
+  }
+
+  if (runtime.documentsField && attachments.length) {
+    const currentDocuments = await readProjectFieldValue(recordId, runtime.documentsField);
+    const nextDocuments = upsertProjectLayoutSectionHtml(
+      currentDocuments,
+      "documents",
+      conversationKey,
+      buildProjectDocumentsSectionHtml(ctx, attachments, runtime),
+      runtime,
+    );
+    if (nextDocuments && nextDocuments !== currentDocuments) {
+      updates[runtime.documentsField] = nextDocuments;
+    }
+  }
+
+  if (!Object.keys(updates).length) {
+    return { ok: true, usedFallback: false };
+  }
+
+  try {
+    await writeOdoo("project.project", recordId, updates);
+    return { ok: true, usedFallback: false };
+  } catch (error) {
+    console.error("Erro ao sincronizar layout estruturado do projeto", recordId, error);
+    if (runtime.fallbackToDescription) {
+      const ok = await syncConversationDescriptionToRecord(
+        "project.project",
+        recordId,
+        description,
+        ctx,
+        attachments,
+        runtime.descriptionField,
+      );
+      return { ok, usedFallback: true };
+    }
+    return { ok: false, usedFallback: false };
   }
 }
 
@@ -2149,6 +2476,23 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
   const [description, setDescription] = useState("");
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
   const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
+  const [projectLayout, setProjectLayout] = useState<ProjectLayoutRuntime | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const settings = await getSettings();
+        const runtime = await resolveProjectLayoutRuntime(settings.crm2OdooLayout);
+        if (alive) setProjectLayout(runtime);
+      } catch {
+        if (alive) setProjectLayout(DEFAULT_PROJECT_LAYOUT_RUNTIME);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
@@ -2157,12 +2501,13 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
   }, [mode, ctx.bodyHtml, fullBody, description, emailAtts]);
 
   useEffect(() => {
-    if (mode !== "edit" || !editId) return;
+    if (mode !== "edit" || !editId || !projectLayout) return;
     (async () => {
       try {
+        const readFields = Array.from(new Set(["name", "partner_id", "user_id", projectLayout.descriptionField].filter(Boolean)));
         let rows: any[] | null = null;
         try {
-          rows = await readOdoo("project.project", [editId], ["name", "partner_id", "user_id", "description"]);
+          rows = await readOdoo("project.project", [editId], readFields);
         } catch {
           rows = await readOdoo("project.project", [editId], ["name", "partner_id", "user_id"]);
         }
@@ -2171,26 +2516,32 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
         setName(record.name || "");
         if (record.partner_id) { setPartnerId(record.partner_id[0]); setPartnerName(record.partner_id[1]); }
         if (record.user_id) { setManagerId(record.user_id[0]); setManagerName(record.user_id[1]); }
-        if (record.description) setDescription(String(record.description));
+        const descriptionValue = record?.[projectLayout.descriptionField];
+        if (descriptionValue) setDescription(String(descriptionValue));
       } catch (error: any) {
         onStatus(error?.message ?? String(error));
       }
     })();
-  }, [editId, mode, onStatus]);
+  }, [editId, mode, onStatus, projectLayout]);
 
   async function save() {
     try {
+      const activeLayout = projectLayout || await (async () => {
+        const settings = await getSettings();
+        return await resolveProjectLayoutRuntime(settings.crm2OdooLayout);
+      })();
+
       let values: any = { name: name || "Novo projeto" };
       if (partnerId) values.partner_id = partnerId;
       if (managerId) values.user_id = managerId;
-      if (description) values.description = description;
+      if (description) values[activeLayout.descriptionField] = description;
 
       if (mode === "edit") {
         try {
           await writeOdoo("project.project", editId, values);
         } catch {
           const fallbackValues = { ...values };
-          delete fallbackValues.description;
+          delete fallbackValues[activeLayout.descriptionField];
           await writeOdoo("project.project", editId, fallbackValues);
         }
         let uploadedAttachments: UploadedRecordAttachment[] = [];
@@ -2201,8 +2552,21 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
         if (publishState.postToChatter) {
           await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", Number(editId), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
         }
-        const descriptionSynced = await syncConversationDescriptionToRecord("project.project", Number(editId), description, ctx, uploadedAttachments);
-        onStatus(descriptionSynced ? "Atualizado OK" : "Atualizado, mas a descricao nao foi enriquecida com os anexos.");
+        const syncResult = activeLayout.structuredActive
+          ? await syncConversationToProjectStructuredLayout(Number(editId), activeLayout, ctx, publishState, fullBody, description, uploadedAttachments)
+          : {
+            ok: await syncConversationDescriptionToRecord("project.project", Number(editId), description, ctx, uploadedAttachments, activeLayout.descriptionField),
+            usedFallback: false,
+          };
+        onStatus(
+          syncResult.ok
+            ? syncResult.usedFallback
+              ? "Atualizado OK, com fallback para a descricao base."
+              : activeLayout.structuredActive
+                ? "Atualizado OK no layout estruturado."
+                : "Atualizado OK"
+            : "Atualizado, mas o historico/documentos nao foram sincronizados."
+        );
         setTimeout(() => closeDialog(), 500);
         return;
       }
@@ -2216,8 +2580,21 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
       }
       await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
 
-      const descriptionSynced = await syncConversationDescriptionToRecord("project.project", id, description, ctx, uploadedAttachments);
-      onStatus(descriptionSynced ? "Criado com sucesso" : "Criado, mas a descricao nao foi enriquecida com os anexos.");
+      const syncResult = activeLayout.structuredActive
+        ? await syncConversationToProjectStructuredLayout(id, activeLayout, ctx, publishState, fullBody, description, uploadedAttachments)
+        : {
+          ok: await syncConversationDescriptionToRecord("project.project", id, description, ctx, uploadedAttachments, activeLayout.descriptionField),
+          usedFallback: false,
+        };
+      onStatus(
+        syncResult.ok
+          ? syncResult.usedFallback
+            ? "Criado com sucesso, com fallback para a descricao base."
+            : activeLayout.structuredActive
+              ? "Criado com sucesso no layout estruturado."
+              : "Criado com sucesso"
+          : "Criado, mas o historico/documentos nao foram sincronizados."
+      );
       setTimeout(() => closeDialog(), 500);
     } catch (error: any) {
       onStatus(error?.message ?? String(error));
@@ -2254,8 +2631,10 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
         </CompactDualPickerCard>
       </div>
       <DescriptionWorkspace
-        title="DESCRICAO"
-        hint="Prepara aqui a descricao limpa e formatada do projeto. Esta area alimenta a coluna esquerda do Odoo."
+        title={projectLayout?.structuredActive ? "DESCRICAO BASE" : "DESCRICAO"}
+        hint={projectLayout?.structuredActive
+          ? `Este editor alimenta o campo ${projectLayout.descriptionField}. O historico segue para ${projectLayout.historyField || projectLayout.historyTabLabel} e os anexos para ${projectLayout.documentsField || projectLayout.documentsTabLabel}.`
+          : "Prepara aqui a descricao limpa e formatada do projeto. Esta area alimenta a coluna esquerda do Odoo."}
         value={description}
         onChange={setDescription}
         placeholder="Edita aqui a descricao do projeto..."
