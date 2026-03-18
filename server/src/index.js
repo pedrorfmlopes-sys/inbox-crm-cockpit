@@ -66,10 +66,13 @@ let odooInitPromise = null;
 async function getOdooCached(req) {
   // 1. Try session token from Authorization header
   const authHeader = req.headers.authorization;
+  let hadSessionToken = false;
   if (authHeader && authHeader.startsWith("Session ")) {
+    hadSessionToken = true;
     const token = authHeader.split(" ")[1];
     const session = sessionManager.getSession(token);
     if (session) return session.client || session;
+    throw Object.assign(new Error("Session expired"), { status: 401, code: "SESSION_EXPIRED" });
   }
 
   // 2. Fallback to global singleton (from .env)
@@ -82,6 +85,9 @@ async function getOdooCached(req) {
       cachedOdoo = client;
       return client;
     } catch (e) {
+      if (hadSessionToken) {
+        throw Object.assign(new Error("Session expired"), { status: 401, code: "SESSION_EXPIRED", cause: e });
+      }
       odooInitPromise = null; // allow retry
       throw e;
     } finally {
@@ -110,8 +116,8 @@ app.get("/api/auth/check", async (req, res) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Session ")) {
     const token = authHeader.split(" ")[1];
-    const sessionClient = sessionManager.getSession(token);
-    if (sessionClient) return res.json({ ok: true, meta: sessionClient.meta });
+    const session = sessionManager.getSession(token);
+    if (session?.client?.meta) return res.json({ ok: true, meta: session.client.meta });
   }
   return res.json({ ok: false });
 });
@@ -352,8 +358,10 @@ app.get("/api/odoo/partners/by-email", async (req, res) => {
       const partner = await findPartnerExactByEmail(odoo, email);
       return res.json({ ok: true, partner: partner || null });
     } catch (e) {
-      console.warn("[server] /partners/by-email fallback to null:", e?.message);
-      return res.json({ ok: true, partner: null, warning: "odoo_unavailable" });
+      const message = String(e?.message || e);
+      const status = Number(e?.status) || (/session expired/i.test(message) ? 401 : 503);
+      console.warn("[server] /partners/by-email failed:", message);
+      return res.status(status).json({ ok: false, error: "odoo_unavailable", message, partner: null });
     }
   } catch (e) {
     console.error(e);
@@ -371,8 +379,10 @@ app.get("/api/odoo/companies/search", async (req, res) => {
       const companies = await safeSearchReadCompat(odoo, "res.partner", domain, PARTNER_PREFERRED_READ_FIELDS, 10);
       return res.json({ ok: true, results: companies || [] });
     } catch (e) {
-      console.warn("[server] /companies/search fallback empty:", e?.message);
-      return res.json({ ok: true, results: [], warning: "odoo_unavailable" });
+      const message = String(e?.message || e);
+      const status = Number(e?.status) || (/session expired/i.test(message) ? 401 : 503);
+      console.warn("[server] /companies/search failed:", message);
+      return res.status(status).json({ ok: false, error: "odoo_unavailable", message, results: [] });
     }
   } catch (e) {
     console.error(e);
