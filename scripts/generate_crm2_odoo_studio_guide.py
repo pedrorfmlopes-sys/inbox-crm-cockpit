@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
@@ -12,6 +13,41 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "output" / "pdf"
 PUBLIC_DIR = ROOT / "client" / "public" / "docs"
 FILENAME = "inbox-cockpit-crm2-odoo-studio-setup.pdf"
+
+LAYOUTS = [
+    {
+        "title": "Projetos",
+        "model": "project.project",
+        "description": "description",
+        "fixed": "x_studio_iccc_project_brief",
+        "history": "x_studio_iccc_project_history",
+        "documents": "x_studio_iccc_project_documents",
+    },
+    {
+        "title": "Leads",
+        "model": "crm.lead",
+        "description": "description",
+        "fixed": "x_studio_iccc_lead_brief",
+        "history": "x_studio_iccc_lead_history",
+        "documents": "x_studio_iccc_lead_documents",
+    },
+    {
+        "title": "Tarefas",
+        "model": "project.task",
+        "description": "description",
+        "fixed": "x_studio_iccc_task_brief",
+        "history": "x_studio_iccc_task_history",
+        "documents": "x_studio_iccc_task_documents",
+    },
+    {
+        "title": "Tickets",
+        "model": "helpdesk.ticket",
+        "description": "description",
+        "fixed": "x_studio_iccc_ticket_brief",
+        "history": "x_studio_iccc_ticket_history",
+        "documents": "x_studio_iccc_ticket_documents",
+    },
+]
 
 
 def build_styles():
@@ -105,16 +141,48 @@ def build_table(data, col_widths):
 
 def bullet_list(styles, items):
     return ListFlowable(
-        [
-            ListItem(Paragraph(item, styles["GuideBody"]), leftIndent=6)
-            for item in items
-        ],
+        [ListItem(Paragraph(item, styles["GuideBody"]), leftIndent=6) for item in items],
         bulletType="bullet",
         start="circle",
         leftIndent=16,
         bulletFontName="Helvetica",
         bulletFontSize=8,
         bulletOffsetY=1,
+    )
+
+
+def add_layout_story(story, styles, layout):
+    story.append(Paragraph(layout["title"], styles["GuideSection"]))
+    story.append(
+        Paragraph(
+            f"O CRM2 pode usar este layout de forma independente no modelo <b>{layout['model']}</b>. "
+            f"Se o modo desta entidade ficar em 'Descricao apenas', o CRM2 continua a usar apenas o campo base.",
+            styles["GuideBody"],
+        )
+    )
+    story.append(
+        build_table(
+            [
+                ["Funcao", "Nome tecnico recomendado", "Tipo recomendado", "Obrigatorio"],
+                ["Descricao base", layout["description"], "HTML ou Text", "Sim"],
+                ["Informacao fixa", layout["fixed"], "HTML", "Opcional"],
+                ["Historico", layout["history"], "HTML", "Opcional"],
+                ["Documentos", layout["documents"], "HTML", "Opcional"],
+            ],
+            [42 * mm, 70 * mm, 35 * mm, 25 * mm],
+        )
+    )
+    story.append(Spacer(1, 6))
+    story.append(
+        bullet_list(
+            styles,
+            [
+                f"Abrir o Studio num registo de <b>{layout['title'][:-1] if layout['title'].endswith('s') else layout['title']}</b> e editar a vista de <b>{layout['model']}</b>.",
+                f"Criar os campos <b>{layout['fixed']}</b>, <b>{layout['history']}</b> e <b>{layout['documents']}</b> se quiseres modo estruturado nesta entidade.",
+                "Adicionar as abas Informacao fixa, Historico e Documentos na vista form e colocar um campo por aba.",
+                "Guardar o Studio, voltar ao add-in, escolher esta entidade em Settings e correr a validacao.",
+            ],
+        )
     )
 
 
@@ -126,101 +194,68 @@ def build_story():
     story.append(
         Paragraph(
             "Este guia explica como preparar o Odoo Studio para o modo estruturado do CRM2. "
-            "O objetivo e separar descricao base, informacao fixa, historico e documentos do projeto "
-            "sem perder o fallback para tenants que usam apenas a descricao standard.",
+            "A configuracao e independente por entidade: projetos, leads, tarefas e tickets podem usar "
+            "modos diferentes na mesma empresa.",
             styles["GuideIntro"],
         )
     )
     story.append(
         Paragraph(
-            "Escopo desta versao: configuracao do modelo <b>project.project</b>. "
-            "Os restantes modelos podem continuar a usar o fluxo tradicional enquanto o CRM2 evolui.",
+            "O cockpit suporta dois modos por entidade: <b>Descricao apenas</b> e <b>Layout estruturado</b>. "
+            "Podes ativar o modo estruturado apenas nos modelos que realmente precisam dele.",
             styles["GuideNote"],
         )
     )
 
-    story.append(Paragraph("1. O que o CRM2 espera encontrar", styles["GuideSection"]))
-    story.append(
-        Paragraph(
-            "O modo estruturado do CRM2 usa um campo base para a descricao e, opcionalmente, "
-            "campos HTML separados para informacao fixa, historico e documentos. "
-            "Quando os campos nao existem ou falham, a app pode regressar automaticamente ao campo de descricao.",
-            styles["GuideBody"],
-        )
-    )
-    story.append(
-        build_table(
-            [
-                ["Funcao", "Nome tecnico recomendado", "Tipo recomendado", "Obrigatorio"],
-                ["Descricao base", "description", "HTML ou Text", "Sim"],
-                ["Informacao fixa", "x_studio_iccc_project_brief", "HTML", "Opcional"],
-                ["Historico", "x_studio_iccc_project_history", "HTML", "Recomendado"],
-                ["Documentos", "x_studio_iccc_project_documents", "HTML", "Recomendado"],
-            ],
-            [45 * mm, 67 * mm, 35 * mm, 25 * mm],
-        )
-    )
-
-    story.append(Paragraph("2. Abas recomendadas na vista do projeto", styles["GuideSection"]))
-    story.append(
-        Paragraph(
-            "No formulario do projeto, o CRM2 consegue validar se as abas existem. "
-            "As etiquetas recomendadas sao estas:",
-            styles["GuideBody"],
-        )
-    )
-    story.append(
-        build_table(
-            [
-                ["Aba", "Campo a colocar", "Observacao"],
-                ["Informacao fixa", "x_studio_iccc_project_brief", "Contexto permanente do projeto"],
-                ["Historico", "x_studio_iccc_project_history", "Emails/posts da conversa, geridos pelo CRM2"],
-                ["Documentos", "x_studio_iccc_project_documents", "Blocos com anexos por conversa"],
-            ],
-            [40 * mm, 70 * mm, 65 * mm],
-        )
-    )
-
-    story.append(Paragraph("3. Passo a passo no Odoo Studio", styles["GuideSection"]))
+    story.append(Paragraph("1. Estrategia recomendada", styles["GuideSection"]))
     story.append(
         bullet_list(
             styles,
             [
-                "Abrir um registo de projeto no Odoo e clicar em <b>Studio</b>.",
-                "Entrar no formulario de <b>project.project</b>.",
-                "Criar os campos HTML recomendados se ainda nao existirem.",
-                "Adicionar as abas <b>Informacao fixa</b>, <b>Historico</b> e <b>Documentos</b>.",
-                "Colocar um campo por aba, com largura total, para evitar scroll horizontal.",
-                "Guardar e publicar as alteracoes do Studio.",
-                "Voltar ao add-in e abrir <b>Settings &gt; CRM2 / Odoo Layout</b>.",
-                "Ativar o modo <b>Projeto com campos/abas proprias</b>.",
-                "Executar <b>Validar configuracao Odoo</b> para confirmar campos, tipos e visibilidade na vista.",
+                "Comecar com 'Descricao apenas' em todas as entidades.",
+                "Ativar o modo estruturado apenas onde houver ganho real de organizacao.",
+                "Usar o validador do cockpit antes de ativar qualquer entidade em producao.",
+                "Manter o fallback para descricao ligado nas primeiras instalacoes de cada cliente.",
             ],
         )
     )
 
-    story.append(Paragraph("4. Como configurar no Settings do Inbox Cockpit", styles["GuideSection"]))
+    story.append(Paragraph("2. Resumo de modelos suportados", styles["GuideSection"]))
+    story.append(
+        build_table(
+            [["Entidade", "Modelo", "Descricao base", "Campos extra opcionais"]]
+            + [[layout["title"], layout["model"], layout["description"], "Informacao fixa / Historico / Documentos"] for layout in LAYOUTS],
+            [34 * mm, 42 * mm, 40 * mm, 64 * mm],
+        )
+    )
+
+    story.append(Paragraph("3. Settings do CRM2 / Odoo Layout", styles["GuideSection"]))
     story.append(
         Paragraph(
-            "A secao <b>CRM2 / Odoo Layout</b> permite definir o modo de escrita e os nomes tecnicos. "
-            "Se a empresa usar nomes diferentes dos recomendados, basta substituir os nomes tecnicos no cockpit "
-            "e guardar as definicoes antes de validar.",
+            "Nos Settings, a secao CRM2 / Odoo Layout permite escolher a entidade alvo e definir o modo dessa entidade. "
+            "As opcoes de indice e 'Voltar ao topo' sao globais, mas a escolha entre 'Descricao apenas' e 'Layout estruturado' e feita separadamente em cada tipo.",
             styles["GuideBody"],
         )
     )
     story.append(
         build_table(
             [
-                ["Opcao", "Quando usar"],
-                ["Descricao apenas", "Tenants sem Studio ou fases piloto"],
-                ["Projeto com campos/abas proprias", "Tenants com estrutura Odoo preparada"],
-                ["Fallback automatico para descricao", "Recomendado para instalacoes comerciais"],
-                ["Criar indice de emails/posts", "Ativa navegacao por ancora no historico"],
-                ["Mostrar links Voltar ao topo", "Ajuda em historicos longos"],
+                ["Opcao", "Escopo", "Objetivo"],
+                ["Modo da entidade", "Independente por entidade", "Escolher descricao simples ou layout estruturado"],
+                ["Fallback para descricao", "Independente por entidade", "Garantir continuidade se algum campo Studio falhar"],
+                ["Indice de emails/posts", "Global", "Criar navegacao por ancora nos historicos"],
+                ["Links Voltar ao topo", "Global", "Facilitar leitura de historicos longos"],
             ],
-            [75 * mm, 105 * mm],
+            [48 * mm, 48 * mm, 84 * mm],
         )
     )
+
+    story.append(PageBreak())
+
+    story.append(Paragraph("4. Setup Studio por entidade", styles["GuideSection"]))
+    for layout in LAYOUTS:
+        add_layout_story(story, styles, layout)
+        story.append(Spacer(1, 4))
 
     story.append(PageBreak())
 
@@ -229,47 +264,32 @@ def build_story():
         bullet_list(
             styles,
             [
-                "O editor <b>Descricao base</b> escreve no campo configurado como descricao principal.",
-                "O editor <b>Informacao fixa</b> guarda texto permanente do projeto e nao deve ser reescrito pelo historico.",
-                "Ao ligar um email ao projeto, o CRM2 pode gravar o resumo do email no campo de historico.",
-                "Os anexos selecionados podem aparecer no campo de documentos, agrupados por conversa.",
-                "Se algum campo falhar, o cockpit pode voltar ao campo base de descricao sem bloquear a operacao.",
+                "Se a entidade estiver em 'Descricao apenas', o CRM2 escreve so no campo base e continua a funcionar como hoje.",
+                "Se a entidade estiver em 'Layout estruturado', o CRM2 pode separar descricao base, informacao fixa, historico e documentos.",
+                "Cada email ligado pode atualizar o historico e os documentos dessa mesma entidade sem interferir com as outras.",
+                "A mesma empresa pode usar, por exemplo, projetos estruturados, leads simples, tickets estruturados e tarefas simples.",
             ],
         )
     )
 
-    story.append(Paragraph("6. Recomendacoes para comercializacao multiempresa", styles["GuideSection"]))
-    story.append(
-        bullet_list(
-            styles,
-            [
-                "Manter os nomes tecnicos recomendados sempre que possivel.",
-                "Usar o validador do cockpit em cada novo cliente antes de ativar o modo estruturado.",
-                "Nao desligar o fallback para descricao nas primeiras instalacoes.",
-                "Documentar internamente quem gere o Studio em cada empresa cliente.",
-                "Testar um projeto novo e um projeto existente antes de iniciar utilizacao produtiva.",
-            ],
-        )
-    )
-
-    story.append(Paragraph("7. Troubleshooting rapido", styles["GuideSection"]))
+    story.append(Paragraph("6. Troubleshooting rapido", styles["GuideSection"]))
     story.append(
         build_table(
             [
                 ["Sintoma", "Causa provavel", "Acao recomendada"],
                 ["Campo nao encontrado", "Nome tecnico errado ou campo nao criado", "Corrigir nome tecnico ou criar o campo no Studio"],
-                ["Campo existe mas nao aparece", "Campo fora da vista form", "Adicionar o campo a uma aba visivel"],
-                ["Aba nao encontrada", "Etiqueta diferente da configurada", "Ajustar label no Studio ou no Settings"],
-                ["CRM2 voltou para descricao", "Fallback ativo apos erro no campo estruturado", "Validar configuracao e rever permissao/tipo"],
+                ["Campo existe mas nao aparece na validacao", "Nao esta na vista form", "Adicionar o campo a uma aba ou pagina visivel"],
+                ["Historico/documentos nao atualizam", "Entidade ainda em Descricao apenas", "Verificar o modo configurado para essa entidade"],
+                ["Uma entidade funciona e outra nao", "Configuracao independente por tipo", "Validar apenas a entidade em falta e rever os campos dessa vista"],
             ],
-            [42 * mm, 62 * mm, 76 * mm],
+            [48 * mm, 58 * mm, 74 * mm],
         )
     )
 
-    story.append(Spacer(1, 8))
     story.append(
         Paragraph(
-            "Documento gerado para acompanhar a configuracao do modo estruturado do CRM2 no Inbox CRM Cockpit.",
+            "Recomendacao comercial: manter esta estrutura documentada por cliente e ativar o modo estruturado "
+            "por fases, entidade a entidade, em vez de o ligar em todo o tenant de uma vez.",
             styles["GuideNote"],
         )
     )
@@ -277,38 +297,29 @@ def build_story():
     return story
 
 
-def add_page_number(canvas, doc):
-    canvas.saveState()
-    canvas.setFont("Helvetica", 8)
-    canvas.setFillColor(colors.HexColor("#486581"))
-    canvas.drawRightString(A4[0] - 18 * mm, 12 * mm, f"Pagina {doc.page}")
-    canvas.restoreState()
-
-
-def main():
+def generate_pdf():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
 
-    output_pdf = OUTPUT_DIR / FILENAME
-    public_pdf = PUBLIC_DIR / FILENAME
+    output_path = OUTPUT_DIR / FILENAME
+    public_path = PUBLIC_DIR / FILENAME
 
     doc = SimpleDocTemplate(
-        str(output_pdf),
+        str(output_path),
         pagesize=A4,
-        leftMargin=18 * mm,
-        rightMargin=18 * mm,
-        topMargin=18 * mm,
-        bottomMargin=18 * mm,
+        rightMargin=16 * mm,
+        leftMargin=16 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
         title="Inbox CRM Cockpit - Guia Odoo Studio para CRM2",
         author="OpenAI Codex",
-        subject="Configuracao CRM2 / Odoo Studio",
     )
-    doc.build(build_story(), onFirstPage=add_page_number, onLaterPages=add_page_number)
-
-    public_pdf.write_bytes(output_pdf.read_bytes())
-    print(output_pdf)
-    print(public_pdf)
+    doc.build(build_story())
+    shutil.copyfile(output_path, public_path)
+    return output_path, public_path
 
 
 if __name__ == "__main__":
-    main()
+    output_path, public_path = generate_pdf()
+    print(f"PDF gerado em: {output_path}")
+    print(f"Copia publicada em: {public_path}")

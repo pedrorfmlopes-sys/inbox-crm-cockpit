@@ -25,6 +25,7 @@ export type ReferenceCounterMode = "per_type" | "global";
 export type ReferenceCodePosition = "prefix" | "suffix";
 export type GroupStorageProvider = "cloud" | "local" | "onedrive" | "disabled";
 export type Crm2OdooLayoutMode = "description_only" | "structured_project";
+export type Crm2OdooLayoutTarget = "project" | "lead" | "task" | "ticket";
 
 export type ReferenceCodeSettings = {
   enabled: boolean;
@@ -48,6 +49,7 @@ export type GroupStorageSettings = {
 
 export type Crm2StructuredLayoutSettings<TModel extends string> = {
   model: TModel;
+  mode: Crm2OdooLayoutMode;
   descriptionField: string;
   fixedInfoField: string;
   historyField: string;
@@ -60,13 +62,18 @@ export type Crm2StructuredLayoutSettings<TModel extends string> = {
 
 export type Crm2ProjectStructuredLayoutSettings = Crm2StructuredLayoutSettings<"project.project">;
 export type Crm2LeadStructuredLayoutSettings = Crm2StructuredLayoutSettings<"crm.lead">;
+export type Crm2TaskStructuredLayoutSettings = Crm2StructuredLayoutSettings<"project.task">;
+export type Crm2TicketStructuredLayoutSettings = Crm2StructuredLayoutSettings<"helpdesk.ticket">;
 
 export type Crm2OdooLayoutSettings = {
+  // Legacy/global default kept for backwards compatibility.
   mode: Crm2OdooLayoutMode;
   includeAnchorIndex: boolean;
   showBackToTopLinks: boolean;
   project: Crm2ProjectStructuredLayoutSettings;
   lead: Crm2LeadStructuredLayoutSettings;
+  task: Crm2TaskStructuredLayoutSettings;
+  ticket: Crm2TicketStructuredLayoutSettings;
 };
 
 export type CockpitSettingsV1 = {
@@ -267,6 +274,7 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     showBackToTopLinks: true,
     project: {
       model: "project.project",
+      mode: "description_only",
       descriptionField: "description",
       fixedInfoField: "x_studio_iccc_project_brief",
       historyField: "x_studio_iccc_project_history",
@@ -278,10 +286,35 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     },
     lead: {
       model: "crm.lead",
+      mode: "description_only",
       descriptionField: "description",
       fixedInfoField: "x_studio_iccc_lead_brief",
       historyField: "x_studio_iccc_lead_history",
       documentsField: "x_studio_iccc_lead_documents",
+      fixedInfoTabLabel: "Informacao fixa",
+      historyTabLabel: "Historico",
+      documentsTabLabel: "Documentos",
+      fallbackToDescription: true,
+    },
+    task: {
+      model: "project.task",
+      mode: "description_only",
+      descriptionField: "description",
+      fixedInfoField: "x_studio_iccc_task_brief",
+      historyField: "x_studio_iccc_task_history",
+      documentsField: "x_studio_iccc_task_documents",
+      fixedInfoTabLabel: "Informacao fixa",
+      historyTabLabel: "Historico",
+      documentsTabLabel: "Documentos",
+      fallbackToDescription: true,
+    },
+    ticket: {
+      model: "helpdesk.ticket",
+      mode: "description_only",
+      descriptionField: "description",
+      fixedInfoField: "x_studio_iccc_ticket_brief",
+      historyField: "x_studio_iccc_ticket_history",
+      documentsField: "x_studio_iccc_ticket_documents",
       fixedInfoTabLabel: "Informacao fixa",
       historyTabLabel: "Historico",
       documentsTabLabel: "Documentos",
@@ -398,6 +431,8 @@ function emitSettingsUpdated(settings: CockpitSettingsV1): void {
 
 function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSettingsV1> | null): CockpitSettingsV1 {
   if (!incoming) return base;
+  const incomingLayout = ((incoming as any).crm2OdooLayout || {});
+  const incomingLayoutMode = normalizeCrm2OdooLayoutMode(incomingLayout.mode ?? base.crm2OdooLayout.mode);
 
   const merged: CockpitSettingsV1 = {
     ...base,
@@ -431,29 +466,49 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
     },
     crm2OdooLayout: {
       ...base.crm2OdooLayout,
-      ...((incoming as any).crm2OdooLayout || {}),
-      mode: normalizeCrm2OdooLayoutMode(((incoming as any).crm2OdooLayout || {}).mode ?? base.crm2OdooLayout.mode),
-      includeAnchorIndex: typeof ((incoming as any).crm2OdooLayout || {}).includeAnchorIndex === "boolean"
-        ? ((incoming as any).crm2OdooLayout || {}).includeAnchorIndex
+      ...incomingLayout,
+      mode: incomingLayoutMode,
+      includeAnchorIndex: typeof incomingLayout.includeAnchorIndex === "boolean"
+        ? incomingLayout.includeAnchorIndex
         : base.crm2OdooLayout.includeAnchorIndex,
-      showBackToTopLinks: typeof ((incoming as any).crm2OdooLayout || {}).showBackToTopLinks === "boolean"
-        ? ((incoming as any).crm2OdooLayout || {}).showBackToTopLinks
+      showBackToTopLinks: typeof incomingLayout.showBackToTopLinks === "boolean"
+        ? incomingLayout.showBackToTopLinks
         : base.crm2OdooLayout.showBackToTopLinks,
       project: {
         ...base.crm2OdooLayout.project,
-        ...(((incoming as any).crm2OdooLayout || {}).project || {}),
+        ...(incomingLayout.project || {}),
         model: "project.project",
-        fallbackToDescription: typeof ((((incoming as any).crm2OdooLayout || {}).project || {}).fallbackToDescription) === "boolean"
-          ? (((incoming as any).crm2OdooLayout || {}).project || {}).fallbackToDescription
+        mode: normalizeCrm2OdooLayoutMode((incomingLayout.project || {}).mode ?? incomingLayoutMode),
+        fallbackToDescription: typeof ((incomingLayout.project || {}).fallbackToDescription) === "boolean"
+          ? (incomingLayout.project || {}).fallbackToDescription
           : base.crm2OdooLayout.project.fallbackToDescription,
       },
       lead: {
         ...base.crm2OdooLayout.lead,
-        ...(((incoming as any).crm2OdooLayout || {}).lead || {}),
+        ...(incomingLayout.lead || {}),
         model: "crm.lead",
-        fallbackToDescription: typeof ((((incoming as any).crm2OdooLayout || {}).lead || {}).fallbackToDescription) === "boolean"
-          ? (((incoming as any).crm2OdooLayout || {}).lead || {}).fallbackToDescription
+        mode: normalizeCrm2OdooLayoutMode((incomingLayout.lead || {}).mode ?? incomingLayoutMode),
+        fallbackToDescription: typeof ((incomingLayout.lead || {}).fallbackToDescription) === "boolean"
+          ? (incomingLayout.lead || {}).fallbackToDescription
           : base.crm2OdooLayout.lead.fallbackToDescription,
+      },
+      task: {
+        ...base.crm2OdooLayout.task,
+        ...(incomingLayout.task || {}),
+        model: "project.task",
+        mode: normalizeCrm2OdooLayoutMode((incomingLayout.task || {}).mode ?? incomingLayoutMode),
+        fallbackToDescription: typeof ((incomingLayout.task || {}).fallbackToDescription) === "boolean"
+          ? (incomingLayout.task || {}).fallbackToDescription
+          : base.crm2OdooLayout.task.fallbackToDescription,
+      },
+      ticket: {
+        ...base.crm2OdooLayout.ticket,
+        ...(incomingLayout.ticket || {}),
+        model: "helpdesk.ticket",
+        mode: normalizeCrm2OdooLayoutMode((incomingLayout.ticket || {}).mode ?? incomingLayoutMode),
+        fallbackToDescription: typeof ((incomingLayout.ticket || {}).fallbackToDescription) === "boolean"
+          ? (incomingLayout.ticket || {}).fallbackToDescription
+          : base.crm2OdooLayout.ticket.fallbackToDescription,
       },
     },
   };

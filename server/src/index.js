@@ -638,12 +638,25 @@ function createLayoutCheck({
 app.post("/api/odoo/layout/validate", async (req, res) => {
   try {
     const layout = req.body?.layout || {};
-    const target = String(req.body?.target || "project").trim() === "lead" ? "lead" : "project";
-    const mode = String(layout?.mode || "description_only").trim() === "structured_project"
+    const requestedTarget = String(req.body?.target || "project").trim().toLowerCase();
+    const target = requestedTarget === "lead"
+      ? "lead"
+      : requestedTarget === "task"
+        ? "task"
+        : requestedTarget === "ticket"
+          ? "ticket"
+          : "project";
+    const targetConfig = layout?.[target] || {};
+    const mode = String(targetConfig?.mode || layout?.mode || "description_only").trim() === "structured_project"
       ? "structured_project"
       : "description_only";
-    const targetConfig = layout?.[target] || {};
-    const modelFallback = target === "lead" ? "crm.lead" : "project.project";
+    const modelFallback = target === "lead"
+      ? "crm.lead"
+      : target === "task"
+        ? "project.task"
+        : target === "ticket"
+          ? "helpdesk.ticket"
+          : "project.project";
     const model = String(targetConfig?.model || modelFallback).trim() || modelFallback;
 
     if (!modelAllowed(model)) {
@@ -1064,6 +1077,8 @@ function cleanValuesForModel(model, values) {
     if (
       allowedByModel.has(k) ||
       (model === "project.project" && /^x_/i.test(k)) ||
+      (model === "project.task" && /^x_/i.test(k)) ||
+      (model === "helpdesk.ticket" && /^x_/i.test(k)) ||
       (model === "crm.lead" && (/^x_/i.test(k) || /(^|_)(lead_type|tipo_de_lead|tipo_lead)$/.test(k) || /tipo.*lead/i.test(k)))
     ) {
       clean[k] = v;

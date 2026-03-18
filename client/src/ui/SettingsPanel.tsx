@@ -8,6 +8,7 @@ import {
   setSignatureImageDataUrl,
   type AppLocale,
   type CockpitSettingsV1,
+  type Crm2OdooLayoutTarget,
   type GroupStorageProvider,
   type LangOption,
   type ReferenceEntityKey,
@@ -1313,25 +1314,49 @@ function Crm2LayoutSettings({
 }) {
   const layout = model.crm2OdooLayout;
   const pdfGuideHref = "/docs/inbox-cockpit-crm2-odoo-studio-setup.pdf";
-  const [layoutTarget, setLayoutTarget] = useState<"project" | "lead">("project");
+  const [layoutTarget, setLayoutTarget] = useState<Crm2OdooLayoutTarget>("project");
   const [isValidating, setIsValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [validation, setValidation] = useState<Crm2LayoutValidationResult | null>(null);
-  const targetConfig = layoutTarget === "lead" ? layout.lead : layout.project;
-  const targetLabel = layoutTarget === "lead" ? "Lead" : "Projeto";
-  const targetPluralLabel = layoutTarget === "lead" ? "leads" : "projetos";
-  const targetModeLabel = layout.mode === "structured_project" ? `${targetLabel} com campos/abas proprias` : "Descricao apenas";
-  const targetGuideDefaults = layoutTarget === "lead"
-    ? {
-        fixedInfoField: "x_studio_iccc_lead_brief",
-        historyField: "x_studio_iccc_lead_history",
-        documentsField: "x_studio_iccc_lead_documents",
-      }
-    : {
-        fixedInfoField: "x_studio_iccc_project_brief",
-        historyField: "x_studio_iccc_project_history",
-        documentsField: "x_studio_iccc_project_documents",
-      };
+  const targetConfig = layout[layoutTarget];
+  const targetMeta = {
+    project: {
+      singular: "Projeto",
+      plural: "projetos",
+      button: "Projetos",
+      fixedInfoField: "x_studio_iccc_project_brief",
+      historyField: "x_studio_iccc_project_history",
+      documentsField: "x_studio_iccc_project_documents",
+    },
+    lead: {
+      singular: "Lead",
+      plural: "leads",
+      button: "Leads",
+      fixedInfoField: "x_studio_iccc_lead_brief",
+      historyField: "x_studio_iccc_lead_history",
+      documentsField: "x_studio_iccc_lead_documents",
+    },
+    task: {
+      singular: "Tarefa",
+      plural: "tarefas",
+      button: "Tarefas",
+      fixedInfoField: "x_studio_iccc_task_brief",
+      historyField: "x_studio_iccc_task_history",
+      documentsField: "x_studio_iccc_task_documents",
+    },
+    ticket: {
+      singular: "Ticket",
+      plural: "tickets",
+      button: "Tickets",
+      fixedInfoField: "x_studio_iccc_ticket_brief",
+      historyField: "x_studio_iccc_ticket_history",
+      documentsField: "x_studio_iccc_ticket_documents",
+    },
+  } as const;
+  const targetLabel = targetMeta[layoutTarget].singular;
+  const targetPluralLabel = targetMeta[layoutTarget].plural;
+  const targetGuideDefaults = targetMeta[layoutTarget];
+  const targetModeLabel = targetConfig.mode === "structured_project" ? `${targetLabel} com campos/abas proprias` : "Descricao apenas";
 
   function updateLayout<K extends keyof CockpitSettingsV1["crm2OdooLayout"]>(
     key: K,
@@ -1390,7 +1415,7 @@ function Crm2LayoutSettings({
         compact
         tone="info"
         title="Estrategia de escrita do CRM2 no Odoo"
-        description="Define se o CRM2 escreve tudo na descricao base ou se usa um layout estruturado com campos/abas preparados no Odoo Studio por entidade."
+        description="Define por entidade se o CRM2 escreve apenas na descricao base ou se usa um layout estruturado com campos e abas preparados no Odoo Studio."
       />
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -1408,43 +1433,46 @@ function Crm2LayoutSettings({
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          style={layoutTarget === "project" ? S.btn : S.btnGhost}
-          onClick={() => {
-            setLayoutTarget("project");
-            setValidation(null);
-            setValidationError(null);
-          }}
-        >
-          Projetos
-        </button>
-        <button
-          type="button"
-          style={layoutTarget === "lead" ? S.btn : S.btnGhost}
-          onClick={() => {
-            setLayoutTarget("lead");
-            setValidation(null);
-            setValidationError(null);
-          }}
-        >
-          Leads
-        </button>
+        {(["project", "lead", "task", "ticket"] as Crm2OdooLayoutTarget[]).map((target) => (
+          <button
+            key={target}
+            type="button"
+            style={layoutTarget === target ? S.btn : S.btnGhost}
+            onClick={() => {
+              setLayoutTarget(target);
+              setValidation(null);
+              setValidationError(null);
+            }}
+          >
+            {targetMeta[target].button}
+          </button>
+        ))}
       </div>
 
-      <Field label="Modo de escrita">
+      <Field label={`Modo de escrita para ${targetPluralLabel}`}>
         <select
           style={S.select}
-          value={layout.mode}
-          onChange={(e) => updateLayout("mode", e.target.value === "structured_project" ? "structured_project" : "description_only")}
+          value={targetConfig.mode}
+          onChange={(e) => updateTargetConfig("mode", e.target.value === "structured_project" ? "structured_project" : "description_only")}
         >
           <option value="description_only">Descricao apenas (fallback universal)</option>
           <option value="structured_project">Layout estruturado com campos/abas proprias</option>
         </select>
         <div style={S.hint}>
-          Usa "Descricao apenas" para tenants sem personalizacao. Usa "Layout estruturado" quando o cliente tiver preparado o Odoo Studio para {targetPluralLabel}.
+          Esta escolha e independente por entidade. Podes deixar {targetPluralLabel} em "Descricao apenas" e usar modo estruturado noutros tipos ao mesmo tempo.
         </div>
       </Field>
+
+      <div style={S.referenceCard}>
+        <div style={S.fieldLabel}>Resumo de independencia</div>
+        <div style={{ display: "grid", gap: 6 }}>
+          {(["project", "lead", "task", "ticket"] as Crm2OdooLayoutTarget[]).map((target) => (
+            <div key={target} style={S.hint}>
+              {targetMeta[target].singular}: <b>{layout[target].mode === "structured_project" ? "Estruturado" : "Descricao apenas"}</b>
+            </div>
+          ))}
+        </div>
+      </div>
 
       <label style={S.toggleRow}>
         <input
@@ -1597,7 +1625,7 @@ function Crm2LayoutSettings({
           </a>
         </div>
         <div style={{ ...S.hint, marginTop: 8 }}>
-          O PDF foi pensado para onboarding multiempresa. A versao atual e mais detalhada para projetos, mas a mesma logica aplica-se aos leads: basta alinhar os nomes tecnicos nesta secao antes de validar.
+          O PDF foi pensado para onboarding multiempresa. A versao nova passa a cobrir projetos, leads, tarefas e tickets, mantendo configuracao independente por entidade.
         </div>
       </div>
 
@@ -1616,7 +1644,7 @@ function Crm2LayoutSettings({
             compact
             tone={validation.ready ? "success" : validation.summary.error > 0 ? "error" : "warning"}
             title={validation.ready ? "Layout pronto para uso" : "Layout requer ajustes no Odoo Studio"}
-            description={`Modelo ${validation.model}. ${validation.summary.ok} ok, ${validation.summary.warning} aviso(s), ${validation.summary.error} erro(s). Alvo validado: ${validation.target === "lead" ? "Lead" : "Projeto"}.`}
+            description={`Modelo ${validation.model}. ${validation.summary.ok} ok, ${validation.summary.warning} aviso(s), ${validation.summary.error} erro(s). Alvo validado: ${validation.target === "lead" ? "Lead" : validation.target === "task" ? "Tarefa" : validation.target === "ticket" ? "Ticket" : "Projeto"}.`}
           />
 
           <div style={S.referenceCard}>
@@ -1683,9 +1711,9 @@ function Crm2LayoutSettings({
 
       <PanelState
         compact
-        tone="warning"
-        title="Proxima fase do CRM2"
-        description="Os settings ja definem a estrategia e a validacao no Odoo Studio para projetos e leads. O passo seguinte e ligar o DialogApp e o fluxo de escrita do CRM2 a estes modos, com fallback real por empresa."
+        tone="success"
+        title="Estado desta fase do CRM2"
+        description="Os settings, a validacao Odoo Studio e o DialogApp ja suportam projetos, leads, tarefas e tickets com configuracao independente por entidade, incluindo fallback automatico para descricao."
       />
     </div>
   );

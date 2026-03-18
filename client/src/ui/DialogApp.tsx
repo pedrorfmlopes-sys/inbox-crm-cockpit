@@ -601,8 +601,8 @@ type UploadedRecordAttachment = {
 };
 
 type ProjectLayoutSettings = CockpitSettingsV1["crm2OdooLayout"];
-type StructuredLayoutTarget = "project" | "lead";
-type StructuredLayoutModel = "project.project" | "crm.lead";
+type StructuredLayoutTarget = "project" | "lead" | "task" | "ticket";
+type StructuredLayoutModel = "project.project" | "crm.lead" | "project.task" | "helpdesk.ticket";
 type ProjectLayoutRuntime = {
   target: StructuredLayoutTarget;
   model: StructuredLayoutModel;
@@ -624,8 +624,14 @@ type ProjectLayoutRuntime = {
 function getDefaultStructuredLayoutRuntime(target: StructuredLayoutTarget): ProjectLayoutRuntime {
   return {
     target,
-    model: target === "lead" ? "crm.lead" : "project.project",
-    entityLabel: target === "lead" ? "Lead" : "Projeto",
+    model: target === "lead"
+      ? "crm.lead"
+      : target === "task"
+        ? "project.task"
+        : target === "ticket"
+          ? "helpdesk.ticket"
+          : "project.project",
+    entityLabel: target === "lead" ? "Lead" : target === "task" ? "Tarefa" : target === "ticket" ? "Ticket" : "Projeto",
     mode: "description_only",
     descriptionField: "description",
     fixedInfoField: null,
@@ -643,6 +649,8 @@ function getDefaultStructuredLayoutRuntime(target: StructuredLayoutTarget): Proj
 
 const DEFAULT_PROJECT_LAYOUT_RUNTIME = getDefaultStructuredLayoutRuntime("project");
 const DEFAULT_LEAD_LAYOUT_RUNTIME = getDefaultStructuredLayoutRuntime("lead");
+const DEFAULT_TASK_LAYOUT_RUNTIME = getDefaultStructuredLayoutRuntime("task");
+const DEFAULT_TICKET_LAYOUT_RUNTIME = getDefaultStructuredLayoutRuntime("ticket");
 
 function escapeRegExp(value: string) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -736,7 +744,7 @@ async function resolveProjectLayoutRuntime(
     target,
     model: defaults.model,
     entityLabel: defaults.entityLabel,
-    mode: layout?.mode === "structured_project" ? "structured_project" : "description_only",
+    mode: config?.mode === "structured_project" || (config?.mode == null && layout?.mode === "structured_project") ? "structured_project" : "description_only",
     descriptionField: descriptionField || "description",
     fixedInfoField,
     historyField,
@@ -747,7 +755,7 @@ async function resolveProjectLayoutRuntime(
     includeAnchorIndex,
     showBackToTopLinks,
     fallbackToDescription,
-    structuredActive: layout?.mode === "structured_project" && Boolean(historyField || documentsField),
+    structuredActive: (config?.mode === "structured_project" || (config?.mode == null && layout?.mode === "structured_project")) && Boolean(historyField || documentsField),
   };
 }
 
@@ -2320,6 +2328,7 @@ function AddExistingPanel({ entity, ctx, onStatus }: any) {
 function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail, aiManualOnly }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [description, setDescription] = useState("");
+  const [fixedInfo, setFixedInfo] = useState("");
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
   const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
   const [projectId, setProjectId] = useState<number | null>(null);
@@ -2334,6 +2343,23 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   const [parentId, setParentId] = useState<number | null>(null);
   const [parentName, setParentName] = useState("");
   const [pendingSubtasks, setPendingSubtasks] = useState<string[]>([]);
+  const [taskLayout, setTaskLayout] = useState<ProjectLayoutRuntime | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const settings = await getSettings();
+        const runtime = await resolveProjectLayoutRuntime(settings.crm2OdooLayout, "task");
+        if (alive) setTaskLayout(runtime);
+      } catch {
+        if (alive) setTaskLayout(DEFAULT_TASK_LAYOUT_RUNTIME);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
@@ -2342,14 +2368,15 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   }, [mode, ctx.bodyHtml, fullBody, description, emailAtts]);
 
   useEffect(() => {
-    if (mode !== "edit" || !editId) return;
+    if (mode !== "edit" || !editId || !taskLayout) return;
     (async () => {
       try {
-        const rows = await readOdoo("project.task", [editId], ["name", "description", "project_id", "user_ids", "date_deadline", "stage_id", "parent_id"]);
+        const fields = Array.from(new Set(["name", taskLayout.descriptionField, "project_id", "user_ids", "date_deadline", "stage_id", "parent_id"].filter(Boolean)));
+        const rows = await readOdoo("project.task", [editId], fields);
         const record = rows?.[0];
         if (!record) return;
         setName(record.name || "");
-        setDescription(record.description || "");
+        setDescription(String(record?.[taskLayout.descriptionField] || ""));
         if (record.project_id) { setProjectId(record.project_id[0]); setProjectName(record.project_id[1]); }
         if (Array.isArray(record.user_ids) && record.user_ids.length) {
           const users = await readOdoo("res.users", [record.user_ids[0]], ["name"]);
@@ -2359,11 +2386,15 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         if (record.date_deadline) setDeadline(String(record.date_deadline));
         if (record.stage_id) { setStageId(record.stage_id[0]); setStageName(record.stage_id[1]); }
         if (record.parent_id) { setIsSub(true); setParentId(record.parent_id[0]); setParentName(record.parent_id[1]); }
+        if (taskLayout.fixedInfoField) {
+          const fixedInfoValue = await readStructuredFieldValue(taskLayout.model, Number(editId), taskLayout.fixedInfoField);
+          if (fixedInfoValue) setFixedInfo(String(fixedInfoValue));
+        }
       } catch (error: any) {
         onStatus(error?.message ?? String(error));
       }
     })();
-  }, [editId, mode, onStatus]);
+  }, [editId, mode, onStatus, taskLayout]);
 
   useEffect(() => {
     (async () => {
@@ -2379,7 +2410,14 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
 
   async function save() {
     try {
-      let values: any = { name: name || "Nova tarefa", description: description || "" };
+      const activeLayout = taskLayout || await (async () => {
+        const settings = await getSettings();
+        return await resolveProjectLayoutRuntime(settings.crm2OdooLayout, "task");
+      })();
+
+      let values: any = { name: name || "Nova tarefa" };
+      if (description) values[activeLayout.descriptionField] = description || "";
+      if (activeLayout.fixedInfoField && fixedInfo) values[activeLayout.fixedInfoField] = fixedInfo;
       if (projectId) values.project_id = projectId;
       if (assigneeId) values.user_ids = [[6, 0, [assigneeId]]];
       if (deadline) values.date_deadline = deadline;
@@ -2388,29 +2426,48 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
 
       let id = editId;
       if (mode === "edit") {
-        await writeOdoo("project.task", id, values);
+        try {
+          await writeOdoo(activeLayout.model, id, values);
+        } catch {
+          const fallbackValues = { ...values };
+          delete fallbackValues[activeLayout.descriptionField];
+          await writeOdoo(activeLayout.model, id, fallbackValues);
+        }
         let uploadedAttachments: UploadedRecordAttachment[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          uploadedAttachments = await uploadSelectedAttachmentsToRecord("project.task", Number(id), emailAtts || [], selectedAtts);
+          uploadedAttachments = await uploadSelectedAttachmentsToRecord(activeLayout.model, Number(id), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", Number(id), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, activeLayout.model, Number(id), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
         }
-        const descriptionSynced = await syncConversationDescriptionToRecord("project.task", Number(id), description, ctx, uploadedAttachments);
-        onStatus(descriptionSynced ? "Atualizado OK" : "Atualizado, mas a descricao nao foi enriquecida com os anexos.");
+        const syncResult = activeLayout.structuredActive
+          ? await syncConversationToProjectStructuredLayout(Number(id), activeLayout, ctx, publishState, fullBody, description, uploadedAttachments)
+          : {
+            ok: await syncConversationDescriptionToRecord(activeLayout.model, Number(id), description, ctx, uploadedAttachments, activeLayout.descriptionField),
+            usedFallback: false,
+          };
+        onStatus(
+          syncResult.ok
+            ? syncResult.usedFallback
+              ? "Atualizado OK, com fallback para a descricao base."
+              : activeLayout.structuredActive
+                ? "Atualizado OK no layout estruturado."
+                : "Atualizado OK"
+            : "Atualizado, mas o historico/documentos nao foram sincronizados."
+        );
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
-      values = await withReferenceCode("project.task", values);
-      id = await createOdoo("project.task", values);
+      values = await withReferenceCode(activeLayout.model, values);
+      id = await createOdoo(activeLayout.model, values);
       let uploadedAttachments: UploadedRecordAttachment[] = [];
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        uploadedAttachments = await uploadSelectedAttachmentsToRecord("project.task", id, emailAtts || [], selectedAtts);
+        uploadedAttachments = await uploadSelectedAttachmentsToRecord(activeLayout.model, id, emailAtts || [], selectedAtts);
       }
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, activeLayout.model, id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
 
       if (pendingSubtasks.length > 0) {
         onStatus(`A criar ${pendingSubtasks.length} subtarefas...`);
@@ -2424,8 +2481,21 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         }
       }
 
-      const descriptionSynced = await syncConversationDescriptionToRecord("project.task", id, description, ctx, uploadedAttachments);
-      onStatus(descriptionSynced ? "Criado com sucesso" : "Criado, mas a descricao nao foi enriquecida com os anexos.");
+      const syncResult = activeLayout.structuredActive
+        ? await syncConversationToProjectStructuredLayout(id, activeLayout, ctx, publishState, fullBody, description, uploadedAttachments)
+        : {
+          ok: await syncConversationDescriptionToRecord(activeLayout.model, id, description, ctx, uploadedAttachments, activeLayout.descriptionField),
+          usedFallback: false,
+        };
+      onStatus(
+        syncResult.ok
+          ? syncResult.usedFallback
+            ? "Criado com sucesso, com fallback para a descricao base."
+            : activeLayout.structuredActive
+              ? "Criado com sucesso no layout estruturado."
+              : "Criado com sucesso"
+          : "Criado, mas o historico/documentos nao foram sincronizados."
+      );
       setTimeout(() => closeDialog(), 500);
     } catch (error: any) {
       onStatus(error?.message ?? String(error));
@@ -2466,6 +2536,39 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
           <TypeaheadPicker compact label="RESPONSAVEL" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name", "email"]} pickedId={assigneeId} pickedName={assigneeName} onPick={(item: any) => { const id = item?.id ?? null; setAssigneeId(id); setAssigneeName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
         </CompactDualPickerCard>
       </div>
+      {taskLayout ? (
+        <div style={S.metaCardLarge}>
+          <div style={S.metaCardLabel}>LAYOUT ODOO ATIVO</div>
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={S.metaRowItem}>
+              <span style={S.metaRowLabel}>Modo</span>
+              <span style={S.metaRowValue}>{taskLayout.mode === "structured_project" ? "Estruturado" : "Descricao apenas"}</span>
+            </div>
+            <div style={S.metaRowItem}>
+              <span style={S.metaRowLabel}>Descricao</span>
+              <span style={S.metaRowValue}>{taskLayout.descriptionField}</span>
+            </div>
+            {taskLayout.fixedInfoField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Informacao fixa</span>
+                <span style={S.metaRowValue}>{taskLayout.fixedInfoField}</span>
+              </div>
+            ) : null}
+            {taskLayout.historyField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Historico</span>
+                <span style={S.metaRowValue}>{taskLayout.historyField}</span>
+              </div>
+            ) : null}
+            {taskLayout.documentsField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Documentos</span>
+                <span style={S.metaRowValue}>{taskLayout.documentsField}</span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <div style={S.grid2}>
         <PickerStatic label="ETAPA" pickedId={stageId} pickedName={stageName} items={stagePick} onPick={(item: any) => { setStageId(item.id); setStageName(item.name || item.display_name || `#${item.id}`); }} placeholder={projectId ? "Escolher etapa..." : "Etapa (opcional)"} />
         <div style={S.row}><label style={S.lab}>PRAZO</label><input style={S.input} type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} /></div>
@@ -2473,8 +2576,10 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       <div style={S.row}><label style={S.lab}>SUBTAREFA</label><input type="checkbox" checked={isSub} onChange={(e) => { setIsSub(e.target.checked); if (!e.target.checked) { setParentId(null); setParentName(""); } }} /></div>
       {isSub ? <TypeaheadPicker label="PARENT TASK" placeholder={projectId ? "Pesquisar tarefa (filtra por projeto)..." : "Pesquisar tarefa (global)..."} model="project.task" fields={["id", "name", "display_name", "project_id"]} pickedId={parentId} pickedName={parentName} extraDomain={(query) => { const domain: any[] = []; if (projectId) domain.push(["project_id", "=", projectId]); if (query?.trim()) domain.push(["name", "ilike", query.trim()]); return domain; }} onPick={(item: any) => { const id = item?.id ?? null; setParentId(id); setParentName(id ? (item.display_name || item.name || `#${id}`) : ""); }} /> : null}
       <DescriptionWorkspace
-        title="DESCRICAO"
-        hint="Edita aqui a descricao estruturada da tarefa. Esta area alimenta a coluna esquerda do Odoo."
+        title={taskLayout?.structuredActive ? "DESCRICAO BASE" : "DESCRICAO"}
+        hint={taskLayout?.structuredActive
+          ? `Este editor alimenta o campo ${taskLayout.descriptionField}. O historico segue para ${taskLayout.historyField || taskLayout.historyTabLabel} e os anexos para ${taskLayout.documentsField || taskLayout.documentsTabLabel}.`
+          : "Edita aqui a descricao estruturada da tarefa. Esta area alimenta a coluna esquerda do Odoo."}
         value={description}
         onChange={setDescription}
         placeholder="Descricao e notas da tarefa..."
@@ -2487,6 +2592,20 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
           setSelectedAtts((prev) => Array.from(new Set([...prev, ...suggested])));
         }}
       />
+      {taskLayout?.fixedInfoField ? (
+        <DescriptionWorkspace
+          title="INFORMACAO FIXA"
+          hint={`Este editor alimenta o campo ${taskLayout.fixedInfoField}. Usa-o para regras e contexto permanente da tarefa.`}
+          value={fixedInfo}
+          onChange={setFixedInfo}
+          placeholder="Escreve aqui a informacao permanente da tarefa..."
+          onUseEmail={() => {
+            if (!description) return;
+            setFixedInfo(description);
+          }}
+          actionLabel="Duplicar base"
+        />
+      ) : null}
       <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
@@ -3795,6 +3914,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
 function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, aiManualOnly }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [description, setDescription] = useState("");
+  const [fixedInfo, setFixedInfo] = useState("");
   const [partnerId, setPartnerId] = useState<number | null>(null);
   const [partnerName, setPartnerName] = useState("");
   const [teamId, setTeamId] = useState<number | null>(null);
@@ -3806,6 +3926,23 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
   const [priority, setPriority] = useState("0");
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
   const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
+  const [ticketLayout, setTicketLayout] = useState<ProjectLayoutRuntime | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const settings = await getSettings();
+        const runtime = await resolveProjectLayoutRuntime(settings.crm2OdooLayout, "ticket");
+        if (alive) setTicketLayout(runtime);
+      } catch {
+        if (alive) setTicketLayout(DEFAULT_TICKET_LAYOUT_RUNTIME);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
@@ -3814,24 +3951,29 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
   }, [mode, ctx.bodyHtml, fullBody, description, emailAtts]);
 
   useEffect(() => {
-    if (mode !== "edit" || !editId) return;
+    if (mode !== "edit" || !editId || !ticketLayout) return;
     (async () => {
       try {
-        const rows = await readOdoo("helpdesk.ticket", [editId], ["name", "description", "partner_id", "team_id", "user_id", "stage_id", "priority"]);
+        const fields = Array.from(new Set(["name", ticketLayout.descriptionField, "partner_id", "team_id", "user_id", "stage_id", "priority"].filter(Boolean)));
+        const rows = await readOdoo("helpdesk.ticket", [editId], fields);
         const record = rows?.[0];
         if (!record) return;
         setName(record.name || "");
-        setDescription(String(record.description || ""));
+        setDescription(String(record?.[ticketLayout.descriptionField] || ""));
         if (record.partner_id) { setPartnerId(record.partner_id[0]); setPartnerName(record.partner_id[1]); }
         if (record.team_id) { setTeamId(record.team_id[0]); setTeamName(record.team_id[1]); }
         if (record.user_id) { setAssigneeId(record.user_id[0]); setAssigneeName(record.user_id[1]); }
         if (record.stage_id) { setStageId(record.stage_id[0]); setStageName(record.stage_id[1]); }
         setPriority(String(record.priority ?? "0"));
+        if (ticketLayout.fixedInfoField) {
+          const fixedInfoValue = await readStructuredFieldValue(ticketLayout.model, Number(editId), ticketLayout.fixedInfoField);
+          if (fixedInfoValue) setFixedInfo(String(fixedInfoValue));
+        }
       } catch (error: any) {
         onStatus(error?.message ?? String(error));
       }
     })();
-  }, [editId, mode, onStatus]);
+  }, [editId, mode, onStatus, ticketLayout]);
 
   function handleAddAiAction(title: string) {
     setDescription((prev) => {
@@ -3844,8 +3986,14 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
 
   async function save() {
     try {
+      const activeLayout = ticketLayout || await (async () => {
+        const settings = await getSettings();
+        return await resolveProjectLayoutRuntime(settings.crm2OdooLayout, "ticket");
+      })();
+
       let values: any = { name: name || `Ticket: ${ctx.subject || "sem assunto"}` };
-      if (description) values.description = description;
+      if (description) values[activeLayout.descriptionField] = description;
+      if (activeLayout.fixedInfoField && fixedInfo) values[activeLayout.fixedInfoField] = fixedInfo;
       if (partnerId) values.partner_id = partnerId;
       if (teamId) values.team_id = teamId;
       if (assigneeId) values.user_id = assigneeId;
@@ -3854,32 +4002,64 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
 
       let id = editId;
       if (mode === "edit") {
-        await writeOdoo("helpdesk.ticket", id, values);
+        try {
+          await writeOdoo(activeLayout.model, id, values);
+        } catch {
+          const fallbackValues = { ...values };
+          delete fallbackValues[activeLayout.descriptionField];
+          await writeOdoo(activeLayout.model, id, fallbackValues);
+        }
         let uploadedAttachments: UploadedRecordAttachment[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          uploadedAttachments = await uploadSelectedAttachmentsToRecord("helpdesk.ticket", Number(id), emailAtts || [], selectedAtts);
+          uploadedAttachments = await uploadSelectedAttachmentsToRecord(activeLayout.model, Number(id), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", Number(id), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, activeLayout.model, Number(id), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
         }
-        const descriptionSynced = await syncConversationDescriptionToRecord("helpdesk.ticket", Number(id), description, ctx, uploadedAttachments);
-        onStatus(descriptionSynced ? "Atualizado OK" : "Atualizado, mas a descricao nao foi enriquecida com os anexos.");
+        const syncResult = activeLayout.structuredActive
+          ? await syncConversationToProjectStructuredLayout(Number(id), activeLayout, ctx, publishState, fullBody, description, uploadedAttachments)
+          : {
+            ok: await syncConversationDescriptionToRecord(activeLayout.model, Number(id), description, ctx, uploadedAttachments, activeLayout.descriptionField),
+            usedFallback: false,
+          };
+        onStatus(
+          syncResult.ok
+            ? syncResult.usedFallback
+              ? "Atualizado OK, com fallback para a descricao base."
+              : activeLayout.structuredActive
+                ? "Atualizado OK no layout estruturado."
+                : "Atualizado OK"
+            : "Atualizado, mas o historico/documentos nao foram sincronizados."
+        );
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
-      values = await withReferenceCode("helpdesk.ticket", values);
-      id = await createOdoo("helpdesk.ticket", values);
+      values = await withReferenceCode(activeLayout.model, values);
+      id = await createOdoo(activeLayout.model, values);
       let uploadedAttachments: UploadedRecordAttachment[] = [];
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        uploadedAttachments = await uploadSelectedAttachmentsToRecord("helpdesk.ticket", id, emailAtts || [], selectedAtts);
+        uploadedAttachments = await uploadSelectedAttachmentsToRecord(activeLayout.model, id, emailAtts || [], selectedAtts);
       }
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, activeLayout.model, id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
 
-      const descriptionSynced = await syncConversationDescriptionToRecord("helpdesk.ticket", id, description, ctx, uploadedAttachments);
-      onStatus(descriptionSynced ? "Criado com sucesso" : "Criado, mas a descricao nao foi enriquecida com os anexos.");
+      const syncResult = activeLayout.structuredActive
+        ? await syncConversationToProjectStructuredLayout(id, activeLayout, ctx, publishState, fullBody, description, uploadedAttachments)
+        : {
+          ok: await syncConversationDescriptionToRecord(activeLayout.model, id, description, ctx, uploadedAttachments, activeLayout.descriptionField),
+          usedFallback: false,
+        };
+      onStatus(
+        syncResult.ok
+          ? syncResult.usedFallback
+            ? "Criado com sucesso, com fallback para a descricao base."
+            : activeLayout.structuredActive
+              ? "Criado com sucesso no layout estruturado."
+              : "Criado com sucesso"
+          : "Criado, mas o historico/documentos nao foram sincronizados."
+      );
       setTimeout(() => closeDialog(), 500);
     } catch (error: any) {
       onStatus(error?.message ?? String(error));
@@ -3902,6 +4082,39 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
           <TypeaheadPicker compact label="RESPONSAVEL" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name"]} pickedId={assigneeId} pickedName={assigneeName} onPick={(item: any) => { const id = item?.id ?? null; setAssigneeId(id); setAssigneeName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
         </CompactDualPickerCard>
       </div>
+      {ticketLayout ? (
+        <div style={S.metaCardLarge}>
+          <div style={S.metaCardLabel}>LAYOUT ODOO ATIVO</div>
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={S.metaRowItem}>
+              <span style={S.metaRowLabel}>Modo</span>
+              <span style={S.metaRowValue}>{ticketLayout.mode === "structured_project" ? "Estruturado" : "Descricao apenas"}</span>
+            </div>
+            <div style={S.metaRowItem}>
+              <span style={S.metaRowLabel}>Descricao</span>
+              <span style={S.metaRowValue}>{ticketLayout.descriptionField}</span>
+            </div>
+            {ticketLayout.fixedInfoField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Informacao fixa</span>
+                <span style={S.metaRowValue}>{ticketLayout.fixedInfoField}</span>
+              </div>
+            ) : null}
+            {ticketLayout.historyField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Historico</span>
+                <span style={S.metaRowValue}>{ticketLayout.historyField}</span>
+              </div>
+            ) : null}
+            {ticketLayout.documentsField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Documentos</span>
+                <span style={S.metaRowValue}>{ticketLayout.documentsField}</span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <div style={S.grid2}>
         <TypeaheadPicker label="EQUIPA" placeholder="Pesquisar equipa..." model="helpdesk.team" fields={["id", "name"]} pickedId={teamId} pickedName={teamName} onPick={(item: any) => { const id = item?.id ?? null; setTeamId(id); setTeamName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
         <div />
@@ -3911,8 +4124,10 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
         <div style={S.row}><label style={S.lab}>PRIORIDADE</label><select style={S.sel} value={priority} onChange={(e) => setPriority(e.target.value)}><option value="0">Baixa</option><option value="1">Media</option><option value="2">Alta</option><option value="3">Urgente</option></select></div>
       </div>
       <DescriptionWorkspace
-        title="DESCRICAO"
-        hint="Edita aqui a descricao estruturada do ticket. O chatter fica separado e controlado abaixo."
+        title={ticketLayout?.structuredActive ? "DESCRICAO BASE" : "DESCRICAO"}
+        hint={ticketLayout?.structuredActive
+          ? `Este editor alimenta o campo ${ticketLayout.descriptionField}. O historico segue para ${ticketLayout.historyField || ticketLayout.historyTabLabel} e os anexos para ${ticketLayout.documentsField || ticketLayout.documentsTabLabel}.`
+          : "Edita aqui a descricao estruturada do ticket. O chatter fica separado e controlado abaixo."}
         value={description}
         onChange={setDescription}
         placeholder="Detalhes e contexto do ticket..."
@@ -3925,6 +4140,20 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
           setSelectedAtts((prev) => Array.from(new Set([...prev, ...suggested])));
         }}
       />
+      {ticketLayout?.fixedInfoField ? (
+        <DescriptionWorkspace
+          title="INFORMACAO FIXA"
+          hint={`Este editor alimenta o campo ${ticketLayout.fixedInfoField}. Usa-o para contexto fixo, SLA e notas permanentes do ticket.`}
+          value={fixedInfo}
+          onChange={setFixedInfo}
+          placeholder="Escreve aqui a informacao permanente do ticket..."
+          onUseEmail={() => {
+            if (!description) return;
+            setFixedInfo(description);
+          }}
+          actionLabel="Duplicar base"
+        />
+      ) : null}
       <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
