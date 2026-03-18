@@ -441,7 +441,6 @@ function sanitizeEmailHtmlForOdooClient(html?: string) {
 
   cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, "");
   cleaned = cleaned.replace(/<(script|style|meta|link|title|head|xml|svg|canvas|noscript|iframe)[^>]*>[\s\S]*?<\/\1>/gi, "");
-  cleaned = cleaned.replace(/<img\b[^>]*>/gi, "");
   cleaned = cleaned.replace(/<picture\b[^>]*>[\s\S]*?<\/picture>/gi, "");
   cleaned = cleaned.replace(/<source\b[^>]*>/gi, "");
   cleaned = cleaned.replace(/<\/?(o:p|v:[^>\s]+|w:[^>\s]+)\b[^>]*>/gi, "");
@@ -526,6 +525,95 @@ function attachmentKindLabel(att: any) {
   const name = String(att?.name || "").trim();
   const ext = name.includes(".") ? name.split(".").pop() : "";
   return ext ? ext.toUpperCase() : "FICHEIRO";
+}
+
+type UploadedRecordAttachment = {
+  id: number;
+  name: string;
+  contentType?: string;
+  size?: number;
+  isInline?: boolean;
+};
+
+function escapeRegExp(value: string) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildOdooAttachmentContentUrl(attachmentId: number, download = false) {
+  const suffix = download ? "?download=true" : "";
+  return `/web/content/${Number(attachmentId)}${suffix}`;
+}
+
+function stripGeneratedConversationAttachmentSection(html?: string, conversationId?: string) {
+  const source = String(html || "").trim();
+  if (!source) return "";
+  const encodedConversationId = escapeHtmlClient(String(conversationId || "").trim());
+  if (!encodedConversationId) {
+    return source.replace(/<section\b[^>]*data-icc-attachment-group=(['"])true\1[^>]*>[\s\S]*?<\/section>\s*/gi, "").trim();
+  }
+  const pattern = new RegExp(
+    `<section\\b[^>]*data-icc-attachment-group=(['"])true\\1[^>]*data-icc-conversation=(['"])${escapeRegExp(encodedConversationId)}\\2[^>]*>[\\s\\S]*?<\\/section>\\s*`,
+    "gi",
+  );
+  return source.replace(pattern, "").trim();
+}
+
+function buildDescriptionAttachmentSectionHtml(ctx: Ctx, attachments: UploadedRecordAttachment[]) {
+  const usableAttachments = (attachments || []).filter((att) => Number(att?.id) > 0 && String(att?.name || "").trim());
+  if (!usableAttachments.length) return "";
+
+  const metaBits = [
+    ctx.subject ? `Assunto: ${ctx.subject}` : "",
+    ctx.fromEmail ? `De: ${ctx.fromName ? `${ctx.fromName} <${ctx.fromEmail}>` : ctx.fromEmail}` : "",
+    ctx.receivedAtIso ? `Data: ${ctx.receivedAtIso}` : "",
+  ].filter(Boolean);
+
+  const cardsHtml = usableAttachments.map((att) => {
+    const openUrl = buildOdooAttachmentContentUrl(att.id, false);
+    const downloadUrl = buildOdooAttachmentContentUrl(att.id, true);
+    const mimeLabel = normalizeMimeLabel(att.contentType || "") || "ficheiro";
+    const sizeLabel = formatBytes(att.size);
+    const footer = [mimeLabel, sizeLabel].filter(Boolean).join(" · ");
+    const visual = isImageAttachment(att)
+      ? `<div style="height:64px;border-radius:8px;overflow:hidden;background:#E9EEF8;border:1px solid rgba(37,99,235,0.10);display:flex;align-items:center;justify-content:center;"><img src="${escapeHtmlClient(openUrl)}" alt="${escapeHtmlClient(att.name)}" style="width:100%;height:100%;object-fit:cover;display:block;" /></div>`
+      : `<div style="height:64px;border-radius:8px;background:#EEF3FF;border:1px solid rgba(37,99,235,0.14);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;letter-spacing:0.04em;color:#1D4ED8;">${escapeHtmlClient(attachmentKindLabel(att))}</div>`;
+
+    return [
+      `<a href="${escapeHtmlClient(downloadUrl)}" target="_blank" rel="noreferrer" style="display:block;width:132px;padding:8px;border:1px solid #D8E2F2;border-radius:10px;background:#FFFFFF;text-decoration:none;vertical-align:top;margin:0 8px 8px 0;">`,
+      visual,
+      `<div style="margin-top:8px;font-size:11px;font-weight:700;line-height:1.35;color:#172B4D;word-break:break-word;">${escapeHtmlClient(att.name)}</div>`,
+      `<div style="margin-top:4px;font-size:10px;line-height:1.35;color:#5E6C84;">${escapeHtmlClient(footer || "Anexo")}</div>`,
+      `</a>`,
+    ].join("");
+  }).join("");
+
+  return [
+    `<section data-icc-attachment-group="true" data-icc-conversation="${escapeHtmlClient(ctx.conversationId || ctx.internetMessageId || "current")}" style="margin-top:16px;padding:12px;border:1px solid #D8E2F2;border-radius:12px;background:#F8FAFF;">`,
+    `<div style="font-size:11px;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;color:#2563EB;">Anexos desta conversa (${usableAttachments.length})</div>`,
+    metaBits.length ? `<div style="margin-top:4px;font-size:11px;line-height:1.45;color:#5E6C84;">${escapeHtmlClient(metaBits.join(" · "))}</div>` : "",
+    `<div style="margin-top:10px;font-size:0;">${cardsHtml}</div>`,
+    `</section>`,
+  ].filter(Boolean).join("");
+}
+
+function buildDescriptionForRecord(descriptionHtml: string, ctx: Ctx, attachments: UploadedRecordAttachment[]) {
+  const baseHtml = stripGeneratedConversationAttachmentSection(normalizeDescriptionEditorHtml(descriptionHtml), ctx.conversationId || ctx.internetMessageId);
+  const attachmentSection = buildDescriptionAttachmentSectionHtml(ctx, attachments);
+  if (!attachmentSection) return baseHtml;
+  return [baseHtml, attachmentSection].filter(Boolean).join("\n");
+}
+
+async function syncConversationDescriptionToRecord(model: string, recordId: number, descriptionHtml: string, ctx: Ctx, attachments: UploadedRecordAttachment[]) {
+  if (!attachments.length) return true;
+  const enrichedDescription = buildDescriptionForRecord(descriptionHtml, ctx, attachments);
+  if (!enrichedDescription) return true;
+  try {
+    await writeOdoo(model, recordId, { description: enrichedDescription });
+    return true;
+  } catch (error) {
+    console.error("Erro ao sincronizar descricao enriquecida", model, recordId, error);
+    return false;
+  }
 }
 
 function formatBytes(value: any) {
@@ -656,7 +744,7 @@ function buildOdooPreviewHtml({
       break;
     case "description":
     default:
-      innerHtml = plainTextToHtmlClient(description || fallbackText);
+      innerHtml = normalizeDescriptionEditorHtml(description) || plainTextToHtmlClient(fallbackText);
       break;
   }
 
@@ -736,7 +824,7 @@ function buildLinkPayloadForRecord(
 }
 
 async function uploadSelectedAttachmentsToRecord(model: string, recordId: number, emailAtts: any[], selectedAtts: string[]) {
-  const uploadedIds: number[] = [];
+  const uploadedRefs: UploadedRecordAttachment[] = [];
   for (const fileName of selectedAtts) {
     const att = (emailAtts || []).find((item: any) => item.name === fileName);
     if (!att?.content) continue;
@@ -751,13 +839,19 @@ async function uploadSelectedAttachmentsToRecord(model: string, recordId: number
         type: "binary",
       });
       if (Number.isFinite(attachmentId) && Number(attachmentId) > 0) {
-        uploadedIds.push(Number(attachmentId));
+        uploadedRefs.push({
+          id: Number(attachmentId),
+          name: String(att.name || "").trim(),
+          contentType: String(att.contentType || att.mimetype || "").trim(),
+          size: Number(att.size || 0) || undefined,
+          isInline: !!att.isInline,
+        });
       }
     } catch (error) {
       console.error("Erro ao enviar anexo", att.name, error);
     }
   }
-  return uploadedIds;
+  return uploadedRefs;
 }
 
 function OdooContentEditor({
@@ -1871,27 +1965,28 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       let id = editId;
       if (mode === "edit") {
         await writeOdoo("project.task", id, values);
-        let attachmentIds: number[] = [];
+        let uploadedAttachments: UploadedRecordAttachment[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          attachmentIds = await uploadSelectedAttachmentsToRecord("project.task", Number(id), emailAtts || [], selectedAtts);
+          uploadedAttachments = await uploadSelectedAttachmentsToRecord("project.task", Number(id), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", Number(id), values.name, publishState, fullBody, description, attachmentIds));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", Number(id), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
         }
-        onStatus("Atualizado OK");
+        const descriptionSynced = await syncConversationDescriptionToRecord("project.task", Number(id), description, ctx, uploadedAttachments);
+        onStatus(descriptionSynced ? "Atualizado OK" : "Atualizado, mas a descricao nao foi enriquecida com os anexos.");
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
       values = await withReferenceCode("project.task", values);
       id = await createOdoo("project.task", values);
-      let attachmentIds: number[] = [];
+      let uploadedAttachments: UploadedRecordAttachment[] = [];
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        attachmentIds = await uploadSelectedAttachmentsToRecord("project.task", id, emailAtts || [], selectedAtts);
+        uploadedAttachments = await uploadSelectedAttachmentsToRecord("project.task", id, emailAtts || [], selectedAtts);
       }
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", id, values.name, publishState, fullBody, description, attachmentIds));
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
 
       if (pendingSubtasks.length > 0) {
         onStatus(`A criar ${pendingSubtasks.length} subtarefas...`);
@@ -1905,7 +2000,8 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         }
       }
 
-      onStatus("Criado com sucesso");
+      const descriptionSynced = await syncConversationDescriptionToRecord("project.task", id, description, ctx, uploadedAttachments);
+      onStatus(descriptionSynced ? "Criado com sucesso" : "Criado, mas a descricao nao foi enriquecida com os anexos.");
       setTimeout(() => closeDialog(), 500);
     } catch (error: any) {
       onStatus(error?.message ?? String(error));
@@ -2020,29 +2116,31 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
           delete fallbackValues.description;
           await writeOdoo("project.project", editId, fallbackValues);
         }
-        let attachmentIds: number[] = [];
+        let uploadedAttachments: UploadedRecordAttachment[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          attachmentIds = await uploadSelectedAttachmentsToRecord("project.project", Number(editId), emailAtts || [], selectedAtts);
+          uploadedAttachments = await uploadSelectedAttachmentsToRecord("project.project", Number(editId), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", Number(editId), values.name, publishState, fullBody, description, attachmentIds));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", Number(editId), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
         }
-        onStatus("Atualizado OK");
+        const descriptionSynced = await syncConversationDescriptionToRecord("project.project", Number(editId), description, ctx, uploadedAttachments);
+        onStatus(descriptionSynced ? "Atualizado OK" : "Atualizado, mas a descricao nao foi enriquecida com os anexos.");
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
       values = await withReferenceCode("project.project", values);
       const id = await createOdoo("project.project", values);
-      let attachmentIds: number[] = [];
+      let uploadedAttachments: UploadedRecordAttachment[] = [];
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        attachmentIds = await uploadSelectedAttachmentsToRecord("project.project", id, emailAtts || [], selectedAtts);
+        uploadedAttachments = await uploadSelectedAttachmentsToRecord("project.project", id, emailAtts || [], selectedAtts);
       }
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", id, values.name, publishState, fullBody, description, attachmentIds));
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
 
-      onStatus("Criado com sucesso");
+      const descriptionSynced = await syncConversationDescriptionToRecord("project.project", id, description, ctx, uploadedAttachments);
+      onStatus(descriptionSynced ? "Criado com sucesso" : "Criado, mas a descricao nao foi enriquecida com os anexos.");
       setTimeout(() => closeDialog(), 500);
     } catch (error: any) {
       onStatus(error?.message ?? String(error));
@@ -2188,29 +2286,31 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
           delete fallbackValues.description;
           await writeOdoo("crm.lead", editId, fallbackValues);
         }
-        let attachmentIds: number[] = [];
+        let uploadedAttachments: UploadedRecordAttachment[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          attachmentIds = await uploadSelectedAttachmentsToRecord("crm.lead", Number(editId), emailAtts || [], selectedAtts);
+          uploadedAttachments = await uploadSelectedAttachmentsToRecord("crm.lead", Number(editId), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", Number(editId), values.name, publishState, fullBody, description, attachmentIds));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", Number(editId), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
         }
-        onStatus("Atualizado OK");
+        const descriptionSynced = await syncConversationDescriptionToRecord("crm.lead", Number(editId), description, ctx, uploadedAttachments);
+        onStatus(descriptionSynced ? "Atualizado OK" : "Atualizado, mas a descricao nao foi enriquecida com os anexos.");
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
       values = await withReferenceCode("crm.lead", values);
       const id = await createOdoo("crm.lead", values);
-      let attachmentIds: number[] = [];
+      let uploadedAttachments: UploadedRecordAttachment[] = [];
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        attachmentIds = await uploadSelectedAttachmentsToRecord("crm.lead", id, emailAtts || [], selectedAtts);
+        uploadedAttachments = await uploadSelectedAttachmentsToRecord("crm.lead", id, emailAtts || [], selectedAtts);
       }
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", id, values.name, publishState, fullBody, description, attachmentIds));
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
 
-      onStatus("Criado com sucesso");
+      const descriptionSynced = await syncConversationDescriptionToRecord("crm.lead", id, description, ctx, uploadedAttachments);
+      onStatus(descriptionSynced ? "Criado com sucesso" : "Criado, mas a descricao nao foi enriquecida com os anexos.");
       setTimeout(() => closeDialog(), 500);
     } catch (error: any) {
       onStatus(error?.message ?? String(error));
@@ -3104,29 +3204,31 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
       let id = editId;
       if (mode === "edit") {
         await writeOdoo("helpdesk.ticket", id, values);
-        let attachmentIds: number[] = [];
+        let uploadedAttachments: UploadedRecordAttachment[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          attachmentIds = await uploadSelectedAttachmentsToRecord("helpdesk.ticket", Number(id), emailAtts || [], selectedAtts);
+          uploadedAttachments = await uploadSelectedAttachmentsToRecord("helpdesk.ticket", Number(id), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", Number(id), values.name, publishState, fullBody, description, attachmentIds));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", Number(id), values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
         }
-        onStatus("Atualizado OK");
+        const descriptionSynced = await syncConversationDescriptionToRecord("helpdesk.ticket", Number(id), description, ctx, uploadedAttachments);
+        onStatus(descriptionSynced ? "Atualizado OK" : "Atualizado, mas a descricao nao foi enriquecida com os anexos.");
         setTimeout(() => closeDialog(), 500);
         return;
       }
 
       values = await withReferenceCode("helpdesk.ticket", values);
       id = await createOdoo("helpdesk.ticket", values);
-      let attachmentIds: number[] = [];
+      let uploadedAttachments: UploadedRecordAttachment[] = [];
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        attachmentIds = await uploadSelectedAttachmentsToRecord("helpdesk.ticket", id, emailAtts || [], selectedAtts);
+        uploadedAttachments = await uploadSelectedAttachmentsToRecord("helpdesk.ticket", id, emailAtts || [], selectedAtts);
       }
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", id, values.name, publishState, fullBody, description, attachmentIds));
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", id, values.name, publishState, fullBody, description, uploadedAttachments.map((att) => att.id)));
 
-      onStatus("Criado com sucesso");
+      const descriptionSynced = await syncConversationDescriptionToRecord("helpdesk.ticket", id, description, ctx, uploadedAttachments);
+      onStatus(descriptionSynced ? "Criado com sucesso" : "Criado, mas a descricao nao foi enriquecida com os anexos.");
       setTimeout(() => closeDialog(), 500);
     } catch (error: any) {
       onStatus(error?.message ?? String(error));
