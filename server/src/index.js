@@ -573,6 +573,280 @@ async function listPartnerNativeRelations(odoo, partnerId) {
   return sections;
 }
 
+function normalizeStudioLabel(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function decodeXmlEntities(value) {
+  return String(value || "")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function extractFormTabTitles(viewArch) {
+  const matches = String(viewArch || "").matchAll(/<page\b[^>]*\bstring=(["'])(.*?)\1/gi);
+  const titles = [];
+  for (const match of matches) {
+    const decoded = decodeXmlEntities(match?.[2] || "").trim();
+    if (decoded) titles.push(decoded);
+  }
+  return titles;
+}
+
+function fieldExistsInView(viewArch, fieldName) {
+  const normalizedFieldName = String(fieldName || "").trim();
+  if (!normalizedFieldName) return false;
+  const pattern = new RegExp(`<field\\b[^>]*\\bname=(["'])${normalizedFieldName}\\1`, "i");
+  return pattern.test(String(viewArch || ""));
+}
+
+function createLayoutCheck({
+  key,
+  label,
+  kind,
+  configuredName,
+  status,
+  message,
+  details,
+  actualType,
+  expectedTypes,
+  recommendedType,
+  presentInFormView,
+}) {
+  return {
+    key,
+    label,
+    kind,
+    configuredName,
+    status,
+    message,
+    details,
+    actualType,
+    expectedTypes,
+    recommendedType,
+    presentInFormView,
+  };
+}
+
+app.post("/api/odoo/layout/validate", async (req, res) => {
+  try {
+    const layout = req.body?.layout || {};
+    const mode = String(layout?.mode || "description_only").trim() === "structured_project"
+      ? "structured_project"
+      : "description_only";
+    const project = layout?.project || {};
+    const model = String(project?.model || "project.project").trim() || "project.project";
+
+    if (!modelAllowed(model)) {
+      return res.status(400).json({ ok: false, error: "invalid_model", message: `Model not allowed: ${model}` });
+    }
+
+    const odoo = await getOdooCached(req);
+    const fieldMeta = await odoo.call(model, "fields_get", [], {
+      attributes: ["string", "type", "relation", "readonly", "required"],
+    });
+
+    let formViewArch = "";
+    let formViewAvailable = false;
+    let formViewError = "";
+    try {
+      const formView = await odoo.call(model, "fields_view_get", [], { view_type: "form" });
+      formViewArch = String(formView?.arch || "");
+      formViewAvailable = Boolean(formViewArch.trim());
+    } catch (error) {
+      formViewError = String(error?.message || error || "");
+    }
+
+    const tabTitles = formViewAvailable ? extractFormTabTitles(formViewArch) : [];
+    const normalizedTabTitles = new Set(tabTitles.map(normalizeStudioLabel).filter(Boolean));
+    const checks = [];
+
+    function validateField(spec) {
+      const configuredName = String(spec.configuredName || "").trim();
+      if (!configuredName) {
+        checks.push(createLayoutCheck({
+          key: spec.key,
+          label: spec.label,
+          kind: "field",
+          configuredName,
+          status: "error",
+          message: "Campo tecnico por definir.",
+          expectedTypes: spec.expectedTypes,
+          recommendedType: spec.recommendedType,
+        }));
+        return;
+      }
+
+      const meta = fieldMeta?.[configuredName];
+      if (!meta) {
+        checks.push(createLayoutCheck({
+          key: spec.key,
+          label: spec.label,
+          kind: "field",
+          configuredName,
+          status: "error",
+          message: "O campo nao existe neste modelo Odoo.",
+          details: `Criar no Studio em ${model}.`,
+          expectedTypes: spec.expectedTypes,
+          recommendedType: spec.recommendedType,
+          presentInFormView: false,
+        }));
+        return;
+      }
+
+      const actualType = String(meta?.type || "").trim();
+      const expectedTypes = Array.isArray(spec.expectedTypes) ? spec.expectedTypes : [];
+      const presentInFormView = formViewAvailable ? fieldExistsInView(formViewArch, configuredName) : undefined;
+      let status = expectedTypes.includes(actualType) ? "ok" : "error";
+      let message = expectedTypes.includes(actualType)
+        ? "Campo encontrado e tipo compativel."
+        : `Tipo incompatível: ${actualType || "desconhecido"}.`;
+
+      if (status === "ok" && spec.recommendedType && actualType && actualType !== spec.recommendedType) {
+        status = "warning";
+        message = `Campo utilizavel, mas o tipo recomendado e ${spec.recommendedType}.`;
+      }
+
+      if (status !== "error" && formViewAvailable && presentInFormView === false) {
+        status = "warning";
+        message = "Campo existe, mas nao esta exposto na vista form atual.";
+      }
+
+      checks.push(createLayoutCheck({
+        key: spec.key,
+        label: spec.label,
+        kind: "field",
+        configuredName,
+        status,
+        message,
+        actualType,
+        expectedTypes,
+        recommendedType: spec.recommendedType,
+        presentInFormView,
+      }));
+    }
+
+    function validateTab(spec) {
+      const configuredName = String(spec.configuredName || "").trim();
+      if (!configuredName) {
+        checks.push(createLayoutCheck({
+          key: spec.key,
+          label: spec.label,
+          kind: "tab",
+          configuredName,
+          status: "warning",
+          message: "Etiqueta da aba por definir.",
+        }));
+        return;
+      }
+
+      if (!formViewAvailable) {
+        checks.push(createLayoutCheck({
+          key: spec.key,
+          label: spec.label,
+          kind: "tab",
+          configuredName,
+          status: "warning",
+          message: "Nao foi possivel validar a aba na vista form.",
+          details: formViewError || "A vista form do modelo nao foi lida.",
+        }));
+        return;
+      }
+
+      const exists = normalizedTabTitles.has(normalizeStudioLabel(configuredName));
+      checks.push(createLayoutCheck({
+        key: spec.key,
+        label: spec.label,
+        kind: "tab",
+        configuredName,
+        status: exists ? "ok" : "warning",
+        message: exists
+          ? "Aba encontrada na vista form."
+          : "Aba nao encontrada na vista form atual.",
+      }));
+    }
+
+    validateField({
+      key: "descriptionField",
+      label: "Campo base da descricao",
+      configuredName: project.descriptionField,
+      expectedTypes: ["html", "text", "char"],
+      recommendedType: "html",
+    });
+
+    if (mode === "structured_project") {
+      validateField({
+        key: "fixedInfoField",
+        label: "Campo de informacao fixa",
+        configuredName: project.fixedInfoField,
+        expectedTypes: ["html", "text"],
+        recommendedType: "html",
+      });
+      validateField({
+        key: "historyField",
+        label: "Campo de historico",
+        configuredName: project.historyField,
+        expectedTypes: ["html", "text"],
+        recommendedType: "html",
+      });
+      validateField({
+        key: "documentsField",
+        label: "Campo de documentos",
+        configuredName: project.documentsField,
+        expectedTypes: ["html", "text"],
+        recommendedType: "html",
+      });
+
+      validateTab({
+        key: "fixedInfoTabLabel",
+        label: "Aba de informacao fixa",
+        configuredName: project.fixedInfoTabLabel,
+      });
+      validateTab({
+        key: "historyTabLabel",
+        label: "Aba de historico",
+        configuredName: project.historyTabLabel,
+      });
+      validateTab({
+        key: "documentsTabLabel",
+        label: "Aba de documentos",
+        configuredName: project.documentsTabLabel,
+      });
+    }
+
+    const summary = checks.reduce((acc, check) => {
+      if (check.status === "ok") acc.ok += 1;
+      else if (check.status === "warning") acc.warning += 1;
+      else acc.error += 1;
+      return acc;
+    }, { ok: 0, warning: 0, error: 0 });
+
+    return res.json({
+      ok: true,
+      mode,
+      model,
+      ready: summary.error === 0,
+      summary,
+      checks,
+      formView: {
+        available: formViewAvailable,
+        tabTitles,
+        error: formViewError || undefined,
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "layout_validation_failed", details: String(e?.message || e) });
+  }
+});
+
 app.get("/api/odoo/partners/by-email", async (req, res) => {
   try {
     const email = normalizeEmail(req.query.email);

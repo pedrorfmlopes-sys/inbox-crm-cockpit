@@ -1,5 +1,5 @@
 // Goal: keep UI stable even if server endpoints evolve.
-import { getSettings, saveSettings } from "./settings";
+import { getSettings, saveSettings, type CockpitSettingsV1 } from "./settings";
 
 let _sessionToken: string | null = null;
 let _sessionBootstrapPromise: Promise<string | null> | null = null;
@@ -384,6 +384,47 @@ export function getOdooAutoLoginUrl(_token: string | null, redirect: string = "/
 
 export async function odooPing(): Promise<{ ok: boolean }> {
   return await requestJSON(`/api/odoo/ping`);
+}
+
+export type Crm2LayoutValidationCheck = {
+  key: string;
+  label: string;
+  kind: "field" | "tab";
+  configuredName: string;
+  status: "ok" | "warning" | "error";
+  message: string;
+  details?: string;
+  actualType?: string;
+  expectedTypes?: string[];
+  recommendedType?: string;
+  presentInFormView?: boolean;
+};
+
+export type Crm2LayoutValidationResult = {
+  ok: boolean;
+  mode: "description_only" | "structured_project";
+  model: string;
+  ready: boolean;
+  summary: {
+    ok: number;
+    warning: number;
+    error: number;
+  };
+  checks: Crm2LayoutValidationCheck[];
+  formView?: {
+    available: boolean;
+    tabTitles?: string[];
+    error?: string;
+  };
+};
+
+export async function validateCrm2OdooLayout(
+  layout: CockpitSettingsV1["crm2OdooLayout"],
+): Promise<Crm2LayoutValidationResult> {
+  return await requestJSON(`/api/odoo/layout/validate`, {
+    method: "POST",
+    body: JSON.stringify({ layout }),
+  });
 }
 
 // -------- Links --------

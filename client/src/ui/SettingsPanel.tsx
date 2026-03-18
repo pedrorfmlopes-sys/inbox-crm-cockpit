@@ -17,7 +17,7 @@ import {
 import { applySkin } from "./skins";
 import * as Icons from "./icons";
 import { useCockpit } from "../components/shell/CockpitProvider";
-import { aiListModels } from "../api";
+import { aiListModels, validateCrm2OdooLayout, type Crm2LayoutValidationResult } from "../api";
 import { PanelState, type PanelStateTone } from "./PanelState";
 import { previewReferenceCode } from "../referenceCodes";
 
@@ -1313,6 +1313,9 @@ function Crm2LayoutSettings({
 }) {
   const layout = model.crm2OdooLayout;
   const project = layout.project;
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [validation, setValidation] = useState<Crm2LayoutValidationResult | null>(null);
 
   function updateLayout<K extends keyof CockpitSettingsV1["crm2OdooLayout"]>(
     key: K,
@@ -1351,6 +1354,20 @@ function Crm2LayoutSettings({
     );
   }
 
+  async function runValidation() {
+    setIsValidating(true);
+    setValidationError(null);
+    try {
+      const result = await validateCrm2OdooLayout(layout);
+      setValidation(result);
+    } catch (error: any) {
+      setValidation(null);
+      setValidationError(error?.message || "Nao foi possivel validar a configuracao no Odoo.");
+    } finally {
+      setIsValidating(false);
+    }
+  }
+
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <PanelState
@@ -1359,6 +1376,20 @@ function Crm2LayoutSettings({
         title="Estrategia de escrita do CRM2 no Odoo"
         description="Define se o CRM2 escreve tudo na descricao do projeto ou se usa um layout estruturado com campos/abas preparados no Odoo Studio."
       />
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={S.hint}>
+          Valida campos, tipos e presença na vista form do projeto antes de ativares o modo estruturado em produção.
+        </div>
+        <button
+          type="button"
+          style={isValidating ? { ...S.btnGhost, opacity: 0.7, cursor: "wait" } : S.btnGhost}
+          onClick={runValidation}
+          disabled={isValidating}
+        >
+          {isValidating ? "A validar..." : "Validar configuracao Odoo"}
+        </button>
+      </div>
 
       <Field label="Modo de escrita">
         <select
@@ -1506,11 +1537,91 @@ function Crm2LayoutSettings({
         </div>
       </div>
 
+      {validationError && (
+        <PanelState
+          compact
+          tone="error"
+          title="Falha na validacao Odoo"
+          description={validationError}
+        />
+      )}
+
+      {validation && (
+        <div style={{ display: "grid", gap: 10 }}>
+          <PanelState
+            compact
+            tone={validation.ready ? "success" : validation.summary.error > 0 ? "error" : "warning"}
+            title={validation.ready ? "Layout pronto para uso" : "Layout requer ajustes no Odoo Studio"}
+            description={`Modelo ${validation.model}. ${validation.summary.ok} ok, ${validation.summary.warning} aviso(s), ${validation.summary.error} erro(s).`}
+          />
+
+          <div style={S.referenceCard}>
+            <div style={S.fieldLabel}>Checklist da validacao</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {validation.checks.map((check) => {
+                const toneColor = check.status === "ok" ? "var(--iccc-pill-active-bg)" : check.status === "warning" ? "#d97706" : "#ef4444";
+                const toneBg = check.status === "ok" ? "rgba(16, 185, 129, 0.08)" : check.status === "warning" ? "rgba(217, 119, 6, 0.08)" : "rgba(239, 68, 68, 0.08)";
+                return (
+                  <div
+                    key={check.key}
+                    style={{
+                      borderRadius: 12,
+                      border: `1px solid ${toneColor}`,
+                      background: toneBg,
+                      padding: 10,
+                      display: "grid",
+                      gap: 4,
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: "var(--iccc-text)" }}>{check.label}</div>
+                      <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: toneColor }}>
+                        {check.kind === "field" ? "Campo" : "Aba"} · {check.status}
+                      </div>
+                    </div>
+                    <div style={S.hint}>
+                      Configurado: <b>{check.configuredName || "Por definir"}</b>
+                      {check.actualType ? <> · Tipo real: <b>{check.actualType}</b></> : null}
+                    </div>
+                    <div style={S.hint}>{check.message}</div>
+                    {check.expectedTypes?.length ? (
+                      <div style={S.hint}>
+                        Tipos aceites: <b>{check.expectedTypes.join(", ")}</b>
+                        {check.recommendedType ? <> · Recomendado: <b>{check.recommendedType}</b></> : null}
+                      </div>
+                    ) : null}
+                    {typeof check.presentInFormView === "boolean" ? (
+                      <div style={S.hint}>
+                        Vista form: <b>{check.presentInFormView ? "Campo presente" : "Campo nao visivel"}</b>
+                      </div>
+                    ) : null}
+                    {check.details ? <div style={S.hint}>{check.details}</div> : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={S.referenceCard}>
+            <div style={S.fieldLabel}>Vista form detetada</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={S.hint}>
+                Leitura da vista: <b>{validation.formView?.available ? "OK" : "Nao confirmada"}</b>
+              </div>
+              <div style={S.hint}>
+                Abas encontradas: <b>{validation.formView?.tabTitles?.length ? validation.formView?.tabTitles.join(" | ") : "Nenhuma identificada"}</b>
+              </div>
+              {validation.formView?.error ? <div style={S.hint}>{validation.formView.error}</div> : null}
+            </div>
+          </div>
+        </div>
+      )}
+
       <PanelState
         compact
         tone="warning"
-        title="Fase 1 concluida: schema e preferencias"
-        description="Na fase seguinte vamos validar no proprio Odoo se estes campos existem, mostrar o que falta no Studio e ativar o comportamento real do CRM2 por modo."
+        title="Proxima fase do CRM2"
+        description="Os settings ja definem a estrategia e a validacao no Odoo Studio. O passo seguinte e ligar o DialogApp e o fluxo de escrita do CRM2 a estes modos, com fallback real por empresa."
       />
     </div>
   );
