@@ -2235,8 +2235,21 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
   const [name, setName] = useState(ctx.fromName || ctx.subject || "");
   const [email, setEmail] = useState(ctx.fromEmail || "");
   const [phone, setPhone] = useState("");
+  const [mobile, setMobile] = useState("");
+  const [jobTitle, setJobTitle] = useState("");
   const [partnerKind, setPartnerKind] = useState<"person" | "company">("person");
   const [vat, setVat] = useState("");
+  const [website, setWebsite] = useState("");
+  const [street, setStreet] = useState("");
+  const [street2, setStreet2] = useState("");
+  const [zip, setZip] = useState("");
+  const [city, setCity] = useState("");
+  const [countryId, setCountryId] = useState<number | null>(null);
+  const [countryName, setCountryName] = useState("");
+  const [stateId, setStateId] = useState<number | null>(null);
+  const [stateName, setStateName] = useState("");
+  const [parentCompanyId, setParentCompanyId] = useState<number | null>(null);
+  const [parentCompanyName, setParentCompanyName] = useState("");
 
   const participants = useMemo(() => {
     const out: Array<{ role: string; name: string; email: string }> = [];
@@ -2263,14 +2276,45 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
     if (mode !== "edit" || !editId) return;
     (async () => {
       try {
-        const rows = await readOdoo("res.partner", [editId], ["name", "email", "phone", "company_type", "vat"]);
+        const rows = await readOdoo("res.partner", [editId], [
+          "name", "email", "phone", "mobile", "function", "company_type", "vat", "parent_id",
+          "street", "street2", "zip", "city", "country_id", "state_id", "website",
+        ]);
         const r = rows?.[0];
         if (!r) return;
         setName(r.name || "");
         setEmail(r.email || "");
         setPhone(r.phone || "");
+        setMobile(r.mobile || "");
+        setJobTitle(r.function || "");
         setPartnerKind(r.company_type === "company" ? "company" : "person");
         setVat(String(r.vat || "").trim());
+        setWebsite(String(r.website || "").trim());
+        setStreet(String(r.street || ""));
+        setStreet2(String(r.street2 || ""));
+        setZip(String(r.zip || ""));
+        setCity(String(r.city || ""));
+        if (Array.isArray(r.parent_id) && r.parent_id[0]) {
+          setParentCompanyId(r.parent_id[0]);
+          setParentCompanyName(r.parent_id[1] || `#${r.parent_id[0]}`);
+        } else {
+          setParentCompanyId(null);
+          setParentCompanyName("");
+        }
+        if (Array.isArray(r.country_id) && r.country_id[0]) {
+          setCountryId(r.country_id[0]);
+          setCountryName(r.country_id[1] || `#${r.country_id[0]}`);
+        } else {
+          setCountryId(null);
+          setCountryName("");
+        }
+        if (Array.isArray(r.state_id) && r.state_id[0]) {
+          setStateId(r.state_id[0]);
+          setStateName(r.state_id[1] || `#${r.state_id[0]}`);
+        } else {
+          setStateId(null);
+          setStateName("");
+        }
       } catch (e: any) {
         onStatus(e?.message ?? String(e));
       }
@@ -2298,8 +2342,23 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
     })();
   }, [participants]);
 
+  function normalizeText(raw: string) {
+    return String(raw || "").trim();
+  }
+
   function normalizeVat(raw: string) {
-    return String(raw || "").trim().toUpperCase().replace(/\s+/g, "");
+    return normalizeText(raw).toUpperCase().replace(/\s+/g, "");
+  }
+
+  function displayNameOf(item: any) {
+    const id = Number(item?.id);
+    return item?.display_name || item?.name || (id ? `#${id}` : "");
+  }
+
+  function buildCompanySearchDomain(query: string) {
+    const q = normalizeText(query);
+    if (!q) return [["company_type", "=", "company"]];
+    return ["&", ["company_type", "=", "company"], "|", ["name", "ilike", q], ["vat", "ilike", q]];
   }
 
   async function findExistingCompanyByVat(rawVat: string) {
@@ -2329,10 +2388,17 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
 
   async function saveMain() {
     try {
-      const cleanName = String(name || "").trim();
-      const cleanEmail = String(email || "").trim();
-      const cleanPhone = String(phone || "").trim();
+      const cleanName = normalizeText(name);
+      const cleanEmail = normalizeText(email);
+      const cleanPhone = normalizeText(phone);
+      const cleanMobile = normalizeText(mobile);
+      const cleanJobTitle = normalizeText(jobTitle);
       const cleanVat = normalizeVat(vat);
+      const cleanWebsite = normalizeText(website);
+      const cleanStreet = normalizeText(street);
+      const cleanStreet2 = normalizeText(street2);
+      const cleanZip = normalizeText(zip);
+      const cleanCity = normalizeText(city);
       const isCompany = partnerKind === "company";
 
       if (isCompany && !cleanName) {
@@ -2346,15 +2412,25 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
 
       if (mode === "edit") {
         const values: any = {
-          name: cleanName || cleanEmail || (isCompany ? "Empresa" : "Contacto"),
+          name: cleanName || cleanEmail || (isCompany ? `Empresa ${cleanVat}` : "Contacto"),
           email: cleanEmail || false,
           phone: cleanPhone || false,
+          mobile: cleanMobile || false,
+          function: cleanJobTitle || false,
           company_type: partnerKind,
           is_company: isCompany,
+          parent_id: isCompany ? false : (parentCompanyId || false),
           vat: isCompany ? cleanVat : false,
+          website: cleanWebsite || false,
+          street: cleanStreet || false,
+          street2: cleanStreet2 || false,
+          zip: cleanZip || false,
+          city: cleanCity || false,
+          country_id: countryId || false,
+          state_id: stateId || false,
         };
         await writeOdoo("res.partner", editId, values);
-        onStatus("Atualizado ✅");
+        onStatus("Atualizado OK");
         setTimeout(() => closeDialog(), 500);
         return;
       }
@@ -2376,7 +2452,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
             receivedAtIso: ctx.receivedAtIso,
             emailWebLink: ctx.emailWebLink,
           });
-          onStatus(`Empresa já existente ligada: ${display} ✅`);
+          onStatus(`Empresa ja existente ligada: ${display}`);
           setTimeout(() => closeDialog(), 500);
           return;
         }
@@ -2384,12 +2460,22 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
 
       const values: any = {
         name: cleanName || cleanEmail || (isCompany ? `Empresa ${cleanVat}` : "Contacto"),
+        email: cleanEmail || false,
+        phone: cleanPhone || false,
+        mobile: cleanMobile || false,
+        function: cleanJobTitle || false,
         company_type: partnerKind,
         is_company: isCompany,
+        parent_id: isCompany ? false : (parentCompanyId || false),
+        vat: isCompany ? cleanVat : false,
+        website: cleanWebsite || false,
+        street: cleanStreet || false,
+        street2: cleanStreet2 || false,
+        zip: cleanZip || false,
+        city: cleanCity || false,
+        country_id: countryId || false,
+        state_id: stateId || false,
       };
-      if (cleanEmail) values.email = cleanEmail;
-      if (cleanPhone) values.phone = cleanPhone;
-      if (isCompany) values.vat = cleanVat;
 
       const id = await createOdoo("res.partner", values);
       await linkEmailToRecord({
@@ -2406,7 +2492,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
         emailWebLink: ctx.emailWebLink,
       });
 
-      onStatus("Criado ✅");
+      onStatus("Criado OK");
       setTimeout(() => closeDialog(), 500);
     } catch (e: any) {
       onStatus(e?.message ?? String(e));
@@ -2428,7 +2514,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
         receivedAtIso: ctx.receivedAtIso,
         emailWebLink: ctx.emailWebLink,
       });
-      onStatus(`Ligado a ${display} ✅`);
+      onStatus(`Ligado a ${display}`);
     } catch (e: any) {
       onStatus(e?.message ?? String(e));
     }
@@ -2436,7 +2522,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
 
   async function createPartnerFrom(p: any) {
     try {
-      const id = await createOdoo("res.partner", { name: p.name || p.email, email: p.email });
+      const id = await createOdoo("res.partner", { name: p.name || p.email, email: p.email, company_type: "person", is_company: false });
       await linkToPartner(id, p.name || p.email);
       setMatch((prev) => ({ ...prev, [p.email]: { id, name: p.name || p.email, email: p.email } }));
     } catch (e: any) {
@@ -2468,31 +2554,140 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
         />
       </div>
 
-      {partnerKind === "company" ? (
+      <div style={S.grid2}>
+        {partnerKind === "company" ? (
+          <div style={S.row}>
+            <label style={S.lab}>NIF</label>
+            <input
+              style={S.input}
+              value={vat}
+              onChange={(e) => setVat(e.target.value)}
+              placeholder="NIF da empresa"
+            />
+          </div>
+        ) : (
+          <TypeaheadPicker
+            label="EMPRESA"
+            placeholder="Pesquisar empresa no Odoo..."
+            model="res.partner"
+            fields={["id", "name", "display_name", "vat", "email"]}
+            pickedId={parentCompanyId}
+            pickedName={parentCompanyName}
+            extraDomain={buildCompanySearchDomain}
+            onPick={(item: any) => {
+              const id = Number(item?.id) || null;
+              setParentCompanyId(id);
+              setParentCompanyName(id ? displayNameOf(item) : "");
+            }}
+          />
+        )}
+
         <div style={S.row}>
-          <label style={S.lab}>NIF</label>
+          <label style={S.lab}>EMAIL</label>
           <input
             style={S.input}
-            value={vat}
-            onChange={(e) => setVat(e.target.value)}
-            placeholder="NIF da empresa"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder={partnerKind === "company" ? "geral@empresa.pt (opcional)" : "email@..."}
           />
         </div>
-      ) : null}
-
-      <div style={S.row}>
-        <label style={S.lab}>EMAIL</label>
-        <input
-          style={S.input}
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder={partnerKind === "company" ? "geral@empresa.pt (opcional)" : "email@..."}
-        />
       </div>
 
-      <div style={S.row}>
-        <label style={S.lab}>TELEFONE</label>
-        <input style={S.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone" />
+      <div style={S.grid2}>
+        <div style={S.row}>
+          <label style={S.lab}>TELEFONE</label>
+          <input style={S.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Telefone" />
+        </div>
+        <div style={S.row}>
+          <label style={S.lab}>TELEMOVEL</label>
+          <input style={S.input} value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="Telemovel" />
+        </div>
+      </div>
+
+      <div style={S.grid2}>
+        <div style={S.row}>
+          <label style={S.lab}>{partnerKind === "company" ? "CONTACTO / FUNCAO" : "FUNCAO"}</label>
+          <input
+            style={S.input}
+            value={jobTitle}
+            onChange={(e) => setJobTitle(e.target.value)}
+            placeholder={partnerKind === "company" ? "Pessoa de contacto ou funcao" : "Cargo ou funcao"}
+          />
+        </div>
+        <div style={S.row}>
+          <label style={S.lab}>WEBSITE</label>
+          <input style={S.input} value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://..." />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 20, borderTop: "1px solid #DFE1E6", paddingTop: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 12, color: "#6B778C", marginBottom: 12, textTransform: "uppercase" }}>
+          Morada e classificacao
+        </div>
+
+        <div style={S.grid2}>
+          <div style={S.row}>
+            <label style={S.lab}>MORADA</label>
+            <input style={S.input} value={street} onChange={(e) => setStreet(e.target.value)} placeholder="Rua, numero" />
+          </div>
+          <div style={S.row}>
+            <label style={S.lab}>MORADA 2</label>
+            <input style={S.input} value={street2} onChange={(e) => setStreet2(e.target.value)} placeholder="Andar, porta, complemento" />
+          </div>
+        </div>
+
+        <div style={S.grid2}>
+          <div style={S.row}>
+            <label style={S.lab}>CODIGO POSTAL</label>
+            <input style={S.input} value={zip} onChange={(e) => setZip(e.target.value)} placeholder="Codigo postal" />
+          </div>
+          <div style={S.row}>
+            <label style={S.lab}>CIDADE</label>
+            <input style={S.input} value={city} onChange={(e) => setCity(e.target.value)} placeholder="Cidade" />
+          </div>
+        </div>
+
+        <div style={S.grid2}>
+          <TypeaheadPicker
+            label="PAIS"
+            placeholder="Pesquisar pais..."
+            model="res.country"
+            fields={["id", "name", "display_name"]}
+            pickedId={countryId}
+            pickedName={countryName}
+            extraDomain={(query) => {
+              const q = normalizeText(query);
+              return q ? [["name", "ilike", q]] : [];
+            }}
+            onPick={(item: any) => {
+              const id = Number(item?.id) || null;
+              setCountryId(id);
+              setCountryName(id ? displayNameOf(item) : "");
+              setStateId(null);
+              setStateName("");
+            }}
+          />
+          <TypeaheadPicker
+            label="DISTRITO / ESTADO"
+            placeholder={countryId ? "Pesquisar distrito/estado..." : "Pesquisar distrito/estado (opcional)..."}
+            model="res.country.state"
+            fields={["id", "name", "display_name", "country_id"]}
+            pickedId={stateId}
+            pickedName={stateName}
+            extraDomain={(query) => {
+              const domain: any[] = [];
+              const q = normalizeText(query);
+              if (countryId) domain.push(["country_id", "=", countryId]);
+              if (q) domain.push(["name", "ilike", q]);
+              return domain;
+            }}
+            onPick={(item: any) => {
+              const id = Number(item?.id) || null;
+              setStateId(id);
+              setStateName(id ? displayNameOf(item) : "");
+            }}
+          />
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}>

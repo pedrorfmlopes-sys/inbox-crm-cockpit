@@ -215,6 +215,8 @@ const MODEL_WHITELIST = new Set([
   "project.project",
   "crm.lead",
   "res.partner",
+  "res.country",
+  "res.country.state",
   "project.task",
   "helpdesk.ticket",
   "helpdesk.team",
@@ -230,7 +232,9 @@ function modelAllowed(model) {
 }
 
 const PARTNER_PREFERRED_READ_FIELDS = [
-  "id", "name", "email", "phone", "mobile", "function", "company_type", "is_company", "parent_id", "vat", "street", "zip", "city", "country_id", "display_name"
+  "id", "name", "email", "phone", "mobile", "function", "company_type", "is_company",
+  "parent_id", "vat", "street", "street2", "zip", "city", "state_id", "country_id",
+  "website", "display_name"
 ];
 
 async function safeSearchReadCompat(odoo, model, domain, wantedFields, limit = 10, order) {
@@ -303,6 +307,22 @@ function normalizePartnerPayload(data = {}) {
   if (typeof data.function === "string") clean.function = data.function.trim();
   if (typeof data.phone === "string") clean.phone = data.phone.trim();
   if (typeof data.mobile === "string") clean.mobile = data.mobile.trim();
+  if (typeof data.vat === "string") clean.vat = data.vat.trim().toUpperCase().replace(/\s+/g, "");
+  if (typeof data.street === "string") clean.street = data.street.trim();
+  if (typeof data.street2 === "string") clean.street2 = data.street2.trim();
+  if (typeof data.zip === "string") clean.zip = data.zip.trim();
+  if (typeof data.city === "string") clean.city = data.city.trim();
+  if (typeof data.website === "string") clean.website = data.website.trim();
+
+  if (Object.prototype.hasOwnProperty.call(data, "country_id")) {
+    const countryId = Number(data.country_id);
+    clean.country_id = countryId > 0 ? countryId : false;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, "state_id")) {
+    const stateId = Number(data.state_id);
+    clean.state_id = stateId > 0 ? stateId : false;
+  }
 
   return clean;
 }
@@ -347,7 +367,9 @@ app.get("/api/odoo/companies/search", async (req, res) => {
 
     try {
       const odoo = await getOdooCached(req);
-      const domain = [["company_type", "=", "company"], ...(q ? [["name", "ilike", q]] : [])];
+      const domain = q
+        ? ["&", ["company_type", "=", "company"], "|", ["name", "ilike", q], ["vat", "ilike", q]]
+        : [["company_type", "=", "company"]];
       const companies = await safeSearchReadCompat(odoo, "res.partner", domain, PARTNER_PREFERRED_READ_FIELDS, 10);
       return res.json({ ok: true, results: companies || [] });
     } catch (e) {
@@ -482,7 +504,11 @@ app.get("/api/odoo/search", async (req, res) => {
 // --- compat endpoints (client expects POST + search-domain/read/write/call) ---
 function cleanValuesForModel(model, values) {
   const allowedByModel = {
-    "res.partner": new Set(["name", "email", "phone", "mobile", "function", "company_type", "parent_id"]),
+    "res.partner": new Set([
+      "name", "email", "phone", "mobile", "function", "company_type", "parent_id",
+      "vat", "is_company", "street", "street2", "zip", "city", "country_id",
+      "state_id", "website"
+    ]),
     "crm.lead": new Set(["name", "contact_name", "email_from", "phone", "partner_id", "stage_id", "description"]),
     "project.project": new Set(["name", "partner_id", "user_id", "description"]),
     "project.task": new Set(["name", "description", "date_deadline", "project_id", "lead_id", "parent_id", "user_ids", "stage_id"]),
@@ -517,6 +543,12 @@ function buildSearchSpec(model, q) {
   if (model === "res.partner") {
     domain = isEmpty ? [] : ["|", ["name", "ilike", q], ["email", "ilike", q]];
     fields = ["name", "email", "phone", "mobile", "display_name"];
+  } else if (model === "res.country") {
+    domain = isEmpty ? [] : [["name", "ilike", q]];
+    fields = ["name", "display_name"];
+  } else if (model === "res.country.state") {
+    domain = isEmpty ? [] : [["name", "ilike", q]];
+    fields = ["name", "display_name", "country_id"];
   } else if (model === "crm.lead") {
     domain = isEmpty ? [] : ["|", ["name", "ilike", q], ["email_from", "ilike", q]];
     fields = ["name", "display_name", "email_from", "partner_id"];
