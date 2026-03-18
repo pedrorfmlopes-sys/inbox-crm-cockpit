@@ -3,7 +3,7 @@ import { useCockpit } from "@/components/shell/CockpitProvider";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 import { openCockpitDialog } from "@/office";
-import { getOdooAutoLoginUrl, getPartnerByEmail, type LinkEntry } from "@/api";
+import { getLinksByRecord, getOdooAutoLoginUrl, getPartnerByEmail, linkEmailToRecord, type LinkEntry } from "@/api";
 
 type Participant = {
     email: string;
@@ -63,6 +63,43 @@ function dedupeLinkedRecords(entries: LinkEntry[]): LinkEntry[] {
     });
 }
 
+function dedupeParticipantLinks(entries: LinkEntry[]): LinkEntry[] {
+    const seen = new Set<string>();
+    return (entries || []).filter((entry) => {
+        const key = [
+            String(entry.conversationId || "").trim(),
+            String(entry.itemId || "").trim(),
+            String(entry.emailWebLink || entry.url || "").trim(),
+            String(entry.subject || "").trim(),
+        ].join("|");
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function sortLinksByRecency(entries: LinkEntry[]): LinkEntry[] {
+    return [...entries].sort((a, b) => {
+        const aTime = Date.parse(String(a.linkedAt || a.receivedAtIso || a.messageDateIso || a.sentAtIso || 0));
+        const bTime = Date.parse(String(b.linkedAt || b.receivedAtIso || b.messageDateIso || b.sentAtIso || 0));
+        return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+    });
+}
+
+function formatLinkMoment(link: LinkEntry): string {
+    const raw = String(link.linkedAt || link.receivedAtIso || link.messageDateIso || link.sentAtIso || "").trim();
+    if (!raw) return "Sem data";
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return "Sem data";
+    return date.toLocaleString("pt-PT", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
 function serializeRecipients(recipients: Array<{ name?: string; email?: string }> | undefined) {
     return (recipients || [])
         .map((recipient) => `${String(recipient?.name || "").trim()}|${String(recipient?.email || "").trim()}`)
@@ -84,6 +121,12 @@ export const CrmCockpit2: React.FC = () => {
     const [contactLoading, setContactLoading] = useState(false);
     const [participantsExpanded, setParticipantsExpanded] = useState(false);
     const [linkedExpanded, setLinkedExpanded] = useState(true);
+    const [activeParticipantEmail, setActiveParticipantEmail] = useState<string | null>(null);
+    const [participantDetailLoading, setParticipantDetailLoading] = useState(false);
+    const [participantDetailError, setParticipantDetailError] = useState("");
+    const [participantDetailPartner, setParticipantDetailPartner] = useState<any | null>(null);
+    const [participantDetailLinks, setParticipantDetailLinks] = useState<LinkEntry[]>([]);
+    const [participantActionBusy, setParticipantActionBusy] = useState(false);
 
     const participants = useMemo(() => dedupeParticipants(ctx), [ctx]);
     const linkedRecords = useMemo(() => dedupeLinkedRecords(links), [links]);
@@ -95,6 +138,10 @@ export const CrmCockpit2: React.FC = () => {
         }
         return Array.from(names).sort((a, b) => a.localeCompare(b));
     }, [links]);
+    const activeParticipant = useMemo(
+        () => participants.find((row) => normalizeEmail(row.email) === normalizeEmail(activeParticipantEmail || "")) || null,
+        [participants, activeParticipantEmail],
+    );
 
     useEffect(() => {
         let alive = true;
@@ -168,12 +215,95 @@ export const CrmCockpit2: React.FC = () => {
         window.open(getOdooAutoLoginUrl(settings?.odooSessionToken || null, target, baseUrl), "_blank");
     }
 
+    async function loadParticipantDetail(participant: Participant) {
+        setParticipantDetailLoading(true);
+        setParticipantDetailError("");
+        try {
+            const partner = await getPartnerByEmail(participant.email);
+            const recordLinks = partner?.id ? await getLinksByRecord("res.partner", Number(partner.id)) : [];
+            setParticipantDetailPartner(partner || null);
+            setParticipantDetailLinks(sortLinksByRecency(dedupeParticipantLinks(recordLinks)));
+        } catch (error: any) {
+            setParticipantDetailPartner(null);
+            setParticipantDetailLinks([]);
+            setParticipantDetailError(error?.message ?? String(error));
+        } finally {
+            setParticipantDetailLoading(false);
+        }
+    }
+
+    async function openParticipantDetail(participant: Participant) {
+        setActiveParticipantEmail(participant.email);
+        await loadParticipantDetail(participant);
+    }
+
+    async function openParticipantEditor(participant: Participant, partnerId?: number | null) {
+        await openDialog(partnerId ? "edit" : "new", {
+            model: "res.partner",
+            fromEmail: participant.email,
+            fromName: participant.name,
+            ...(partnerId ? { recordId: String(partnerId) } : {}),
+        });
+        await loadParticipantDetail(participant);
+    }
+
+    async function linkParticipantToCurrentEmail(participant: Participant) {
+        if (!participantDetailPartner?.id) return;
+        setParticipantActionBusy(true);
+        try {
+            await linkEmailToRecord({
+                conversationId: ctx.conversationId,
+                model: "res.partner",
+                recordId: Number(participantDetailPartner.id),
+                recordName: participantDetailPartner.name || participant.name || participant.email,
+                internetMessageId: ctx.internetMessageId,
+                itemId: ctx.itemId,
+                subject: ctx.subject,
+                fromEmail: ctx.fromEmail,
+                fromName: ctx.fromName,
+                receivedAtIso: ctx.receivedDateTimeIso,
+                emailWebLink: (ctx as any).emailWebLink,
+            });
+            await refreshLinks();
+            await loadParticipantDetail(participant);
+            setMsg("Contacto ligado ao email atual.");
+        } catch (error: any) {
+            setMsg(error?.message ?? String(error));
+        } finally {
+            setParticipantActionBusy(false);
+        }
+    }
+
+    useEffect(() => {
+        if (!activeParticipantEmail) return;
+        const stillVisible = participants.some((row) => normalizeEmail(row.email) === normalizeEmail(activeParticipantEmail));
+        if (stillVisible) return;
+        setActiveParticipantEmail(null);
+        setParticipantDetailPartner(null);
+        setParticipantDetailLinks([]);
+        setParticipantDetailError("");
+    }, [participants, activeParticipantEmail]);
+
+    useEffect(() => {
+        setActiveParticipantEmail(null);
+        setParticipantDetailPartner(null);
+        setParticipantDetailLinks([]);
+        setParticipantDetailError("");
+    }, [ctx.conversationId, ctx.itemId]);
+
     const primaryName = primaryPartner?.name || ctx.fromName || fallbackNameFromEmail(ctx.fromEmail || "");
     const primaryCompany =
         primaryPartner?.parent_id?.[1] ||
         primaryPartner?.company_name ||
         (primaryPartner?.company_type === "company" ? primaryPartner?.name : "");
     const primaryRole = primaryPartner?.function || "";
+    const participantCompany =
+        participantDetailPartner?.parent_id?.[1] ||
+        participantDetailPartner?.company_name ||
+        (participantDetailPartner?.company_type === "company" ? participantDetailPartner?.name : "");
+    const participantCurrentConversationLinked = participantDetailPartner?.id
+        ? linkedRecords.some((entry) => entry.model === "res.partner" && Number(entry.recordId || entry.resId || 0) === Number(participantDetailPartner.id))
+        : false;
 
     return (
         <div style={S.root}>
@@ -269,20 +399,41 @@ export const CrmCockpit2: React.FC = () => {
                     </button>
                 </div>
 
-                {contactLoading ? (
-                    <PanelState compact tone="loading" title="A procurar contacto" description="A cruzar o remetente com o Odoo." />
-                ) : participantsExpanded ? (
+                <div style={S.participantViewport}>
+                    <div
+                        style={{
+                            ...S.participantTrack,
+                            transform: activeParticipant ? "translateX(-50%)" : "translateX(0)",
+                        }}
+                    >
+                        <div style={S.participantPane}>
+                            {contactLoading ? (
+                                <PanelState compact tone="loading" title="A procurar contacto" description="A cruzar o remetente com o Odoo." />
+                            ) : participantsExpanded ? (
                     <div style={S.participantList}>
                         {participants.map((row) => {
                             const isPrimary = normalizeEmail(row.email) === normalizeEmail(ctx.fromEmail);
+                            const isActive = normalizeEmail(row.email) === normalizeEmail(activeParticipant?.email || "");
                             return (
-                                <div key={`${row.source}:${row.email}`} style={isPrimary ? { ...S.participantCard, ...S.participantCardPrimary } : S.participantCard}>
-                                    <div>
+                                <button
+                                    key={`${row.source}:${row.email}`}
+                                    type="button"
+                                    style={{
+                                        ...S.participantCard,
+                                        ...(isPrimary ? S.participantCardPrimary : {}),
+                                        ...(isActive ? S.participantCardActive : {}),
+                                    }}
+                                    onClick={() => openParticipantDetail(row)}
+                                >
+                                    <div style={S.participantIdentity}>
                                         <div style={S.participantName}>{row.name}</div>
                                         <div style={S.participantEmail}>{row.email}</div>
                                     </div>
-                                    <span style={S.participantBadge}>{row.source.toUpperCase()}</span>
-                                </div>
+                                    <div style={S.participantCardSide}>
+                                        <span style={S.participantBadge}>{row.source.toUpperCase()}</span>
+                                        <span style={S.participantChevron}>›</span>
+                                    </div>
+                                </button>
                             );
                         })}
                     </div>
@@ -291,7 +442,170 @@ export const CrmCockpit2: React.FC = () => {
                         {participants.map((row) => row.name).slice(0, 4).join(" · ")}
                         {participants.length > 4 ? ` +${participants.length - 4}` : ""}
                     </div>
-                )}
+                            )}
+                        </div>
+
+                        <div style={S.participantPane}>
+                            {!activeParticipant ? (
+                                <PanelState
+                                    compact
+                                    tone="empty"
+                                    title="Seleciona um participante"
+                                    description="Abre um participante para ver o estado no Odoo, criar ou atualizar o contacto e consultar as ligacoes."
+                                />
+                            ) : participantDetailLoading ? (
+                                <PanelState
+                                    compact
+                                    tone="loading"
+                                    title="A abrir participante"
+                                    description={`A carregar contacto e ligacoes de ${activeParticipant.name}.`}
+                                />
+                            ) : participantDetailError ? (
+                                <PanelState compact tone="error" title="Falha ao carregar participante" description={participantDetailError} />
+                            ) : (
+                                <div style={S.participantDetail}>
+                                    <div style={S.participantDetailHead}>
+                                        <button type="button" style={S.secondaryAction} onClick={() => setActiveParticipantEmail(null)}>
+                                            Voltar
+                                        </button>
+                                        <div style={S.participantDetailTitleWrap}>
+                                            <div style={S.participantDetailTitle}>{activeParticipant.name}</div>
+                                            <div style={S.participantDetailEmail}>{activeParticipant.email}</div>
+                                        </div>
+                                        <span style={S.participantBadge}>{activeParticipant.source.toUpperCase()}</span>
+                                    </div>
+
+                                    <div style={S.participantDetailMeta}>
+                                        <div style={S.participantInfoCard}>
+                                            <div style={S.detailKicker}>Estado</div>
+                                            <div style={S.detailValue}>{participantDetailPartner?.id ? "Contacto existente no Odoo" : "Ainda sem contacto no Odoo"}</div>
+                                            <div style={S.detailCopy}>
+                                                {participantDetailPartner?.id
+                                                    ? `ID ${participantDetailPartner.id}${participantCompany ? ` · ${participantCompany}` : ""}`
+                                                    : "Podes criar o contacto a partir deste participante."}
+                                            </div>
+                                        </div>
+                                        <div style={S.participantInfoCard}>
+                                            <div style={S.detailKicker}>Ligacoes</div>
+                                            <div style={S.detailValue}>{participantDetailPartner?.id ? `${participantDetailLinks.length} email(s) ligados` : "Sem ligacoes"}</div>
+                                            <div style={S.detailCopy}>
+                                                {participantDetailPartner?.id
+                                                    ? (participantCurrentConversationLinked ? "Este email ja esta ligado ao contacto." : "Ainda nao ha ligacao deste email ao contacto.")
+                                                    : "Cria primeiro o contacto para poderes consultar ligacoes."}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {participantDetailPartner ? (
+                                        <>
+                                            <div style={S.participantSummaryGrid}>
+                                                {participantDetailPartner.function ? (
+                                                    <div style={S.participantSummaryItem}>
+                                                        <div style={S.detailKicker}>Funcao</div>
+                                                        <div style={S.detailLine}>{participantDetailPartner.function}</div>
+                                                    </div>
+                                                ) : null}
+                                                {participantCompany ? (
+                                                    <div style={S.participantSummaryItem}>
+                                                        <div style={S.detailKicker}>Empresa</div>
+                                                        <div style={S.detailLine}>{participantCompany}</div>
+                                                    </div>
+                                                ) : null}
+                                                {participantDetailPartner.phone ? (
+                                                    <div style={S.participantSummaryItem}>
+                                                        <div style={S.detailKicker}>Telefone</div>
+                                                        <div style={S.detailLine}>{participantDetailPartner.phone}</div>
+                                                    </div>
+                                                ) : null}
+                                                {participantDetailPartner.mobile ? (
+                                                    <div style={S.participantSummaryItem}>
+                                                        <div style={S.detailKicker}>Telemovel</div>
+                                                        <div style={S.detailLine}>{participantDetailPartner.mobile}</div>
+                                                    </div>
+                                                ) : null}
+                                            </div>
+
+                                            <div style={S.participantDetailActions}>
+                                                <button
+                                                    type="button"
+                                                    style={S.primaryAction}
+                                                    onClick={() => openParticipantEditor(activeParticipant, Number(participantDetailPartner.id))}
+                                                >
+                                                    Atualizar
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    style={S.secondaryAction}
+                                                    onClick={() => linkParticipantToCurrentEmail(activeParticipant)}
+                                                    disabled={participantActionBusy || participantCurrentConversationLinked}
+                                                >
+                                                    {participantCurrentConversationLinked ? "Ja ligado" : "Ligar ao email"}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    style={S.secondaryAction}
+                                                    onClick={() => openOdooRecord("res.partner", Number(participantDetailPartner.id))}
+                                                >
+                                                    Odoo
+                                                </button>
+                                            </div>
+
+                                            {!participantDetailLinks.length ? (
+                                                <PanelState
+                                                    compact
+                                                    tone="empty"
+                                                    title="Sem ligacoes ativas"
+                                                    description="Este contacto ainda nao tem outros emails ligados no storage central."
+                                                />
+                                            ) : (
+                                                <div style={S.participantLinksList}>
+                                                    {participantDetailLinks.map((entry, index) => (
+                                                        <div key={`${entry.conversationId || entry.itemId || entry.subject || "link"}:${index}`} style={S.participantLinkCard}>
+                                                            <div style={S.detailKicker}>Ligacao {index + 1}</div>
+                                                            <div style={S.participantLinkTitle}>{entry.subject || "Email sem assunto"}</div>
+                                                            <div style={S.participantLinkMeta}>
+                                                                <span>{formatLinkMoment(entry)}</span>
+                                                                {entry.fromEmail ? <span>{entry.fromEmail}</span> : null}
+                                                            </div>
+                                                            <div style={S.linkedActions}>
+                                                                {(entry.emailWebLink || entry.url) ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        style={S.linkAction}
+                                                                        onClick={() => window.open(entry.emailWebLink || entry.url, "_blank")}
+                                                                    >
+                                                                        Abrir email
+                                                                    </button>
+                                                                ) : null}
+                                                                <button
+                                                                    type="button"
+                                                                    style={S.linkActionMuted}
+                                                                    onClick={() => openOdooRecord("res.partner", Number(participantDetailPartner.id))}
+                                                                >
+                                                                    Odoo
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <div style={S.participantDetailActions}>
+                                            <button
+                                                type="button"
+                                                style={S.primaryAction}
+                                                onClick={() => openParticipantEditor(activeParticipant)}
+                                            >
+                                                Criar contacto
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <section style={S.sectionCard}>
@@ -546,6 +860,20 @@ const S: Record<string, React.CSSProperties> = {
         color: "#0C66E4",
         display: "inline-flex",
     },
+    participantViewport: {
+        overflow: "hidden",
+    },
+    participantTrack: {
+        display: "flex",
+        width: "200%",
+        transition: "transform 220ms ease",
+    },
+    participantPane: {
+        width: "50%",
+        minWidth: 0,
+        paddingRight: 8,
+        boxSizing: "border-box",
+    },
     participantList: {
         display: "grid",
         gap: 8,
@@ -559,10 +887,26 @@ const S: Record<string, React.CSSProperties> = {
         justifyContent: "space-between",
         alignItems: "center",
         gap: 12,
+        width: "100%",
+        textAlign: "left",
+        cursor: "pointer",
     },
     participantCardPrimary: {
         borderColor: "#0C66E4",
         background: "#EFF6FF",
+    },
+    participantCardActive: {
+        boxShadow: "0 0 0 2px rgba(12,102,228,0.16) inset",
+    },
+    participantIdentity: {
+        minWidth: 0,
+        flex: 1,
+    },
+    participantCardSide: {
+        display: "grid",
+        justifyItems: "end",
+        gap: 6,
+        flexShrink: 0,
     },
     participantName: {
         fontSize: 12,
@@ -584,6 +928,115 @@ const S: Record<string, React.CSSProperties> = {
         fontWeight: 800,
         background: "#DFE1E6",
         color: "#42526E",
+    },
+    participantChevron: {
+        fontSize: 12,
+        fontWeight: 800,
+        color: "#6B778C",
+    },
+    participantDetail: {
+        display: "grid",
+        gap: 10,
+    },
+    participantDetailHead: {
+        display: "grid",
+        gridTemplateColumns: "auto minmax(0, 1fr) auto",
+        gap: 10,
+        alignItems: "center",
+    },
+    participantDetailTitleWrap: {
+        minWidth: 0,
+    },
+    participantDetailTitle: {
+        fontSize: 14,
+        fontWeight: 800,
+        color: "#172B4D",
+    },
+    participantDetailEmail: {
+        marginTop: 2,
+        fontSize: 11,
+        color: "#42526E",
+        wordBreak: "break-all",
+    },
+    participantDetailMeta: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+        gap: 8,
+    },
+    participantInfoCard: {
+        border: "1px solid #DFE1E6",
+        borderRadius: 10,
+        background: "#F7F8FA",
+        padding: "10px 12px",
+        display: "grid",
+        gap: 4,
+    },
+    detailKicker: {
+        fontSize: 10,
+        fontWeight: 800,
+        color: "#6B778C",
+        textTransform: "uppercase",
+        letterSpacing: "0.05em",
+    },
+    detailValue: {
+        fontSize: 13,
+        fontWeight: 700,
+        color: "#172B4D",
+        lineHeight: 1.3,
+    },
+    detailCopy: {
+        fontSize: 11,
+        color: "#5E6C84",
+        lineHeight: 1.45,
+    },
+    participantSummaryGrid: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+        gap: 8,
+    },
+    participantSummaryItem: {
+        border: "1px solid #DFE1E6",
+        borderRadius: 10,
+        background: "#FFFFFF",
+        padding: "10px 12px",
+        display: "grid",
+        gap: 4,
+    },
+    detailLine: {
+        fontSize: 12,
+        fontWeight: 600,
+        color: "#172B4D",
+        lineHeight: 1.35,
+    },
+    participantDetailActions: {
+        display: "flex",
+        gap: 8,
+        flexWrap: "wrap",
+    },
+    participantLinksList: {
+        display: "grid",
+        gap: 8,
+    },
+    participantLinkCard: {
+        border: "1px solid #DFE1E6",
+        borderRadius: 10,
+        background: "#F7F8FA",
+        padding: "10px 12px",
+        display: "grid",
+        gap: 6,
+    },
+    participantLinkTitle: {
+        fontSize: 12,
+        fontWeight: 700,
+        color: "#172B4D",
+        lineHeight: 1.35,
+    },
+    participantLinkMeta: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 8,
+        fontSize: 10,
+        color: "#5E6C84",
     },
     collapsedSummary: {
         fontSize: 11,
