@@ -3,7 +3,15 @@ import { useCockpit } from "@/components/shell/CockpitProvider";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 import { openCockpitDialog } from "@/office";
-import { getLinksByRecord, getOdooAutoLoginUrl, getPartnerByEmail, linkEmailToRecord, type LinkEntry } from "@/api";
+import {
+    getLinksByRecord,
+    getOdooAutoLoginUrl,
+    getPartnerByEmail,
+    getPartnerRelations,
+    linkEmailToRecord,
+    type LinkEntry,
+    type PartnerRelationSection,
+} from "@/api";
 
 type Participant = {
     email: string;
@@ -115,6 +123,12 @@ const QUICK_CREATE_MODELS = [
     { model: "res.partner", label: "Contacto", icon: <Icons.User size={12} /> },
 ] as const;
 
+const CRM2_EDITABLE_MODELS = new Set(["res.partner", "crm.lead", "project.project", "project.task", "helpdesk.ticket"]);
+
+function canOpenCrm2Editor(model: string): boolean {
+    return CRM2_EDITABLE_MODELS.has(String(model || "").trim());
+}
+
 export const CrmCockpit2: React.FC = () => {
     const { ctx, bodyText, bodyHtml, attachments, links, settings, meta, refreshLinks, setMsg, setTab } = useCockpit();
     const [primaryPartner, setPrimaryPartner] = useState<any | null>(null);
@@ -126,6 +140,7 @@ export const CrmCockpit2: React.FC = () => {
     const [participantDetailError, setParticipantDetailError] = useState("");
     const [participantDetailPartner, setParticipantDetailPartner] = useState<any | null>(null);
     const [participantDetailLinks, setParticipantDetailLinks] = useState<LinkEntry[]>([]);
+    const [participantDetailRelations, setParticipantDetailRelations] = useState<PartnerRelationSection[]>([]);
     const [participantActionBusy, setParticipantActionBusy] = useState(false);
 
     const participants = useMemo(() => dedupeParticipants(ctx), [ctx]);
@@ -220,12 +235,19 @@ export const CrmCockpit2: React.FC = () => {
         setParticipantDetailError("");
         try {
             const partner = await getPartnerByEmail(participant.email);
-            const recordLinks = partner?.id ? await getLinksByRecord("res.partner", Number(partner.id)) : [];
+            const [recordLinks, relationPayload] = partner?.id
+                ? await Promise.all([
+                    getLinksByRecord("res.partner", Number(partner.id)),
+                    getPartnerRelations(Number(partner.id)),
+                ])
+                : [[], { partner: null, total: 0, relations: [] }];
             setParticipantDetailPartner(partner || null);
             setParticipantDetailLinks(sortLinksByRecency(dedupeParticipantLinks(recordLinks)));
+            setParticipantDetailRelations(Array.isArray(relationPayload?.relations) ? relationPayload.relations : []);
         } catch (error: any) {
             setParticipantDetailPartner(null);
             setParticipantDetailLinks([]);
+            setParticipantDetailRelations([]);
             setParticipantDetailError(error?.message ?? String(error));
         } finally {
             setParticipantDetailLoading(false);
@@ -281,6 +303,7 @@ export const CrmCockpit2: React.FC = () => {
         setActiveParticipantEmail(null);
         setParticipantDetailPartner(null);
         setParticipantDetailLinks([]);
+        setParticipantDetailRelations([]);
         setParticipantDetailError("");
     }, [participants, activeParticipantEmail]);
 
@@ -288,6 +311,7 @@ export const CrmCockpit2: React.FC = () => {
         setActiveParticipantEmail(null);
         setParticipantDetailPartner(null);
         setParticipantDetailLinks([]);
+        setParticipantDetailRelations([]);
         setParticipantDetailError("");
     }, [ctx.conversationId, ctx.itemId]);
 
@@ -304,6 +328,11 @@ export const CrmCockpit2: React.FC = () => {
     const participantCurrentConversationLinked = participantDetailPartner?.id
         ? linkedRecords.some((entry) => entry.model === "res.partner" && Number(entry.recordId || entry.resId || 0) === Number(participantDetailPartner.id))
         : false;
+    const participantRelationTotal = participantDetailRelations.reduce((sum, section) => sum + Number(section?.total || 0), 0);
+    const participantRelationPreview = participantDetailRelations
+        .slice(0, 2)
+        .map((section) => `${section.total} ${section.label.toLowerCase()}`)
+        .join(" · ");
 
     return (
         <div style={S.root}>
@@ -486,12 +515,21 @@ export const CrmCockpit2: React.FC = () => {
                                             </div>
                                         </div>
                                         <div style={S.participantInfoCard}>
-                                            <div style={S.detailKicker}>Ligacoes</div>
+                                            <div style={S.detailKicker}>Storage central</div>
                                             <div style={S.detailValue}>{participantDetailPartner?.id ? `${participantDetailLinks.length} email(s) ligados` : "Sem ligacoes"}</div>
                                             <div style={S.detailCopy}>
                                                 {participantDetailPartner?.id
                                                     ? (participantCurrentConversationLinked ? "Este email ja esta ligado ao contacto." : "Ainda nao ha ligacao deste email ao contacto.")
                                                     : "Cria primeiro o contacto para poderes consultar ligacoes."}
+                                            </div>
+                                        </div>
+                                        <div style={S.participantInfoCard}>
+                                            <div style={S.detailKicker}>Relacoes Odoo</div>
+                                            <div style={S.detailValue}>{participantDetailPartner?.id ? `${participantRelationTotal} registo(s)` : "Sem relacoes"}</div>
+                                            <div style={S.detailCopy}>
+                                                {participantDetailPartner?.id
+                                                    ? (participantRelationPreview || "Sem relacoes nativas encontradas para este contacto.")
+                                                    : "Cria primeiro o contacto para poderes consultar ligacoes nativas no Odoo."}
                                             </div>
                                         </div>
                                     </div>
@@ -550,45 +588,109 @@ export const CrmCockpit2: React.FC = () => {
                                                 </button>
                                             </div>
 
-                                            {!participantDetailLinks.length ? (
-                                                <PanelState
-                                                    compact
-                                                    tone="empty"
-                                                    title="Sem ligacoes ativas"
-                                                    description="Este contacto ainda nao tem outros emails ligados no storage central."
-                                                />
-                                            ) : (
-                                                <div style={S.participantLinksList}>
-                                                    {participantDetailLinks.map((entry, index) => (
-                                                        <div key={`${entry.conversationId || entry.itemId || entry.subject || "link"}:${index}`} style={S.participantLinkCard}>
-                                                            <div style={S.detailKicker}>Ligacao {index + 1}</div>
-                                                            <div style={S.participantLinkTitle}>{entry.subject || "Email sem assunto"}</div>
-                                                            <div style={S.participantLinkMeta}>
-                                                                <span>{formatLinkMoment(entry)}</span>
-                                                                {entry.fromEmail ? <span>{entry.fromEmail}</span> : null}
+                                            <div style={S.participantSectionBlock}>
+                                                <div style={S.participantSectionHead}>
+                                                    <div style={S.sectionTitle}>Relacoes no Odoo</div>
+                                                    <div style={S.sectionHint}>Leitura direta dos registos nativos associados a este contacto.</div>
+                                                </div>
+
+                                                {!participantDetailRelations.length ? (
+                                                    <PanelState
+                                                        compact
+                                                        tone="empty"
+                                                        title="Sem relacoes nativas"
+                                                        description="Nao encontrei leads, projetos, tickets, vendas ou reunioes ligados a este contacto no Odoo."
+                                                    />
+                                                ) : (
+                                                    <div style={S.participantRelationGroups}>
+                                                        {participantDetailRelations.map((section) => (
+                                                            <div key={section.key} style={S.participantRelationGroupCard}>
+                                                                <div style={S.participantRelationGroupHead}>
+                                                                    <div>
+                                                                        <div style={S.detailKicker}>{section.label}</div>
+                                                                        <div style={S.detailLine}>{section.total} registo(s)</div>
+                                                                    </div>
+                                                                </div>
+
+                                                                <div style={S.participantLinksList}>
+                                                                    {section.items.map((item) => (
+                                                                        <div key={`${item.model}:${item.recordId}`} style={S.participantLinkCard}>
+                                                                            <div style={S.participantLinkTitle}>{item.title || `#${item.recordId}`}</div>
+                                                                            {item.meta ? <div style={S.participantLinkMeta}><span>{item.meta}</span></div> : null}
+                                                                            {item.secondary ? <div style={S.participantLinkMeta}><span>{item.secondary}</span></div> : null}
+                                                                            <div style={S.linkedActions}>
+                                                                                {canOpenCrm2Editor(item.model) ? (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        style={S.linkAction}
+                                                                                        onClick={() => openDialog("edit", { model: item.model, recordId: String(item.recordId) })}
+                                                                                    >
+                                                                                        Editor v2
+                                                                                    </button>
+                                                                                ) : null}
+                                                                                <button
+                                                                                    type="button"
+                                                                                    style={canOpenCrm2Editor(item.model) ? S.linkActionMuted : S.linkAction}
+                                                                                    onClick={() => openOdooRecord(item.model, item.recordId)}
+                                                                                >
+                                                                                    Odoo
+                                                                                </button>
+                                                                            </div>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
                                                             </div>
-                                                            <div style={S.linkedActions}>
-                                                                {(entry.emailWebLink || entry.url) ? (
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div style={S.participantSectionBlock}>
+                                                <div style={S.participantSectionHead}>
+                                                    <div style={S.sectionTitle}>Emails ligados</div>
+                                                    <div style={S.sectionHint}>Leitura direta do storage central do add-in.</div>
+                                                </div>
+
+                                                {!participantDetailLinks.length ? (
+                                                    <PanelState
+                                                        compact
+                                                        tone="empty"
+                                                        title="Sem ligacoes no storage central"
+                                                        description="Este contacto ainda nao tem outros emails ligados no storage central."
+                                                    />
+                                                ) : (
+                                                    <div style={S.participantLinksList}>
+                                                        {participantDetailLinks.map((entry, index) => (
+                                                            <div key={`${entry.conversationId || entry.itemId || entry.subject || "link"}:${index}`} style={S.participantLinkCard}>
+                                                                <div style={S.detailKicker}>Ligacao {index + 1}</div>
+                                                                <div style={S.participantLinkTitle}>{entry.subject || "Email sem assunto"}</div>
+                                                                <div style={S.participantLinkMeta}>
+                                                                    <span>{formatLinkMoment(entry)}</span>
+                                                                    {entry.fromEmail ? <span>{entry.fromEmail}</span> : null}
+                                                                </div>
+                                                                <div style={S.linkedActions}>
+                                                                    {(entry.emailWebLink || entry.url) ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            style={S.linkAction}
+                                                                            onClick={() => window.open(entry.emailWebLink || entry.url, "_blank")}
+                                                                        >
+                                                                            Abrir email
+                                                                        </button>
+                                                                    ) : null}
                                                                     <button
                                                                         type="button"
-                                                                        style={S.linkAction}
-                                                                        onClick={() => window.open(entry.emailWebLink || entry.url, "_blank")}
+                                                                        style={S.linkActionMuted}
+                                                                        onClick={() => openOdooRecord("res.partner", Number(participantDetailPartner.id))}
                                                                     >
-                                                                        Abrir email
+                                                                        Odoo
                                                                     </button>
-                                                                ) : null}
-                                                                <button
-                                                                    type="button"
-                                                                    style={S.linkActionMuted}
-                                                                    onClick={() => openOdooRecord("res.partner", Number(participantDetailPartner.id))}
-                                                                >
-                                                                    Odoo
-                                                                </button>
+                                                                </div>
                                                             </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
                                         </>
                                     ) : (
                                         <div style={S.participantDetailActions}>
@@ -1012,6 +1114,32 @@ const S: Record<string, React.CSSProperties> = {
         display: "flex",
         gap: 8,
         flexWrap: "wrap",
+    },
+    participantSectionBlock: {
+        display: "grid",
+        gap: 8,
+    },
+    participantSectionHead: {
+        display: "grid",
+        gap: 2,
+    },
+    participantRelationGroups: {
+        display: "grid",
+        gap: 10,
+    },
+    participantRelationGroupCard: {
+        border: "1px solid #DFE1E6",
+        borderRadius: 10,
+        background: "#FFFFFF",
+        padding: "10px 12px",
+        display: "grid",
+        gap: 8,
+    },
+    participantRelationGroupHead: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
     },
     participantLinksList: {
         display: "grid",

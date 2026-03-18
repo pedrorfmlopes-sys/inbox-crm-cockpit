@@ -348,6 +348,231 @@ async function findPartnerExactByEmail(odoo, email) {
   return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
+function many2oneLabel(value) {
+  return Array.isArray(value) ? String(value[1] || "").trim() : "";
+}
+
+function formatIsoDate(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("pt-PT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function formatCurrencyAmount(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "";
+  return new Intl.NumberFormat("pt-PT", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function isIgnorableOdooLookupError(error) {
+  const message = String(error?.message || error || "");
+  return /invalid field|keyerror|unknown|does not exist|doesn't exist|not found|accesserror|access denied|forbidden/i.test(message);
+}
+
+async function getModelFieldsSafe(odoo, model) {
+  try {
+    return await odoo.schema.getModelFields(model);
+  } catch (error) {
+    if (isIgnorableOdooLookupError(error)) return null;
+    throw error;
+  }
+}
+
+async function readPartnerRelationSection(odoo, spec, partnerId) {
+  const fields = await getModelFieldsSafe(odoo, spec.model);
+  if (!fields) return null;
+  if ((spec.requiredFields || []).some((fieldName) => !fields.has(fieldName))) return null;
+
+  try {
+    const rows = await safeSearchReadCompat(
+      odoo,
+      spec.model,
+      spec.domain(partnerId),
+      spec.fields,
+      spec.limit || 6,
+      spec.order,
+    );
+
+    const items = (Array.isArray(rows) ? rows : []).map((row) => spec.mapRow(row)).filter(Boolean);
+    if (!items.length) return null;
+
+    return {
+      key: spec.key,
+      label: spec.label,
+      model: spec.model,
+      total: items.length,
+      items,
+    };
+  } catch (error) {
+    if (isIgnorableOdooLookupError(error)) return null;
+    throw error;
+  }
+}
+
+async function listPartnerNativeRelations(odoo, partnerId) {
+  const specs = [
+    {
+      key: "leads",
+      label: "Leads e oportunidades",
+      model: "crm.lead",
+      requiredFields: ["partner_id"],
+      fields: ["name", "type", "stage_id", "user_id", "probability", "expected_revenue"],
+      order: "write_date desc, id desc",
+      domain: (id) => [["partner_id", "=", id]],
+      mapRow: (row) => {
+        const recordId = Number(row?.id || 0);
+        if (!recordId) return null;
+        const kind = row?.type === "opportunity" ? "Oportunidade" : "Lead";
+        const stage = many2oneLabel(row?.stage_id);
+        const owner = many2oneLabel(row?.user_id);
+        const probability = Number(row?.probability);
+        const revenue = Number(row?.expected_revenue);
+        return {
+          model: "crm.lead",
+          recordId,
+          title: String(row?.name || "").trim() || `Lead #${recordId}`,
+          meta: [kind, stage].filter(Boolean).join(" · "),
+          secondary: [
+            owner,
+            Number.isFinite(probability) ? `${Math.round(probability)}%` : "",
+            Number.isFinite(revenue) && revenue > 0 ? `${formatCurrencyAmount(revenue)} EUR` : "",
+          ].filter(Boolean).join(" · "),
+        };
+      },
+    },
+    {
+      key: "projects",
+      label: "Projetos",
+      model: "project.project",
+      requiredFields: ["partner_id"],
+      fields: ["name", "user_id"],
+      order: "write_date desc, id desc",
+      domain: (id) => [["partner_id", "=", id]],
+      mapRow: (row) => {
+        const recordId = Number(row?.id || 0);
+        if (!recordId) return null;
+        return {
+          model: "project.project",
+          recordId,
+          title: String(row?.name || "").trim() || `Projeto #${recordId}`,
+          meta: "Projeto",
+          secondary: many2oneLabel(row?.user_id),
+        };
+      },
+    },
+    {
+      key: "tasks",
+      label: "Tarefas",
+      model: "project.task",
+      requiredFields: ["partner_id"],
+      fields: ["name", "project_id", "stage_id", "date_deadline"],
+      order: "write_date desc, id desc",
+      domain: (id) => [["partner_id", "=", id]],
+      mapRow: (row) => {
+        const recordId = Number(row?.id || 0);
+        if (!recordId) return null;
+        const project = many2oneLabel(row?.project_id);
+        const stage = many2oneLabel(row?.stage_id);
+        const deadline = formatIsoDate(row?.date_deadline);
+        return {
+          model: "project.task",
+          recordId,
+          title: String(row?.name || "").trim() || `Tarefa #${recordId}`,
+          meta: [project, stage].filter(Boolean).join(" · "),
+          secondary: deadline ? `Prazo ${deadline}` : "",
+        };
+      },
+    },
+    {
+      key: "tickets",
+      label: "Tickets",
+      model: "helpdesk.ticket",
+      requiredFields: ["partner_id"],
+      fields: ["name", "stage_id", "team_id", "user_id", "priority"],
+      order: "write_date desc, id desc",
+      domain: (id) => [["partner_id", "=", id]],
+      mapRow: (row) => {
+        const recordId = Number(row?.id || 0);
+        if (!recordId) return null;
+        const stage = many2oneLabel(row?.stage_id);
+        const team = many2oneLabel(row?.team_id);
+        const owner = many2oneLabel(row?.user_id);
+        const priority = String(row?.priority || "").trim();
+        return {
+          model: "helpdesk.ticket",
+          recordId,
+          title: String(row?.name || "").trim() || `Ticket #${recordId}`,
+          meta: [stage, team].filter(Boolean).join(" · "),
+          secondary: [owner, priority ? `Prioridade ${priority}` : ""].filter(Boolean).join(" · "),
+        };
+      },
+    },
+    {
+      key: "sales",
+      label: "Vendas",
+      model: "sale.order",
+      requiredFields: ["partner_id"],
+      fields: ["name", "state", "user_id", "date_order", "amount_total"],
+      order: "date_order desc, id desc",
+      domain: (id) => [["partner_id", "=", id]],
+      mapRow: (row) => {
+        const recordId = Number(row?.id || 0);
+        if (!recordId) return null;
+        const state = String(row?.state || "").trim().replace(/_/g, " ");
+        const owner = many2oneLabel(row?.user_id);
+        const orderedAt = formatIsoDate(row?.date_order);
+        const amount = formatCurrencyAmount(row?.amount_total);
+        return {
+          model: "sale.order",
+          recordId,
+          title: String(row?.name || "").trim() || `Venda #${recordId}`,
+          meta: [state, owner].filter(Boolean).join(" · "),
+          secondary: [orderedAt ? `Data ${orderedAt}` : "", amount ? `${amount} EUR` : ""].filter(Boolean).join(" · "),
+        };
+      },
+    },
+    {
+      key: "meetings",
+      label: "Reunioes",
+      model: "calendar.event",
+      requiredFields: ["partner_ids"],
+      fields: ["name", "start", "stop", "user_id"],
+      order: "start desc, id desc",
+      domain: (id) => [["partner_ids", "in", [id]]],
+      mapRow: (row) => {
+        const recordId = Number(row?.id || 0);
+        if (!recordId) return null;
+        const owner = many2oneLabel(row?.user_id);
+        const start = formatIsoDate(row?.start);
+        const stop = formatIsoDate(row?.stop);
+        return {
+          model: "calendar.event",
+          recordId,
+          title: String(row?.name || "").trim() || `Reuniao #${recordId}`,
+          meta: [start ? `Inicio ${start}` : "", stop && stop !== start ? `Fim ${stop}` : ""].filter(Boolean).join(" · "),
+          secondary: owner,
+        };
+      },
+    },
+  ];
+
+  const sections = [];
+  for (const spec of specs) {
+    const section = await readPartnerRelationSection(odoo, spec, partnerId);
+    if (section) sections.push(section);
+  }
+  return sections;
+}
+
 app.get("/api/odoo/partners/by-email", async (req, res) => {
   try {
     const email = normalizeEmail(req.query.email);
@@ -366,6 +591,35 @@ app.get("/api/odoo/partners/by-email", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "partner_lookup_failed", details: String(e?.message || e), partner: null });
+  }
+});
+
+app.get("/api/odoo/partners/:id/relations", async (req, res) => {
+  try {
+    const partnerId = Number(req.params.id || 0);
+    if (!partnerId) {
+      return res.status(400).json({ ok: false, message: "Missing partner id", relations: [] });
+    }
+
+    const odoo = await getOdooCached(req);
+    const partnerRows = await safeReadCompat(odoo, "res.partner", [partnerId], PARTNER_PREFERRED_READ_FIELDS);
+    const partner = Array.isArray(partnerRows) && partnerRows.length ? partnerRows[0] : null;
+    if (!partner) {
+      return res.status(404).json({ ok: false, message: "Partner not found", relations: [] });
+    }
+
+    const relations = await listPartnerNativeRelations(odoo, partnerId);
+    const total = relations.reduce((sum, section) => sum + Number(section?.total || 0), 0);
+
+    return res.json({
+      ok: true,
+      partner,
+      total,
+      relations,
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "partner_relations_failed", details: String(e?.message || e), relations: [] });
   }
 });
 

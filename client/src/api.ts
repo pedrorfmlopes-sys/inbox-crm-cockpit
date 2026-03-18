@@ -633,10 +633,44 @@ export type PartnerLite = {
   mobile?: string;
 };
 
+export type PartnerRelationItem = {
+  model: string;
+  recordId: number;
+  title: string;
+  meta?: string;
+  secondary?: string;
+};
+
+export type PartnerRelationSection = {
+  key: string;
+  label: string;
+  model: string;
+  total: number;
+  items: PartnerRelationItem[];
+};
+
+export type PartnerRelationsResponse = {
+  ok: boolean;
+  partner?: PartnerLite | null;
+  total?: number;
+  relations?: PartnerRelationSection[];
+};
+
 export async function getPartnerByEmail(email: string): Promise<PartnerLite | null> {
   const q = encodeURIComponent(String(email || "").trim());
   const r: any = await requestJSON(`/api/odoo/partners/by-email?email=${q}`);
   return r?.partner ?? null;
+}
+
+export async function getPartnerRelations(partnerId: number): Promise<{ partner: PartnerLite | null; total: number; relations: PartnerRelationSection[] }> {
+  const id = Number(partnerId || 0);
+  if (!id) return { partner: null, total: 0, relations: [] };
+  const r: PartnerRelationsResponse = await requestJSON(`/api/odoo/partners/${encodeURIComponent(String(id))}/relations`);
+  return {
+    partner: r?.partner ?? null,
+    total: Number(r?.total || 0),
+    relations: Array.isArray(r?.relations) ? r.relations : [],
+  };
 }
 
 export async function createOrUpdatePartner(payload: {
