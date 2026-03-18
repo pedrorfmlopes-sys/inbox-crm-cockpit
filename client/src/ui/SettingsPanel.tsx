@@ -1313,6 +1313,7 @@ function Crm2LayoutSettings({
 }) {
   const layout = model.crm2OdooLayout;
   const project = layout.project;
+  const pdfGuideHref = "/docs/inbox-cockpit-crm2-odoo-studio-setup.pdf";
   const [isValidating, setIsValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [validation, setValidation] = useState<Crm2LayoutValidationResult | null>(null);
@@ -1534,6 +1535,29 @@ function Crm2LayoutSettings({
           <div style={S.hint}>
             Estrutura recomendada: <b>{project.fixedInfoField || "?"}</b> / <b>{project.historyField || "?"}</b> / <b>{project.documentsField || "?"}</b>
           </div>
+        </div>
+      </div>
+
+      <div style={S.referenceCard}>
+        <div style={S.fieldLabel}>Checklist Odoo Studio</div>
+        <div style={{ display: "grid", gap: 8 }}>
+          <div style={S.hint}><b>1.</b> Abrir o Studio num registo de projeto e editar a vista de <b>{project.model}</b>.</div>
+          <div style={S.hint}><b>2.</b> Confirmar que o campo base <b>{project.descriptionField || "description"}</b> existe e fica visivel no formulario.</div>
+          <div style={S.hint}><b>3.</b> Criar o campo <b>{project.fixedInfoField || "x_studio_iccc_project_brief"}</b> para informacao fixa, de preferencia HTML.</div>
+          <div style={S.hint}><b>4.</b> Criar o campo <b>{project.historyField || "x_studio_iccc_project_history"}</b> para historico e o campo <b>{project.documentsField || "x_studio_iccc_project_documents"}</b> para documentos.</div>
+          <div style={S.hint}><b>5.</b> Adicionar as abas <b>{project.fixedInfoTabLabel || "Informacao fixa"}</b>, <b>{project.historyTabLabel || "Historico"}</b> e <b>{project.documentsTabLabel || "Documentos"}</b>, colocando um campo por aba.</div>
+          <div style={S.hint}><b>6.</b> Guardar o Studio, voltar ao cockpit e correr <b>Validar configuracao Odoo</b>.</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+          <a href={pdfGuideHref} target="_blank" rel="noreferrer" style={{ ...S.btnGhost, textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+            Abrir guia PDF
+          </a>
+          <a href={pdfGuideHref} download style={{ ...S.btnGhost, textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+            Descarregar PDF
+          </a>
+        </div>
+        <div style={{ ...S.hint, marginTop: 8 }}>
+          O PDF foi pensado para onboarding multiempresa. Se o cliente usar nomes tecnicos diferentes, basta alinhar esses nomes nesta secao antes de validar.
         </div>
       </div>
 
