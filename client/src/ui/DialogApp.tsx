@@ -454,16 +454,69 @@ function sanitizeEmailHtmlForOdooClient(html?: string) {
   return cleaned;
 }
 
-function buildDescriptionEditorHtml(emailHtml?: string, emailText?: string, currentValue?: string) {
+function normalizeDialogCidValue(value: string | undefined) {
+  return String(value || "")
+    .trim()
+    .replace(/^cid:/i, "")
+    .replace(/[<>\s]/g, "")
+    .toLowerCase();
+}
+
+function stripDialogDataUrlPrefix(value: string | undefined) {
+  return String(value || "").trim().replace(/^data:[^,]+,/, "");
+}
+
+function normalizeDialogAttachmentMime(att: any) {
+  const raw = String(att?.contentType || att?.mimetype || "").trim().toLowerCase();
+  const fileName = String(att?.name || "").trim().toLowerCase();
+  if (raw === "application/x-pdf" || (!raw && /\.pdf$/.test(fileName))) return "application/pdf";
+  if (raw === "image/jpg") return "image/jpeg";
+  return raw || "application/octet-stream";
+}
+
+function buildDialogAttachmentDataUrl(att: any) {
+  const base64 = stripDialogDataUrlPrefix(att?.content);
+  if (!base64) return "";
+  return `data:${normalizeDialogAttachmentMime(att)};base64,${base64}`;
+}
+
+function attachmentMatchesDialogCid(att: any, cid: string) {
+  const normalizedCid = normalizeDialogCidValue(cid);
+  if (!normalizedCid) return false;
+  const normalizedContentId = normalizeDialogCidValue(att?.contentId);
+  if (normalizedContentId && normalizedContentId === normalizedCid) return true;
+  const normalizedName = String(att?.name || "").trim().toLowerCase();
+  if (!normalizedName) return false;
+  return normalizedCid === normalizedName || normalizedCid.startsWith(`${normalizedName}@`) || normalizedCid.includes(normalizedName);
+}
+
+function rewriteDialogHtmlInlineImages(html?: string, attachments: any[] = []) {
+  const source = String(html || "").trim();
+  if (!source) return "";
+  return source
+    .replace(/\b(src|background)=(["'])cid:([^"'<>]+)\2/gi, (match, attr, quote, cid) => {
+      const attachment = (attachments || []).find((entry) => attachmentMatchesDialogCid(entry, cid));
+      const dataUrl = attachment ? buildDialogAttachmentDataUrl(attachment) : "";
+      if (!dataUrl) return match;
+      return `${attr}=${quote}${dataUrl}${quote}`;
+    })
+    .replace(/url\((["']?)cid:([^)"']+)\1\)/gi, (match, quote, cid) => {
+      const attachment = (attachments || []).find((entry) => attachmentMatchesDialogCid(entry, cid));
+      const dataUrl = attachment ? buildDialogAttachmentDataUrl(attachment) : "";
+      return dataUrl ? `url(${quote}${dataUrl}${quote})` : match;
+    });
+}
+
+function buildDescriptionEditorHtml(emailHtml?: string, emailText?: string, currentValue?: string, attachments: any[] = []) {
   const existing = String(currentValue || "").trim();
   if (existing) {
-    const cleanedExisting = sanitizeEmailHtmlForOdooClient(existing);
+    const cleanedExisting = rewriteDialogHtmlInlineImages(sanitizeEmailHtmlForOdooClient(existing), attachments);
     if (cleanedExisting) return cleanedExisting;
     const existingText = htmlToReadableTextClient(existing);
     return plainTextToHtmlClient(existingText || existing);
   }
 
-  const cleanedEmailHtml = sanitizeEmailHtmlForOdooClient(emailHtml);
+  const cleanedEmailHtml = rewriteDialogHtmlInlineImages(sanitizeEmailHtmlForOdooClient(emailHtml), attachments);
   if (cleanedEmailHtml) return cleanedEmailHtml;
 
   return plainTextToHtmlClient(emailText);
@@ -525,6 +578,17 @@ function attachmentKindLabel(att: any) {
   const name = String(att?.name || "").trim();
   const ext = name.includes(".") ? name.split(".").pop() : "";
   return ext ? ext.toUpperCase() : "FICHEIRO";
+}
+
+function getSuggestedInlineAttachmentNames(attachments: any[]) {
+  return Array.from(new Set((attachments || [])
+    .filter((att) => {
+      const hasContent = Boolean(String(att?.content || "").trim());
+      const looksInlineImage = Boolean(att?.isInline) || normalizeAttachmentMime(att).startsWith("image/");
+      return hasContent && looksInlineImage && String(att?.name || "").trim();
+    })
+    .map((att) => String(att.name || "").trim())
+    .filter(Boolean)));
 }
 
 type UploadedRecordAttachment = {
@@ -941,7 +1005,7 @@ function OdooContentEditor({
           <button
             type="button"
             style={S.secondaryBtn}
-            onClick={() => onDescriptionChange(cleanEmailText)}
+            onClick={() => onDescriptionChange(buildDescriptionEditorHtml(emailHtml, emailText, undefined, attachments || []))}
             title="Preencher descricao com o texto limpo do email"
           >
             EMAIL
@@ -1339,6 +1403,8 @@ function DescriptionWorkspace({
   placeholder,
   emailHtml,
   emailText,
+  attachments,
+  onUseEmail,
 }: {
   title: string;
   hint: string;
@@ -1347,6 +1413,8 @@ function DescriptionWorkspace({
   placeholder: string;
   emailHtml?: string;
   emailText?: string;
+  attachments?: any[];
+  onUseEmail?: () => void;
 }) {
   return (
     <div style={S.descriptionCard}>
@@ -1358,7 +1426,10 @@ function DescriptionWorkspace({
         <button
           type="button"
           style={S.compactActionBtn}
-          onClick={() => onChange(buildDescriptionEditorHtml(emailHtml, emailText))}
+          onClick={() => {
+            onChange(buildDescriptionEditorHtml(emailHtml, emailText, undefined, attachments || []));
+            onUseEmail?.();
+          }}
           title="Usar o corpo do email"
         >
           Usar email
@@ -1913,9 +1984,9 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
 
   useEffect(() => {
     if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
-      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody));
+      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody, undefined, emailAtts || []));
     }
-  }, [mode, ctx.bodyHtml, fullBody, description]);
+  }, [mode, ctx.bodyHtml, fullBody, description, emailAtts]);
 
   useEffect(() => {
     if (mode !== "edit" || !editId) return;
@@ -2056,6 +2127,12 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         placeholder="Descricao e notas da tarefa..."
         emailHtml={ctx.bodyHtml}
         emailText={fullBody}
+        attachments={emailAtts}
+        onUseEmail={() => {
+          const suggested = getSuggestedInlineAttachmentNames(emailAtts || []);
+          if (!suggested.length) return;
+          setSelectedAtts((prev) => Array.from(new Set([...prev, ...suggested])));
+        }}
       />
       <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
@@ -2075,9 +2152,9 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
 
   useEffect(() => {
     if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
-      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody));
+      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody, undefined, emailAtts || []));
     }
-  }, [mode, ctx.bodyHtml, fullBody, description]);
+  }, [mode, ctx.bodyHtml, fullBody, description, emailAtts]);
 
   useEffect(() => {
     if (mode !== "edit" || !editId) return;
@@ -2184,6 +2261,12 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
         placeholder="Edita aqui a descricao do projeto..."
         emailHtml={ctx.bodyHtml}
         emailText={fullBody}
+        attachments={emailAtts}
+        onUseEmail={() => {
+          const suggested = getSuggestedInlineAttachmentNames(emailAtts || []);
+          if (!suggested.length) return;
+          setSelectedAtts((prev) => Array.from(new Set([...prev, ...suggested])));
+        }}
       />
       <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
@@ -2212,9 +2295,9 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
 
   useEffect(() => {
     if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
-      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody));
+      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody, undefined, emailAtts || []));
     }
-  }, [mode, ctx.bodyHtml, fullBody, description]);
+  }, [mode, ctx.bodyHtml, fullBody, description, emailAtts]);
 
   useEffect(() => {
     let alive = true;
@@ -2362,6 +2445,12 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
         placeholder="Resumo e notas do lead..."
         emailHtml={ctx.bodyHtml}
         emailText={fullBody}
+        attachments={emailAtts}
+        onUseEmail={() => {
+          const suggested = getSuggestedInlineAttachmentNames(emailAtts || []);
+          if (!suggested.length) return;
+          setSelectedAtts((prev) => Array.from(new Set([...prev, ...suggested])));
+        }}
       />
       <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
@@ -3158,9 +3247,9 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
 
   useEffect(() => {
     if (mode === "new" && !htmlToReadableTextClient(description) && (ctx.bodyHtml || fullBody)) {
-      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody));
+      setDescription(buildDescriptionEditorHtml(ctx.bodyHtml, fullBody, undefined, emailAtts || []));
     }
-  }, [mode, ctx.bodyHtml, fullBody, description]);
+  }, [mode, ctx.bodyHtml, fullBody, description, emailAtts]);
 
   useEffect(() => {
     if (mode !== "edit" || !editId) return;
@@ -3267,6 +3356,12 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
         placeholder="Detalhes e contexto do ticket..."
         emailHtml={ctx.bodyHtml}
         emailText={fullBody}
+        attachments={emailAtts}
+        onUseEmail={() => {
+          const suggested = getSuggestedInlineAttachmentNames(emailAtts || []);
+          if (!suggested.length) return;
+          setSelectedAtts((prev) => Array.from(new Set([...prev, ...suggested])));
+        }}
       />
       <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
