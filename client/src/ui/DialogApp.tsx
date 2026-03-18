@@ -2254,6 +2254,25 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
   );
 }
 function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
+  const partnerFields = [
+    "id",
+    "name",
+    "display_name",
+    "email",
+    "phone",
+    "mobile",
+    "function",
+    "company_type",
+    "vat",
+    "parent_id",
+    "street",
+    "street2",
+    "zip",
+    "city",
+    "country_id",
+    "state_id",
+    "website",
+  ];
   const [name, setName] = useState(ctx.fromName || ctx.subject || "");
   const [email, setEmail] = useState(ctx.fromEmail || "");
   const [phone, setPhone] = useState("");
@@ -2272,6 +2291,14 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
   const [stateName, setStateName] = useState("");
   const [parentCompanyId, setParentCompanyId] = useState<number | null>(null);
   const [parentCompanyName, setParentCompanyName] = useState("");
+  const [existingPartnerId, setExistingPartnerId] = useState<number | null>(mode === "edit" && editId ? Number(editId) : null);
+  const [existingPartnerName, setExistingPartnerName] = useState("");
+  const [duplicateCandidates, setDuplicateCandidates] = useState<any[]>([]);
+  const [duplicateModalOpen, setDuplicateModalOpen] = useState(false);
+  const [duplicateBusy, setDuplicateBusy] = useState(false);
+  const [duplicateHint, setDuplicateHint] = useState("");
+  const [allowCreateNew, setAllowCreateNew] = useState(mode === "edit");
+  const lookupKeyRef = useRef("");
 
   const participants = useMemo(() => {
     const out: Array<{ role: string; name: string; email: string }> = [];
@@ -2298,51 +2325,109 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
     if (mode !== "edit" || !editId) return;
     (async () => {
       try {
-        const rows = await readOdoo("res.partner", [editId], [
-          "name", "email", "phone", "mobile", "function", "company_type", "vat", "parent_id",
-          "street", "street2", "zip", "city", "country_id", "state_id", "website",
-        ]);
-        const r = rows?.[0];
-        if (!r) return;
-        setName(r.name || "");
-        setEmail(r.email || "");
-        setPhone(r.phone || "");
-        setMobile(r.mobile || "");
-        setJobTitle(r.function || "");
-        setPartnerKind(r.company_type === "company" ? "company" : "person");
-        setVat(String(r.vat || "").trim());
-        setWebsite(String(r.website || "").trim());
-        setStreet(String(r.street || ""));
-        setStreet2(String(r.street2 || ""));
-        setZip(String(r.zip || ""));
-        setCity(String(r.city || ""));
-        if (Array.isArray(r.parent_id) && r.parent_id[0]) {
-          setParentCompanyId(r.parent_id[0]);
-          setParentCompanyName(r.parent_id[1] || `#${r.parent_id[0]}`);
-        } else {
-          setParentCompanyId(null);
-          setParentCompanyName("");
-        }
-        if (Array.isArray(r.country_id) && r.country_id[0]) {
-          setCountryId(r.country_id[0]);
-          setCountryName(r.country_id[1] || `#${r.country_id[0]}`);
-        } else {
-          setCountryId(null);
-          setCountryName("");
-        }
-        if (Array.isArray(r.state_id) && r.state_id[0]) {
-          setStateId(r.state_id[0]);
-          setStateName(r.state_id[1] || `#${r.state_id[0]}`);
-        } else {
-          setStateId(null);
-          setStateName("");
-        }
+        const record = await loadPartnerRecord(editId);
+        if (!record) return;
+        applyPartnerRecord(record, { selectExisting: true, hint: "" });
       } catch (e: any) {
         onStatus(e?.message ?? String(e));
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, editId]);
+
+  useEffect(() => {
+    if (mode !== "new") return;
+    const lookupKey = `${ctx.fromEmail || ""}|${ctx.fromName || ""}`;
+    if (lookupKeyRef.current === lookupKey) return;
+    lookupKeyRef.current = lookupKey;
+
+    (async () => {
+      const cleanEmail = normalizeText(ctx.fromEmail || "").toLowerCase();
+      const cleanName = normalizeText(ctx.fromName || "");
+      if (!cleanEmail && !cleanName) return;
+
+      setDuplicateBusy(true);
+      try {
+        const candidateMap = new Map<number, any>();
+        const addCandidate = (row: any, meta: { source: "email" | "name"; emailExact?: boolean; nameExact?: boolean }) => {
+          const id = Number(row?.id);
+          if (!id) return;
+          const prev = candidateMap.get(id) || { ...row, id, matchSources: [] as string[], emailExact: false, nameExact: false };
+          candidateMap.set(id, {
+            ...prev,
+            ...row,
+            id,
+            matchSources: Array.from(new Set([...(prev.matchSources || []), meta.source])),
+            emailExact: prev.emailExact || Boolean(meta.emailExact),
+            nameExact: prev.nameExact || Boolean(meta.nameExact),
+          });
+        };
+
+        if (cleanEmail) {
+          const rows = await searchOdooDomain("res.partner", [["email", "ilike", cleanEmail]], partnerFields, 10);
+          for (const row of rows || []) {
+            const rowEmail = normalizeText(row?.email || "").toLowerCase();
+            if (rowEmail === cleanEmail) addCandidate(row, { source: "email", emailExact: true });
+          }
+        }
+
+        if (cleanName) {
+          const lowerName = cleanName.toLowerCase();
+          const rows = await searchOdoo({
+            model: "res.partner",
+            domain: [["name", "ilike", cleanName]],
+            fields: partnerFields,
+            limit: 8,
+            order: "name asc",
+          });
+          for (const row of rows || []) {
+            const rowName = normalizeText(row?.name || "").toLowerCase();
+            const rowDisplay = normalizeText(row?.display_name || "").toLowerCase();
+            addCandidate(row, {
+              source: "name",
+              nameExact: rowName === lowerName || rowDisplay === lowerName,
+            });
+          }
+        }
+
+        const candidates = Array.from(candidateMap.values()).sort((a: any, b: any) => {
+          const score = (row: any) =>
+            (row?.emailExact ? 100 : 0) +
+            (row?.nameExact ? 40 : 0) +
+            ((row?.matchSources || []).includes("email") ? 20 : 0) +
+            ((row?.matchSources || []).includes("name") ? 10 : 0);
+          return score(b) - score(a) || displayNameOf(a).localeCompare(displayNameOf(b));
+        });
+
+        setDuplicateCandidates(candidates);
+        if (!candidates.length) return;
+
+        const emailMatches = candidates.filter((row: any) => row?.emailExact);
+        if (emailMatches.length === 1) {
+          const full = await loadPartnerRecord(emailMatches[0].id);
+          if (!full) return;
+          applyPartnerRecord(full, {
+            selectExisting: true,
+            hint: `Contacto existente detetado pelo email: ${displayNameOf(full)}. Ao guardar, este registo sera atualizado.`,
+          });
+          onStatus(`Contacto existente detetado: ${displayNameOf(full)}`);
+          return;
+        }
+
+        setDuplicateModalOpen(true);
+        onStatus(
+          candidates.length === 1
+            ? "Foi encontrado um contacto possivel no Odoo. Escolhe se queres atualizar esse registo."
+            : `Foram encontrados ${candidates.length} contactos semelhantes no Odoo. Escolhe qual queres atualizar.`,
+        );
+      } catch (e: any) {
+        onStatus(e?.message ?? String(e));
+      } finally {
+        setDuplicateBusy(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, ctx.fromEmail, ctx.fromName]);
 
   useEffect(() => {
     (async () => {
@@ -2375,6 +2460,66 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
   function displayNameOf(item: any) {
     const id = Number(item?.id);
     return item?.display_name || item?.name || (id ? `#${id}` : "");
+  }
+
+  function applyPartnerRecord(record: any, options?: { selectExisting?: boolean; hint?: string }) {
+    if (!record) return;
+    setName(String(record.name || ""));
+    setEmail(String(record.email || ""));
+    setPhone(String(record.phone || ""));
+    setMobile(String(record.mobile || ""));
+    setJobTitle(String(record.function || ""));
+    setPartnerKind(record.company_type === "company" ? "company" : "person");
+    setVat(String(record.vat || "").trim());
+    setWebsite(String(record.website || "").trim());
+    setStreet(String(record.street || ""));
+    setStreet2(String(record.street2 || ""));
+    setZip(String(record.zip || ""));
+    setCity(String(record.city || ""));
+
+    if (Array.isArray(record.parent_id) && record.parent_id[0]) {
+      setParentCompanyId(record.parent_id[0]);
+      setParentCompanyName(record.parent_id[1] || `#${record.parent_id[0]}`);
+    } else {
+      setParentCompanyId(null);
+      setParentCompanyName("");
+    }
+
+    if (Array.isArray(record.country_id) && record.country_id[0]) {
+      setCountryId(record.country_id[0]);
+      setCountryName(record.country_id[1] || `#${record.country_id[0]}`);
+    } else {
+      setCountryId(null);
+      setCountryName("");
+    }
+
+    if (Array.isArray(record.state_id) && record.state_id[0]) {
+      setStateId(record.state_id[0]);
+      setStateName(record.state_id[1] || `#${record.state_id[0]}`);
+    } else {
+      setStateId(null);
+      setStateName("");
+    }
+
+    if (options?.selectExisting) {
+      const display = displayNameOf(record);
+      setExistingPartnerId(Number(record.id) || null);
+      setExistingPartnerName(display);
+      setAllowCreateNew(false);
+      setDuplicateHint(options.hint || `O editor ficou ligado a ${display}. Ao guardar, esse registo sera atualizado em vez de criar duplicado.`);
+    }
+  }
+
+  async function loadPartnerRecord(id: number) {
+    const rows = await readOdoo("res.partner", [id], partnerFields);
+    return rows?.[0] || null;
+  }
+
+  function clearExistingSelection(options?: { allowNew?: boolean; hint?: string }) {
+    setExistingPartnerId(null);
+    setExistingPartnerName("");
+    setAllowCreateNew(Boolean(options?.allowNew));
+    setDuplicateHint(options?.hint || "");
   }
 
   async function loadCompanyOptions(query: string) {
@@ -2433,28 +2578,35 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
         return;
       }
 
+      const values: any = {
+        name: cleanName || cleanEmail || (isCompany ? `Empresa ${cleanVat}` : "Contacto"),
+        email: cleanEmail || false,
+        phone: cleanPhone || false,
+        mobile: cleanMobile || false,
+        function: cleanJobTitle || false,
+        company_type: partnerKind,
+        is_company: isCompany,
+        parent_id: isCompany ? false : (parentCompanyId || false),
+        vat: isCompany ? cleanVat : false,
+        website: cleanWebsite || false,
+        street: cleanStreet || false,
+        street2: cleanStreet2 || false,
+        zip: cleanZip || false,
+        city: cleanCity || false,
+        country_id: countryId || false,
+        state_id: stateId || false,
+      };
+
       if (mode === "edit") {
-        const values: any = {
-          name: cleanName || cleanEmail || (isCompany ? `Empresa ${cleanVat}` : "Contacto"),
-          email: cleanEmail || false,
-          phone: cleanPhone || false,
-          mobile: cleanMobile || false,
-          function: cleanJobTitle || false,
-          company_type: partnerKind,
-          is_company: isCompany,
-          parent_id: isCompany ? false : (parentCompanyId || false),
-          vat: isCompany ? cleanVat : false,
-          website: cleanWebsite || false,
-          street: cleanStreet || false,
-          street2: cleanStreet2 || false,
-          zip: cleanZip || false,
-          city: cleanCity || false,
-          country_id: countryId || false,
-          state_id: stateId || false,
-        };
         await writeOdoo("res.partner", editId, values);
         onStatus("Atualizado OK");
         setTimeout(() => closeDialog(), 500);
+        return;
+      }
+
+      if (!existingPartnerId && duplicateCandidates.length && !allowCreateNew) {
+        setDuplicateModalOpen(true);
+        onStatus("Existe pelo menos um contacto semelhante no Odoo. Escolhe primeiro se queres atualizar um existente ou criar novo.");
         return;
       }
 
@@ -2481,24 +2633,26 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
         }
       }
 
-      const values: any = {
-        name: cleanName || cleanEmail || (isCompany ? `Empresa ${cleanVat}` : "Contacto"),
-        email: cleanEmail || false,
-        phone: cleanPhone || false,
-        mobile: cleanMobile || false,
-        function: cleanJobTitle || false,
-        company_type: partnerKind,
-        is_company: isCompany,
-        parent_id: isCompany ? false : (parentCompanyId || false),
-        vat: isCompany ? cleanVat : false,
-        website: cleanWebsite || false,
-        street: cleanStreet || false,
-        street2: cleanStreet2 || false,
-        zip: cleanZip || false,
-        city: cleanCity || false,
-        country_id: countryId || false,
-        state_id: stateId || false,
-      };
+      if (existingPartnerId) {
+        const display = existingPartnerName || cleanName || cleanEmail || `#${existingPartnerId}`;
+        await writeOdoo("res.partner", existingPartnerId, values);
+        await linkEmailToRecord({
+          conversationId: ctx.conversationId,
+          model: "res.partner",
+          recordId: existingPartnerId,
+          recordName: display,
+          internetMessageId: ctx.internetMessageId,
+          itemId: ctx.itemId,
+          subject: ctx.subject,
+          fromEmail: ctx.fromEmail,
+          fromName: ctx.fromName,
+          receivedAtIso: ctx.receivedAtIso,
+          emailWebLink: ctx.emailWebLink,
+        });
+        onStatus("Contacto existente atualizado OK");
+        setTimeout(() => closeDialog(), 500);
+        return;
+      }
 
       const id = await createOdoo("res.partner", values);
       await linkEmailToRecord({
@@ -2520,6 +2674,38 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
     } catch (e: any) {
       onStatus(e?.message ?? String(e));
     }
+  }
+
+  async function useExistingCandidate(candidate: any) {
+    try {
+      setDuplicateBusy(true);
+      const full = await loadPartnerRecord(candidate.id);
+      if (!full) {
+        onStatus("Nao foi possivel carregar o registo selecionado.");
+        return;
+      }
+      applyPartnerRecord(full, {
+        selectExisting: true,
+        hint: `O editor foi preenchido com os dados do Odoo para ${displayNameOf(full)}. Ao guardar, esse registo sera atualizado.`,
+      });
+      setDuplicateModalOpen(false);
+      onStatus(`Editor preenchido com dados de ${displayNameOf(full)}`);
+    } catch (e: any) {
+      onStatus(e?.message ?? String(e));
+    } finally {
+      setDuplicateBusy(false);
+    }
+  }
+
+  function allowExplicitCreateNew() {
+    clearExistingSelection({
+      allowNew: true,
+      hint: duplicateCandidates.length
+        ? "Existem correspondencias no Odoo, mas ficou autorizado criar um novo registo se for isso que pretendes."
+        : "",
+    });
+    setDuplicateModalOpen(false);
+    onStatus("Vai ser criado um novo contacto se carregares em Criar.");
   }
 
   async function linkToPartner(id: number, display: string) {
@@ -2555,6 +2741,33 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
 
   return (
     <div>
+      {mode === "new" && (existingPartnerId || duplicateCandidates.length) ? (
+        <div style={S.detectCard}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={S.detectTitle}>
+              {existingPartnerId ? "Contacto existente detetado" : "Correspondencias encontradas no Odoo"}
+            </div>
+            <div style={S.detectText}>
+              {existingPartnerId
+                ? (duplicateHint || `O editor esta ligado a ${existingPartnerName}. Ao guardar, esse registo sera atualizado em vez de criar duplicado.`)
+                : "Foi encontrado pelo menos um contacto semelhante. Reve as opcoes antes de criar um novo registo."}
+            </div>
+          </div>
+          <div style={S.detectActions}>
+            {duplicateCandidates.length ? (
+              <button type="button" style={S.btn2} onClick={() => setDuplicateModalOpen(true)}>
+                Rever opcoes
+              </button>
+            ) : null}
+            {existingPartnerId ? (
+              <button type="button" style={S.btn2} onClick={allowExplicitCreateNew}>
+                Criar novo
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <div style={S.row}>
         <label style={S.lab}>TIPO</label>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2752,6 +2965,62 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
           </div>
         )}
       </div>
+
+      {duplicateModalOpen ? (
+        <div style={S.modalOverlay}>
+          <div style={S.modalCard}>
+            <div style={S.modalHeader}>
+              <div>
+                <div style={S.modalTitle}>Possiveis duplicados no Odoo</div>
+                <div style={S.modalText}>
+                  Escolhe um registo existente para preencher o editor e atualizar esse contacto, ou confirma que queres criar um novo.
+                </div>
+              </div>
+              <button type="button" style={S.btn2} onClick={() => setDuplicateModalOpen(false)} disabled={duplicateBusy}>
+                Fechar
+              </button>
+            </div>
+
+            <div style={S.modalList}>
+              {duplicateCandidates.map((candidate: any) => {
+                const companyLabel =
+                  candidate?.company_type === "company"
+                    ? "Empresa"
+                    : (Array.isArray(candidate?.parent_id) && candidate.parent_id[1] ? `Pessoa em ${candidate.parent_id[1]}` : "Pessoa");
+                const matchLabel = candidate?.emailExact
+                  ? "Email exato"
+                  : candidate?.nameExact
+                    ? "Nome exato"
+                    : (candidate?.matchSources || []).includes("name")
+                      ? "Nome semelhante"
+                      : "Correspondencia";
+                return (
+                  <div key={candidate.id} style={S.modalCandidate}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={S.modalCandidateTitle}>{displayNameOf(candidate)}</div>
+                      <div style={S.modalCandidateMeta}>
+                        <span>{companyLabel}</span>
+                        <span>{matchLabel}</span>
+                        {candidate?.email ? <span>{candidate.email}</span> : null}
+                        {candidate?.phone ? <span>{candidate.phone}</span> : null}
+                      </div>
+                    </div>
+                    <button type="button" style={S.btn} onClick={() => useExistingCandidate(candidate)} disabled={duplicateBusy}>
+                      Atualizar este
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={S.modalFooter}>
+              <button type="button" style={S.btn2} onClick={allowExplicitCreateNew} disabled={duplicateBusy}>
+                Criar novo na mesma
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3211,6 +3480,22 @@ const S: Record<string, React.CSSProperties> = {
   },
 
   alert: { marginTop: 12, padding: "8px 12px", borderRadius: 3, border: "1px solid #FFBDAD", background: "#FFEBE6", color: "#BF2600", fontSize: 12 },
+  detectCard: {
+    marginTop: 4,
+    marginBottom: 16,
+    padding: "12px 14px",
+    borderRadius: 12,
+    border: "1px solid #d6def2",
+    background: "rgba(255,255,255,0.7)",
+    display: "flex",
+    gap: 12,
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+  },
+  detectTitle: { fontSize: 12, fontWeight: 800, color: "#2563eb", textTransform: "uppercase" },
+  detectText: { marginTop: 4, fontSize: 12, color: "#253858", lineHeight: 1.45 },
+  detectActions: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" },
 
   primaryBtn: {
     boxSizing: "border-box",
@@ -3329,6 +3614,44 @@ const S: Record<string, React.CSSProperties> = {
     gap: 10,
     color: "#122",
   },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.32)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    zIndex: 30,
+  },
+  modalCard: {
+    width: "min(760px, 100%)",
+    maxHeight: "80vh",
+    overflow: "auto",
+    borderRadius: 18,
+    border: "1px solid #d6def2",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(243,247,255,0.96) 100%)",
+    boxShadow: "0 20px 50px rgba(15,23,42,0.18)",
+    padding: 18,
+  },
+  modalHeader: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" },
+  modalTitle: { fontSize: 14, fontWeight: 800, color: "#172B4D" },
+  modalText: { marginTop: 4, fontSize: 12, color: "#5E6C84", lineHeight: 1.45 },
+  modalList: { marginTop: 16, display: "flex", flexDirection: "column", gap: 10 },
+  modalCandidate: {
+    border: "1px solid #d6def2",
+    borderRadius: 12,
+    background: "#fff",
+    padding: 12,
+    display: "flex",
+    gap: 12,
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+  },
+  modalCandidateTitle: { fontSize: 13, fontWeight: 700, color: "#172B4D" },
+  modalCandidateMeta: { marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 11, color: "#5E6C84" },
+  modalFooter: { marginTop: 16, display: "flex", justifyContent: "flex-end" },
 
   partRow: {
     display: "flex",
