@@ -1732,6 +1732,7 @@ function DescriptionWorkspace({
   emailText,
   attachments,
   onUseEmail,
+  actionLabel = "Usar email",
 }: {
   title: string;
   hint: string;
@@ -1742,6 +1743,7 @@ function DescriptionWorkspace({
   emailText?: string;
   attachments?: any[];
   onUseEmail?: () => void;
+  actionLabel?: string;
 }) {
   return (
     <div style={S.descriptionCard}>
@@ -1750,17 +1752,19 @@ function DescriptionWorkspace({
           <div style={S.sectionTitle}>{title}</div>
           <div style={S.sectionHint}>{hint}</div>
         </div>
-        <button
-          type="button"
-          style={S.compactActionBtn}
-          onClick={() => {
-            onChange(buildDescriptionEditorHtml(emailHtml, emailText, undefined, attachments || []));
-            onUseEmail?.();
-          }}
-          title="Usar o corpo do email"
-        >
-          Usar email
-        </button>
+        {onUseEmail ? (
+          <button
+            type="button"
+            style={S.compactActionBtn}
+            onClick={() => {
+              onChange(buildDescriptionEditorHtml(emailHtml, emailText, undefined, attachments || []));
+              onUseEmail();
+            }}
+            title="Usar o corpo do email"
+          >
+            {actionLabel}
+          </button>
+        ) : null}
       </div>
       <RichHtmlEditor value={value} onChange={onChange} placeholder={placeholder} />
     </div>
@@ -2474,6 +2478,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
   const [managerId, setManagerId] = useState<number | null>(null);
   const [managerName, setManagerName] = useState("");
   const [description, setDescription] = useState("");
+  const [fixedInfo, setFixedInfo] = useState("");
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
   const [publishState, setPublishState] = useState<OdooPublishState>(() => getDefaultPublishState(mode, ctx.bodyHtml, fullBody));
   const [projectLayout, setProjectLayout] = useState<ProjectLayoutRuntime | null>(null);
@@ -2518,6 +2523,10 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
         if (record.user_id) { setManagerId(record.user_id[0]); setManagerName(record.user_id[1]); }
         const descriptionValue = record?.[projectLayout.descriptionField];
         if (descriptionValue) setDescription(String(descriptionValue));
+        if (projectLayout.fixedInfoField) {
+          const fixedInfoValue = await readProjectFieldValue(Number(editId), projectLayout.fixedInfoField);
+          if (fixedInfoValue) setFixedInfo(String(fixedInfoValue));
+        }
       } catch (error: any) {
         onStatus(error?.message ?? String(error));
       }
@@ -2535,6 +2544,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
       if (partnerId) values.partner_id = partnerId;
       if (managerId) values.user_id = managerId;
       if (description) values[activeLayout.descriptionField] = description;
+      if (activeLayout.fixedInfoField && fixedInfo) values[activeLayout.fixedInfoField] = fixedInfo;
 
       if (mode === "edit") {
         try {
@@ -2630,6 +2640,39 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
           <TypeaheadPicker compact label="RESPONSAVEL" placeholder="Pesquisar utilizador..." model="res.users" fields={["id", "name", "display_name", "email"]} pickedId={managerId} pickedName={managerName} onPick={(item: any) => { const id = item?.id ?? null; setManagerId(id); setManagerName(id ? (item.display_name || item.name || `#${id}`) : ""); }} />
         </CompactDualPickerCard>
       </div>
+      {projectLayout ? (
+        <div style={S.metaCardLarge}>
+          <div style={S.metaCardLabel}>LAYOUT ODOO ATIVO</div>
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={S.metaRowItem}>
+              <span style={S.metaRowLabel}>Modo</span>
+              <span style={S.metaRowValue}>{projectLayout.mode === "structured_project" ? "Estruturado" : "Descricao apenas"}</span>
+            </div>
+            <div style={S.metaRowItem}>
+              <span style={S.metaRowLabel}>Descricao</span>
+              <span style={S.metaRowValue}>{projectLayout.descriptionField}</span>
+            </div>
+            {projectLayout.fixedInfoField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Informacao fixa</span>
+                <span style={S.metaRowValue}>{projectLayout.fixedInfoField}</span>
+              </div>
+            ) : null}
+            {projectLayout.historyField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Historico</span>
+                <span style={S.metaRowValue}>{projectLayout.historyField}</span>
+              </div>
+            ) : null}
+            {projectLayout.documentsField ? (
+              <div style={S.metaRowItem}>
+                <span style={S.metaRowLabel}>Documentos</span>
+                <span style={S.metaRowValue}>{projectLayout.documentsField}</span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <DescriptionWorkspace
         title={projectLayout?.structuredActive ? "DESCRICAO BASE" : "DESCRICAO"}
         hint={projectLayout?.structuredActive
@@ -2647,6 +2690,20 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
           setSelectedAtts((prev) => Array.from(new Set([...prev, ...suggested])));
         }}
       />
+      {projectLayout?.fixedInfoField ? (
+        <DescriptionWorkspace
+          title="INFORMACAO FIXA"
+          hint={`Este editor alimenta o campo ${projectLayout.fixedInfoField}. Usa-o para regras, contexto e notas que devem ficar sempre preservadas no topo do projeto.`}
+          value={fixedInfo}
+          onChange={setFixedInfo}
+          placeholder="Escreve aqui a informacao permanente do projeto..."
+          onUseEmail={() => {
+            if (!description) return;
+            setFixedInfo(description);
+          }}
+          actionLabel="Duplicar base"
+        />
+      ) : null}
       <CompactOdooContentEditor mode={mode} publishState={publishState} onPublishChange={setPublishState} selectedAttachmentCount={selectedAtts.length} totalAttachmentCount={(emailAtts || []).length} />
       <AttachmentPicker attachments={emailAtts} selected={selectedAtts} onToggle={(fileName) => setSelectedAtts((prev) => prev.includes(fileName) ? prev.filter((name) => name !== fileName) : [...prev, fileName])} />
       <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button style={S.btn} onClick={save}>{mode === "edit" ? "Guardar" : "Criar"}</button></div>
@@ -3928,6 +3985,9 @@ const S: Record<string, React.CSSProperties> = {
   metaCardLarge: { border: "1px solid #d6def2", borderRadius: 12, background: "rgba(255,255,255,0.55)", padding: 10, display: "flex", flexDirection: "column", gap: 8, minHeight: 78 },
   metaCardLabel: { fontSize: 10, fontWeight: 700, color: "#6B778C", textTransform: "uppercase", letterSpacing: "0.04em" },
   metaCardValue: { fontSize: 18, fontWeight: 700, color: "#172B4D" },
+  metaRowItem: { display: "grid", gridTemplateColumns: "120px minmax(0, 1fr)", gap: 8, alignItems: "start" },
+  metaRowLabel: { fontSize: 11, fontWeight: 700, color: "#6B778C", textTransform: "uppercase" },
+  metaRowValue: { fontSize: 12, fontWeight: 600, color: "#172B4D", minWidth: 0, wordBreak: "break-word" },
   compactFieldStack: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "start" },
   headerInput: { width: "100%", padding: "8px 10px", border: "2px solid #DFE1E6", borderRadius: 8, color: "#172B4D", background: "#FAFBFC", fontSize: 16, fontWeight: 600, outline: "none" },
   descriptionCard: { marginTop: 12, border: "1px solid #d6def2", borderRadius: 12, background: "rgba(255,255,255,0.55)", padding: 12 },
