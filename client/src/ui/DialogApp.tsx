@@ -1609,6 +1609,7 @@ export default function DialogApp() {
           onStatus={setStatus}
           fromEmail={ctx.fromEmail}
           apiReady={apiReady}
+          aiManualOnly={aiManualOnly}
         />
       ) : entity === "project.project" ? (
         <ProjectForm
@@ -1620,6 +1621,7 @@ export default function DialogApp() {
           onStatus={setStatus}
           fromEmail={ctx.fromEmail}
           apiReady={apiReady}
+          aiManualOnly={aiManualOnly}
         />
       ) : entity === "crm.lead" ? (
         <LeadForm
@@ -1631,6 +1633,7 @@ export default function DialogApp() {
           onStatus={setStatus}
           fromEmail={ctx.fromEmail}
           apiReady={apiReady}
+          aiManualOnly={aiManualOnly}
         />
       ) : entity === "res.partner" ? (
         <ContactHubForm mode={mode} ctx={ctx} editId={editId} onStatus={setStatus} />
@@ -1642,6 +1645,7 @@ export default function DialogApp() {
           fullBody={fullBody}
           emailAtts={emailAtts}
           onStatus={setStatus}
+          aiManualOnly={aiManualOnly}
         />
       ) : (
         <div style={S.alert}>Este fluxo ainda usa o editor atual.</div>
@@ -1786,7 +1790,7 @@ function AddExistingPanel({ entity, ctx, onStatus }: any) {
   );
 }
 
-function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail }: any) {
+function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail, aiManualOnly }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [description, setDescription] = useState("");
   const [selectedAtts, setSelectedAtts] = useState<string[]>([]);
@@ -1953,7 +1957,7 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail 
     </div>
   );
 }
-function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail }: any) {
+function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail, aiManualOnly }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [partnerId, setPartnerId] = useState<number | null>(null);
   const [partnerName, setPartnerName] = useState("");
@@ -2078,7 +2082,7 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
     </div>
   );
 }
-function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail, apiReady }: any) {
+function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail, apiReady, aiManualOnly }: any) {
   const LEAD_TYPE_FIELD_NAME = "x_studio_tipo_de_lead";
   const [name, setName] = useState(ctx.subject || "");
   const [contactName, setContactName] = useState(ctx.fromName || "");
@@ -3025,7 +3029,7 @@ function ContactHubForm({ mode, ctx, editId, onStatus }: any) {
   );
 }
 
-function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts }: any) {
+function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, aiManualOnly }: any) {
   const [name, setName] = useState(ctx.subject || "");
   const [description, setDescription] = useState("");
   const [partnerId, setPartnerId] = useState<number | null>(null);

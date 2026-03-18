@@ -10,6 +10,7 @@ import {
     getPartnerRelations,
     linkEmailToRecord,
     type LinkEntry,
+    type PartnerRelationItem,
     type PartnerRelationSection,
 } from "@/api";
 
@@ -18,6 +19,14 @@ type Participant = {
     name: string;
     source: "from" | "to" | "cc";
 };
+
+type ParticipantCollectionState =
+    | { kind: "relation"; key: string }
+    | { kind: "storage" }
+    | null;
+
+type ParticipantCollectionSort = "recent" | "title_asc" | "title_desc";
+type ParticipantCollectionFilter = "all" | "title" | "meta" | "detail";
 
 function normalizeEmail(value: string | undefined): string {
     return String(value || "").trim().toLowerCase();
@@ -108,6 +117,33 @@ function formatLinkMoment(link: LinkEntry): string {
     });
 }
 
+function normalizeSearchText(value: string | undefined): string {
+    return String(value || "").trim().toLowerCase();
+}
+
+function relationItemFieldText(item: PartnerRelationItem, field: ParticipantCollectionFilter): string {
+    if (field === "title") return String(item.title || "");
+    if (field === "meta") return [item.meta, item.secondary].filter(Boolean).join(" ");
+    if (field === "detail") return [item.title, item.meta, item.secondary, item.model, item.recordId].filter(Boolean).join(" ");
+    return [item.title, item.meta, item.secondary, item.model, item.recordId].filter(Boolean).join(" ");
+}
+
+function linkFieldText(entry: LinkEntry, field: ParticipantCollectionFilter): string {
+    if (field === "title") return String(entry.subject || "");
+    if (field === "meta") return [entry.fromName, entry.fromEmail].filter(Boolean).join(" ");
+    if (field === "detail") return [entry.emailWebLink, entry.url, entry.conversationId, entry.itemId].filter(Boolean).join(" ");
+    return [entry.subject, entry.fromEmail, entry.fromName, entry.emailWebLink, entry.url, entry.conversationId, entry.itemId].filter(Boolean).join(" ");
+}
+
+function summarizeRelationSection(section: PartnerRelationSection): string {
+    if (!section.items.length) return "Sem registos nesta colecao.";
+    return section.items
+        .slice(0, 2)
+        .map((item) => item.title)
+        .filter(Boolean)
+        .join(" · ");
+}
+
 function serializeRecipients(recipients: Array<{ name?: string; email?: string }> | undefined) {
     return (recipients || [])
         .map((recipient) => `${String(recipient?.name || "").trim()}|${String(recipient?.email || "").trim()}`)
@@ -141,6 +177,10 @@ export const CrmCockpit2: React.FC = () => {
     const [participantDetailPartner, setParticipantDetailPartner] = useState<any | null>(null);
     const [participantDetailLinks, setParticipantDetailLinks] = useState<LinkEntry[]>([]);
     const [participantDetailRelations, setParticipantDetailRelations] = useState<PartnerRelationSection[]>([]);
+    const [activeParticipantCollection, setActiveParticipantCollection] = useState<ParticipantCollectionState>(null);
+    const [participantCollectionQuery, setParticipantCollectionQuery] = useState("");
+    const [participantCollectionSort, setParticipantCollectionSort] = useState<ParticipantCollectionSort>("recent");
+    const [participantCollectionFilter, setParticipantCollectionFilter] = useState<ParticipantCollectionFilter>("all");
     const [participantActionBusy, setParticipantActionBusy] = useState(false);
 
     const participants = useMemo(() => dedupeParticipants(ctx), [ctx]);
@@ -256,7 +296,18 @@ export const CrmCockpit2: React.FC = () => {
 
     async function openParticipantDetail(participant: Participant) {
         setActiveParticipantEmail(participant.email);
+        setActiveParticipantCollection(null);
+        setParticipantCollectionQuery("");
+        setParticipantCollectionSort("recent");
+        setParticipantCollectionFilter("all");
         await loadParticipantDetail(participant);
+    }
+
+    function openParticipantCollection(collection: ParticipantCollectionState) {
+        setActiveParticipantCollection(collection);
+        setParticipantCollectionQuery("");
+        setParticipantCollectionSort(collection?.kind === "storage" ? "recent" : "title_asc");
+        setParticipantCollectionFilter("all");
     }
 
     async function openParticipantEditor(participant: Participant, partnerId?: number | null) {
@@ -301,17 +352,25 @@ export const CrmCockpit2: React.FC = () => {
         const stillVisible = participants.some((row) => normalizeEmail(row.email) === normalizeEmail(activeParticipantEmail));
         if (stillVisible) return;
         setActiveParticipantEmail(null);
+        setActiveParticipantCollection(null);
         setParticipantDetailPartner(null);
         setParticipantDetailLinks([]);
         setParticipantDetailRelations([]);
+        setParticipantCollectionQuery("");
+        setParticipantCollectionSort("recent");
+        setParticipantCollectionFilter("all");
         setParticipantDetailError("");
     }, [participants, activeParticipantEmail]);
 
     useEffect(() => {
         setActiveParticipantEmail(null);
+        setActiveParticipantCollection(null);
         setParticipantDetailPartner(null);
         setParticipantDetailLinks([]);
         setParticipantDetailRelations([]);
+        setParticipantCollectionQuery("");
+        setParticipantCollectionSort("recent");
+        setParticipantCollectionFilter("all");
         setParticipantDetailError("");
     }, [ctx.conversationId, ctx.itemId]);
 
@@ -333,6 +392,59 @@ export const CrmCockpit2: React.FC = () => {
         .slice(0, 2)
         .map((section) => `${section.total} ${section.label.toLowerCase()}`)
         .join(" · ");
+    const activeRelationSection = useMemo(
+        () => activeParticipantCollection?.kind === "relation"
+            ? participantDetailRelations.find((section) => section.key === activeParticipantCollection.key) || null
+            : null,
+        [activeParticipantCollection, participantDetailRelations],
+    );
+    const collectionQuery = normalizeSearchText(participantCollectionQuery);
+    const filteredRelationItems = useMemo(() => {
+        if (!activeRelationSection) return [];
+        const rows = [...activeRelationSection.items];
+        const filtered = collectionQuery
+            ? rows.filter((item) => normalizeSearchText(relationItemFieldText(item, participantCollectionFilter)).includes(collectionQuery))
+            : rows;
+        if (participantCollectionSort === "title_desc") {
+            filtered.sort((a, b) => String(b.title || "").localeCompare(String(a.title || ""), "pt-PT"));
+        } else {
+            filtered.sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "pt-PT"));
+        }
+        return filtered;
+    }, [activeRelationSection, collectionQuery, participantCollectionFilter, participantCollectionSort]);
+    const filteredStorageLinks = useMemo(() => {
+        const rows = [...participantDetailLinks];
+        const filtered = collectionQuery
+            ? rows.filter((entry) => normalizeSearchText(linkFieldText(entry, participantCollectionFilter)).includes(collectionQuery))
+            : rows;
+        if (participantCollectionSort === "title_asc") {
+            filtered.sort((a, b) => String(a.subject || "").localeCompare(String(b.subject || ""), "pt-PT"));
+        } else if (participantCollectionSort === "title_desc") {
+            filtered.sort((a, b) => String(b.subject || "").localeCompare(String(a.subject || ""), "pt-PT"));
+        } else {
+            filtered.sort((a, b) => {
+                const aTime = Date.parse(String(a.linkedAt || a.receivedAtIso || a.messageDateIso || a.sentAtIso || 0));
+                const bTime = Date.parse(String(b.linkedAt || b.receivedAtIso || b.messageDateIso || b.sentAtIso || 0));
+                return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+            });
+        }
+        return filtered;
+    }, [participantDetailLinks, collectionQuery, participantCollectionFilter, participantCollectionSort]);
+    const participantTrackTransform = activeParticipantCollection
+        ? "translateX(-66.6667%)"
+        : activeParticipant
+            ? "translateX(-33.3333%)"
+            : "translateX(0)";
+    const participantCollectionTitle = activeParticipantCollection?.kind === "relation"
+        ? activeRelationSection?.label || "Colecao"
+        : activeParticipantCollection?.kind === "storage"
+            ? "Emails ligados"
+            : "";
+    const participantCollectionSubtitle = activeParticipantCollection?.kind === "relation"
+        ? `${activeParticipant?.name || ""} - ${activeRelationSection?.total || 0} registo(s)`
+        : activeParticipantCollection?.kind === "storage"
+            ? `${activeParticipant?.name || ""} - ${participantDetailLinks.length} email(s)`
+            : "";
 
     return (
         <div style={S.root}>
@@ -432,7 +544,7 @@ export const CrmCockpit2: React.FC = () => {
                     <div
                         style={{
                             ...S.participantTrack,
-                            transform: activeParticipant ? "translateX(-50%)" : "translateX(0)",
+                            transform: participantTrackTransform,
                         }}
                     >
                         <div style={S.participantPane}>
@@ -494,7 +606,14 @@ export const CrmCockpit2: React.FC = () => {
                             ) : (
                                 <div style={S.participantDetail}>
                                     <div style={S.participantDetailHead}>
-                                        <button type="button" style={S.secondaryAction} onClick={() => setActiveParticipantEmail(null)}>
+                                        <button
+                                            type="button"
+                                            style={S.secondaryAction}
+                                            onClick={() => {
+                                                setActiveParticipantEmail(null);
+                                                setActiveParticipantCollection(null);
+                                            }}
+                                        >
                                             Voltar
                                         </button>
                                         <div style={S.participantDetailTitleWrap}>
@@ -504,6 +623,7 @@ export const CrmCockpit2: React.FC = () => {
                                         <span style={S.participantBadge}>{activeParticipant.source.toUpperCase()}</span>
                                     </div>
 
+                                    <>
                                     <div style={S.participantDetailMeta}>
                                         <div style={S.participantInfoCard}>
                                             <div style={S.detailKicker}>Estado</div>
@@ -516,7 +636,7 @@ export const CrmCockpit2: React.FC = () => {
                                         </div>
                                         <div style={S.participantInfoCard}>
                                             <div style={S.detailKicker}>Storage central</div>
-                                            <div style={S.detailValue}>{participantDetailPartner?.id ? `${participantDetailLinks.length} email(s) ligados` : "Sem ligacoes"}</div>
+                                            <div style={S.detailValue}>{participantDetailPartner?.id ? `${participantDetailLinks.length} email(s)` : "Sem ligacoes"}</div>
                                             <div style={S.detailCopy}>
                                                 {participantDetailPartner?.id
                                                     ? (participantCurrentConversationLinked ? "Este email ja esta ligado ao contacto." : "Ainda nao ha ligacao deste email ao contacto.")
@@ -590,106 +710,42 @@ export const CrmCockpit2: React.FC = () => {
 
                                             <div style={S.participantSectionBlock}>
                                                 <div style={S.participantSectionHead}>
-                                                    <div style={S.sectionTitle}>Relacoes no Odoo</div>
-                                                    <div style={S.sectionHint}>Leitura direta dos registos nativos associados a este contacto.</div>
+                                                    <div style={S.sectionTitle}>Colecoes</div>
+                                                    <div style={S.sectionHint}>Cada colecao abre num ecran limpo com pesquisa e ordenacao.</div>
                                                 </div>
 
-                                                {!participantDetailRelations.length ? (
-                                                    <PanelState
-                                                        compact
-                                                        tone="empty"
-                                                        title="Sem relacoes nativas"
-                                                        description="Nao encontrei leads, projetos, tickets, vendas ou reunioes ligados a este contacto no Odoo."
-                                                    />
-                                                ) : (
-                                                    <div style={S.participantRelationGroups}>
-                                                        {participantDetailRelations.map((section) => (
-                                                            <div key={section.key} style={S.participantRelationGroupCard}>
-                                                                <div style={S.participantRelationGroupHead}>
-                                                                    <div>
-                                                                        <div style={S.detailKicker}>{section.label}</div>
-                                                                        <div style={S.detailLine}>{section.total} registo(s)</div>
-                                                                    </div>
-                                                                </div>
-
-                                                                <div style={S.participantLinksList}>
-                                                                    {section.items.map((item) => (
-                                                                        <div key={`${item.model}:${item.recordId}`} style={S.participantLinkCard}>
-                                                                            <div style={S.participantLinkTitle}>{item.title || `#${item.recordId}`}</div>
-                                                                            {item.meta ? <div style={S.participantLinkMeta}><span>{item.meta}</span></div> : null}
-                                                                            {item.secondary ? <div style={S.participantLinkMeta}><span>{item.secondary}</span></div> : null}
-                                                                            <div style={S.linkedActions}>
-                                                                                {canOpenCrm2Editor(item.model) ? (
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        style={S.linkAction}
-                                                                                        onClick={() => openDialog("edit", { model: item.model, recordId: String(item.recordId) })}
-                                                                                    >
-                                                                                        Editor v2
-                                                                                    </button>
-                                                                                ) : null}
-                                                                                <button
-                                                                                    type="button"
-                                                                                    style={canOpenCrm2Editor(item.model) ? S.linkActionMuted : S.linkAction}
-                                                                                    onClick={() => openOdooRecord(item.model, item.recordId)}
-                                                                                >
-                                                                                    Odoo
-                                                                                </button>
-                                                                            </div>
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
+                                                <div style={S.participantSummaryList}>
+                                                    {participantDetailRelations.map((section) => (
+                                                        <button
+                                                            key={section.key}
+                                                            type="button"
+                                                            style={S.participantCompactCard}
+                                                            onClick={() => openParticipantCollection({ kind: "relation", key: section.key })}
+                                                        >
+                                                            <div style={S.participantCompactCardHead}>
+                                                                <div style={S.participantCompactCardTitle}>{section.label}</div>
+                                                                <div style={S.participantCompactCardCount}>{section.total}</div>
                                                             </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
+                                                            <div style={S.participantCompactCardCopy}>{summarizeRelationSection(section)}</div>
+                                                        </button>
+                                                    ))}
 
-                                            <div style={S.participantSectionBlock}>
-                                                <div style={S.participantSectionHead}>
-                                                    <div style={S.sectionTitle}>Emails ligados</div>
-                                                    <div style={S.sectionHint}>Leitura direta do storage central do add-in.</div>
+                                                    <button
+                                                        type="button"
+                                                        style={S.participantCompactCard}
+                                                        onClick={() => openParticipantCollection({ kind: "storage" })}
+                                                    >
+                                                        <div style={S.participantCompactCardHead}>
+                                                            <div style={S.participantCompactCardTitle}>Emails ligados</div>
+                                                            <div style={S.participantCompactCardCount}>{participantDetailLinks.length}</div>
+                                                        </div>
+                                                        <div style={S.participantCompactCardCopy}>
+                                                            {participantDetailLinks.length
+                                                                ? `${participantDetailLinks.length} email(s) no storage central deste contacto.`
+                                                                : "Sem emails ligados no storage central."}
+                                                        </div>
+                                                    </button>
                                                 </div>
-
-                                                {!participantDetailLinks.length ? (
-                                                    <PanelState
-                                                        compact
-                                                        tone="empty"
-                                                        title="Sem ligacoes no storage central"
-                                                        description="Este contacto ainda nao tem outros emails ligados no storage central."
-                                                    />
-                                                ) : (
-                                                    <div style={S.participantLinksList}>
-                                                        {participantDetailLinks.map((entry, index) => (
-                                                            <div key={`${entry.conversationId || entry.itemId || entry.subject || "link"}:${index}`} style={S.participantLinkCard}>
-                                                                <div style={S.detailKicker}>Ligacao {index + 1}</div>
-                                                                <div style={S.participantLinkTitle}>{entry.subject || "Email sem assunto"}</div>
-                                                                <div style={S.participantLinkMeta}>
-                                                                    <span>{formatLinkMoment(entry)}</span>
-                                                                    {entry.fromEmail ? <span>{entry.fromEmail}</span> : null}
-                                                                </div>
-                                                                <div style={S.linkedActions}>
-                                                                    {(entry.emailWebLink || entry.url) ? (
-                                                                        <button
-                                                                            type="button"
-                                                                            style={S.linkAction}
-                                                                            onClick={() => window.open(entry.emailWebLink || entry.url, "_blank")}
-                                                                        >
-                                                                            Abrir email
-                                                                        </button>
-                                                                    ) : null}
-                                                                    <button
-                                                                        type="button"
-                                                                        style={S.linkActionMuted}
-                                                                        onClick={() => openOdooRecord("res.partner", Number(participantDetailPartner.id))}
-                                                                    >
-                                                                        Odoo
-                                                                    </button>
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
                                             </div>
                                         </>
                                     ) : (
@@ -701,6 +757,194 @@ export const CrmCockpit2: React.FC = () => {
                                             >
                                                 Criar contacto
                                             </button>
+                                        </div>
+                                    )}
+                                    </>
+                                </div>
+                            )}
+                        </div>
+
+                        <div style={S.participantPane}>
+                            {!activeParticipant ? (
+                                <PanelState
+                                    compact
+                                    tone="empty"
+                                    title="Seleciona um participante"
+                                    description="Abre primeiro o detalhe do participante para depois escolheres a colecao."
+                                />
+                            ) : !activeParticipantCollection ? (
+                                <PanelState
+                                    compact
+                                    tone="empty"
+                                    title="Escolhe uma colecao"
+                                    description="Carrega num card de ligacoes para abrir uma lista limpa, com pesquisa e ordenacao."
+                                />
+                            ) : (
+                                <div style={S.participantDetail}>
+                                    <div style={S.participantDetailHead}>
+                                        <button
+                                            type="button"
+                                            style={S.secondaryAction}
+                                            onClick={() => setActiveParticipantCollection(null)}
+                                        >
+                                            Voltar
+                                        </button>
+                                        <div style={S.participantDetailTitleWrap}>
+                                            <div style={S.participantDetailTitle}>{participantCollectionTitle}</div>
+                                            <div style={S.participantDetailEmail}>
+                                                {activeParticipantCollection?.kind === "relation"
+                                                    ? `${activeParticipant.name} · ${activeRelationSection?.total || 0} registo(s)`
+                                                    : activeParticipantCollection?.kind === "storage"
+                                                        ? `${activeParticipant.name} · ${participantDetailLinks.length} email(s)`
+                                                        : activeParticipant.email}
+                                            </div>
+                                        </div>
+                                        <span style={S.participantBadge}>LISTA</span>
+                                    </div>
+
+                                    <div style={S.participantDetailMeta}>
+                                        <div style={S.participantInfoCard}>
+                                            <div style={S.detailKicker}>Estado</div>
+                                            <div style={S.detailValue}>{participantDetailPartner?.id ? "Contacto existente no Odoo" : "Ainda sem contacto no Odoo"}</div>
+                                            <div style={S.detailCopy}>
+                                                {participantDetailPartner?.id
+                                                    ? `ID ${participantDetailPartner.id}${participantCompany ? ` · ${participantCompany}` : ""}`
+                                                    : "Podes criar o contacto a partir deste participante."}
+                                            </div>
+                                        </div>
+                                        <div style={S.participantInfoCard}>
+                                            <div style={S.detailKicker}>Storage central</div>
+                                            <div style={S.detailValue}>{participantDetailPartner?.id ? `${participantDetailLinks.length} email(s) ligados` : "Sem ligacoes"}</div>
+                                            <div style={S.detailCopy}>
+                                                {participantDetailPartner?.id
+                                                    ? (participantCurrentConversationLinked ? "Este email ja esta ligado ao contacto." : "Ainda nao ha ligacao deste email ao contacto.")
+                                                    : "Cria primeiro o contacto para poderes consultar ligacoes."}
+                                            </div>
+                                        </div>
+                                        <div style={S.participantInfoCard}>
+                                            <div style={S.detailKicker}>Relacoes Odoo</div>
+                                            <div style={S.detailValue}>{participantDetailPartner?.id ? `${participantRelationTotal} registo(s)` : "Sem relacoes"}</div>
+                                            <div style={S.detailCopy}>
+                                                {participantDetailPartner?.id
+                                                    ? (participantRelationPreview || "Sem relacoes nativas encontradas para este contacto.")
+                                                    : "Cria primeiro o contacto para poderes consultar ligacoes nativas no Odoo."}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div style={S.participantCollectionTools}>
+                                        <input
+                                            type="text"
+                                            style={S.participantSearchInput}
+                                            value={participantCollectionQuery}
+                                            onChange={(event) => setParticipantCollectionQuery(event.target.value)}
+                                            placeholder={
+                                                activeParticipantCollection.kind === "relation"
+                                                    ? "Pesquisar por marca, empresa, cliente, referencia ou texto livre..."
+                                                    : "Pesquisar por assunto, remetente ou link..."
+                                            }
+                                        />
+                                        <div style={S.participantSortWrap}>
+                                            <label style={S.detailKicker}>Filtrar</label>
+                                            <select
+                                                style={S.participantSortSelect}
+                                                value={participantCollectionFilter}
+                                                onChange={(event) => setParticipantCollectionFilter(event.target.value as ParticipantCollectionFilter)}
+                                            >
+                                                <option value="all">Tudo</option>
+                                                <option value="title">{activeParticipantCollection.kind === "relation" ? "Titulo" : "Assunto"}</option>
+                                                <option value="meta">{activeParticipantCollection.kind === "relation" ? "Contexto" : "Remetente"}</option>
+                                                <option value="detail">{activeParticipantCollection.kind === "relation" ? "Detalhe" : "Link / IDs"}</option>
+                                            </select>
+                                        </div>
+                                        <div style={S.participantSortWrap}>
+                                            <label style={S.detailKicker}>Ordenar</label>
+                                            <select
+                                                style={S.participantSortSelect}
+                                                value={participantCollectionSort}
+                                                onChange={(event) => setParticipantCollectionSort(event.target.value as ParticipantCollectionSort)}
+                                            >
+                                                {activeParticipantCollection.kind === "storage" ? <option value="recent">Mais recente</option> : null}
+                                                <option value="title_asc">A-Z</option>
+                                                <option value="title_desc">Z-A</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {activeParticipantCollection.kind === "relation" ? (
+                                        !activeRelationSection || !filteredRelationItems.length ? (
+                                            <PanelState
+                                                compact
+                                                tone="empty"
+                                                title="Sem resultados"
+                                                description={activeRelationSection ? "A pesquisa nao devolveu registos nesta colecao." : "Esta colecao deixou de estar disponivel."}
+                                            />
+                                        ) : (
+                                            <div style={S.participantLinksList}>
+                                                {filteredRelationItems.map((item) => (
+                                                    <div key={`${item.model}:${item.recordId}`} style={S.participantLinkCard}>
+                                                        <div style={S.participantLinkTitle}>{item.title || `#${item.recordId}`}</div>
+                                                        {item.meta ? <div style={S.participantLinkMeta}><span>{item.meta}</span></div> : null}
+                                                        {item.secondary ? <div style={S.participantLinkMeta}><span>{item.secondary}</span></div> : null}
+                                                        <div style={S.linkedActions}>
+                                                            {canOpenCrm2Editor(item.model) ? (
+                                                                <button
+                                                                    type="button"
+                                                                    style={S.linkAction}
+                                                                    onClick={() => openDialog("edit", { model: item.model, recordId: String(item.recordId) })}
+                                                                >
+                                                                    Editor v2
+                                                                </button>
+                                                            ) : null}
+                                                            <button
+                                                                type="button"
+                                                                style={canOpenCrm2Editor(item.model) ? S.linkActionMuted : S.linkAction}
+                                                                onClick={() => openOdooRecord(item.model, item.recordId)}
+                                                            >
+                                                                Odoo
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )
+                                    ) : !filteredStorageLinks.length ? (
+                                        <PanelState
+                                            compact
+                                            tone="empty"
+                                            title="Sem resultados"
+                                            description="Nao encontrei emails ligados com os filtros atuais."
+                                        />
+                                    ) : (
+                                        <div style={S.participantLinksList}>
+                                            {filteredStorageLinks.map((entry, index) => (
+                                                <div key={`${entry.conversationId || entry.itemId || entry.subject || "link"}:${index}`} style={S.participantLinkCard}>
+                                                    <div style={S.detailKicker}>Ligacao {index + 1}</div>
+                                                    <div style={S.participantLinkTitle}>{entry.subject || "Email sem assunto"}</div>
+                                                    <div style={S.participantLinkMeta}>
+                                                        <span>{formatLinkMoment(entry)}</span>
+                                                        {entry.fromEmail ? <span>{entry.fromEmail}</span> : null}
+                                                    </div>
+                                                    <div style={S.linkedActions}>
+                                                        {(entry.emailWebLink || entry.url) ? (
+                                                            <button
+                                                                type="button"
+                                                                style={S.linkAction}
+                                                                onClick={() => window.open(entry.emailWebLink || entry.url, "_blank")}
+                                                            >
+                                                                Abrir email
+                                                            </button>
+                                                        ) : null}
+                                                        <button
+                                                            type="button"
+                                                            style={S.linkActionMuted}
+                                                            onClick={() => openOdooRecord("res.partner", Number(participantDetailPartner?.id || 0))}
+                                                        >
+                                                            Odoo
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
                                     )}
                                 </div>
@@ -967,11 +1211,11 @@ const S: Record<string, React.CSSProperties> = {
     },
     participantTrack: {
         display: "flex",
-        width: "200%",
+        width: "300%",
         transition: "transform 220ms ease",
     },
     participantPane: {
-        width: "50%",
+        width: "33.3333%",
         minWidth: 0,
         paddingRight: 8,
         boxSizing: "border-box",
@@ -1122,6 +1366,81 @@ const S: Record<string, React.CSSProperties> = {
     participantSectionHead: {
         display: "grid",
         gap: 2,
+    },
+    participantSummaryList: {
+        display: "grid",
+        gap: 8,
+    },
+    participantCompactCard: {
+        border: "1px solid #DFE1E6",
+        borderRadius: 8,
+        background: "#F7F8FA",
+        padding: "8px 10px",
+        display: "grid",
+        gap: 4,
+        textAlign: "left",
+        cursor: "pointer",
+    },
+    participantCompactCardHead: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    participantCompactCardTitle: {
+        fontSize: 12,
+        fontWeight: 800,
+        color: "#172B4D",
+    },
+    participantCompactCardCount: {
+        minWidth: 22,
+        padding: "2px 6px",
+        borderRadius: 999,
+        background: "#E9F2FF",
+        color: "#0C66E4",
+        fontSize: 10,
+        fontWeight: 800,
+        textAlign: "center",
+    },
+    participantCompactCardCopy: {
+        fontSize: 11,
+        lineHeight: 1.4,
+        color: "#5E6C84",
+        display: "-webkit-box",
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: "vertical",
+        overflow: "hidden",
+    },
+    participantCollectionTools: {
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) repeat(2, minmax(108px, auto))",
+        gap: 8,
+        alignItems: "end",
+    },
+    participantSearchInput: {
+        border: "1px solid #DFE1E6",
+        borderRadius: 8,
+        background: "#FFFFFF",
+        color: "#172B4D",
+        padding: "8px 10px",
+        fontSize: 11,
+        outline: "none",
+        width: "100%",
+        boxSizing: "border-box",
+    },
+    participantSortWrap: {
+        display: "grid",
+        gap: 4,
+        minWidth: 108,
+    },
+    participantSortSelect: {
+        border: "1px solid #DFE1E6",
+        borderRadius: 8,
+        background: "#FFFFFF",
+        color: "#172B4D",
+        padding: "8px 10px",
+        fontSize: 11,
+        outline: "none",
     },
     participantRelationGroups: {
         display: "grid",
