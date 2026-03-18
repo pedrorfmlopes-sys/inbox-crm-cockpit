@@ -1091,6 +1091,9 @@ app.post("/api/odoo/link-email", async (req, res) => {
     const safeSubject = subject || "(sem assunto)";
     const safeFrom = `${(fromName || "").trim()}${fromEmail ? ` <${fromEmail}>` : ""}`.trim() || "(desconhecido)";
     const shouldPostToChatter = bodyIn.postToChatter !== false;
+    const attachmentIds = Array.isArray(bodyIn.attachmentIds)
+      ? bodyIn.attachmentIds.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
+      : [];
 
     const normalizedEmailBody = normalizeEmailBodyForOdoo(bodyIn.bodyHtml, bodyIn.bodyText);
     const bodyForOdoo = [
@@ -1113,7 +1116,8 @@ app.post("/api/odoo/link-email", async (req, res) => {
     if (shouldPostToChatter) {
       // message_post no chatter do registo
       await odoo.messagePost(m, rid, bodyForOdoo, safeSubject, {
-        message_id: internetMessageId || false
+        message_id: internetMessageId || false,
+        ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
       });
     }
 

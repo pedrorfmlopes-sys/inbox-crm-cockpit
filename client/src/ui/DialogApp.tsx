@@ -690,6 +690,7 @@ function buildLinkPayloadForRecord(
   publishState: OdooPublishState,
   emailText: string,
   description: string,
+  attachmentIds: number[] = [],
 ) {
   const fallbackText = String(emailText || htmlToReadableTextClient(ctx.bodyHtml) || "").trim();
   const safeDescriptionHtml = normalizeDescriptionEditorHtml(description);
@@ -730,15 +731,17 @@ function buildLinkPayloadForRecord(
     bodyHtml,
     bodyText,
     postToChatter: publishState.postToChatter,
+    attachmentIds,
   };
 }
 
 async function uploadSelectedAttachmentsToRecord(model: string, recordId: number, emailAtts: any[], selectedAtts: string[]) {
+  const uploadedIds: number[] = [];
   for (const fileName of selectedAtts) {
     const att = (emailAtts || []).find((item: any) => item.name === fileName);
     if (!att?.content) continue;
     try {
-      await createOdoo("ir.attachment", {
+      const attachmentId = await createOdoo("ir.attachment", {
         name: att.name,
         datas: att.content,
         datas_fname: att.name,
@@ -747,10 +750,14 @@ async function uploadSelectedAttachmentsToRecord(model: string, recordId: number
         res_id: recordId,
         type: "binary",
       });
+      if (Number.isFinite(attachmentId) && Number(attachmentId) > 0) {
+        uploadedIds.push(Number(attachmentId));
+      }
     } catch (error) {
       console.error("Erro ao enviar anexo", att.name, error);
     }
   }
+  return uploadedIds;
 }
 
 function OdooContentEditor({
@@ -904,7 +911,9 @@ function OdooContentEditor({
 
       <div style={S.odooAttachmentHint}>
         {selectedAttachmentCount > 0
-          ? `${selectedAttachmentCount} anexo(s) selecionado(s) seguem para o registo no Odoo.`
+          ? publishState.postToChatter
+            ? `${selectedAttachmentCount} anexo(s) selecionado(s) seguem na mesma mensagem do chatter e ficam ligados ao registo.`
+            : `${selectedAttachmentCount} anexo(s) selecionado(s) seguem para o registo no Odoo.`
           : totalAttachmentCount > 0
             ? "Podes selecionar anexos abaixo para os associar ao registo."
             : "Este email nao tem anexos disponiveis nesta fase."}
@@ -1862,12 +1871,13 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
       let id = editId;
       if (mode === "edit") {
         await writeOdoo("project.task", id, values);
+        let attachmentIds: number[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          await uploadSelectedAttachmentsToRecord("project.task", Number(id), emailAtts || [], selectedAtts);
+          attachmentIds = await uploadSelectedAttachmentsToRecord("project.task", Number(id), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", Number(id), values.name, publishState, fullBody, description));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", Number(id), values.name, publishState, fullBody, description, attachmentIds));
         }
         onStatus("Atualizado OK");
         setTimeout(() => closeDialog(), 500);
@@ -1876,7 +1886,12 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
 
       values = await withReferenceCode("project.task", values);
       id = await createOdoo("project.task", values);
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", id, values.name, publishState, fullBody, description));
+      let attachmentIds: number[] = [];
+      if (selectedAtts.length > 0) {
+        onStatus("A enviar anexos...");
+        attachmentIds = await uploadSelectedAttachmentsToRecord("project.task", id, emailAtts || [], selectedAtts);
+      }
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.task", id, values.name, publishState, fullBody, description, attachmentIds));
 
       if (pendingSubtasks.length > 0) {
         onStatus(`A criar ${pendingSubtasks.length} subtarefas...`);
@@ -1888,11 +1903,6 @@ function TaskForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
             console.error("Erro ao criar subtarefa diferida", error);
           }
         }
-      }
-
-      if (selectedAtts.length > 0) {
-        onStatus("A enviar anexos...");
-        await uploadSelectedAttachmentsToRecord("project.task", id, emailAtts || [], selectedAtts);
       }
 
       onStatus("Criado com sucesso");
@@ -2010,12 +2020,13 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
           delete fallbackValues.description;
           await writeOdoo("project.project", editId, fallbackValues);
         }
+        let attachmentIds: number[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          await uploadSelectedAttachmentsToRecord("project.project", Number(editId), emailAtts || [], selectedAtts);
+          attachmentIds = await uploadSelectedAttachmentsToRecord("project.project", Number(editId), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", Number(editId), values.name, publishState, fullBody, description));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", Number(editId), values.name, publishState, fullBody, description, attachmentIds));
         }
         onStatus("Atualizado OK");
         setTimeout(() => closeDialog(), 500);
@@ -2024,12 +2035,12 @@ function ProjectForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEma
 
       values = await withReferenceCode("project.project", values);
       const id = await createOdoo("project.project", values);
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", id, values.name, publishState, fullBody, description));
-
+      let attachmentIds: number[] = [];
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        await uploadSelectedAttachmentsToRecord("project.project", id, emailAtts || [], selectedAtts);
+        attachmentIds = await uploadSelectedAttachmentsToRecord("project.project", id, emailAtts || [], selectedAtts);
       }
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "project.project", id, values.name, publishState, fullBody, description, attachmentIds));
 
       onStatus("Criado com sucesso");
       setTimeout(() => closeDialog(), 500);
@@ -2177,12 +2188,13 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
           delete fallbackValues.description;
           await writeOdoo("crm.lead", editId, fallbackValues);
         }
+        let attachmentIds: number[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          await uploadSelectedAttachmentsToRecord("crm.lead", Number(editId), emailAtts || [], selectedAtts);
+          attachmentIds = await uploadSelectedAttachmentsToRecord("crm.lead", Number(editId), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", Number(editId), values.name, publishState, fullBody, description));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", Number(editId), values.name, publishState, fullBody, description, attachmentIds));
         }
         onStatus("Atualizado OK");
         setTimeout(() => closeDialog(), 500);
@@ -2191,12 +2203,12 @@ function LeadForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, fromEmail,
 
       values = await withReferenceCode("crm.lead", values);
       const id = await createOdoo("crm.lead", values);
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", id, values.name, publishState, fullBody, description));
-
+      let attachmentIds: number[] = [];
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        await uploadSelectedAttachmentsToRecord("crm.lead", id, emailAtts || [], selectedAtts);
+        attachmentIds = await uploadSelectedAttachmentsToRecord("crm.lead", id, emailAtts || [], selectedAtts);
       }
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "crm.lead", id, values.name, publishState, fullBody, description, attachmentIds));
 
       onStatus("Criado com sucesso");
       setTimeout(() => closeDialog(), 500);
@@ -3092,12 +3104,13 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
       let id = editId;
       if (mode === "edit") {
         await writeOdoo("helpdesk.ticket", id, values);
+        let attachmentIds: number[] = [];
         if (selectedAtts.length > 0) {
           onStatus("A enviar anexos...");
-          await uploadSelectedAttachmentsToRecord("helpdesk.ticket", Number(id), emailAtts || [], selectedAtts);
+          attachmentIds = await uploadSelectedAttachmentsToRecord("helpdesk.ticket", Number(id), emailAtts || [], selectedAtts);
         }
         if (publishState.postToChatter) {
-          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", Number(id), values.name, publishState, fullBody, description));
+          await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", Number(id), values.name, publishState, fullBody, description, attachmentIds));
         }
         onStatus("Atualizado OK");
         setTimeout(() => closeDialog(), 500);
@@ -3106,12 +3119,12 @@ function HelpdeskTicketForm({ mode, ctx, editId, onStatus, fullBody, emailAtts, 
 
       values = await withReferenceCode("helpdesk.ticket", values);
       id = await createOdoo("helpdesk.ticket", values);
-      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", id, values.name, publishState, fullBody, description));
-
+      let attachmentIds: number[] = [];
       if (selectedAtts.length > 0) {
         onStatus("A enviar anexos...");
-        await uploadSelectedAttachmentsToRecord("helpdesk.ticket", id, emailAtts || [], selectedAtts);
+        attachmentIds = await uploadSelectedAttachmentsToRecord("helpdesk.ticket", id, emailAtts || [], selectedAtts);
       }
+      await linkEmailToRecord(buildLinkPayloadForRecord(ctx, "helpdesk.ticket", id, values.name, publishState, fullBody, description, attachmentIds));
 
       onStatus("Criado com sucesso");
       setTimeout(() => closeDialog(), 500);

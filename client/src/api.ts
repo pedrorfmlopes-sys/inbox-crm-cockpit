@@ -251,6 +251,7 @@ export type LinkPayload = {
   bodyHtml?: string;
   bodyText?: string;
   postToChatter?: boolean;
+  attachmentIds?: number[];
 
   // compat aliases
   resId?: number;
