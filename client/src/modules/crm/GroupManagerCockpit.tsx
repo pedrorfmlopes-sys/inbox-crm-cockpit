@@ -17,11 +17,10 @@ import { saveSettings } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 
-type GroupManagerView = "groups" | "detail" | "library";
+type GroupManagerView = "groups" | "detail" | "library" | "settings" | "labels";
 type GroupStatusFilter = "all" | "em_analise" | "em_progresso" | "concluido";
 type GroupArchiveFilter = "active" | "archived" | "all";
 type MembershipKind = "principal" | "referencia";
-type GroupSettingsSection = "labels";
 
 type GroupDraft = {
   name: string;
@@ -175,8 +174,6 @@ function draftChanged(group: LinkGroupEntry | null, draft: GroupDraft): boolean 
 export const GroupManagerCockpit: React.FC = () => {
   const { ctx, bodyText, bodyHtml, attachments, setMsg, setActiveGroupForCurrentEmail, settings, openSettingsSection } = useCockpit();
   const [view, setView] = useState<GroupManagerView>("groups");
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<GroupSettingsSection>("labels");
   const [groups, setGroups] = useState<LinkGroupEntry[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [groupsError, setGroupsError] = useState("");
@@ -703,63 +700,110 @@ export const GroupManagerCockpit: React.FC = () => {
   }
 
   const trackTransform = view === "groups" ? "translateX(0%)" : view === "detail" ? "translateX(-33.3333%)" : "translateX(-66.6667%)";
+  const configView = view === "settings" || view === "labels";
+
+  const headerTitle = view === "settings"
+    ? "Settings dos grupos"
+    : view === "labels"
+      ? "Gestor de etiquetas"
+      : "Gestao dedicada de grupos";
+
+  const headerHint = view === "settings"
+    ? "Configuracoes locais do modulo de grupos."
+    : view === "labels"
+      ? "Catalogo central e manutencao global das etiquetas."
+      : "Gestao dedicada de grupos, emails e etiquetas";
 
   return (
     <div style={S.root}>
       <div style={S.header}>
         <div>
           <div style={S.kicker}>Gestor de Grupos</div>
-          <div style={S.title}>Gestao dedicada de grupos, emails e etiquetas</div>
+          <div style={S.title}>{headerTitle}</div>
+          <div style={S.headerHint}>{headerHint}</div>
         </div>
         <div style={S.headerActions}>
-          <button type="button" style={S.secondaryBtn} onClick={() => void refreshAll()} disabled={groupsLoading || busy}>
-            <Icons.RefreshCw size={12} />
-            Atualizar
-          </button>
-          <button
-            type="button"
-            style={settingsOpen ? S.secondaryBtnActive : S.secondaryBtn}
-            onClick={() => setSettingsOpen((current) => !current)}
-            disabled={busy}
-            title="Configurar grupos"
-          >
-            <Icons.Settings size={13} />
-            {settingsOpen ? "Fechar" : "Definicoes"}
-          </button>
+          {configView ? (
+            <button
+              type="button"
+              style={S.secondaryBtn}
+              onClick={() => setView(view === "labels" ? "settings" : "groups")}
+              disabled={busy}
+            >
+              Voltar
+            </button>
+          ) : (
+            <>
+              <button type="button" style={S.secondaryBtn} onClick={() => void refreshAll()} disabled={groupsLoading || busy}>
+                <Icons.RefreshCw size={12} />
+                Atualizar
+              </button>
+              <button
+                type="button"
+                style={S.iconGearBtn}
+                onClick={() => setView("settings")}
+                disabled={busy}
+                title="Settings dos grupos"
+              >
+                <Icons.Settings size={14} />
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {settingsOpen ? (
-        <div style={S.settingsShell}>
-          <div style={S.settingsMenu}>
-            <button
-              type="button"
-              style={settingsSection === "labels" ? S.settingsMenuItemActive : S.settingsMenuItem}
-              onClick={() => setSettingsSection("labels")}
-            >
-              <Icons.Settings size={13} />
-              Gestor de etiquetas
-            </button>
-          </div>
-          <div style={S.settingsContent}>
-            <div style={S.settingsContentHead}>
+      <div style={S.viewport}>
+        {view === "settings" ? (
+          <section style={S.cleanPanel}>
+            <div style={S.panelHeader}>
               <div>
-                <div style={S.panelTitle}>Definicoes do modulo Grupos</div>
-                <div style={S.panelHint}>A operacao diaria das etiquetas fica aqui; a ativacao global continua em Settings.</div>
+                <div style={S.panelTitle}>Settings dos grupos</div>
+                <div style={S.panelHint}>Area limpa para configurar extras especificos do modulo.</div>
               </div>
             </div>
+
+            <div style={S.settingMenuGrid}>
+              <button type="button" style={S.settingEntry} onClick={() => setView("labels")}>
+                <div style={S.settingEntryBody}>
+                  <div style={S.settingEntryTitle}>Etiquetas</div>
+                  <div style={S.settingEntryHint}>Abrir o gestor central de etiquetas para criar, renomear ou eliminar etiquetas.</div>
+                </div>
+                <span style={S.settingEntryMeta}>{labelsManagerEnabled ? "Ativo" : "Desativado"}</span>
+              </button>
+
+              <div style={S.card}>
+                <div style={S.fieldLabel}>Ativacao global</div>
+                <div style={S.smallMeta}>A ativacao e desativacao desta funcionalidade continua em Settings {" > "} Grupos.</div>
+                <div style={S.inlineRow}>
+                  <button type="button" style={S.primaryBtn} onClick={() => openSettingsSection("groups")}>
+                    <Icons.Settings size={12} />
+                    Abrir Settings gerais
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : view === "labels" ? (
+          <section style={S.cleanPanel}>
+            <div style={S.panelHeader}>
+              <div>
+                <div style={S.panelTitle}>Gestor de etiquetas</div>
+                <div style={S.panelHint}>Catalogo central de etiquetas sem referencias ao email ou ao grupo ativo.</div>
+              </div>
+            </div>
+
             {!labelsManagerEnabled ? (
               <div style={S.card}>
                 <PanelState
                   compact
                   tone="info"
                   title="Gestor de etiquetas desativado"
-                  description="Ativa a funcionalidade em Settings > Grupos para gerir o catalogo central."
+                  description="Ativa a funcionalidade em Settings > Grupos para usar o catalogo central."
                 />
                 <div style={S.inlineRow}>
                   <button type="button" style={S.primaryBtn} onClick={() => openSettingsSection("groups")}>
                     <Icons.Settings size={12} />
-                    Abrir Settings
+                    Abrir Settings gerais
                   </button>
                 </div>
               </div>
@@ -834,12 +878,9 @@ export const GroupManagerCockpit: React.FC = () => {
                 </div>
               </div>
             )}
-          </div>
-        </div>
-      ) : null}
-
-      <div style={S.viewport}>
-        <div style={{ ...S.track, transform: trackTransform }}>
+          </section>
+        ) : (
+          <div style={{ ...S.track, transform: trackTransform }}>
           <section style={S.panel}>
             <div style={S.panelHeader}>
               <div>
@@ -1177,7 +1218,8 @@ export const GroupManagerCockpit: React.FC = () => {
               </>
             )}
           </section>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1202,12 +1244,7 @@ const S: Record<string, React.CSSProperties> = {
   headerActions: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" },
   kicker: { fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: "var(--iccc-text-muted)", letterSpacing: "0.06em" },
   title: { fontSize: 18, fontWeight: 800, color: "var(--iccc-text)" },
-  settingsShell: { display: "grid", gridTemplateColumns: "220px minmax(0, 1fr)", gap: 0, borderRadius: 20, border: "1px solid var(--iccc-card-border)", background: "var(--iccc-card-bg)", boxShadow: "var(--iccc-shadow)", overflow: "hidden" },
-  settingsMenu: { display: "grid", alignContent: "start", gap: 8, padding: 12, background: "rgba(255,255,255,0.78)", borderRight: "1px solid var(--iccc-card-border)" },
-  settingsMenuItem: { ...baseButton, width: "100%", justifyContent: "flex-start", background: "transparent", color: "var(--iccc-text)" },
-  settingsMenuItemActive: { ...baseButton, width: "100%", justifyContent: "flex-start", background: "rgba(37, 99, 235, 0.12)", color: "#1d4ed8", border: "1px solid rgba(37, 99, 235, 0.2)" },
-  settingsContent: { display: "grid", gap: 12, padding: 12, alignContent: "start" },
-  settingsContentHead: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
+  headerHint: { fontSize: 12, color: "var(--iccc-text-muted)", marginTop: 2 },
   settingsGrid: { display: "grid", gap: 12 },
   settingsColumns: { display: "grid", gridTemplateColumns: "minmax(220px, 260px) minmax(0, 1fr)", gap: 12, alignItems: "start" },
   managerList: { display: "grid", gap: 8, padding: 12, borderRadius: 16, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.72)", alignContent: "start" },
@@ -1217,13 +1254,20 @@ const S: Record<string, React.CSSProperties> = {
   viewport: { overflow: "hidden", borderRadius: 20, border: "1px solid var(--iccc-card-border)", background: "var(--iccc-card-bg)", boxShadow: "var(--iccc-shadow)" },
   track: { width: "300%", display: "flex", transition: "transform 0.22s ease" },
   panel: { width: "33.3333%", padding: 12, display: "grid", alignContent: "start", gap: 12, minHeight: "calc(100vh - 220px)", boxSizing: "border-box" },
+  cleanPanel: { padding: 12, display: "grid", alignContent: "start", gap: 12, minHeight: "calc(100vh - 220px)", boxSizing: "border-box" },
+  settingMenuGrid: { display: "grid", gap: 12, alignContent: "start" },
+  settingEntry: { width: "100%", textAlign: "left", borderRadius: 16, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.78)", padding: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer" },
+  settingEntryBody: { display: "grid", gap: 6, minWidth: 0 },
+  settingEntryTitle: { fontSize: 15, fontWeight: 800, color: "var(--iccc-text)" },
+  settingEntryHint: { fontSize: 12, color: "var(--iccc-text-muted)", lineHeight: 1.45 },
+  settingEntryMeta: { display: "inline-flex", alignItems: "center", padding: "5px 10px", borderRadius: 999, background: "rgba(37, 99, 235, 0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" },
   panelHeader: { display: "flex", alignItems: "center", gap: 10 },
   panelTitle: { fontSize: 16, fontWeight: 800, color: "var(--iccc-text)" },
   panelHint: { fontSize: 12, color: "var(--iccc-text-muted)" },
   backBtn: { ...baseButton, background: "transparent", color: "var(--iccc-text)" },
   primaryBtn: { ...baseButton, background: "linear-gradient(180deg, rgba(96, 165, 250, 0.95) 0%, rgba(37, 99, 235, 0.95) 100%)", color: "#fff", border: "1px solid rgba(37, 99, 235, 0.35)" },
   secondaryBtn: { ...baseButton, background: "rgba(255,255,255,0.78)", color: "var(--iccc-text)" },
-  secondaryBtnActive: { ...baseButton, background: "rgba(37, 99, 235, 0.12)", color: "#1d4ed8", border: "1px solid rgba(37, 99, 235, 0.2)" },
+  iconGearBtn: { ...baseButton, width: 38, height: 38, padding: 0, background: "rgba(255,255,255,0.78)", color: "var(--iccc-text)" },
   dangerBtn: { ...baseButton, background: "rgba(254, 226, 226, 0.95)", color: "#b91c1c", border: "1px solid rgba(239, 68, 68, 0.25)" },
   card: { display: "grid", gap: 8, padding: 12, borderRadius: 16, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.72)" },
   fieldLabel: { fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: "var(--iccc-text-muted)", letterSpacing: "0.05em" },
