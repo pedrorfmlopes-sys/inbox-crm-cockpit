@@ -149,6 +149,7 @@ export type RelevantEmailPayload = {
   receivedAtIso?: string;
   bodyText?: string;
   bodyHtml?: string;
+  membershipKind?: "principal" | "referencia" | string;
   attachments?: Array<{
     id?: string;
     name: string;
@@ -222,8 +223,9 @@ export type RelatedReason =
 
 export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordName" | "resId" | "name" | "title"> & {
   emailKey?: string;
+  membershipKind?: "principal" | "referencia" | string;
   relatedRecords?: Array<{ model: string; recordId: number; recordName: string }>;
-  relatedGroups?: Array<{ id: string; name?: string; kind?: string }>;
+  relatedGroups?: Array<{ id: string; name?: string; kind?: string; relationKind?: "principal" | "referencia" | string }>;
   relatedReasons?: RelatedReason[];
   groupId?: string;
   groupName?: string;
@@ -451,6 +453,7 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
   return {
     ...normalizeLinkEntry(entry),
     emailKey: String(entry?.emailKey || "").trim(),
+    membershipKind: String(entry?.membershipKind || "").trim() || undefined,
     bodyText: String(entry?.bodyText || "").trim(),
     bodyHtml: String(entry?.bodyHtml || "").trim(),
     relatedRecords: Array.isArray(entry?.relatedRecords)
@@ -465,6 +468,7 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
         id: String(group?.id || "").trim(),
         name: String(group?.name || "").trim(),
         kind: String(group?.kind || "").trim(),
+        relationKind: String(group?.relationKind || "").trim() || undefined,
       })).filter((group: any) => group.id)
       : [],
     attachments: Array.isArray(entry?.attachments)

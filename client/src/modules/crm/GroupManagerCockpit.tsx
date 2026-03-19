@@ -19,6 +19,7 @@ import * as Icons from "@/ui/icons";
 type GroupManagerView = "groups" | "detail" | "library";
 type GroupStatusFilter = "all" | "em_analise" | "em_progresso" | "concluido";
 type GroupArchiveFilter = "active" | "archived" | "all";
+type MembershipKind = "principal" | "referencia";
 
 type GroupDraft = {
   name: string;
@@ -33,6 +34,11 @@ const STATUS_OPTIONS: Array<{ value: GroupDraft["status"]; label: string }> = [
   { value: "em_analise", label: "Em analise" },
   { value: "em_progresso", label: "Em progresso" },
   { value: "concluido", label: "Concluido" },
+];
+
+const MEMBERSHIP_OPTIONS: Array<{ value: MembershipKind; label: string }> = [
+  { value: "principal", label: "Principal" },
+  { value: "referencia", label: "Referencia" },
 ];
 
 function normalizeText(value: string | undefined): string {
@@ -80,6 +86,10 @@ function formatDate(value: string | undefined): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function membershipKindLabel(value: string | undefined): string {
+  return String(value || "").trim().toLowerCase() === "referencia" ? "Referencia" : "Principal";
 }
 
 function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
@@ -158,6 +168,7 @@ export const GroupManagerCockpit: React.FC = () => {
   const [groupEmailsLoading, setGroupEmailsLoading] = useState(false);
   const [groupEmailQuery, setGroupEmailQuery] = useState("");
   const [selectedGroupEmailKeys, setSelectedGroupEmailKeys] = useState<string[]>([]);
+  const [linkKind, setLinkKind] = useState<MembershipKind>("principal");
 
   const [libraryQuery, setLibraryQuery] = useState("");
   const [libraryEmails, setLibraryEmails] = useState<RelatedEmailEntry[]>([]);
@@ -430,10 +441,13 @@ export const GroupManagerCockpit: React.FC = () => {
     if (!selectedGroup) return;
     setBusy(true);
     try {
-      await addEmailToLinkGroup(selectedGroup.id, currentEmailPayload);
+      await addEmailToLinkGroup(selectedGroup.id, {
+        ...currentEmailPayload,
+        membershipKind: linkKind,
+      });
       setActiveGroupForCurrentEmail(selectedGroup.id);
       await refreshAll();
-      setMsg("Email atual associado ao grupo.");
+      setMsg(`Email atual associado ao grupo como ${membershipKindLabel(linkKind).toLowerCase()}.`);
     } catch (error: any) {
       setMsg(error?.message || "Nao foi possivel associar o email atual.");
     } finally {
@@ -446,14 +460,36 @@ export const GroupManagerCockpit: React.FC = () => {
     setBusy(true);
     try {
       for (const email of selectedLibraryRows) {
-        await addEmailToLinkGroup(selectedGroup.id, email);
+        await addEmailToLinkGroup(selectedGroup.id, {
+          ...email,
+          membershipKind: linkKind,
+        });
       }
       setSelectedLibraryKeys([]);
       await refreshAll();
-      setMsg(`${selectedLibraryRows.length} email(s) associados ao grupo.`);
+      setMsg(`${selectedLibraryRows.length} email(s) associados ao grupo como ${membershipKindLabel(linkKind).toLowerCase()}.`);
       setView("detail");
     } catch (error: any) {
       setMsg(error?.message || "Nao foi possivel associar os emails selecionados.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSetSelectedEmailsKind(nextKind: MembershipKind) {
+    if (!selectedGroup || !selectedGroupEmailRows.length) return;
+    setBusy(true);
+    try {
+      for (const email of selectedGroupEmailRows) {
+        await addEmailToLinkGroup(selectedGroup.id, {
+          ...email,
+          membershipKind: nextKind,
+        });
+      }
+      await refreshAll();
+      setMsg(`${selectedGroupEmailRows.length} email(s) marcados como ${membershipKindLabel(nextKind).toLowerCase()}.`);
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel atualizar o tipo de ligacao.");
     } finally {
       setBusy(false);
     }
@@ -661,6 +697,15 @@ export const GroupManagerCockpit: React.FC = () => {
                       </div>
                     </div>
                     <div style={S.inlineActions}>
+                      <select
+                        style={S.compactSelect}
+                        value={linkKind}
+                        onChange={(event) => setLinkKind(event.target.value as MembershipKind)}
+                      >
+                        {MEMBERSHIP_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
                       <button type="button" style={S.secondaryBtn} onClick={() => void handleAddCurrentEmail()} disabled={busy || currentEmailAlreadyLinked}>
                         <Icons.Link size={12} />
                         Adicionar email atual
@@ -673,6 +718,12 @@ export const GroupManagerCockpit: React.FC = () => {
                   </div>
                   <div style={S.inlineRow}>
                     <input style={S.input} value={groupEmailQuery} onChange={(event) => setGroupEmailQuery(event.target.value)} placeholder="Filtrar emails do grupo" />
+                    <button type="button" style={S.secondaryBtn} onClick={() => void handleSetSelectedEmailsKind("principal")} disabled={busy || !selectedGroupEmailRows.length}>
+                      Tornar principal
+                    </button>
+                    <button type="button" style={S.secondaryBtn} onClick={() => void handleSetSelectedEmailsKind("referencia")} disabled={busy || !selectedGroupEmailRows.length}>
+                      Tornar referencia
+                    </button>
                     <button type="button" style={S.secondaryBtn} onClick={() => void handleRemoveSelectedEmails()} disabled={busy || !selectedGroupEmailRows.length}>
                       Remover selecionados
                     </button>
@@ -700,6 +751,9 @@ export const GroupManagerCockpit: React.FC = () => {
                           <button type="button" style={S.emailMain} onClick={() => openLinkedOutlookEmail(email as any)}>
                             <div style={S.emailSubject}>
                               {email.subject || "Sem assunto"}
+                              <span style={email.membershipKind === "referencia" ? S.refBadge : S.principalBadge}>
+                                {membershipKindLabel(email.membershipKind)}
+                              </span>
                               {isCurrent ? <span style={S.currentEmailBadge}>Atual</span> : null}
                             </div>
                             <div style={S.emailMeta}>{email.fromName || email.fromEmail || "Sem remetente"} · {formatDate(email.messageDateIso || email.receivedAtIso)}</div>
@@ -733,6 +787,15 @@ export const GroupManagerCockpit: React.FC = () => {
                   <div style={S.fieldLabel}>Pesquisar emails conhecidos</div>
                   <div style={S.inlineRow}>
                     <input style={S.input} value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder="Assunto, remetente, grupo, registo..." />
+                    <select
+                      style={S.compactSelect}
+                      value={linkKind}
+                      onChange={(event) => setLinkKind(event.target.value as MembershipKind)}
+                    >
+                      {MEMBERSHIP_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
                     <button type="button" style={S.primaryBtn} onClick={() => void handleAddSelectedLibrary()} disabled={busy || !selectedLibraryRows.length}>
                       <Icons.Link size={12} />
                       Associar selecionados
@@ -769,7 +832,10 @@ export const GroupManagerCockpit: React.FC = () => {
                           {(email.relatedGroups?.length || email.relatedRecords?.length) ? (
                             <div style={S.emailAssociations}>
                               {(email.relatedGroups || []).slice(0, 3).map((group) => (
-                                <span key={`${rowKey}:g:${group.id}`} style={S.labelBadge}>{group.name || group.id}</span>
+                                <span key={`${rowKey}:g:${group.id}`} style={group.relationKind === "referencia" ? S.refBadge : S.labelBadge}>
+                                  {group.name || group.id}
+                                  {group.relationKind === "referencia" ? " · Ref" : ""}
+                                </span>
                               ))}
                               {(email.relatedRecords || []).slice(0, 2).map((record) => (
                                 <span key={`${rowKey}:r:${record.model}:${record.recordId}`} style={S.recordBadge}>{record.recordName || `${record.model}#${record.recordId}`}</span>
@@ -824,6 +890,7 @@ const S: Record<string, React.CSSProperties> = {
   card: { display: "grid", gap: 8, padding: 12, borderRadius: 16, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.72)" },
   fieldLabel: { fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: "var(--iccc-text-muted)", letterSpacing: "0.05em" },
   input: { width: "100%", borderRadius: 12, border: "1px solid var(--iccc-card-border)", padding: "10px 12px", background: "#fff", fontSize: 13, color: "var(--iccc-text)", boxSizing: "border-box" },
+  compactSelect: { borderRadius: 12, border: "1px solid var(--iccc-card-border)", padding: "8px 10px", background: "#fff", fontSize: 12, color: "var(--iccc-text)", minWidth: 120 },
   textarea: { width: "100%", minHeight: 86, borderRadius: 12, border: "1px solid var(--iccc-card-border)", padding: "10px 12px", background: "#fff", fontSize: 13, color: "var(--iccc-text)", boxSizing: "border-box", resize: "vertical" },
   select: { width: "100%", borderRadius: 12, border: "1px solid var(--iccc-card-border)", padding: "10px 12px", background: "#fff", fontSize: 13, color: "var(--iccc-text)" },
   inlineRow: { display: "flex", gap: 8, alignItems: "center" },
@@ -840,6 +907,8 @@ const S: Record<string, React.CSSProperties> = {
   groupMeta: { display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11, color: "var(--iccc-text-muted)" },
   groupLabels: { display: "flex", gap: 6, flexWrap: "wrap" },
   labelBadge: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(37, 99, 235, 0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
+  principalBadge: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(37, 99, 235, 0.08)", color: "#1d4ed8", fontSize: 10, fontWeight: 800, textTransform: "uppercase" },
+  refBadge: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(15, 23, 42, 0.06)", color: "var(--iccc-text)", fontSize: 10, fontWeight: 800, textTransform: "uppercase" },
   recordBadge: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(15, 23, 42, 0.06)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 700 },
   statusBadge: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, border: "1px solid transparent", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em" },
   statusAnalysis: { background: "rgba(217, 119, 6, 0.12)", color: "#b45309", borderColor: "rgba(217, 119, 6, 0.2)" },

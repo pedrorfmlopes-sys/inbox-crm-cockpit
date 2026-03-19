@@ -16,6 +16,7 @@ const LEGACY_FILE_PATH = path.join(process.cwd(), "server", "data", "links.json"
 const STORE_VERSION = 2;
 const CUSTOM_GROUP_KIND = "custom";
 const DEFAULT_GROUP_STATUS = "em_analise";
+const DEFAULT_GROUP_MEMBERSHIP_KIND = "principal";
 
 const db = createOptionalPgStore("linkStore");
 let customGroupDbInitPromise = null;
@@ -83,6 +84,29 @@ function parseGroupLabelsJson(value) {
   }
 }
 
+function normalizeGroupMembershipKind(value) {
+  const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, "_");
+  if (normalized === "referencia" || normalized === "reference" || normalized === "linked" || normalized === "link") {
+    return "referencia";
+  }
+  return DEFAULT_GROUP_MEMBERSHIP_KIND;
+}
+
+function normalizeGroupMembershipMeta(value = {}) {
+  if (typeof value === "string") {
+    return {
+      kind: normalizeGroupMembershipKind(value),
+      linkedAt: "",
+      updatedAt: "",
+    };
+  }
+  return {
+    kind: normalizeGroupMembershipKind(value?.kind),
+    linkedAt: normalizeString(value?.linkedAt),
+    updatedAt: normalizeString(value?.updatedAt),
+  };
+}
+
 function splitLookupKey(conversationId, internetMessageId = "") {
   const rawConversationId = normalizeString(conversationId);
   if (rawConversationId.includes("||")) {
@@ -127,6 +151,7 @@ function createEmptyStore() {
     },
     groups: {},
     groupMembers: {},
+    groupMemberLinks: {},
     emailGroups: {},
     conversationGroups: {},
     entityLinks: {},
@@ -326,12 +351,49 @@ function hydrateStore(raw) {
   };
   store.groups = source.groups && typeof source.groups === "object" ? source.groups : {};
   store.groupMembers = source.groupMembers && typeof source.groupMembers === "object" ? source.groupMembers : {};
+  store.groupMemberLinks = source.groupMemberLinks && typeof source.groupMemberLinks === "object" ? source.groupMemberLinks : {};
   store.emailGroups = source.emailGroups && typeof source.emailGroups === "object" ? source.emailGroups : {};
   store.conversationGroups = source.conversationGroups && typeof source.conversationGroups === "object" ? source.conversationGroups : {};
   store.entityLinks = source.entityLinks && typeof source.entityLinks === "object" ? source.entityLinks : {};
   store.emailEntityLinks = source.emailEntityLinks && typeof source.emailEntityLinks === "object" ? source.emailEntityLinks : {};
   store.groupDocuments = source.groupDocuments && typeof source.groupDocuments === "object" ? source.groupDocuments : {};
   store.groupAttachmentFlags = source.groupAttachmentFlags && typeof source.groupAttachmentFlags === "object" ? source.groupAttachmentFlags : {};
+
+  for (const [groupId, value] of Object.entries(store.groupMemberLinks || {})) {
+    const gid = normalizeString(groupId);
+    if (!gid || !value || typeof value !== "object") {
+      delete store.groupMemberLinks[groupId];
+      continue;
+    }
+    const normalizedEntries = {};
+    for (const [emailId, meta] of Object.entries(value)) {
+      const eid = normalizeString(emailId);
+      if (!eid) continue;
+      normalizedEntries[eid] = normalizeGroupMembershipMeta(meta);
+      const members = Array.isArray(store.groupMembers[gid]) ? store.groupMembers[gid] : [];
+      if (!members.includes(eid)) store.groupMembers[gid] = [...members, eid];
+      const emailGroups = Array.isArray(store.emailGroups[eid]) ? store.emailGroups[eid] : [];
+      if (!emailGroups.includes(gid)) store.emailGroups[eid] = [...emailGroups, gid];
+    }
+    store.groupMemberLinks[gid] = normalizedEntries;
+  }
+
+  for (const [groupId, members] of Object.entries(store.groupMembers || {})) {
+    const gid = normalizeString(groupId);
+    if (!gid) continue;
+    if (!store.groupMemberLinks[gid] || typeof store.groupMemberLinks[gid] !== "object" || Array.isArray(store.groupMemberLinks[gid])) {
+      store.groupMemberLinks[gid] = {};
+    }
+    const dedupedMembers = Array.from(new Set((Array.isArray(members) ? members : []).map((entry) => normalizeString(entry)).filter(Boolean)));
+    store.groupMembers[gid] = dedupedMembers;
+    for (const emailId of dedupedMembers) {
+      if (!store.groupMemberLinks[gid][emailId]) {
+        store.groupMemberLinks[gid][emailId] = normalizeGroupMembershipMeta({});
+      }
+      const emailGroups = Array.isArray(store.emailGroups[emailId]) ? store.emailGroups[emailId] : [];
+      if (!emailGroups.includes(gid)) store.emailGroups[emailId] = [...emailGroups, gid];
+    }
+  }
   return store;
 }
 
@@ -437,6 +499,7 @@ function ensureGroup(store, partial) {
   if (!next.createdAt) next.createdAt = now;
   store.groups[id] = next;
   if (!Array.isArray(store.groupMembers[id])) store.groupMembers[id] = [];
+  if (!store.groupMemberLinks[id] || typeof store.groupMemberLinks[id] !== "object") store.groupMemberLinks[id] = {};
   return next;
 }
 
@@ -464,14 +527,42 @@ function ensureConversationGroup(store, conversationId, sampleEmail = null) {
   return group;
 }
 
-function addEmailMembership(store, groupId, emailId) {
+function getEmailMembershipMeta(store, groupId, emailId) {
+  const gid = normalizeString(groupId);
+  const eid = normalizeString(emailId);
+  if (!gid || !eid) return normalizeGroupMembershipMeta({});
+  const raw = store?.groupMemberLinks?.[gid]?.[eid];
+  return normalizeGroupMembershipMeta(raw || {});
+}
+
+function listEmailGroupMemberships(store, emailId) {
+  const eid = normalizeString(emailId);
+  if (!eid) return [];
+  const groupIds = Array.isArray(store?.emailGroups?.[eid]) ? store.emailGroups[eid] : [];
+  return groupIds
+    .map((groupId) => ({
+      groupId: normalizeString(groupId),
+      kind: getEmailMembershipMeta(store, groupId, eid).kind,
+    }))
+    .filter((entry) => entry.groupId);
+}
+
+function addEmailMembership(store, groupId, emailId, options = {}) {
   const gid = normalizeString(groupId);
   const eid = normalizeString(emailId);
   if (!gid || !eid) return;
+  const now = nowIso();
   const members = Array.isArray(store.groupMembers[gid]) ? store.groupMembers[gid] : [];
   if (!members.includes(eid)) store.groupMembers[gid] = [...members, eid];
   const emailGroups = Array.isArray(store.emailGroups[eid]) ? store.emailGroups[eid] : [];
   if (!emailGroups.includes(gid)) store.emailGroups[eid] = [...emailGroups, gid];
+  if (!store.groupMemberLinks[gid] || typeof store.groupMemberLinks[gid] !== "object") store.groupMemberLinks[gid] = {};
+  const currentMeta = normalizeGroupMembershipMeta(store.groupMemberLinks[gid][eid]);
+  store.groupMemberLinks[gid][eid] = {
+    kind: normalizeGroupMembershipKind(options?.membershipKind || currentMeta.kind),
+    linkedAt: currentMeta.linkedAt || normalizeString(options?.linkedAt) || now,
+    updatedAt: now,
+  };
   if (store.groups[gid]) store.groups[gid].updatedAt = nowIso();
 }
 
@@ -483,6 +574,10 @@ function removeEmailMembership(store, groupId, emailId) {
   const nextMembers = members.filter((value) => value !== eid);
   if (nextMembers.length === members.length) return false;
   store.groupMembers[gid] = nextMembers;
+  if (store.groupMemberLinks[gid] && typeof store.groupMemberLinks[gid] === "object") {
+    delete store.groupMemberLinks[gid][eid];
+    if (!Object.keys(store.groupMemberLinks[gid]).length) delete store.groupMemberLinks[gid];
+  }
 
   const emailGroups = Array.isArray(store.emailGroups[eid]) ? store.emailGroups[eid] : [];
   store.emailGroups[eid] = emailGroups.filter((value) => value !== gid);
@@ -562,6 +657,7 @@ function buildEmailListEntry(email, extra = {}) {
     createdAt: normalizeString(email?.createdAt),
     updatedAt: normalizeString(email?.updatedAt),
     attachments: normalizeAttachments(email?.attachments),
+    membershipKind: normalizeGroupMembershipKind(extra?.membershipKind || email?.membershipKind),
     ...extra,
   };
 }
@@ -582,6 +678,7 @@ function buildEmailSearchEntry(email, extra = {}) {
     sentAtIso: normalizeString(email?.sentAtIso),
     createdAt: normalizeString(email?.createdAt),
     updatedAt: normalizeString(email?.updatedAt),
+    membershipKind: normalizeGroupMembershipKind(extra?.membershipKind || email?.membershipKind),
     ...extra,
   };
 }
@@ -666,6 +763,7 @@ function mapDbGroupMemberRow(row) {
     createdAt: normalizeString(row.created_at),
     updatedAt: normalizeString(row.updated_at),
     attachments: parseAttachmentsJson(row.attachments_json),
+    membershipKind: normalizeGroupMembershipKind(row.relation_kind),
   });
 }
 
@@ -842,15 +940,16 @@ async function deleteDbGroupDocument(groupId, documentId) {
   await db.query(`DELETE FROM crm_custom_group_documents WHERE group_id = $1 AND id = $2`, [gid, did]);
 }
 
-async function upsertDbCustomGroupMember(groupId, email) {
+async function upsertDbCustomGroupMember(groupId, email, membershipKind = DEFAULT_GROUP_MEMBERSHIP_KIND) {
   if (!db.isEnabled()) return;
   const emailKey = makePersistentEmailKey(email);
   if (!groupId || !emailKey) return;
   await db.query(
     `INSERT INTO crm_custom_group_members
-       (group_id, email_key, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, body_text, body_html, attachments_json, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17)
+       (group_id, email_key, relation_kind, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, body_text, body_html, attachments_json, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18)
      ON CONFLICT (group_id, email_key) DO UPDATE SET
+       relation_kind = EXCLUDED.relation_kind,
        item_id = EXCLUDED.item_id,
        internet_message_id = EXCLUDED.internet_message_id,
        conversation_id = EXCLUDED.conversation_id,
@@ -868,6 +967,7 @@ async function upsertDbCustomGroupMember(groupId, email) {
     [
       normalizeString(groupId),
       emailKey,
+      normalizeGroupMembershipKind(membershipKind),
       normalizeString(email?.itemId),
       normalizeMessageId(email?.internetMessageId),
       normalizeString(email?.conversationId),
@@ -978,6 +1078,7 @@ async function listDbEmailsByGroup(groupId) {
       relatedRecords: [],
       groupId: gid,
       groupName: normalizeString(row.group_name),
+      membershipKind: normalizeGroupMembershipKind(row.relation_kind),
     })
   ));
 }
@@ -1053,6 +1154,7 @@ async function getDbCustomGroupContext(input) {
         id: normalizeString(row.group_id),
         name: normalizeString(row.group_name),
         kind: "group",
+        relationKind: normalizeGroupMembershipKind(row.relation_kind),
       });
     }
 
@@ -1061,6 +1163,7 @@ async function getDbCustomGroupContext(input) {
       groupId: normalizeString(row.group_id),
       groupName: normalizeString(row.group_name),
       conversationId: normalizeString(row.conversation_id),
+      relationKind: normalizeGroupMembershipKind(row.relation_kind),
     };
     const reasonKey = JSON.stringify(reason);
     if (!current.relatedReasons.some((entry) => JSON.stringify(entry) === reasonKey)) {
@@ -1123,6 +1226,7 @@ async function ensureCustomGroupDb() {
       CREATE TABLE IF NOT EXISTS crm_custom_group_members (
         group_id TEXT NOT NULL REFERENCES crm_custom_groups(id) ON DELETE CASCADE,
         email_key TEXT NOT NULL,
+        relation_kind TEXT NOT NULL DEFAULT 'principal',
         item_id TEXT,
         internet_message_id TEXT,
         conversation_id TEXT,
@@ -1155,6 +1259,10 @@ async function ensureCustomGroupDb() {
     await db.query(`
       ALTER TABLE crm_custom_group_members
       ADD COLUMN IF NOT EXISTS body_html TEXT;
+    `);
+    await db.query(`
+      ALTER TABLE crm_custom_group_members
+      ADD COLUMN IF NOT EXISTS relation_kind TEXT NOT NULL DEFAULT 'principal';
     `);
 
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_members_item_id ON crm_custom_group_members (item_id);`);
@@ -1207,7 +1315,7 @@ async function ensureCustomGroupDb() {
       await upsertDbCustomGroup(group);
       for (const emailId of store.groupMembers[group.id] || []) {
         const email = buildRecoveredEmailSnapshot(store, emailId);
-        if (email) await upsertDbCustomGroupMember(group.id, email);
+        if (email) await upsertDbCustomGroupMember(group.id, email, getEmailMembershipMeta(store, group.id, emailId).kind);
       }
       for (const doc of store.groupDocuments[group.id] || []) {
         await upsertDbGroupDocument(group.id, doc);
@@ -1492,18 +1600,19 @@ export async function addEmailToGroup(groupId, input) {
     documentsEnabled: existingDbGroup?.documentsEnabled,
   });
   const email = upsertEmail(store, input);
+  const membershipKind = normalizeGroupMembershipKind(input?.membershipKind);
   if (email.conversationId) {
     const conversationGroup = ensureConversationGroup(store, email.conversationId, email);
-    if (conversationGroup) addEmailMembership(store, conversationGroup.id, email.id);
+    if (conversationGroup) addEmailMembership(store, conversationGroup.id, email.id, { membershipKind: DEFAULT_GROUP_MEMBERSHIP_KIND });
   }
-  addEmailMembership(store, group.id, email.id);
+  addEmailMembership(store, group.id, email.id, { membershipKind });
   writeStore(store);
 
   if (db.isEnabled()) {
     try {
       await ensureCustomGroupDb();
       await upsertDbCustomGroup(group);
-      await upsertDbCustomGroupMember(group.id, email);
+      await upsertDbCustomGroupMember(group.id, email, membershipKind);
     } catch (error) {
       if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Membership Insert Error, central file store kept as source of truth:", error.message);
       else console.error("[linkStore] DB Group Membership Insert Error, central file store kept as source of truth:", error);
@@ -1512,7 +1621,7 @@ export async function addEmailToGroup(groupId, input) {
 
   return {
     group: buildGroupListEntry(store, group),
-    email: buildEmailListEntry(email),
+    email: buildEmailListEntry(email, { membershipKind }),
   };
 }
 
@@ -1573,6 +1682,7 @@ export async function deleteCustomGroup(groupId) {
     removeEmailMembership(store, gid, emailId);
   }
   delete store.groupMembers[gid];
+  delete store.groupMemberLinks[gid];
   delete store.groupDocuments[gid];
   delete store.groupAttachmentFlags[gid];
   delete store.groups[gid];
@@ -1608,6 +1718,7 @@ export async function listEmailsByGroup(groupId) {
       relatedRecords,
       groupId: gid,
       groupName: store.groups[gid]?.name || "",
+      membershipKind: getEmailMembershipMeta(store, gid, emailId).kind,
     });
   });
 
@@ -1647,16 +1758,18 @@ export async function listKnownEmails(query = "", options = {}) {
         recordName: entry.recordName,
       }))
       : [];
-    const relatedGroups = Array.isArray(store.emailGroups[emailId])
-      ? store.emailGroups[emailId]
-        .map((groupId) => store.groups[groupId])
-        .filter(Boolean)
-        .map((group) => ({
+    const relatedGroups = listEmailGroupMemberships(store, emailId)
+      .map((membership) => {
+        const group = store.groups[membership.groupId];
+        if (!group) return null;
+        return {
           id: normalizeString(group.id),
           name: normalizeString(group.name),
           kind: normalizeString(group.kind),
-        }))
-      : [];
+          relationKind: membership.kind,
+        };
+      })
+      .filter(Boolean);
 
     if (excludeGroupId && relatedGroups.some((group) => normalizeString(group.id) === excludeGroupId)) {
       continue;
@@ -1888,6 +2001,7 @@ export async function getRelatedEmails(input) {
           id: reason.groupId,
           name: reason.groupName,
           kind: reason.kind,
+          relationKind: normalizeGroupMembershipKind(reason.relationKind),
         });
       }
     }
@@ -1916,8 +2030,9 @@ export async function getRelatedEmails(input) {
       }
     }
 
-    const emailGroups = Array.isArray(store.emailGroups[emailId]) ? store.emailGroups[emailId] : [];
-    for (const groupId of emailGroups) {
+    const emailGroups = listEmailGroupMemberships(store, emailId);
+    for (const membership of emailGroups) {
+      const groupId = membership.groupId;
       const group = store.groups[groupId];
       if (!group) continue;
       const kind = group.kind === "conversation" ? "conversation" : "group";
@@ -1927,6 +2042,7 @@ export async function getRelatedEmails(input) {
           groupId,
           groupName: group.name,
           conversationId: group.conversationId,
+          relationKind: membership.kind,
         });
       }
     }
@@ -1937,7 +2053,7 @@ export async function getRelatedEmails(input) {
     groups: Array.from(
       new Map(
         currentEmailIds
-          .flatMap((emailId) => store.emailGroups[emailId] || [])
+          .flatMap((emailId) => listEmailGroupMemberships(store, emailId).map((entry) => entry.groupId))
           .map((groupId) => [groupId, store.groups[groupId]])
           .filter(([, group]) => Boolean(group))
       ).values()
