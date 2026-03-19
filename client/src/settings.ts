@@ -164,6 +164,7 @@ export type CockpitSettingsV1 = {
   // Optional extra: central label manager for group labels
   groupLabelsManagerEnabled: boolean;
   groupLabelCatalog: string[];
+  groupFavoriteIds: string[];
 
   // CRM2 Odoo layout strategy for multi-company deployments
   crm2OdooLayout: Crm2OdooLayoutSettings;
@@ -274,6 +275,7 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   },
   groupLabelsManagerEnabled: true,
   groupLabelCatalog: [],
+  groupFavoriteIds: [],
   crm2OdooLayout: {
     mode: "description_only",
     includeAnchorIndex: true,
@@ -476,6 +478,9 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
     groupLabelCatalog: Array.isArray((incoming as any).groupLabelCatalog)
       ? Array.from(new Set((incoming as any).groupLabelCatalog.map((entry: any) => String(entry || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-PT"))
       : base.groupLabelCatalog,
+    groupFavoriteIds: Array.isArray((incoming as any).groupFavoriteIds)
+      ? Array.from(new Set((incoming as any).groupFavoriteIds.map((entry: any) => String(entry || "").trim()).filter(Boolean)))
+      : base.groupFavoriteIds,
     crm2OdooLayout: {
       ...base.crm2OdooLayout,
       ...incomingLayout,

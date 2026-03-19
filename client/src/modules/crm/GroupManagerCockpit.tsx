@@ -296,8 +296,6 @@ export const GroupManagerCockpit: React.FC = () => {
   const [activeLabelFilters, setActiveLabelFilters] = useState<string[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [draft, setDraft] = useState<GroupDraft>(createDraft(null));
-  const [newGroupName, setNewGroupName] = useState("");
-  const [newGroupLabels, setNewGroupLabels] = useState("");
   const [busy, setBusy] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -346,6 +344,8 @@ export const GroupManagerCockpit: React.FC = () => {
   );
 
   const currentEmailKey = useMemo(() => makeEmailKey(currentEmailPayload), [currentEmailPayload]);
+  const favoriteGroupIds = settings?.groupFavoriteIds || [];
+  const favoriteGroupSet = useMemo(() => new Set(favoriteGroupIds), [favoriteGroupIds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -456,7 +456,7 @@ export const GroupManagerCockpit: React.FC = () => {
 
   const visibleGroups = useMemo(() => {
     const query = normalizeText(groupQuery);
-    return groups
+    const filtered = groups
       .filter((group) => {
         if (archiveFilter === "active" && group.isArchived) return false;
         if (archiveFilter === "archived" && !group.isArchived) return false;
@@ -476,9 +476,26 @@ export const GroupManagerCockpit: React.FC = () => {
           .join(" ")
           .toLowerCase();
         return haystack.includes(query);
-      })
-      .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-PT"));
-  }, [activeLabelFilters, archiveFilter, groupQuery, groups, statusFilter]);
+      });
+
+    const sorted = filtered.sort((a, b) => {
+      const favoriteDelta = Number(favoriteGroupSet.has(b.id)) - Number(favoriteGroupSet.has(a.id));
+      if (favoriteDelta) return favoriteDelta;
+      const aUpdated = String(a.updatedAt || a.createdAt || "");
+      const bUpdated = String(b.updatedAt || b.createdAt || "");
+      if (aUpdated !== bUpdated) return bUpdated.localeCompare(aUpdated);
+      return String(a.name || "").localeCompare(String(b.name || ""), "pt-PT");
+    });
+
+    const hasManualFilters = statusFilter !== "all" || archiveFilter !== "active" || activeLabelFilters.length > 0;
+    if (query || hasManualFilters) return sorted;
+    return sorted.slice(0, 8);
+  }, [activeLabelFilters, archiveFilter, favoriteGroupSet, groupQuery, groups, statusFilter]);
+
+  const exactGroupMatch = useMemo(
+    () => groups.some((group) => normalizeText(group.name) === normalizeText(groupQuery)),
+    [groupQuery, groups]
+  );
 
   const visibleGroupEmails = useMemo(() => {
     const query = normalizeText(groupEmailQuery);
@@ -550,22 +567,20 @@ export const GroupManagerCockpit: React.FC = () => {
   }
 
   async function handleCreateGroup() {
-    const name = String(newGroupName || "").trim();
+    const name = String(groupQuery || "").trim();
     if (!name) {
-      setMsg("Escreve um nome para criar o grupo.");
+      setMsg("Escreve um nome para pesquisar ou criar o grupo.");
       return;
     }
     setBusy(true);
     try {
-      const labels = await ensureCatalogLabels(parseLabels(newGroupLabels));
       const group = await createLinkGroup({
         name,
-        labels,
+        labels: [],
         status: "em_analise",
         documentsEnabled: true,
       });
-      setNewGroupName("");
-      setNewGroupLabels("");
+      setGroupQuery("");
       setSelectedGroupId(group.id);
       setView("detail");
       await refreshAll();
@@ -706,6 +721,17 @@ export const GroupManagerCockpit: React.FC = () => {
         ? current.filter((entry) => normalizeText(entry) !== key)
         : [...current, label];
     });
+  }
+
+  async function toggleFavoriteGroup(groupId: string) {
+    const next = favoriteGroupSet.has(groupId)
+      ? favoriteGroupIds.filter((id) => id !== groupId)
+      : [groupId, ...favoriteGroupIds.filter((id) => id !== groupId)];
+    try {
+      await saveSettings({ groupFavoriteIds: next });
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel atualizar os favoritos.");
+    }
   }
 
   async function handleCreateCatalogLabel() {
@@ -1005,26 +1031,31 @@ export const GroupManagerCockpit: React.FC = () => {
 
             <div style={S.card}>
               <div style={S.sectionTitleRow}>
-                <div style={S.fieldLabel}>Novo grupo</div>
-                <HelpHint text="Cria um grupo novo. As etiquetas sao adicionadas pela pesquisa abaixo." title="Ajuda: Novo grupo" />
+                <div style={S.fieldLabel}>Grupo</div>
+                <HelpHint text="Pesquisa um grupo pelo nome. Se nao existir nenhum igual, o mesmo campo permite criar logo esse grupo." title="Ajuda: Grupo" />
               </div>
-              <div style={S.inlineRow}>
-                <input style={S.input} value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} placeholder="Nome do grupo" />
-                <button type="button" style={S.primaryBtn} onClick={() => void handleCreateGroup()} disabled={busy}>
-                  <Icons.Plus size={12} />
-                  Criar
+              <div style={S.labelSearchRow}>
+                <input
+                  style={S.input}
+                  value={groupQuery}
+                  onChange={(event) => setGroupQuery(event.target.value)}
+                  placeholder="Pesquisar ou criar grupo"
+                />
+                <button
+                  type="button"
+                  style={!exactGroupMatch && String(groupQuery || "").trim() ? S.primaryBtn : S.iconGhostBtn}
+                  onClick={() => void handleCreateGroup()}
+                  disabled={busy || !String(groupQuery || "").trim() || exactGroupMatch}
+                  title={!exactGroupMatch && String(groupQuery || "").trim() ? `Criar "${String(groupQuery || "").trim()}"` : "Pesquisar grupos existentes"}
+                >
+                  {!exactGroupMatch && String(groupQuery || "").trim() ? <Icons.Plus size={12} /> : <Icons.Search size={12} />}
                 </button>
               </div>
-              <LabelPicker
-                value={newGroupLabels}
-                onChange={setNewGroupLabels}
-                catalog={allLabels}
-                enabled={labelsManagerEnabled}
-                busy={busy}
-                placeholder="Pesquisar etiqueta"
-                helpText="Pesquisa etiquetas existentes. Quando nao houver resultados, o botao muda para adicionar e grava logo a nova etiqueta no gestor."
-                onCreateLabel={createCatalogLabel}
-              />
+              {!exactGroupMatch && String(groupQuery || "").trim() ? (
+                <div style={S.smallMeta}>Criar grupo: <b>{String(groupQuery || "").trim()}</b></div>
+              ) : (
+                <div style={S.smallMeta}>{favoriteGroupIds.length ? "Favoritos e recentes" : "Recentes"}</div>
+              )}
             </div>
 
             <div style={S.card}>
@@ -1032,7 +1063,6 @@ export const GroupManagerCockpit: React.FC = () => {
                 <div style={S.fieldLabel}>Filtros</div>
                 <HelpHint text="Filtra por texto, estado, arquivo e etiquetas. A explicacao fica aqui para nao sobrecarregar o ecran." title="Ajuda: Filtros" />
               </div>
-              <input style={S.input} value={groupQuery} onChange={(event) => setGroupQuery(event.target.value)} placeholder="Pesquisar grupos" />
               <div style={S.inlineRow}>
                 <select style={S.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as GroupStatusFilter)}>
                   <option value="all">Todos os estados</option>
@@ -1067,17 +1097,36 @@ export const GroupManagerCockpit: React.FC = () => {
             <div style={S.listWrap}>
               {visibleGroups.map((group) => {
                 const selected = group.id === selectedGroupId;
+                const favorite = favoriteGroupSet.has(group.id);
                 return (
-                  <button key={group.id} type="button" style={selected ? S.groupItemActive : S.groupItem} onClick={() => { setSelectedGroupId(group.id); setView("detail"); }}>
+                  <div key={group.id} style={selected ? S.groupItemActive : S.groupItem}>
                     <div style={S.groupItemHead}>
-                      <div style={S.groupName}>{group.name}</div>
-                      <span style={{ ...S.statusBadge, ...(group.status === "concluido" ? S.statusDone : group.status === "em_progresso" ? S.statusProgress : S.statusAnalysis) }}>
-                        {statusLabel(group.status)}
-                      </span>
+                      <button
+                        type="button"
+                        style={S.groupMainBtn}
+                        onClick={() => {
+                          setSelectedGroupId(group.id);
+                          setView("detail");
+                        }}
+                      >
+                        <div style={S.groupName}>{group.name}</div>
+                        <span style={{ ...S.statusBadge, ...(group.status === "concluido" ? S.statusDone : group.status === "em_progresso" ? S.statusProgress : S.statusAnalysis) }}>
+                          {statusLabel(group.status)}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        style={favorite ? S.favoriteBtnActive : S.favoriteBtn}
+                        onClick={() => void toggleFavoriteGroup(group.id)}
+                        title={favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+                      >
+                        <Icons.Star size={11} />
+                      </button>
                     </div>
                     {group.description ? <div style={S.groupDescription}>{group.description}</div> : null}
                     <div style={S.groupMeta}>
                       <span>{group.memberCount || 0} email(s)</span>
+                      {favorite ? <span>Favorito</span> : null}
                       {group.isArchived ? <span>Arquivado</span> : null}
                     </div>
                     {group.labels?.length ? (
@@ -1087,7 +1136,7 @@ export const GroupManagerCockpit: React.FC = () => {
                         ))}
                       </div>
                     ) : null}
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -1401,10 +1450,13 @@ const S: Record<string, React.CSSProperties> = {
   groupItem: { width: "100%", textAlign: "left", borderRadius: 12, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.72)", padding: 10, display: "grid", gap: 6, cursor: "pointer" },
   groupItemActive: { width: "100%", textAlign: "left", borderRadius: 12, border: "1px solid rgba(37, 99, 235, 0.28)", background: "rgba(219, 234, 254, 0.72)", padding: 10, display: "grid", gap: 6, cursor: "pointer" },
   groupItemHead: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  groupMainBtn: { border: "none", background: "transparent", padding: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%", minWidth: 0, cursor: "pointer", textAlign: "left" },
   groupName: { fontSize: 13, fontWeight: 700, color: "var(--iccc-text)" },
   groupDescription: { fontSize: 11, color: "var(--iccc-text-muted)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
   groupMeta: { display: "flex", gap: 8, flexWrap: "wrap", fontSize: 10, color: "var(--iccc-text-muted)" },
   groupLabels: { display: "flex", gap: 6, flexWrap: "wrap" },
+  favoriteBtn: { ...baseButton, width: 28, height: 28, padding: 0, background: "rgba(255,255,255,0.88)", color: "var(--iccc-text-muted)" },
+  favoriteBtnActive: { ...baseButton, width: 28, height: 28, padding: 0, background: "rgba(37, 99, 235, 0.12)", color: "#1d4ed8", border: "1px solid rgba(37, 99, 235, 0.2)" },
   labelBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(37, 99, 235, 0.08)", color: "#1d4ed8", fontSize: 10, fontWeight: 600 },
   principalBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(37, 99, 235, 0.08)", color: "#1d4ed8", fontSize: 9, fontWeight: 700, textTransform: "uppercase" },
   refBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(15, 23, 42, 0.06)", color: "var(--iccc-text)", fontSize: 9, fontWeight: 700, textTransform: "uppercase" },

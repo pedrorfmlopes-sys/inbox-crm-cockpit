@@ -144,6 +144,12 @@ export const Search: React.FC<IconProps> = (props) => (
     </BaseIcon>
 );
 
+export const Star: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <polygon points="12 2 15.1 8.4 22 9.3 17 14.1 18.3 21 12 17.5 5.7 21 7 14.1 2 9.3 8.9 8.4 12 2" />
+    </BaseIcon>
+);
+
 export const Link: React.FC<IconProps> = (props) => (
     <BaseIcon {...props}>
         <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
