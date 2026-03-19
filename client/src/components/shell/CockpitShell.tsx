@@ -10,7 +10,7 @@ import { AiCockpit } from "../../modules/ai/AiCockpit";
 import { CrmCockpit } from "../../modules/crm/CrmCockpit";
 import { CrmCockpit2 } from "../../modules/crm/CrmCockpit2";
 import { RelatedCockpit } from "../../modules/crm/RelatedCockpit";
-import { GroupsCockpit } from "../../modules/crm/GroupsCockpit";
+import { GroupManagerCockpit } from "../../modules/crm/GroupManagerCockpit";
 import { FileCockpit } from "../../modules/files/FileCockpit";
 import { SettingsPanel } from "../../ui/SettingsPanel";
 
@@ -58,7 +58,7 @@ function ShellContent() {
                 {tab === "crm" && <CrmCockpit />}
                 {tab === "crm2" && <CrmCockpit2 />}
                 {tab === "related" && <RelatedCockpit />}
-                {tab === "groups" && <GroupsCockpit />}
+                {tab === "groups" && <GroupManagerCockpit />}
                 {tab === "files" && <FileCockpit />}
                 {tab === "settings" && <SettingsPanel />}
             </main>

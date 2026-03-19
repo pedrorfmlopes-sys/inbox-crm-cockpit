@@ -20,6 +20,7 @@ import {
   listAttachmentFlagsByGroup,
   listDocumentsByGroup,
   listCustomGroups,
+  listKnownEmails,
   listEmailsByGroup,
   listLinksByConversation,
   listLinksByRecord,
@@ -1511,6 +1512,19 @@ app.get("/api/links/groups", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_lookup_failed", details: String(e?.message || e) });
+  }
+});
+
+app.get("/api/links/emails", async (req, res) => {
+  try {
+    const emails = await listKnownEmails(String(req.query.q || ""), {
+      excludeGroupId: req.query.excludeGroupId,
+      limit: req.query.limit,
+    });
+    return res.json({ ok: true, emails });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "known_emails_lookup_failed", details: String(e?.message || e) });
   }
 });
 

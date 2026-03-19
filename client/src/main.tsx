@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import UniversalApp from "@/ui/UniversalApp";
 import DialogApp from "@/ui/DialogApp";
 import GroupExplorerApp from "@/modules/crm/GroupExplorerApp";
+import GroupManagerApp from "@/modules/crm/GroupManagerApp";
 
 const WARM_BOOT_STORAGE_KEY = "iccc_warm_boot_v1";
 
@@ -78,6 +79,7 @@ function Boot() {
   const view = getView();
   if (view === "dialog") return <DialogApp />;
   if (view === "group-explorer") return <GroupExplorerApp />;
+  if (view === "group-manager") return <GroupManagerApp />;
   return <UniversalApp />;
 }
 

@@ -15,6 +15,7 @@ const PRIMARY_FILE_PATH = path.join(PRIMARY_DATA_DIR, "links.json");
 const LEGACY_FILE_PATH = path.join(process.cwd(), "server", "data", "links.json");
 const STORE_VERSION = 2;
 const CUSTOM_GROUP_KIND = "custom";
+const DEFAULT_GROUP_STATUS = "em_analise";
 
 const db = createOptionalPgStore("linkStore");
 let customGroupDbInitPromise = null;
@@ -39,6 +40,47 @@ function normalizeModel(value) {
 
 function normalizeRecordId(value) {
   return Number(value || 0);
+}
+
+function normalizeGroupStatus(value) {
+  const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, "_");
+  if (normalized === "concluido" || normalized === "concluido." || normalized === "completed" || normalized === "done") {
+    return "concluido";
+  }
+  if (normalized === "em_progresso" || normalized === "progresso" || normalized === "in_progress" || normalized === "progress") {
+    return "em_progresso";
+  }
+  return DEFAULT_GROUP_STATUS;
+}
+
+function normalizeGroupLabels(value) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : String(value || "")
+      .split(/[,\n;]/g)
+      .map((entry) => entry.trim());
+  const seen = new Set();
+  const labels = [];
+  for (const item of rawItems) {
+    const label = normalizeString(item);
+    if (!label) continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    labels.push(label);
+  }
+  return labels.sort((a, b) => a.localeCompare(b, "pt"));
+}
+
+function parseGroupLabelsJson(value) {
+  if (Array.isArray(value)) return normalizeGroupLabels(value);
+  const raw = normalizeString(value);
+  if (!raw) return [];
+  try {
+    return normalizeGroupLabels(JSON.parse(raw));
+  } catch {
+    return normalizeGroupLabels(raw);
+  }
 }
 
 function splitLookupKey(conversationId, internetMessageId = "") {
@@ -366,12 +408,24 @@ function ensureGroup(store, partial) {
     id,
     createdAt: now,
   };
+  const archivedRequested = typeof partial?.isArchived === "boolean" ? partial.isArchived : current.isArchived === true;
+  const nextArchivedAt = archivedRequested
+    ? normalizeString(partial?.archivedAt) || normalizeString(current.archivedAt) || now
+    : "";
   const next = {
     ...current,
     kind: normalizeString(partial?.kind) || current.kind || "custom",
     name: normalizeString(partial?.name) || current.name || "Grupo sem nome",
     description: normalizeString(partial?.description) || current.description || "",
     conversationId: normalizeString(partial?.conversationId) || current.conversationId || "",
+    status: normalizeGroupStatus(partial?.status || current.status),
+    labels: normalizeGroupLabels(
+      Object.prototype.hasOwnProperty.call(partial || {}, "labels")
+        ? partial?.labels
+        : current.labels
+    ),
+    isArchived: archivedRequested,
+    archivedAt: nextArchivedAt,
     documentsEnabled:
       typeof partial?.documentsEnabled === "boolean"
         ? partial.documentsEnabled
@@ -491,6 +545,7 @@ function buildLinkEntry(email, entityLink) {
 
 function buildEmailListEntry(email, extra = {}) {
   return {
+    emailKey: makePersistentEmailKey(email),
     id: normalizeString(email?.id),
     conversationId: normalizeString(email?.conversationId),
     itemId: normalizeString(email?.itemId),
@@ -507,6 +562,26 @@ function buildEmailListEntry(email, extra = {}) {
     createdAt: normalizeString(email?.createdAt),
     updatedAt: normalizeString(email?.updatedAt),
     attachments: normalizeAttachments(email?.attachments),
+    ...extra,
+  };
+}
+
+function buildEmailSearchEntry(email, extra = {}) {
+  return {
+    emailKey: makePersistentEmailKey(email),
+    id: normalizeString(email?.id),
+    conversationId: normalizeString(email?.conversationId),
+    itemId: normalizeString(email?.itemId),
+    internetMessageId: normalizeMessageId(email?.internetMessageId),
+    emailWebLink: normalizeString(email?.emailWebLink),
+    subject: normalizeString(email?.subject),
+    fromEmail: normalizeString(email?.fromEmail),
+    fromName: normalizeString(email?.fromName),
+    messageDateIso: normalizeString(email?.messageDateIso),
+    receivedAtIso: normalizeString(email?.receivedAtIso || email?.messageDateIso),
+    sentAtIso: normalizeString(email?.sentAtIso),
+    createdAt: normalizeString(email?.createdAt),
+    updatedAt: normalizeString(email?.updatedAt),
     ...extra,
   };
 }
@@ -541,6 +616,21 @@ function makePersistentEmailKey(email) {
   return makeEmailLookupKey(email);
 }
 
+function buildGroupListEntry(store, group) {
+  if (!group) return null;
+  const gid = normalizeString(group.id);
+  return {
+    ...group,
+    status: normalizeGroupStatus(group.status),
+    labels: normalizeGroupLabels(group.labels),
+    isArchived: group.isArchived === true,
+    archivedAt: group.isArchived === true ? normalizeString(group.archivedAt) : "",
+    documentsEnabled: group.documentsEnabled !== false,
+    memberCount: Array.isArray(store?.groupMembers?.[gid]) ? store.groupMembers[gid].length : Number(group.memberCount || 0) || 0,
+    documentCount: Array.isArray(store?.groupDocuments?.[gid]) ? store.groupDocuments[gid].length : Number(group.documentCount || 0) || 0,
+  };
+}
+
 function mapDbGroupRow(row) {
   if (!row) return null;
   return {
@@ -548,6 +638,10 @@ function mapDbGroupRow(row) {
     kind: CUSTOM_GROUP_KIND,
     name: normalizeString(row.name),
     description: normalizeString(row.description),
+    status: normalizeGroupStatus(row.status),
+    labels: parseGroupLabelsJson(row.labels_json),
+    isArchived: row.is_archived === true,
+    archivedAt: row.is_archived === true ? normalizeString(row.archived_at) : "",
     documentsEnabled: row.documents_enabled !== false,
     createdAt: normalizeString(row.created_at),
     updatedAt: normalizeString(row.updated_at),
@@ -613,17 +707,25 @@ function mapDbGroupAttachmentFlagRow(row) {
 async function upsertDbCustomGroup(group) {
   if (!db.isEnabled()) return;
   await db.query(
-    `INSERT INTO crm_custom_groups (id, name, description, documents_enabled, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO crm_custom_groups (id, name, description, status, is_archived, archived_at, labels_json, documents_enabled, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name,
        description = EXCLUDED.description,
+       status = EXCLUDED.status,
+       is_archived = EXCLUDED.is_archived,
+       archived_at = EXCLUDED.archived_at,
+       labels_json = EXCLUDED.labels_json,
        documents_enabled = EXCLUDED.documents_enabled,
        updated_at = EXCLUDED.updated_at`,
     [
       normalizeString(group?.id),
       normalizeString(group?.name) || "Grupo sem nome",
       normalizeString(group?.description),
+      normalizeGroupStatus(group?.status),
+      group?.isArchived === true,
+      group?.isArchived === true ? normalizeString(group?.archivedAt) || nowIso() : null,
+      JSON.stringify(normalizeGroupLabels(group?.labels)),
       group?.documentsEnabled !== false,
       normalizeString(group?.createdAt) || nowIso(),
       normalizeString(group?.updatedAt) || nowIso(),
@@ -823,7 +925,7 @@ async function getDbCustomGroupById(groupId) {
   const gid = normalizeString(groupId);
   if (!gid) return null;
   const result = await db.query(
-    `SELECT id, name, description, documents_enabled, created_at, updated_at
+    `SELECT id, name, description, status, is_archived, archived_at, labels_json, documents_enabled, created_at, updated_at
      FROM crm_custom_groups
      WHERE id = $1`,
     [gid]
@@ -842,11 +944,11 @@ async function listDbCustomGroups(query = "") {
     where.push(`(LOWER(name) LIKE $${params.length} OR LOWER(COALESCE(description, '')) LIKE $${params.length})`);
   }
   const result = await db.query(
-    `SELECT g.id, g.name, g.description, g.documents_enabled, g.created_at, g.updated_at, COUNT(m.email_key)::int AS member_count
+    `SELECT g.id, g.name, g.description, g.status, g.is_archived, g.archived_at, g.labels_json, g.documents_enabled, g.created_at, g.updated_at, COUNT(m.email_key)::int AS member_count
      FROM crm_custom_groups g
      LEFT JOIN crm_custom_group_members m ON m.group_id = g.id
      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-     GROUP BY g.id, g.name, g.description, g.documents_enabled, g.created_at, g.updated_at
+     GROUP BY g.id, g.name, g.description, g.status, g.is_archived, g.archived_at, g.labels_json, g.documents_enabled, g.created_at, g.updated_at
      ORDER BY LOWER(g.name) ASC, g.created_at ASC`,
     params
   );
@@ -986,6 +1088,10 @@ async function ensureCustomGroupDb() {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'em_analise',
+        is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+        archived_at TIMESTAMP NULL,
+        labels_json JSONB NOT NULL DEFAULT '[]'::jsonb,
         documents_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -995,6 +1101,22 @@ async function ensureCustomGroupDb() {
     await db.query(`
       ALTER TABLE crm_custom_groups
       ADD COLUMN IF NOT EXISTS documents_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    `);
+    await db.query(`
+      ALTER TABLE crm_custom_groups
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'em_analise';
+    `);
+    await db.query(`
+      ALTER TABLE crm_custom_groups
+      ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE;
+    `);
+    await db.query(`
+      ALTER TABLE crm_custom_groups
+      ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL;
+    `);
+    await db.query(`
+      ALTER TABLE crm_custom_groups
+      ADD COLUMN IF NOT EXISTS labels_json JSONB NOT NULL DEFAULT '[]'::jsonb;
     `);
 
     await db.query(`
@@ -1235,6 +1357,10 @@ export async function createCustomGroup(input) {
     kind: CUSTOM_GROUP_KIND,
     name: normalizeString(input?.name) || "Grupo sem nome",
     description: normalizeString(input?.description),
+    status: normalizeGroupStatus(input?.status),
+    labels: normalizeGroupLabels(input?.labels),
+    isArchived: typeof input?.isArchived === "boolean" ? input.isArchived : false,
+    archivedAt: normalizeString(input?.archivedAt),
     documentsEnabled: typeof input?.documentsEnabled === "boolean" ? input.documentsEnabled : true,
   });
   writeStore(store);
@@ -1247,10 +1373,7 @@ export async function createCustomGroup(input) {
       else console.error("[linkStore] DB Custom Group Insert Error, central file store kept as source of truth:", error);
     }
   }
-  return {
-    ...group,
-    memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
-  };
+  return buildGroupListEntry(store, group);
 }
 
 export async function updateCustomGroup(groupId, input) {
@@ -1269,6 +1392,22 @@ export async function updateCustomGroup(groupId, input) {
       Object.prototype.hasOwnProperty.call(input || {}, "description")
         ? normalizeString(input?.description)
         : current.description,
+    status:
+      Object.prototype.hasOwnProperty.call(input || {}, "status")
+        ? normalizeGroupStatus(input?.status)
+        : current.status,
+    labels:
+      Object.prototype.hasOwnProperty.call(input || {}, "labels")
+        ? normalizeGroupLabels(input?.labels)
+        : current.labels,
+    isArchived:
+      typeof input?.isArchived === "boolean"
+        ? input.isArchived
+        : current.isArchived === true,
+    archivedAt:
+      Object.prototype.hasOwnProperty.call(input || {}, "archivedAt")
+        ? normalizeString(input?.archivedAt)
+        : current.archivedAt,
     documentsEnabled:
       typeof input?.documentsEnabled === "boolean"
         ? input.documentsEnabled
@@ -1286,10 +1425,7 @@ export async function updateCustomGroup(groupId, input) {
     }
   }
 
-  return {
-    ...group,
-    memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
-  };
+  return buildGroupListEntry(store, group);
 }
 
 export async function listCustomGroups(query = "") {
@@ -1304,11 +1440,8 @@ export async function listCustomGroups(query = "") {
         || String(group?.description || "").toLowerCase().includes(q);
     })
     .sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), "pt"))
-    .map((group) => ({
-      ...group,
-      documentsEnabled: group.documentsEnabled !== false,
-      memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
-    }));
+    .map((group) => buildGroupListEntry(store, group))
+    .filter(Boolean);
 
   if (db.isEnabled()) {
     try {
@@ -1319,6 +1452,7 @@ export async function listCustomGroups(query = "") {
         merged.set(group.id, {
           ...group,
           memberCount: Math.max(Number(group.memberCount || 0), Number(merged.get(group.id)?.memberCount || 0)),
+          documentCount: Math.max(Number(group.documentCount || 0), Number(merged.get(group.id)?.documentCount || 0)),
         });
       }
       return Array.from(merged.values()).sort((a, b) =>
@@ -1351,6 +1485,10 @@ export async function addEmailToGroup(groupId, input) {
     kind: CUSTOM_GROUP_KIND,
     name: existingDbGroup?.name,
     description: existingDbGroup?.description,
+    status: existingDbGroup?.status,
+    labels: existingDbGroup?.labels,
+    isArchived: existingDbGroup?.isArchived,
+    archivedAt: existingDbGroup?.archivedAt,
     documentsEnabled: existingDbGroup?.documentsEnabled,
   });
   const email = upsertEmail(store, input);
@@ -1373,10 +1511,7 @@ export async function addEmailToGroup(groupId, input) {
   }
 
   return {
-    group: {
-      ...group,
-      memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
-    },
+    group: buildGroupListEntry(store, group),
     email: buildEmailListEntry(email),
   };
 }
@@ -1488,6 +1623,75 @@ export async function listEmailsByGroup(groupId) {
   }
 
   return dedupeEmailLinks(fileRows);
+}
+
+export async function listKnownEmails(query = "", options = {}) {
+  const store = readState();
+  const q = normalizeString(query).toLowerCase();
+  const excludeGroupId = normalizeString(options?.excludeGroupId);
+  const limit = Math.max(1, Math.min(Number(options?.limit || 200) || 200, 500));
+  const allEmailIds = new Set([
+    ...Object.keys(store.emails || {}),
+    ...Object.keys(store.emailEntityLinks || {}),
+    ...Object.values(store.groupMembers || {}).flatMap((value) => (Array.isArray(value) ? value : [])),
+  ]);
+
+  const rows = [];
+  for (const emailId of allEmailIds) {
+    const source = buildRecoveredEmailSnapshot(store, emailId);
+    if (!source) continue;
+    const relatedRecords = Array.isArray(store.emailEntityLinks[emailId])
+      ? dedupeRecordLinks(store.emailEntityLinks[emailId]).map((entry) => ({
+        model: entry.model,
+        recordId: entry.recordId,
+        recordName: entry.recordName,
+      }))
+      : [];
+    const relatedGroups = Array.isArray(store.emailGroups[emailId])
+      ? store.emailGroups[emailId]
+        .map((groupId) => store.groups[groupId])
+        .filter(Boolean)
+        .map((group) => ({
+          id: normalizeString(group.id),
+          name: normalizeString(group.name),
+          kind: normalizeString(group.kind),
+        }))
+      : [];
+
+    if (excludeGroupId && relatedGroups.some((group) => normalizeString(group.id) === excludeGroupId)) {
+      continue;
+    }
+
+    const row = buildEmailSearchEntry(source, {
+      relatedRecords,
+      relatedGroups,
+    });
+
+    if (q) {
+      const haystack = [
+        row.subject,
+        row.fromEmail,
+        row.fromName,
+        row.conversationId,
+        ...(row.relatedGroups || []).flatMap((group) => [group.name, group.kind]),
+        ...(row.relatedRecords || []).flatMap((record) => [record.recordName, record.model]),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(q)) continue;
+    }
+
+    rows.push(row);
+  }
+
+  return dedupeEmailLinks(rows)
+    .sort((a, b) =>
+      String(b.messageDateIso || b.receivedAtIso || b.updatedAt || "").localeCompare(
+        String(a.messageDateIso || a.receivedAtIso || a.updatedAt || "")
+      )
+    )
+    .slice(0, limit);
 }
 
 export async function listDocumentsByGroup(groupId) {

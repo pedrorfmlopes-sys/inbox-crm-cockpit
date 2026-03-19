@@ -648,6 +648,16 @@ export async function openGroupExplorer(params: Record<string, string>) {
   }
 }
 
+export async function openGroupManager(params: Record<string, string> = {}) {
+  try {
+    return await openCockpitView("group-manager", params, { height: 82, width: 58, displayInIframe: true });
+  } catch (error) {
+    const url = buildCockpitViewUrl("group-manager", params);
+    clientLog.warn("[office] group manager fallback to same-window navigation", error);
+    window.location.assign(url.toString());
+  }
+}
+
 export async function requestCockpitHostAction(action: CockpitHostAction): Promise<boolean> {
   try {
     const OfficeAny = await ensureOfficeReady();

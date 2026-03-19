@@ -166,7 +166,12 @@ export type LinkGroupEntry = {
   name: string;
   description?: string;
   conversationId?: string;
+  status?: "em_analise" | "em_progresso" | "concluido" | string;
+  labels?: string[];
+  isArchived?: boolean;
+  archivedAt?: string;
   memberCount?: number;
+  documentCount?: number;
   documentsEnabled?: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -216,6 +221,7 @@ export type RelatedReason =
   };
 
 export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordName" | "resId" | "name" | "title"> & {
+  emailKey?: string;
   relatedRecords?: Array<{ model: string; recordId: number; recordName: string }>;
   relatedGroups?: Array<{ id: string; name?: string; kind?: string }>;
   relatedReasons?: RelatedReason[];
@@ -444,6 +450,7 @@ function normalizeLinkEntry(link: any): LinkEntry {
 function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
   return {
     ...normalizeLinkEntry(entry),
+    emailKey: String(entry?.emailKey || "").trim(),
     bodyText: String(entry?.bodyText || "").trim(),
     bodyHtml: String(entry?.bodyHtml || "").trim(),
     relatedRecords: Array.isArray(entry?.relatedRecords)
@@ -550,7 +557,24 @@ export async function listLinkGroups(query = ""): Promise<LinkGroupEntry[]> {
   return Array.isArray(response?.groups) ? response.groups : [];
 }
 
-export async function createLinkGroup(payload: { name: string; description?: string; documentsEnabled?: boolean }): Promise<LinkGroupEntry> {
+export async function searchKnownEmails(query = "", options?: { excludeGroupId?: string; limit?: number }): Promise<RelatedEmailEntry[]> {
+  const params = new URLSearchParams();
+  if (String(query || "").trim()) params.set("q", String(query || "").trim());
+  if (String(options?.excludeGroupId || "").trim()) params.set("excludeGroupId", String(options?.excludeGroupId || "").trim());
+  if (Number(options?.limit || 0) > 0) params.set("limit", String(Number(options?.limit)));
+  params.set("_ts", String(Date.now()));
+  const response: any = await requestJSON(`/api/links/emails?${params.toString()}`);
+  return Array.isArray(response?.emails) ? response.emails.map(normalizeRelatedEmailEntry) : [];
+}
+
+export async function createLinkGroup(payload: {
+  name: string;
+  description?: string;
+  documentsEnabled?: boolean;
+  status?: string;
+  labels?: string[];
+  isArchived?: boolean;
+}): Promise<LinkGroupEntry> {
   const response: any = await requestJSON(`/api/links/groups`, {
     method: "POST",
     body: JSON.stringify(payload),
@@ -560,7 +584,7 @@ export async function createLinkGroup(payload: { name: string; description?: str
 
 export async function updateLinkGroup(
   groupId: string,
-  payload: { name?: string; description?: string; documentsEnabled?: boolean }
+  payload: { name?: string; description?: string; documentsEnabled?: boolean; status?: string; labels?: string[]; isArchived?: boolean; archivedAt?: string }
 ): Promise<LinkGroupEntry> {
   const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}`, {
     method: "PATCH",
