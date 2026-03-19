@@ -137,6 +137,13 @@ export const Plus: React.FC<IconProps> = (props) => (
     </BaseIcon>
 );
 
+export const Search: React.FC<IconProps> = (props) => (
+    <BaseIcon {...props}>
+        <circle cx="11" cy="11" r="7" />
+        <line x1="20" y1="20" x2="16.65" y2="16.65" />
+    </BaseIcon>
+);
+
 export const Link: React.FC<IconProps> = (props) => (
     <BaseIcon {...props}>
         <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
