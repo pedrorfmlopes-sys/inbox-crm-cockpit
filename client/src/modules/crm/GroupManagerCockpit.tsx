@@ -264,18 +264,6 @@ export const GroupManagerCockpit: React.FC = () => {
   }, [selectedGroup]);
 
   useEffect(() => {
-    if (selectedManagedLabel && allLabels.some((label) => normalizeText(label) === normalizeText(selectedManagedLabel))) {
-      return;
-    }
-    setSelectedManagedLabel(allLabels[0] || "");
-    setRenameLabelValue(allLabels[0] || "");
-  }, [allLabels, selectedManagedLabel]);
-
-  useEffect(() => {
-    setRenameLabelValue(selectedManagedLabel || "");
-  }, [selectedManagedLabel]);
-
-  useEffect(() => {
     if (!selectedGroupId) {
       setGroupEmails([]);
       setSelectedGroupEmailKeys([]);
@@ -343,6 +331,18 @@ export const GroupManagerCockpit: React.FC = () => {
       })),
     [allLabels, groups]
   );
+
+  useEffect(() => {
+    if (selectedManagedLabel && allLabels.some((label) => normalizeText(label) === normalizeText(selectedManagedLabel))) {
+      return;
+    }
+    setSelectedManagedLabel(allLabels[0] || "");
+    setRenameLabelValue(allLabels[0] || "");
+  }, [allLabels, selectedManagedLabel]);
+
+  useEffect(() => {
+    setRenameLabelValue(selectedManagedLabel || "");
+  }, [selectedManagedLabel]);
 
   const visibleGroups = useMemo(() => {
     const query = normalizeText(groupQuery);
