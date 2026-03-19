@@ -161,6 +161,10 @@ export type CockpitSettingsV1 = {
   // Group document storage configuration
   groupStorage: GroupStorageSettings;
 
+  // Optional extra: central label manager for group labels
+  groupLabelsManagerEnabled: boolean;
+  groupLabelCatalog: string[];
+
   // CRM2 Odoo layout strategy for multi-company deployments
   crm2OdooLayout: Crm2OdooLayoutSettings;
 };
@@ -268,6 +272,8 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     ignoreInlineAttachments: true,
     suggestedViewer: "inline",
   },
+  groupLabelsManagerEnabled: true,
+  groupLabelCatalog: [],
   crm2OdooLayout: {
     mode: "description_only",
     includeAnchorIndex: true,
@@ -464,6 +470,12 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
       ...((incoming as any).groupStorage || {}),
       provider: normalizeGroupStorageProvider(((incoming as any).groupStorage || {}).provider ?? base.groupStorage.provider),
     },
+    groupLabelsManagerEnabled: typeof (incoming as any).groupLabelsManagerEnabled === "boolean"
+      ? Boolean((incoming as any).groupLabelsManagerEnabled)
+      : base.groupLabelsManagerEnabled,
+    groupLabelCatalog: Array.isArray((incoming as any).groupLabelCatalog)
+      ? Array.from(new Set((incoming as any).groupLabelCatalog.map((entry: any) => String(entry || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-PT"))
+      : base.groupLabelCatalog,
     crm2OdooLayout: {
       ...base.crm2OdooLayout,
       ...incomingLayout,

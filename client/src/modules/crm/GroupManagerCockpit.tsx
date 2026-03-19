@@ -13,6 +13,7 @@ import {
 } from "@/api";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { openGroupExplorer, openLinkedOutlookEmail } from "@/office";
+import { saveSettings } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 
@@ -20,6 +21,7 @@ type GroupManagerView = "groups" | "detail" | "library";
 type GroupStatusFilter = "all" | "em_analise" | "em_progresso" | "concluido";
 type GroupArchiveFilter = "active" | "archived" | "all";
 type MembershipKind = "principal" | "referencia";
+type GroupSettingsSection = "labels";
 
 type GroupDraft = {
   name: string;
@@ -62,6 +64,29 @@ function parseLabels(value: string | string[] | undefined): string[] {
     labels.push(label);
   }
   return labels.sort((a, b) => a.localeCompare(b, "pt-PT"));
+}
+
+function mergeLabelCatalog(...sources: Array<string[] | undefined>): string[] {
+  const seen = new Map<string, string>();
+  for (const source of sources) {
+    for (const raw of source || []) {
+      const label = String(raw || "").trim();
+      if (!label) continue;
+      const key = label.toLowerCase();
+      if (!seen.has(key)) seen.set(key, label);
+    }
+  }
+  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b, "pt-PT"));
+}
+
+function canonicalizeLabelsWithCatalog(labels: string[], catalog: string[]): string[] {
+  const map = new Map<string, string>();
+  for (const label of catalog || []) {
+    const normalized = String(label || "").trim();
+    if (!normalized) continue;
+    map.set(normalized.toLowerCase(), normalized);
+  }
+  return parseLabels(labels.map((label) => map.get(String(label || "").trim().toLowerCase()) || label));
 }
 
 function labelsToText(labels: string[] | undefined): string {
@@ -148,8 +173,10 @@ function draftChanged(group: LinkGroupEntry | null, draft: GroupDraft): boolean 
 }
 
 export const GroupManagerCockpit: React.FC = () => {
-  const { ctx, bodyText, bodyHtml, attachments, setMsg, setActiveGroupForCurrentEmail } = useCockpit();
+  const { ctx, bodyText, bodyHtml, attachments, setMsg, setActiveGroupForCurrentEmail, settings, openSettingsSection } = useCockpit();
   const [view, setView] = useState<GroupManagerView>("groups");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<GroupSettingsSection>("labels");
   const [groups, setGroups] = useState<LinkGroupEntry[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [groupsError, setGroupsError] = useState("");
@@ -174,6 +201,9 @@ export const GroupManagerCockpit: React.FC = () => {
   const [libraryEmails, setLibraryEmails] = useState<RelatedEmailEntry[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [selectedLibraryKeys, setSelectedLibraryKeys] = useState<string[]>([]);
+  const [newCatalogLabel, setNewCatalogLabel] = useState("");
+  const [selectedManagedLabel, setSelectedManagedLabel] = useState("");
+  const [renameLabelValue, setRenameLabelValue] = useState("");
 
   const selectedGroup = useMemo(
     () => groups.find((group) => group.id === selectedGroupId) || null,
@@ -234,6 +264,18 @@ export const GroupManagerCockpit: React.FC = () => {
   }, [selectedGroup]);
 
   useEffect(() => {
+    if (selectedManagedLabel && allLabels.some((label) => normalizeText(label) === normalizeText(selectedManagedLabel))) {
+      return;
+    }
+    setSelectedManagedLabel(allLabels[0] || "");
+    setRenameLabelValue(allLabels[0] || "");
+  }, [allLabels, selectedManagedLabel]);
+
+  useEffect(() => {
+    setRenameLabelValue(selectedManagedLabel || "");
+  }, [selectedManagedLabel]);
+
+  useEffect(() => {
     if (!selectedGroupId) {
       setGroupEmails([]);
       setSelectedGroupEmailKeys([]);
@@ -283,20 +325,24 @@ export const GroupManagerCockpit: React.FC = () => {
   }, [libraryQuery, reloadToken, selectedGroupId, setMsg]);
 
   const allLabels = useMemo(() => {
-    const seen = new Set<string>();
-    const labels: string[] = [];
-    for (const group of groups) {
-      for (const label of group.labels || []) {
-        const normalized = String(label || "").trim();
-        if (!normalized) continue;
-        const key = normalized.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        labels.push(normalized);
-      }
-    }
-    return labels.sort((a, b) => a.localeCompare(b, "pt-PT"));
-  }, [groups]);
+    return mergeLabelCatalog(
+      settings?.groupLabelCatalog || [],
+      groups.flatMap((group) => group.labels || [])
+    );
+  }, [groups, settings?.groupLabelCatalog]);
+
+  const labelsManagerEnabled = settings?.groupLabelsManagerEnabled !== false;
+
+  const labelUsage = useMemo(
+    () =>
+      allLabels.map((label) => ({
+        label,
+        count: groups.filter((group) =>
+          (group.labels || []).some((entry) => normalizeText(entry) === normalizeText(label))
+        ).length,
+      })),
+    [allLabels, groups]
+  );
 
   const visibleGroups = useMemo(() => {
     const query = normalizeText(groupQuery);
@@ -367,6 +413,17 @@ export const GroupManagerCockpit: React.FC = () => {
     setReloadToken((value) => value + 1);
   }
 
+  async function persistLabelCatalog(nextCatalog: string[]) {
+    await saveSettings({ groupLabelCatalog: mergeLabelCatalog(nextCatalog) });
+  }
+
+  async function ensureCatalogLabels(labels: string[]): Promise<string[]> {
+    if (!labelsManagerEnabled) return parseLabels(labels);
+    const mergedCatalog = mergeLabelCatalog(settings?.groupLabelCatalog || [], labels);
+    await persistLabelCatalog(mergedCatalog);
+    return canonicalizeLabelsWithCatalog(labels, mergedCatalog);
+  }
+
   async function handleCreateGroup() {
     const name = String(newGroupName || "").trim();
     if (!name) {
@@ -375,9 +432,10 @@ export const GroupManagerCockpit: React.FC = () => {
     }
     setBusy(true);
     try {
+      const labels = await ensureCatalogLabels(parseLabels(newGroupLabels));
       const group = await createLinkGroup({
         name,
-        labels: parseLabels(newGroupLabels),
+        labels,
         status: "em_analise",
         documentsEnabled: true,
       });
@@ -403,11 +461,12 @@ export const GroupManagerCockpit: React.FC = () => {
     }
     setBusy(true);
     try {
+      const labels = await ensureCatalogLabels(parseLabels(draft.labelsText));
       await updateLinkGroup(selectedGroup.id, {
         name,
         description: draft.description,
         status: draft.status,
-        labels: parseLabels(draft.labelsText),
+        labels,
         documentsEnabled: draft.documentsEnabled,
         isArchived: draft.isArchived,
       });
@@ -524,6 +583,116 @@ export const GroupManagerCockpit: React.FC = () => {
     });
   }
 
+  function toggleLabelsTextValue(value: string, label: string): string {
+    const current = parseLabels(value);
+    const key = normalizeText(label);
+    const next = current.some((entry) => normalizeText(entry) === key)
+      ? current.filter((entry) => normalizeText(entry) !== key)
+      : [...current, label];
+    return labelsToText(canonicalizeLabelsWithCatalog(next, settings?.groupLabelCatalog || []));
+  }
+
+  async function handleCreateCatalogLabel() {
+    if (!labelsManagerEnabled) {
+      setMsg("Ativa primeiro o gestor de etiquetas em Settings > Grupos.");
+      return;
+    }
+    const label = String(newCatalogLabel || "").trim();
+    if (!label) {
+      setMsg("Escreve um nome para a nova etiqueta.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const nextCatalog = mergeLabelCatalog(settings?.groupLabelCatalog || [], [label]);
+      await persistLabelCatalog(nextCatalog);
+      const canonical = nextCatalog.find((entry) => normalizeText(entry) === normalizeText(label)) || label;
+      setNewCatalogLabel("");
+      setSelectedManagedLabel(canonical);
+      setRenameLabelValue(canonical);
+      setMsg("Etiqueta adicionada ao catalogo.");
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel criar a etiqueta.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRenameManagedLabel() {
+    if (!labelsManagerEnabled) {
+      setMsg("Ativa primeiro o gestor de etiquetas em Settings > Grupos.");
+      return;
+    }
+    const source = String(selectedManagedLabel || "").trim();
+    const target = String(renameLabelValue || "").trim();
+    if (!source) {
+      setMsg("Seleciona primeiro uma etiqueta.");
+      return;
+    }
+    if (!target) {
+      setMsg("Escreve o novo nome da etiqueta.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const nextCatalog = mergeLabelCatalog(
+        (settings?.groupLabelCatalog || []).map((entry) => (normalizeText(entry) === normalizeText(source) ? target : entry)),
+        [target]
+      );
+      for (const group of groups) {
+        const labels = group.labels || [];
+        if (!labels.some((entry) => normalizeText(entry) === normalizeText(source))) continue;
+        const nextLabels = canonicalizeLabelsWithCatalog(
+          labels.map((entry) => (normalizeText(entry) === normalizeText(source) ? target : entry)),
+          nextCatalog
+        );
+        await updateLinkGroup(group.id, { labels: nextLabels });
+      }
+      await persistLabelCatalog(nextCatalog);
+      setSelectedManagedLabel(target);
+      setRenameLabelValue(target);
+      await refreshAll();
+      setMsg("Etiqueta renomeada em todos os grupos.");
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel renomear a etiqueta.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteManagedLabel() {
+    if (!labelsManagerEnabled) {
+      setMsg("Ativa primeiro o gestor de etiquetas em Settings > Grupos.");
+      return;
+    }
+    const label = String(selectedManagedLabel || "").trim();
+    if (!label) {
+      setMsg("Seleciona primeiro uma etiqueta.");
+      return;
+    }
+    if (!window.confirm(`Eliminar a etiqueta "${label}" de todos os grupos?`)) return;
+    setBusy(true);
+    try {
+      for (const group of groups) {
+        const labels = group.labels || [];
+        if (!labels.some((entry) => normalizeText(entry) === normalizeText(label))) continue;
+        await updateLinkGroup(group.id, {
+          labels: labels.filter((entry) => normalizeText(entry) !== normalizeText(label)),
+        });
+      }
+      const nextCatalog = (settings?.groupLabelCatalog || []).filter((entry) => normalizeText(entry) !== normalizeText(label));
+      await persistLabelCatalog(nextCatalog);
+      setSelectedManagedLabel("");
+      setRenameLabelValue("");
+      await refreshAll();
+      setMsg("Etiqueta eliminada do catalogo e dos grupos.");
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel eliminar a etiqueta.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function openExplorer() {
     if (!selectedGroup) return;
     try {
@@ -542,11 +711,132 @@ export const GroupManagerCockpit: React.FC = () => {
           <div style={S.kicker}>Gestor de Grupos</div>
           <div style={S.title}>Gestao dedicada de grupos, emails e etiquetas</div>
         </div>
-        <button type="button" style={S.secondaryBtn} onClick={() => void refreshAll()} disabled={groupsLoading || busy}>
-          <Icons.RefreshCw size={12} />
-          Atualizar
-        </button>
+        <div style={S.headerActions}>
+          <button type="button" style={S.secondaryBtn} onClick={() => void refreshAll()} disabled={groupsLoading || busy}>
+            <Icons.RefreshCw size={12} />
+            Atualizar
+          </button>
+          <button
+            type="button"
+            style={settingsOpen ? S.secondaryBtnActive : S.secondaryBtn}
+            onClick={() => setSettingsOpen((current) => !current)}
+            disabled={busy}
+            title="Configurar grupos"
+          >
+            <Icons.Settings size={13} />
+            {settingsOpen ? "Fechar" : "Definicoes"}
+          </button>
+        </div>
       </div>
+
+      {settingsOpen ? (
+        <div style={S.settingsShell}>
+          <div style={S.settingsMenu}>
+            <button
+              type="button"
+              style={settingsSection === "labels" ? S.settingsMenuItemActive : S.settingsMenuItem}
+              onClick={() => setSettingsSection("labels")}
+            >
+              <Icons.Settings size={13} />
+              Gestor de etiquetas
+            </button>
+          </div>
+          <div style={S.settingsContent}>
+            <div style={S.settingsContentHead}>
+              <div>
+                <div style={S.panelTitle}>Definicoes do modulo Grupos</div>
+                <div style={S.panelHint}>A operacao diaria das etiquetas fica aqui; a ativacao global continua em Settings.</div>
+              </div>
+            </div>
+            {!labelsManagerEnabled ? (
+              <div style={S.card}>
+                <PanelState
+                  compact
+                  tone="info"
+                  title="Gestor de etiquetas desativado"
+                  description="Ativa a funcionalidade em Settings > Grupos para gerir o catalogo central."
+                />
+                <div style={S.inlineRow}>
+                  <button type="button" style={S.primaryBtn} onClick={() => openSettingsSection("groups")}>
+                    <Icons.Settings size={12} />
+                    Abrir Settings
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={S.settingsGrid}>
+                <div style={S.card}>
+                  <div style={S.fieldLabel}>Nova etiqueta</div>
+                  <div style={S.inlineRow}>
+                    <input
+                      style={S.input}
+                      value={newCatalogLabel}
+                      onChange={(event) => setNewCatalogLabel(event.target.value)}
+                      placeholder="Ex.: marca, cliente, ganho"
+                    />
+                    <button type="button" style={S.primaryBtn} onClick={() => void handleCreateCatalogLabel()} disabled={busy}>
+                      <Icons.Plus size={12} />
+                      Criar
+                    </button>
+                  </div>
+                  <div style={S.smallMeta}>Catalogo central usado para evitar duplicados e normalizar etiquetas dos grupos.</div>
+                </div>
+
+                <div style={S.settingsColumns}>
+                  <div style={S.managerList}>
+                    <div style={S.fieldLabel}>Etiquetas existentes</div>
+                    {!labelUsage.length ? (
+                      <PanelState compact tone="info" title="Sem etiquetas" description="Cria a primeira etiqueta ou guarda etiquetas num grupo." />
+                    ) : (
+                      labelUsage.map((entry) => {
+                        const active = normalizeText(entry.label) === normalizeText(selectedManagedLabel);
+                        return (
+                          <button
+                            key={entry.label}
+                            type="button"
+                            style={active ? S.managerRowActive : S.managerRow}
+                            onClick={() => setSelectedManagedLabel(entry.label)}
+                          >
+                            <span>{entry.label}</span>
+                            <span style={S.managerCount}>{entry.count}</span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <div style={S.card}>
+                    <div style={S.fieldLabel}>Etiqueta selecionada</div>
+                    {selectedManagedLabel ? (
+                      <>
+                        <input
+                          style={S.input}
+                          value={renameLabelValue}
+                          onChange={(event) => setRenameLabelValue(event.target.value)}
+                          placeholder="Novo nome da etiqueta"
+                        />
+                        <div style={S.smallMeta}>As acoes abaixo atualizam todos os grupos que usam esta etiqueta.</div>
+                        <div style={S.inlineRow}>
+                          <button type="button" style={S.primaryBtn} onClick={() => void handleRenameManagedLabel()} disabled={busy}>
+                            <Icons.Save size={12} />
+                            Renomear globalmente
+                          </button>
+                          <button type="button" style={S.dangerBtn} onClick={() => void handleDeleteManagedLabel()} disabled={busy}>
+                            <Icons.Trash size={12} />
+                            Eliminar globalmente
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <PanelState compact tone="info" title="Seleciona uma etiqueta" description="Escolhe uma etiqueta da lista para a renomear ou eliminar." />
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       <div style={S.viewport}>
         <div style={{ ...S.track, transform: trackTransform }}>
@@ -573,6 +863,23 @@ export const GroupManagerCockpit: React.FC = () => {
                 onChange={(event) => setNewGroupLabels(event.target.value)}
                 placeholder="Etiquetas iniciais (ganho, marca, cliente...)"
               />
+              {labelsManagerEnabled && allLabels.length ? (
+                <div style={S.tagChooser}>
+                  {allLabels.map((label) => {
+                    const active = parseLabels(newGroupLabels).some((entry) => normalizeText(entry) === normalizeText(label));
+                    return (
+                      <button
+                        key={`new:${label}`}
+                        type="button"
+                        style={active ? S.chipActive : S.chip}
+                        onClick={() => setNewGroupLabels((current) => toggleLabelsTextValue(current, label))}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
 
             <div style={S.card}>
@@ -667,6 +974,23 @@ export const GroupManagerCockpit: React.FC = () => {
                     </label>
                   </div>
                   <input style={S.input} value={draft.labelsText} onChange={(event) => setDraft((current) => ({ ...current, labelsText: event.target.value }))} placeholder="Etiquetas separadas por virgula" />
+                  {labelsManagerEnabled && allLabels.length ? (
+                    <div style={S.tagChooser}>
+                      {allLabels.map((label) => {
+                        const active = parseLabels(draft.labelsText).some((entry) => normalizeText(entry) === normalizeText(label));
+                        return (
+                          <button
+                            key={`draft:${label}`}
+                            type="button"
+                            style={active ? S.chipActive : S.chip}
+                            onClick={() => setDraft((current) => ({ ...current, labelsText: toggleLabelsTextValue(current.labelsText, label) }))}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   <label style={S.toggleRow}>
                     <input type="checkbox" checked={draft.documentsEnabled} onChange={(event) => setDraft((current) => ({ ...current, documentsEnabled: event.target.checked }))} />
                     <span>Documentos ativos neste grupo</span>
@@ -873,10 +1197,23 @@ const baseButton: React.CSSProperties = {
 };
 
 const S: Record<string, React.CSSProperties> = {
-  root: { display: "grid", gap: 12, minHeight: "100%" },
+  root: { display: "grid", gap: 12, minHeight: "100%", position: "relative" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: 12, borderRadius: 18, border: "1px solid var(--iccc-card-border)", background: "var(--iccc-card-bg)", boxShadow: "var(--iccc-shadow)" },
+  headerActions: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" },
   kicker: { fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: "var(--iccc-text-muted)", letterSpacing: "0.06em" },
   title: { fontSize: 18, fontWeight: 800, color: "var(--iccc-text)" },
+  settingsShell: { display: "grid", gridTemplateColumns: "220px minmax(0, 1fr)", gap: 0, borderRadius: 20, border: "1px solid var(--iccc-card-border)", background: "var(--iccc-card-bg)", boxShadow: "var(--iccc-shadow)", overflow: "hidden" },
+  settingsMenu: { display: "grid", alignContent: "start", gap: 8, padding: 12, background: "rgba(255,255,255,0.78)", borderRight: "1px solid var(--iccc-card-border)" },
+  settingsMenuItem: { ...baseButton, width: "100%", justifyContent: "flex-start", background: "transparent", color: "var(--iccc-text)" },
+  settingsMenuItemActive: { ...baseButton, width: "100%", justifyContent: "flex-start", background: "rgba(37, 99, 235, 0.12)", color: "#1d4ed8", border: "1px solid rgba(37, 99, 235, 0.2)" },
+  settingsContent: { display: "grid", gap: 12, padding: 12, alignContent: "start" },
+  settingsContentHead: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
+  settingsGrid: { display: "grid", gap: 12 },
+  settingsColumns: { display: "grid", gridTemplateColumns: "minmax(220px, 260px) minmax(0, 1fr)", gap: 12, alignItems: "start" },
+  managerList: { display: "grid", gap: 8, padding: 12, borderRadius: 16, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.72)", alignContent: "start" },
+  managerRow: { width: "100%", borderRadius: 12, border: "1px solid var(--iccc-card-border)", background: "#fff", padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, cursor: "pointer", color: "var(--iccc-text)", fontSize: 13, fontWeight: 700 },
+  managerRowActive: { width: "100%", borderRadius: 12, border: "1px solid rgba(37, 99, 235, 0.28)", background: "rgba(219, 234, 254, 0.72)", padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, cursor: "pointer", color: "var(--iccc-text)", fontSize: 13, fontWeight: 700 },
+  managerCount: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 26, height: 26, borderRadius: 999, background: "rgba(15, 23, 42, 0.06)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 800 },
   viewport: { overflow: "hidden", borderRadius: 20, border: "1px solid var(--iccc-card-border)", background: "var(--iccc-card-bg)", boxShadow: "var(--iccc-shadow)" },
   track: { width: "300%", display: "flex", transition: "transform 0.22s ease" },
   panel: { width: "33.3333%", padding: 12, display: "grid", alignContent: "start", gap: 12, minHeight: "calc(100vh - 220px)", boxSizing: "border-box" },
@@ -886,6 +1223,7 @@ const S: Record<string, React.CSSProperties> = {
   backBtn: { ...baseButton, background: "transparent", color: "var(--iccc-text)" },
   primaryBtn: { ...baseButton, background: "linear-gradient(180deg, rgba(96, 165, 250, 0.95) 0%, rgba(37, 99, 235, 0.95) 100%)", color: "#fff", border: "1px solid rgba(37, 99, 235, 0.35)" },
   secondaryBtn: { ...baseButton, background: "rgba(255,255,255,0.78)", color: "var(--iccc-text)" },
+  secondaryBtnActive: { ...baseButton, background: "rgba(37, 99, 235, 0.12)", color: "#1d4ed8", border: "1px solid rgba(37, 99, 235, 0.2)" },
   dangerBtn: { ...baseButton, background: "rgba(254, 226, 226, 0.95)", color: "#b91c1c", border: "1px solid rgba(239, 68, 68, 0.25)" },
   card: { display: "grid", gap: 8, padding: 12, borderRadius: 16, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.72)" },
   fieldLabel: { fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: "var(--iccc-text-muted)", letterSpacing: "0.05em" },
@@ -896,6 +1234,7 @@ const S: Record<string, React.CSSProperties> = {
   inlineRow: { display: "flex", gap: 8, alignItems: "center" },
   toggleRow: { display: "inline-flex", gap: 8, alignItems: "center", fontSize: 12, color: "var(--iccc-text)" },
   chipWrap: { display: "flex", flexWrap: "wrap", gap: 8 },
+  tagChooser: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 2 },
   chip: { ...baseButton, padding: "6px 10px", fontSize: 11, background: "rgba(255,255,255,0.85)", color: "var(--iccc-text)" },
   chipActive: { ...baseButton, padding: "6px 10px", fontSize: 11, background: "rgba(37, 99, 235, 0.12)", color: "#1d4ed8", border: "1px solid rgba(37, 99, 235, 0.2)" },
   listWrap: { display: "grid", gap: 8 },

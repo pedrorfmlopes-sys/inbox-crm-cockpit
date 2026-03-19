@@ -968,12 +968,44 @@ export function SettingsPanel(): JSX.Element {
 
           {section === "groups" && (
             <div style={{ display: "grid", gap: 14 }}>
+              <label style={S.toggleRow}>
+                <input
+                  type="checkbox"
+                  checked={model.groupLabelsManagerEnabled !== false}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      groupLabelsManagerEnabled: e.target.checked,
+                    })
+                  }
+                />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ativar gestor de etiquetas</div>
+                  <div style={S.hint}>Liga a gestão central de etiquetas dentro da aba Grupos. Quando desligado, a app esconde o gestor dedicado de etiquetas.</div>
+                </div>
+              </label>
+
               <PanelState
                 compact
                 tone="info"
                 title="Configuração documental dos grupos"
                 description="Definimos aqui a localização base e as regras para a futura gestão de anexos por grupo, sem mexer já na operação diária do cockpit."
               />
+
+              <div style={S.referenceCard}>
+                <div style={S.fieldLabel}>Etiquetas conhecidas</div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={S.hint}>
+                    Estado: <b>{model.groupLabelsManagerEnabled !== false ? "Ativo" : "Desativado"}</b>
+                  </div>
+                  <div style={S.hint}>
+                    Catálogo atual: <b>{(model.groupLabelCatalog || []).length}</b> etiqueta(s)
+                  </div>
+                  <div style={S.hint}>
+                    A gestão diária, renomeação e limpeza das etiquetas passa a ser feita diretamente na aba Grupos pela roda dentada.
+                  </div>
+                </div>
+              </div>
 
               <Field label="Modo de armazenamento">
                 <select
