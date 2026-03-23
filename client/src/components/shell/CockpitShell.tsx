@@ -19,19 +19,18 @@ import { LoginCockpit } from "../../modules/auth/LoginCockpit";
 function ShellContent() {
     const cockpit = useCockpit();
     if (!cockpit) return null;
-    const { tab, isAuthenticated, isLoading, startupChecks, startupNotice, dismissStartupNotice } = cockpit as any;
+    const { tab, isAuthenticated, isLoading, startupChecks, startupNotice, dismissStartupNotice, settings, openSettingsSection } = cockpit as any;
+    const hasOdooSetup = Boolean(
+        String(settings?.odooUrl || "").trim()
+        || String(settings?.odooDb || "").trim()
+        || String(settings?.odooLogin || "").trim()
+        || String(settings?.odooPassword || "").trim()
+        || String(settings?.odooSessionToken || "").trim()
+    );
+    const tabRequiresOdoo = tab === "crm" || tab === "crm2" || tab === "related";
 
     if (isLoading) {
         return <StartupSplash checks={startupChecks} />;
-    }
-
-    if (!isAuthenticated) {
-        return (
-            <div style={S.gateRoot}>
-                {startupNotice ? <StartupNoticeBanner notice={startupNotice} onDismiss={dismissStartupNotice} /> : null}
-                <LoginCockpit />
-            </div>
-        );
     }
 
     return (
@@ -54,13 +53,35 @@ function ShellContent() {
                 minHeight: 0
             }}>
                 {startupNotice ? <StartupNoticeBanner notice={startupNotice} onDismiss={dismissStartupNotice} /> : null}
-                {tab === "ai" && <AiCockpit />}
-                {tab === "crm" && <CrmCockpit />}
-                {tab === "crm2" && <CrmCockpit2 />}
-                {tab === "related" && <RelatedCockpit />}
-                {tab === "groups" && <GroupManagerCockpit />}
-                {tab === "files" && <FileCockpit />}
-                {tab === "settings" && <SettingsPanel />}
+                {tabRequiresOdoo && !isAuthenticated ? (
+                    <div style={S.gateRoot}>
+                        {hasOdooSetup ? (
+                            <LoginCockpit />
+                        ) : (
+                            <div style={S.odooGateCard}>
+                                <PanelState
+                                    compact
+                                    tone="info"
+                                    title="Integracao Odoo nao configurada"
+                                    description="Esta area depende do Odoo. Podes continuar a usar Grupos, Files, AI e Settings sem Odoo."
+                                />
+                                <button type="button" style={S.odooGateBtn} onClick={() => openSettingsSection("conns")}>
+                                    Abrir Ligacoes
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <>
+                        {tab === "ai" && <AiCockpit />}
+                        {tab === "crm" && <CrmCockpit />}
+                        {tab === "crm2" && <CrmCockpit2 />}
+                        {tab === "related" && <RelatedCockpit />}
+                        {tab === "groups" && <GroupManagerCockpit />}
+                        {tab === "files" && <FileCockpit />}
+                        {tab === "settings" && <SettingsPanel />}
+                    </>
+                )}
             </main>
 
             {/* Ghost Spacer: Faz com que o 'main' pare exatamente no topo da barra, 
@@ -109,6 +130,22 @@ const S: Record<string, React.CSSProperties> = {
         minHeight: "100%",
         paddingTop: 12,
         background: "var(--iccc-bg)",
+    },
+    odooGateCard: {
+        display: "grid",
+        gap: 10,
+        maxWidth: 420,
+    },
+    odooGateBtn: {
+        justifySelf: "start",
+        border: "1px solid var(--iccc-card-border)",
+        background: "rgba(255,255,255,0.86)",
+        color: "var(--iccc-text)",
+        borderRadius: 10,
+        padding: "8px 12px",
+        fontSize: 12,
+        fontWeight: 700,
+        cursor: "pointer",
     },
     noticeWrap: {
         display: "grid",
