@@ -211,6 +211,8 @@ export type GroupTicketSeriesEntry = {
   id: string;
   name: string;
   prefix: string;
+  yearMode?: "none" | "yy" | "yyyy";
+  separator?: "-" | "/" | "_" | " " | "";
   nextNumber: number;
   padding: number;
   isActive?: boolean;
@@ -224,6 +226,9 @@ export type GroupTicketEntry = {
   seriesId: string;
   seriesName?: string;
   prefix?: string;
+  yearMode?: "none" | "yy" | "yyyy";
+  separator?: "-" | "/" | "_" | " " | "";
+  yearValue?: string;
   code: string;
   sequenceNumber: number;
   title: string;
@@ -742,6 +747,8 @@ export async function listGroupTicketSeries(): Promise<GroupTicketSeriesEntry[]>
 export async function createGroupTicketSeries(payload: {
   name: string;
   prefix: string;
+  yearMode?: "none" | "yy" | "yyyy";
+  separator?: "-" | "/" | "_" | " " | "";
   nextNumber?: number;
   padding?: number;
   isActive?: boolean;
@@ -755,7 +762,15 @@ export async function createGroupTicketSeries(payload: {
 
 export async function updateGroupTicketSeries(
   seriesId: string,
-  payload: { name?: string; prefix?: string; nextNumber?: number; padding?: number; isActive?: boolean }
+  payload: {
+    name?: string;
+    prefix?: string;
+    yearMode?: "none" | "yy" | "yyyy";
+    separator?: "-" | "/" | "_" | " " | "";
+    nextNumber?: number;
+    padding?: number;
+    isActive?: boolean;
+  }
 ): Promise<GroupTicketSeriesEntry> {
   const response: any = await requestJSON(`/api/links/group-ticket-series/${encodeURIComponent(String(seriesId || "").trim())}`, {
     method: "PATCH",

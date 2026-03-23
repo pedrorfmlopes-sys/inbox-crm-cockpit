@@ -18,6 +18,8 @@ const CUSTOM_GROUP_KIND = "custom";
 const DEFAULT_GROUP_STATUS = "em_analise";
 const DEFAULT_GROUP_MEMBERSHIP_KIND = "principal";
 const DEFAULT_GROUP_TICKET_STATUS = "open";
+const DEFAULT_GROUP_TICKET_YEAR_MODE = "none";
+const DEFAULT_GROUP_TICKET_SEPARATOR = "-";
 
 const db = createOptionalPgStore("linkStore");
 let customGroupDbInitPromise = null;
@@ -127,6 +129,20 @@ function normalizeTicketPrefix(value) {
     .replace(/[^A-Z0-9]+/g, "");
 }
 
+function normalizeTicketYearMode(value) {
+  const normalized = normalizeString(value).toLowerCase();
+  if (normalized === "yy" || normalized === "2" || normalized === "short") return "yy";
+  if (normalized === "yyyy" || normalized === "4" || normalized === "long") return "yyyy";
+  return DEFAULT_GROUP_TICKET_YEAR_MODE;
+}
+
+function normalizeTicketSeparator(value) {
+  const normalized = String(value ?? DEFAULT_GROUP_TICKET_SEPARATOR);
+  return normalized === "-" || normalized === "/" || normalized === "_" || normalized === " " || normalized === ""
+    ? normalized
+    : DEFAULT_GROUP_TICKET_SEPARATOR;
+}
+
 function normalizeGroupIds(value) {
   const items = Array.isArray(value) ? value : [value];
   return Array.from(
@@ -145,11 +161,27 @@ function stripHtmlForTicketLookup(html) {
     .trim();
 }
 
-function buildTicketCode(prefix, sequenceNumber, padding = 4) {
+function getTicketYearValue(value, yearMode = DEFAULT_GROUP_TICKET_YEAR_MODE) {
+  const normalizedMode = normalizeTicketYearMode(yearMode);
+  if (normalizedMode === "none") return "";
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return "";
+  const fullYear = String(date.getUTCFullYear());
+  return normalizedMode === "yy" ? fullYear.slice(-2) : fullYear;
+}
+
+function buildTicketCode(prefix, sequenceNumber, padding = 4, options = {}) {
   const safePrefix = normalizeTicketPrefix(prefix);
   const safeNumber = normalizePositiveInt(sequenceNumber, 1);
   const safePadding = normalizePositiveInt(padding, 4, 2, 8);
-  return safePrefix ? `${safePrefix}-${String(safeNumber).padStart(safePadding, "0")}` : "";
+  const yearMode = normalizeTicketYearMode(options?.yearMode);
+  const separator = normalizeTicketSeparator(options?.separator);
+  const yearValue = normalizeString(options?.yearValue) || getTicketYearValue(options?.dateValue, yearMode);
+  if (!safePrefix) return "";
+  const parts = [safePrefix];
+  if (yearMode !== "none" && yearValue) parts.push(yearValue);
+  parts.push(String(safeNumber).padStart(safePadding, "0"));
+  return parts.join(separator);
 }
 
 function splitLookupKey(conversationId, internetMessageId = "") {
@@ -378,10 +410,14 @@ function normalizeGroupDocumentInput(input = {}) {
 function normalizeGroupTicketSeriesInput(input = {}, current = {}) {
   const name = normalizeString(input?.name) || normalizeString(current?.name) || "Serie";
   const prefix = normalizeTicketPrefix(input?.prefix ?? current?.prefix ?? name);
+  const yearMode = normalizeTicketYearMode(input?.yearMode ?? current?.yearMode);
+  const separator = normalizeTicketSeparator(input?.separator ?? current?.separator);
   return {
     id: normalizeString(input?.id) || normalizeString(current?.id) || `ticket_series_${crypto.randomUUID()}`,
     name,
     prefix,
+    yearMode,
+    separator,
     nextNumber: normalizePositiveInt(input?.nextNumber ?? current?.nextNumber ?? 1, 1),
     padding: normalizePositiveInt(input?.padding ?? current?.padding ?? 4, 4, 2, 8),
     isActive: typeof input?.isActive === "boolean" ? input.isActive : current?.isActive !== false,
@@ -394,12 +430,19 @@ function normalizeGroupTicketInput(input = {}, current = {}) {
   const sequenceNumber = normalizePositiveInt(input?.sequenceNumber ?? current?.sequenceNumber ?? 1, 1);
   const padding = normalizePositiveInt(input?.padding ?? current?.padding ?? 4, 4, 2, 8);
   const prefix = normalizeTicketPrefix(input?.prefix || current?.prefix);
+  const yearMode = normalizeTicketYearMode(input?.yearMode ?? current?.yearMode);
+  const separator = normalizeTicketSeparator(input?.separator ?? current?.separator);
+  const createdAt = normalizeString(input?.createdAt) || normalizeString(current?.createdAt) || nowIso();
+  const yearValue = normalizeString(input?.yearValue || current?.yearValue) || getTicketYearValue(createdAt, yearMode);
   return {
     id: normalizeString(input?.id) || normalizeString(current?.id) || `ticket_${crypto.randomUUID()}`,
     seriesId: normalizeString(input?.seriesId || current?.seriesId),
     seriesName: normalizeString(input?.seriesName || current?.seriesName),
     prefix,
-    code: normalizeString(input?.code) || normalizeString(current?.code) || buildTicketCode(prefix, sequenceNumber, padding),
+    yearMode,
+    separator,
+    yearValue,
+    code: normalizeString(input?.code) || normalizeString(current?.code) || buildTicketCode(prefix, sequenceNumber, padding, { yearMode, separator, yearValue, dateValue: createdAt }),
     sequenceNumber,
     padding,
     title: normalizeString(input?.title) || normalizeString(current?.title) || "Ticket",
@@ -416,7 +459,7 @@ function normalizeGroupTicketInput(input = {}, current = {}) {
         : current?.groupIds
     ),
     createdFromEmailKey: normalizeString(input?.createdFromEmailKey || current?.createdFromEmailKey),
-    createdAt: normalizeString(input?.createdAt) || normalizeString(current?.createdAt) || nowIso(),
+    createdAt,
     updatedAt: normalizeString(input?.updatedAt) || normalizeString(current?.updatedAt) || nowIso(),
   };
 }
@@ -876,6 +919,8 @@ function buildGroupTicketSeriesEntry(store, series) {
   return {
     ...series,
     prefix: normalizeTicketPrefix(series.prefix),
+    yearMode: normalizeTicketYearMode(series.yearMode),
+    separator: normalizeTicketSeparator(series.separator),
     nextNumber: normalizePositiveInt(series.nextNumber, 1),
     padding: normalizePositiveInt(series.padding, 4, 2, 8),
     isActive: series.isActive !== false,
@@ -892,6 +937,9 @@ function buildGroupTicketEntry(store, ticket, extra = {}) {
     ...ticket,
     seriesName: normalizeString(extra?.seriesName || ticket.seriesName || series?.name),
     prefix: normalizeTicketPrefix(extra?.prefix || ticket.prefix || series?.prefix),
+    yearMode: normalizeTicketYearMode(extra?.yearMode ?? ticket.yearMode ?? series?.yearMode),
+    separator: normalizeTicketSeparator(extra?.separator ?? ticket.separator ?? series?.separator),
+    yearValue: normalizeString(extra?.yearValue || ticket.yearValue) || getTicketYearValue(ticket.createdAt, extra?.yearMode ?? ticket.yearMode ?? series?.yearMode),
     code: normalizeString(ticket.code),
     sequenceNumber: normalizePositiveInt(ticket.sequenceNumber, 1),
     padding: normalizePositiveInt(ticket.padding || series?.padding || 4, 4, 2, 8),
@@ -950,33 +998,19 @@ function extractTicketCandidates(store, input) {
   const subject = normalizeString(input?.subject);
   const bodyText = normalizeString(input?.bodyText);
   const bodyHtml = stripHtmlForTicketLookup(input?.bodyHtml);
-  const haystack = [subject, bodyText, bodyHtml].filter(Boolean).join("\n");
+  const haystack = [subject, bodyText, bodyHtml].filter(Boolean).join("\n").toUpperCase();
   if (!haystack) return [];
 
-  const ticketsBySeries = new Map();
-  for (const ticket of Object.values(store.groupTickets || {})) {
-    const key = `${normalizeString(ticket.seriesId)}:${normalizePositiveInt(ticket.sequenceNumber, 1)}`;
-    ticketsBySeries.set(key, ticket);
-  }
-
   const matches = new Map();
-  const seriesList = Object.values(store.groupTicketSeries || {})
-    .map((series) => normalizeGroupTicketSeriesInput(series))
-    .filter((series) => series.prefix);
-
-  for (const series of seriesList) {
-    const escapedPrefix = series.prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`(?:\\[)?\\b(${escapedPrefix})[-\\s]?(\\d{1,10})\\b(?:\\])?`, "gi");
-    let match;
-    while ((match = regex.exec(haystack))) {
-      const sequenceNumber = normalizePositiveInt(match[2], 0);
-      if (!sequenceNumber) continue;
-      const key = `${series.id}:${sequenceNumber}`;
-      const ticket = ticketsBySeries.get(key);
-      if (!ticket) continue;
-      const matchedCode = buildTicketCode(series.prefix, sequenceNumber, series.padding);
-      matches.set(ticket.id, { ticket, matchedCode });
-    }
+  for (const ticket of Object.values(store.groupTickets || {})) {
+    const normalizedTicket = normalizeGroupTicketInput(ticket, ticket);
+    const code = normalizeString(normalizedTicket.code).toUpperCase();
+    if (!code) continue;
+    const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`(?:^|[^A-Z0-9])(?:\\[)?(${escapedCode})(?:\\])?(?=$|[^A-Z0-9])`, "i");
+    const match = haystack.match(regex);
+    if (!match) continue;
+    matches.set(normalizedTicket.id, { ticket: normalizedTicket, matchedCode: match[1] || code });
   }
 
   return Array.from(matches.values());
@@ -1062,6 +1096,8 @@ function mapDbGroupTicketSeriesRow(row) {
     id: row.id,
     name: row.name,
     prefix: row.prefix,
+    yearMode: row.year_mode,
+    separator: row.separator,
     nextNumber: row.next_number,
     padding: row.padding,
     isActive: row.is_active,
@@ -1077,6 +1113,9 @@ function mapDbGroupTicketRow(row) {
     seriesId: row.series_id,
     seriesName: row.series_name,
     prefix: row.prefix,
+    yearMode: row.year_mode,
+    separator: row.separator,
+    yearValue: row.year_value,
     code: row.code,
     sequenceNumber: row.sequence_number,
     padding: row.padding,
@@ -1096,11 +1135,13 @@ async function upsertDbGroupTicketSeries(input) {
   const series = normalizeGroupTicketSeriesInput(input);
   if (!series.id || !series.prefix) return;
   await db.query(
-    `INSERT INTO crm_group_ticket_series (id, name, prefix, next_number, padding, is_active, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO crm_group_ticket_series (id, name, prefix, year_mode, separator, next_number, padding, is_active, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name,
        prefix = EXCLUDED.prefix,
+       year_mode = EXCLUDED.year_mode,
+       separator = EXCLUDED.separator,
        next_number = EXCLUDED.next_number,
        padding = EXCLUDED.padding,
        is_active = EXCLUDED.is_active,
@@ -1109,6 +1150,8 @@ async function upsertDbGroupTicketSeries(input) {
       series.id,
       series.name,
       series.prefix,
+      series.yearMode,
+      series.separator,
       series.nextNumber,
       series.padding,
       series.isActive !== false,
@@ -1123,10 +1166,14 @@ async function upsertDbGroupTicket(input) {
   const ticket = normalizeGroupTicketInput(input);
   if (!ticket.id || !ticket.seriesId || !ticket.code) return;
   await db.query(
-    `INSERT INTO crm_group_tickets (id, series_id, code, sequence_number, padding, title, description, status, labels_json, group_ids_json, created_from_email_key, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13)
+    `INSERT INTO crm_group_tickets (id, series_id, prefix, year_mode, separator, year_value, code, sequence_number, padding, title, description, status, labels_json, group_ids_json, created_from_email_key, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17)
      ON CONFLICT (id) DO UPDATE SET
        series_id = EXCLUDED.series_id,
+       prefix = EXCLUDED.prefix,
+       year_mode = EXCLUDED.year_mode,
+       separator = EXCLUDED.separator,
+       year_value = EXCLUDED.year_value,
        code = EXCLUDED.code,
        sequence_number = EXCLUDED.sequence_number,
        padding = EXCLUDED.padding,
@@ -1140,6 +1187,10 @@ async function upsertDbGroupTicket(input) {
     [
       ticket.id,
       ticket.seriesId,
+      ticket.prefix,
+      ticket.yearMode,
+      ticket.separator,
+      ticket.yearValue,
       ticket.code,
       ticket.sequenceNumber,
       ticket.padding,
@@ -1765,6 +1816,8 @@ async function ensureCustomGroupDb() {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         prefix TEXT NOT NULL,
+        year_mode TEXT NOT NULL DEFAULT 'none',
+        separator TEXT NOT NULL DEFAULT '-',
         next_number INTEGER NOT NULL DEFAULT 1,
         padding INTEGER NOT NULL DEFAULT 4,
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -1777,6 +1830,10 @@ async function ensureCustomGroupDb() {
       CREATE TABLE IF NOT EXISTS crm_group_tickets (
         id TEXT PRIMARY KEY,
         series_id TEXT NOT NULL REFERENCES crm_group_ticket_series(id) ON DELETE RESTRICT,
+        prefix TEXT NOT NULL DEFAULT '',
+        year_mode TEXT NOT NULL DEFAULT 'none',
+        separator TEXT NOT NULL DEFAULT '-',
+        year_value TEXT NOT NULL DEFAULT '',
         code TEXT NOT NULL UNIQUE,
         sequence_number INTEGER NOT NULL,
         padding INTEGER NOT NULL DEFAULT 4,
@@ -1793,6 +1850,12 @@ async function ensureCustomGroupDb() {
 
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_group_tickets_series_id ON crm_group_tickets (series_id);`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_group_tickets_code ON crm_group_tickets (code);`);
+    await db.query(`ALTER TABLE crm_group_ticket_series ADD COLUMN IF NOT EXISTS year_mode TEXT NOT NULL DEFAULT 'none';`);
+    await db.query(`ALTER TABLE crm_group_ticket_series ADD COLUMN IF NOT EXISTS separator TEXT NOT NULL DEFAULT '-';`);
+    await db.query(`ALTER TABLE crm_group_tickets ADD COLUMN IF NOT EXISTS prefix TEXT NOT NULL DEFAULT '';`);
+    await db.query(`ALTER TABLE crm_group_tickets ADD COLUMN IF NOT EXISTS year_mode TEXT NOT NULL DEFAULT 'none';`);
+    await db.query(`ALTER TABLE crm_group_tickets ADD COLUMN IF NOT EXISTS separator TEXT NOT NULL DEFAULT '-';`);
+    await db.query(`ALTER TABLE crm_group_tickets ADD COLUMN IF NOT EXISTS year_value TEXT NOT NULL DEFAULT '';`);
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS crm_group_ticket_emails (
@@ -2569,11 +2632,20 @@ export async function updateGroupTicketSeries(seriesId, input) {
 
   for (const ticket of Object.values(store.groupTickets || {})) {
     if (normalizeString(ticket?.seriesId) !== sid) continue;
+    const yearValue = getTicketYearValue(ticket?.createdAt, next.yearMode);
     const merged = normalizeGroupTicketInput({
       ...ticket,
       prefix: next.prefix,
+      yearMode: next.yearMode,
+      separator: next.separator,
+      yearValue,
       padding: next.padding,
-      code: buildTicketCode(next.prefix, ticket.sequenceNumber, next.padding),
+      code: buildTicketCode(next.prefix, ticket.sequenceNumber, next.padding, {
+        yearMode: next.yearMode,
+        separator: next.separator,
+        yearValue,
+        dateValue: ticket?.createdAt,
+      }),
       seriesName: next.name,
       updatedAt: nowIso(),
     }, ticket);
@@ -2688,19 +2760,31 @@ export async function createGroupTicket(input) {
   if (series.isActive === false) throw new Error("A serie selecionada esta desativada.");
 
   const sequenceNumber = normalizePositiveInt(series.nextNumber, 1);
+  const createdAt = nowIso();
+  const yearValue = getTicketYearValue(createdAt, series.yearMode);
+  const code = buildTicketCode(series.prefix, sequenceNumber, series.padding, {
+    yearMode: series.yearMode,
+    separator: series.separator,
+    yearValue,
+    dateValue: createdAt,
+  });
   const ticket = normalizeGroupTicketInput({
     seriesId,
     seriesName: series.name,
     prefix: series.prefix,
+    yearMode: series.yearMode,
+    separator: series.separator,
+    yearValue,
     padding: series.padding,
     sequenceNumber,
-    code: buildTicketCode(series.prefix, sequenceNumber, series.padding),
-    title: normalizeString(input?.title) || buildTicketCode(series.prefix, sequenceNumber, series.padding),
+    code,
+    title: normalizeString(input?.title) || code,
     description: normalizeString(input?.description),
     labels: normalizeGroupLabels(input?.labels),
     groupIds: normalizeGroupIds(input?.groupIds).filter((groupId) => Boolean(store.groups?.[groupId])),
     createdFromEmailKey: resolveEmailKeyFromInput(store, input?.email || {}),
     status: DEFAULT_GROUP_TICKET_STATUS,
+    createdAt,
   });
 
   store.groupTickets[ticket.id] = ticket;

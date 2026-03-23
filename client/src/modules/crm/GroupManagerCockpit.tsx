@@ -39,6 +39,8 @@ type MembershipKind = "principal" | "referencia";
 type TicketSeriesDraft = {
   name: string;
   prefix: string;
+  yearMode: "none" | "yy" | "yyyy";
+  separator: "-" | "/" | "_" | " " | "";
   nextNumber: string;
   padding: string;
   isActive: boolean;
@@ -71,6 +73,20 @@ const MEMBERSHIP_OPTIONS: Array<{ value: MembershipKind; label: string }> = [
   { value: "referencia", label: "Referencia" },
 ];
 
+const TICKET_YEAR_MODE_OPTIONS: Array<{ value: TicketSeriesDraft["yearMode"]; label: string }> = [
+  { value: "none", label: "Sem ano" },
+  { value: "yy", label: "Ano curto" },
+  { value: "yyyy", label: "Ano longo" },
+];
+
+const TICKET_SEPARATOR_OPTIONS: Array<{ value: TicketSeriesDraft["separator"]; label: string }> = [
+  { value: "-", label: "-" },
+  { value: "/", label: "/" },
+  { value: "_", label: "_" },
+  { value: " ", label: "Espaco" },
+  { value: "", label: "Sem separador" },
+];
+
 function normalizeText(value: string | undefined): string {
   return String(value || "").trim().toLowerCase();
 }
@@ -79,6 +95,15 @@ function normalizeTicketPrefixInput(value: string | undefined): string {
   return String(value || "")
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, "");
+}
+
+function buildTicketSeriesPreview(draft: Pick<TicketSeriesDraft, "prefix" | "yearMode" | "separator" | "padding" | "nextNumber">): string {
+  const prefix = normalizeTicketPrefixInput(draft.prefix) || "TCK";
+  const separator = draft.separator ?? "-";
+  const currentYear = String(new Date().getUTCFullYear());
+  const yearValue = draft.yearMode === "yyyy" ? currentYear : draft.yearMode === "yy" ? currentYear.slice(-2) : "";
+  const number = String(Math.max(1, Number(draft.nextNumber || 1) || 1)).padStart(Math.max(2, Number(draft.padding || 4) || 4), "0");
+  return [prefix, yearValue, number].filter(Boolean).join(separator);
 }
 
 function parseLabels(value: string | string[] | undefined): string[] {
@@ -210,6 +235,10 @@ function createTicketSeriesDraft(series: GroupTicketSeriesEntry | null): TicketS
   return {
     name: String(series?.name || "").trim(),
     prefix: normalizeTicketPrefixInput(series?.prefix),
+    yearMode: series?.yearMode === "yy" || series?.yearMode === "yyyy" ? series.yearMode : "none",
+    separator: series?.separator === "/" || series?.separator === "_" || series?.separator === " " || series?.separator === ""
+      ? series.separator
+      : "-",
     nextNumber: String(Number(series?.nextNumber || 1) || 1),
     padding: String(Number(series?.padding || 4) || 4),
     isActive: series?.isActive !== false,
@@ -221,6 +250,8 @@ function ticketSeriesDraftChanged(series: GroupTicketSeriesEntry | null, draft: 
   return (
     String(series.name || "").trim() !== String(draft.name || "").trim()
     || String(series.prefix || "").trim() !== String(draft.prefix || "").trim()
+    || String(series.yearMode || "none") !== String(draft.yearMode || "none")
+    || String(series.separator || "-") !== String(draft.separator || "-")
     || Number(series.nextNumber || 1) !== Math.max(1, Number(draft.nextNumber || 1) || 1)
     || Number(series.padding || 4) !== Math.max(2, Number(draft.padding || 4) || 4)
     || (series.isActive !== false) !== Boolean(draft.isActive)
@@ -393,7 +424,7 @@ export const GroupManagerCockpit: React.FC = () => {
   const [ticketSeriesLoading, setTicketSeriesLoading] = useState(false);
   const [selectedTicketSeriesId, setSelectedTicketSeriesId] = useState("");
   const [ticketSeriesDraft, setTicketSeriesDraft] = useState<TicketSeriesDraft>(createTicketSeriesDraft(null));
-  const [newTicketSeriesDraft, setNewTicketSeriesDraft] = useState<TicketSeriesDraft>({ name: "", prefix: "", nextNumber: "1", padding: "4", isActive: true });
+  const [newTicketSeriesDraft, setNewTicketSeriesDraft] = useState<TicketSeriesDraft>({ name: "", prefix: "", yearMode: "none", separator: "-", nextNumber: "1", padding: "4", isActive: true });
   const [ticketSearchQuery, setTicketSearchQuery] = useState("");
   const [ticketSearchResults, setTicketSearchResults] = useState<GroupTicketEntry[]>([]);
   const [ticketSearchLoading, setTicketSearchLoading] = useState(false);
@@ -976,6 +1007,8 @@ export const GroupManagerCockpit: React.FC = () => {
       const series = await createGroupTicketSeries({
         name,
         prefix,
+        yearMode: newTicketSeriesDraft.yearMode,
+        separator: newTicketSeriesDraft.separator,
         nextNumber: Math.max(1, Number(newTicketSeriesDraft.nextNumber || 1) || 1),
         padding: Math.max(2, Number(newTicketSeriesDraft.padding || 4) || 4),
         isActive: newTicketSeriesDraft.isActive,
@@ -988,7 +1021,7 @@ export const GroupManagerCockpit: React.FC = () => {
         )
       );
       setSelectedTicketSeriesId(series.id);
-      setNewTicketSeriesDraft({ name: "", prefix: "", nextNumber: "1", padding: "4", isActive: true });
+      setNewTicketSeriesDraft({ name: "", prefix: "", yearMode: "none", separator: "-", nextNumber: "1", padding: "4", isActive: true });
       setReloadToken((value) => value + 1);
       setMsg(`Serie ${series.prefix} criada.`);
     } catch (error: any) {
@@ -1011,6 +1044,8 @@ export const GroupManagerCockpit: React.FC = () => {
       const updated = await updateGroupTicketSeries(selectedTicketSeries.id, {
         name,
         prefix,
+        yearMode: ticketSeriesDraft.yearMode,
+        separator: ticketSeriesDraft.separator,
         nextNumber: Math.max(1, Number(ticketSeriesDraft.nextNumber || 1) || 1),
         padding: Math.max(2, Number(ticketSeriesDraft.padding || 4) || 4),
         isActive: ticketSeriesDraft.isActive,
@@ -1703,6 +1738,24 @@ export const GroupManagerCockpit: React.FC = () => {
                           />
                       </div>
                       <div style={S.inlineRow}>
+                        <select
+                          style={S.compactSelect}
+                          value={newTicketSeriesDraft.yearMode}
+                          onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, yearMode: event.target.value as TicketSeriesDraft["yearMode"] }))}
+                        >
+                          {TICKET_YEAR_MODE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <select
+                          style={S.compactSelect}
+                          value={newTicketSeriesDraft.separator}
+                          onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, separator: event.target.value as TicketSeriesDraft["separator"] }))}
+                        >
+                          {TICKET_SEPARATOR_OPTIONS.map((option) => (
+                            <option key={`${option.label}:${option.value}`} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
                         <input
                           style={S.input}
                           value={newTicketSeriesDraft.nextNumber}
@@ -1721,9 +1774,10 @@ export const GroupManagerCockpit: React.FC = () => {
                             checked={newTicketSeriesDraft.isActive}
                             onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, isActive: event.target.checked }))}
                           />
-                          <span>Ativa</span>
-                        </label>
+                            <span>Ativa</span>
+                          </label>
                       </div>
+                      <div style={S.smallMeta}>Preview: {buildTicketSeriesPreview(newTicketSeriesDraft)}</div>
                       <div style={S.inlineRow}>
                         <button type="button" style={S.primaryBtn} onClick={() => void handleCreateTicketSeries()} disabled={busy}>
                           <Icons.Plus size={12} />
@@ -1751,6 +1805,24 @@ export const GroupManagerCockpit: React.FC = () => {
                               />
                           </div>
                           <div style={S.inlineRow}>
+                            <select
+                              style={S.compactSelect}
+                              value={ticketSeriesDraft.yearMode}
+                              onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, yearMode: event.target.value as TicketSeriesDraft["yearMode"] }))}
+                            >
+                              {TICKET_YEAR_MODE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                            <select
+                              style={S.compactSelect}
+                              value={ticketSeriesDraft.separator}
+                              onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, separator: event.target.value as TicketSeriesDraft["separator"] }))}
+                            >
+                              {TICKET_SEPARATOR_OPTIONS.map((option) => (
+                                <option key={`${option.label}:${option.value}`} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
                             <input
                               style={S.input}
                               value={ticketSeriesDraft.nextNumber}
@@ -1769,9 +1841,10 @@ export const GroupManagerCockpit: React.FC = () => {
                                 checked={ticketSeriesDraft.isActive}
                                 onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, isActive: event.target.checked }))}
                               />
-                              <span>Ativa</span>
-                            </label>
+                                <span>Ativa</span>
+                              </label>
                           </div>
+                          <div style={S.smallMeta}>Preview: {buildTicketSeriesPreview(ticketSeriesDraft)}</div>
                           <div style={S.inlineRow}>
                             <button
                               type="button"
