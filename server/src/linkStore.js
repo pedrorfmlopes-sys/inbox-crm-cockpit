@@ -17,6 +17,7 @@ const STORE_VERSION = 2;
 const CUSTOM_GROUP_KIND = "custom";
 const DEFAULT_GROUP_STATUS = "em_analise";
 const DEFAULT_GROUP_MEMBERSHIP_KIND = "principal";
+const DEFAULT_GROUP_TICKET_STATUS = "open";
 
 const db = createOptionalPgStore("linkStore");
 let customGroupDbInitPromise = null;
@@ -107,6 +108,50 @@ function normalizeGroupMembershipMeta(value = {}) {
   };
 }
 
+function normalizePositiveInt(value, fallback = 1, min = 1, max = 999999) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+function normalizeTicketStatus(value) {
+  const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, "_");
+  return normalized === "closed" || normalized === "fechado" || normalized === "concluido"
+    ? "closed"
+    : DEFAULT_GROUP_TICKET_STATUS;
+}
+
+function normalizeTicketPrefix(value) {
+  return normalizeString(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "");
+}
+
+function normalizeGroupIds(value) {
+  const items = Array.isArray(value) ? value : [value];
+  return Array.from(
+    new Set(
+      items
+        .map((entry) => normalizeString(entry))
+        .filter(Boolean)
+    )
+  );
+}
+
+function stripHtmlForTicketLookup(html) {
+  return String(html || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildTicketCode(prefix, sequenceNumber, padding = 4) {
+  const safePrefix = normalizeTicketPrefix(prefix);
+  const safeNumber = normalizePositiveInt(sequenceNumber, 1);
+  const safePadding = normalizePositiveInt(padding, 4, 2, 8);
+  return safePrefix ? `${safePrefix}-${String(safeNumber).padStart(safePadding, "0")}` : "";
+}
+
 function splitLookupKey(conversationId, internetMessageId = "") {
   const rawConversationId = normalizeString(conversationId);
   if (rawConversationId.includes("||")) {
@@ -158,6 +203,10 @@ function createEmptyStore() {
     emailEntityLinks: {},
     groupDocuments: {},
     groupAttachmentFlags: {},
+    groupTicketSeries: {},
+    groupTickets: {},
+    groupTicketEmails: {},
+    groupEmailTickets: {},
   };
 }
 
@@ -326,6 +375,52 @@ function normalizeGroupDocumentInput(input = {}) {
   };
 }
 
+function normalizeGroupTicketSeriesInput(input = {}, current = {}) {
+  const name = normalizeString(input?.name) || normalizeString(current?.name) || "Serie";
+  const prefix = normalizeTicketPrefix(input?.prefix ?? current?.prefix ?? name);
+  return {
+    id: normalizeString(input?.id) || normalizeString(current?.id) || `ticket_series_${crypto.randomUUID()}`,
+    name,
+    prefix,
+    nextNumber: normalizePositiveInt(input?.nextNumber ?? current?.nextNumber ?? 1, 1),
+    padding: normalizePositiveInt(input?.padding ?? current?.padding ?? 4, 4, 2, 8),
+    isActive: typeof input?.isActive === "boolean" ? input.isActive : current?.isActive !== false,
+    createdAt: normalizeString(input?.createdAt) || normalizeString(current?.createdAt) || nowIso(),
+    updatedAt: normalizeString(input?.updatedAt) || normalizeString(current?.updatedAt) || nowIso(),
+  };
+}
+
+function normalizeGroupTicketInput(input = {}, current = {}) {
+  const sequenceNumber = normalizePositiveInt(input?.sequenceNumber ?? current?.sequenceNumber ?? 1, 1);
+  const padding = normalizePositiveInt(input?.padding ?? current?.padding ?? 4, 4, 2, 8);
+  const prefix = normalizeTicketPrefix(input?.prefix || current?.prefix);
+  return {
+    id: normalizeString(input?.id) || normalizeString(current?.id) || `ticket_${crypto.randomUUID()}`,
+    seriesId: normalizeString(input?.seriesId || current?.seriesId),
+    seriesName: normalizeString(input?.seriesName || current?.seriesName),
+    prefix,
+    code: normalizeString(input?.code) || normalizeString(current?.code) || buildTicketCode(prefix, sequenceNumber, padding),
+    sequenceNumber,
+    padding,
+    title: normalizeString(input?.title) || normalizeString(current?.title) || "Ticket",
+    description: normalizeString(input?.description) || normalizeString(current?.description),
+    status: normalizeTicketStatus(input?.status ?? current?.status),
+    labels: normalizeGroupLabels(
+      Object.prototype.hasOwnProperty.call(input || {}, "labels")
+        ? input?.labels
+        : current?.labels
+    ),
+    groupIds: normalizeGroupIds(
+      Object.prototype.hasOwnProperty.call(input || {}, "groupIds")
+        ? input?.groupIds
+        : current?.groupIds
+    ),
+    createdFromEmailKey: normalizeString(input?.createdFromEmailKey || current?.createdFromEmailKey),
+    createdAt: normalizeString(input?.createdAt) || normalizeString(current?.createdAt) || nowIso(),
+    updatedAt: normalizeString(input?.updatedAt) || normalizeString(current?.updatedAt) || nowIso(),
+  };
+}
+
 function parseAttachmentsJson(value) {
   if (Array.isArray(value)) return normalizeAttachments(value);
   const raw = normalizeString(value);
@@ -358,6 +453,10 @@ function hydrateStore(raw) {
   store.emailEntityLinks = source.emailEntityLinks && typeof source.emailEntityLinks === "object" ? source.emailEntityLinks : {};
   store.groupDocuments = source.groupDocuments && typeof source.groupDocuments === "object" ? source.groupDocuments : {};
   store.groupAttachmentFlags = source.groupAttachmentFlags && typeof source.groupAttachmentFlags === "object" ? source.groupAttachmentFlags : {};
+  store.groupTicketSeries = source.groupTicketSeries && typeof source.groupTicketSeries === "object" ? source.groupTicketSeries : {};
+  store.groupTickets = source.groupTickets && typeof source.groupTickets === "object" ? source.groupTickets : {};
+  store.groupTicketEmails = source.groupTicketEmails && typeof source.groupTicketEmails === "object" ? source.groupTicketEmails : {};
+  store.groupEmailTickets = source.groupEmailTickets && typeof source.groupEmailTickets === "object" ? source.groupEmailTickets : {};
 
   for (const [groupId, value] of Object.entries(store.groupMemberLinks || {})) {
     const gid = normalizeString(groupId);
@@ -393,6 +492,48 @@ function hydrateStore(raw) {
       const emailGroups = Array.isArray(store.emailGroups[emailId]) ? store.emailGroups[emailId] : [];
       if (!emailGroups.includes(gid)) store.emailGroups[emailId] = [...emailGroups, gid];
     }
+  }
+
+  for (const [seriesId, value] of Object.entries(store.groupTicketSeries || {})) {
+    const sid = normalizeString(seriesId);
+    const normalized = normalizeGroupTicketSeriesInput({ id: sid, ...(value || {}) });
+    if (!sid || !normalized.prefix) {
+      delete store.groupTicketSeries[seriesId];
+      continue;
+    }
+    store.groupTicketSeries[sid] = normalized;
+  }
+
+  for (const [ticketId, value] of Object.entries(store.groupTickets || {})) {
+    const tid = normalizeString(ticketId);
+    const normalized = normalizeGroupTicketInput({ id: tid, ...(value || {}) });
+    if (!tid || !normalized.seriesId || !normalized.code) {
+      delete store.groupTickets[ticketId];
+      continue;
+    }
+    store.groupTickets[tid] = normalized;
+  }
+
+  for (const [ticketId, emailKeys] of Object.entries(store.groupTicketEmails || {})) {
+    const tid = normalizeString(ticketId);
+    if (!tid || !store.groupTickets[tid]) {
+      delete store.groupTicketEmails[ticketId];
+      continue;
+    }
+    store.groupTicketEmails[tid] = Array.from(
+      new Set((Array.isArray(emailKeys) ? emailKeys : []).map((entry) => normalizeString(entry)).filter(Boolean))
+    );
+  }
+
+  for (const [emailKey, ticketIds] of Object.entries(store.groupEmailTickets || {})) {
+    const key = normalizeString(emailKey);
+    if (!key) {
+      delete store.groupEmailTickets[emailKey];
+      continue;
+    }
+    store.groupEmailTickets[key] = Array.from(
+      new Set((Array.isArray(ticketIds) ? ticketIds : []).map((entry) => normalizeString(entry)).filter((entry) => Boolean(store.groupTickets[entry])))
+    );
   }
   return store;
 }
@@ -728,6 +869,119 @@ function buildGroupListEntry(store, group) {
   };
 }
 
+function buildGroupTicketSeriesEntry(store, series) {
+  if (!series) return null;
+  const sid = normalizeString(series.id);
+  const usageCount = Object.values(store.groupTickets || {}).filter((ticket) => normalizeString(ticket?.seriesId) === sid).length;
+  return {
+    ...series,
+    prefix: normalizeTicketPrefix(series.prefix),
+    nextNumber: normalizePositiveInt(series.nextNumber, 1),
+    padding: normalizePositiveInt(series.padding, 4, 2, 8),
+    isActive: series.isActive !== false,
+    usageCount,
+  };
+}
+
+function buildGroupTicketEntry(store, ticket, extra = {}) {
+  if (!ticket) return null;
+  const series = store.groupTicketSeries?.[normalizeString(ticket.seriesId)];
+  const groupIds = normalizeGroupIds(extra?.groupIds || ticket.groupIds);
+  const emailKeys = Array.isArray(store.groupTicketEmails?.[normalizeString(ticket.id)]) ? store.groupTicketEmails[ticket.id] : [];
+  return {
+    ...ticket,
+    seriesName: normalizeString(extra?.seriesName || ticket.seriesName || series?.name),
+    prefix: normalizeTicketPrefix(extra?.prefix || ticket.prefix || series?.prefix),
+    code: normalizeString(ticket.code),
+    sequenceNumber: normalizePositiveInt(ticket.sequenceNumber, 1),
+    padding: normalizePositiveInt(ticket.padding || series?.padding || 4, 4, 2, 8),
+    status: normalizeTicketStatus(ticket.status),
+    labels: normalizeGroupLabels(ticket.labels),
+    groupIds,
+    groups: groupIds
+      .map((groupId) => buildGroupListEntry(store, store.groups?.[groupId]))
+      .filter(Boolean),
+    emailCount: Array.isArray(emailKeys) ? emailKeys.length : 0,
+    emailLinked: Boolean(extra?.emailLinked),
+  };
+}
+
+function resolveEmailKeyFromInput(store, input) {
+  const normalized = normalizeEmailInput(input);
+  const directKey = normalizeString(input?.emailKey);
+  if (directKey) return directKey;
+  const emailId = resolveEmailId(store, normalized);
+  if (emailId && store.emails[emailId]) {
+    return makePersistentEmailKey(store.emails[emailId]);
+  }
+  return makePersistentEmailKey(normalized);
+}
+
+function ensureTicketEmailLink(store, ticketId, emailKey) {
+  const tid = normalizeString(ticketId);
+  const key = normalizeString(emailKey);
+  if (!tid || !key) return;
+  const ticketEmails = Array.isArray(store.groupTicketEmails[tid]) ? store.groupTicketEmails[tid] : [];
+  if (!ticketEmails.includes(key)) store.groupTicketEmails[tid] = [...ticketEmails, key];
+  const emailTickets = Array.isArray(store.groupEmailTickets[key]) ? store.groupEmailTickets[key] : [];
+  if (!emailTickets.includes(tid)) store.groupEmailTickets[key] = [...emailTickets, tid];
+}
+
+function removeTicketEmailLink(store, ticketId, emailKey) {
+  const tid = normalizeString(ticketId);
+  const key = normalizeString(emailKey);
+  if (!tid || !key) return;
+  if (Array.isArray(store.groupTicketEmails[tid])) {
+    store.groupTicketEmails[tid] = store.groupTicketEmails[tid].filter((entry) => normalizeString(entry) !== key);
+    if (!store.groupTicketEmails[tid].length) delete store.groupTicketEmails[tid];
+  }
+  if (Array.isArray(store.groupEmailTickets[key])) {
+    store.groupEmailTickets[key] = store.groupEmailTickets[key].filter((entry) => normalizeString(entry) !== tid);
+    if (!store.groupEmailTickets[key].length) delete store.groupEmailTickets[key];
+  }
+}
+
+function listTicketIdsByEmailKey(store, emailKey) {
+  const key = normalizeString(emailKey);
+  return Array.isArray(store.groupEmailTickets?.[key]) ? store.groupEmailTickets[key].filter(Boolean) : [];
+}
+
+function extractTicketCandidates(store, input) {
+  const subject = normalizeString(input?.subject);
+  const bodyText = normalizeString(input?.bodyText);
+  const bodyHtml = stripHtmlForTicketLookup(input?.bodyHtml);
+  const haystack = [subject, bodyText, bodyHtml].filter(Boolean).join("\n");
+  if (!haystack) return [];
+
+  const ticketsBySeries = new Map();
+  for (const ticket of Object.values(store.groupTickets || {})) {
+    const key = `${normalizeString(ticket.seriesId)}:${normalizePositiveInt(ticket.sequenceNumber, 1)}`;
+    ticketsBySeries.set(key, ticket);
+  }
+
+  const matches = new Map();
+  const seriesList = Object.values(store.groupTicketSeries || {})
+    .map((series) => normalizeGroupTicketSeriesInput(series))
+    .filter((series) => series.prefix);
+
+  for (const series of seriesList) {
+    const escapedPrefix = series.prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`(?:\\[)?\\b(${escapedPrefix})[-\\s]?(\\d{1,10})\\b(?:\\])?`, "gi");
+    let match;
+    while ((match = regex.exec(haystack))) {
+      const sequenceNumber = normalizePositiveInt(match[2], 0);
+      if (!sequenceNumber) continue;
+      const key = `${series.id}:${sequenceNumber}`;
+      const ticket = ticketsBySeries.get(key);
+      if (!ticket) continue;
+      const matchedCode = buildTicketCode(series.prefix, sequenceNumber, series.padding);
+      matches.set(ticket.id, { ticket, matchedCode });
+    }
+  }
+
+  return Array.from(matches.values());
+}
+
 function mapDbGroupRow(row) {
   if (!row) return null;
   return {
@@ -800,6 +1054,203 @@ function mapDbGroupAttachmentFlagRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
+}
+
+function mapDbGroupTicketSeriesRow(row) {
+  if (!row) return null;
+  return normalizeGroupTicketSeriesInput({
+    id: row.id,
+    name: row.name,
+    prefix: row.prefix,
+    nextNumber: row.next_number,
+    padding: row.padding,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function mapDbGroupTicketRow(row) {
+  if (!row) return null;
+  return normalizeGroupTicketInput({
+    id: row.id,
+    seriesId: row.series_id,
+    seriesName: row.series_name,
+    prefix: row.prefix,
+    code: row.code,
+    sequenceNumber: row.sequence_number,
+    padding: row.padding,
+    title: row.title,
+    description: row.description,
+    status: row.status,
+    labels: parseGroupLabelsJson(row.labels_json),
+    groupIds: parseGroupLabelsJson(row.group_ids_json),
+    createdFromEmailKey: row.created_from_email_key,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+async function upsertDbGroupTicketSeries(input) {
+  if (!db.isEnabled()) return;
+  const series = normalizeGroupTicketSeriesInput(input);
+  if (!series.id || !series.prefix) return;
+  await db.query(
+    `INSERT INTO crm_group_ticket_series (id, name, prefix, next_number, padding, is_active, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (id) DO UPDATE SET
+       name = EXCLUDED.name,
+       prefix = EXCLUDED.prefix,
+       next_number = EXCLUDED.next_number,
+       padding = EXCLUDED.padding,
+       is_active = EXCLUDED.is_active,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      series.id,
+      series.name,
+      series.prefix,
+      series.nextNumber,
+      series.padding,
+      series.isActive !== false,
+      series.createdAt,
+      series.updatedAt,
+    ]
+  );
+}
+
+async function upsertDbGroupTicket(input) {
+  if (!db.isEnabled()) return;
+  const ticket = normalizeGroupTicketInput(input);
+  if (!ticket.id || !ticket.seriesId || !ticket.code) return;
+  await db.query(
+    `INSERT INTO crm_group_tickets (id, series_id, code, sequence_number, padding, title, description, status, labels_json, group_ids_json, created_from_email_key, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13)
+     ON CONFLICT (id) DO UPDATE SET
+       series_id = EXCLUDED.series_id,
+       code = EXCLUDED.code,
+       sequence_number = EXCLUDED.sequence_number,
+       padding = EXCLUDED.padding,
+       title = EXCLUDED.title,
+       description = EXCLUDED.description,
+       status = EXCLUDED.status,
+       labels_json = EXCLUDED.labels_json,
+       group_ids_json = EXCLUDED.group_ids_json,
+       created_from_email_key = EXCLUDED.created_from_email_key,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      ticket.id,
+      ticket.seriesId,
+      ticket.code,
+      ticket.sequenceNumber,
+      ticket.padding,
+      ticket.title,
+      ticket.description,
+      ticket.status,
+      JSON.stringify(normalizeGroupLabels(ticket.labels)),
+      JSON.stringify(normalizeGroupIds(ticket.groupIds)),
+      ticket.createdFromEmailKey,
+      ticket.createdAt,
+      ticket.updatedAt,
+    ]
+  );
+}
+
+async function upsertDbGroupTicketEmail(ticketId, emailKey) {
+  if (!db.isEnabled()) return;
+  const tid = normalizeString(ticketId);
+  const key = normalizeString(emailKey);
+  if (!tid || !key) return;
+  await db.query(
+    `INSERT INTO crm_group_ticket_emails (ticket_id, email_key, created_at, updated_at)
+     VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+     ON CONFLICT (ticket_id, email_key) DO UPDATE SET
+       updated_at = CURRENT_TIMESTAMP`,
+    [tid, key]
+  );
+}
+
+async function deleteDbGroupTicketSeries(seriesId) {
+  if (!db.isEnabled()) return;
+  const sid = normalizeString(seriesId);
+  if (!sid) return;
+  await db.query(`DELETE FROM crm_group_ticket_series WHERE id = $1`, [sid]);
+}
+
+async function listDbGroupTicketSeries() {
+  if (!db.isEnabled()) return [];
+  const result = await db.query(`SELECT * FROM crm_group_ticket_series ORDER BY is_active DESC, prefix ASC, name ASC`);
+  return (result?.rows || []).map(mapDbGroupTicketSeriesRow).filter(Boolean);
+}
+
+async function listDbGroupTickets(query = "", options = {}) {
+  if (!db.isEnabled()) return [];
+  const q = normalizeString(query).toLowerCase();
+  const groupId = normalizeString(options?.groupId);
+  const emailKey = normalizeString(options?.emailKey);
+  const limit = Math.max(1, Math.min(normalizePositiveInt(options?.limit || 50, 50), 200));
+  const where = [];
+  const params = [];
+  if (q) {
+    params.push(`%${q}%`);
+    where.push(`(LOWER(t.code) LIKE $${params.length} OR LOWER(t.title) LIKE $${params.length} OR LOWER(COALESCE(t.description, '')) LIKE $${params.length})`);
+  }
+  if (groupId) {
+    params.push(groupId);
+    where.push(`t.group_ids_json ? $${params.length}`);
+  }
+  if (emailKey) {
+    params.push(emailKey);
+    where.push(`EXISTS (SELECT 1 FROM crm_group_ticket_emails te WHERE te.ticket_id = t.id AND te.email_key = $${params.length})`);
+  }
+  params.push(limit);
+  const querySql = `
+    SELECT t.*, s.name AS series_name, s.prefix
+    FROM crm_group_tickets t
+    LEFT JOIN crm_group_ticket_series s ON s.id = t.series_id
+    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+    ORDER BY t.updated_at DESC, t.created_at DESC
+    LIMIT $${params.length}
+  `;
+  const result = await db.query(querySql, params);
+  return (result?.rows || []).map(mapDbGroupTicketRow).filter(Boolean);
+}
+
+async function listDbGroupTicketEmailLinks(ticketId = "") {
+  if (!db.isEnabled()) return [];
+  const tid = normalizeString(ticketId);
+  const result = tid
+    ? await db.query(`SELECT ticket_id, email_key FROM crm_group_ticket_emails WHERE ticket_id = $1 ORDER BY updated_at DESC, created_at DESC`, [tid])
+    : await db.query(`SELECT ticket_id, email_key FROM crm_group_ticket_emails ORDER BY updated_at DESC, created_at DESC`);
+  return (result?.rows || [])
+    .map((row) => ({
+      ticketId: normalizeString(row.ticket_id),
+      emailKey: normalizeString(row.email_key),
+    }))
+    .filter((row) => row.ticketId && row.emailKey);
+}
+
+async function syncGroupTicketsFromDb(store) {
+  if (!db.isEnabled()) return;
+  await ensureCustomGroupDb();
+  const [seriesRows, ticketRows, ticketEmailRows] = await Promise.all([
+    listDbGroupTicketSeries(),
+    listDbGroupTickets("", { limit: 5000 }),
+    listDbGroupTicketEmailLinks(),
+  ]);
+
+  for (const series of seriesRows) {
+    if (!series?.id) continue;
+    store.groupTicketSeries[series.id] = normalizeGroupTicketSeriesInput(series, store.groupTicketSeries?.[series.id] || {});
+  }
+
+  for (const ticket of ticketRows) {
+    if (!ticket?.id) continue;
+    store.groupTickets[ticket.id] = normalizeGroupTicketInput(ticket, store.groupTickets?.[ticket.id] || {});
+  }
+
+  for (const row of ticketEmailRows) {
+    ensureTicketEmailLink(store, row.ticketId, row.emailKey);
+  }
 }
 
 async function upsertDbCustomGroup(group) {
@@ -1309,6 +1760,52 @@ async function ensureCustomGroupDb() {
 
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_attachment_flags_group_id ON crm_custom_group_attachment_flags (group_id);`);
 
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS crm_group_ticket_series (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        prefix TEXT NOT NULL,
+        next_number INTEGER NOT NULL DEFAULT 1,
+        padding INTEGER NOT NULL DEFAULT 4,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS crm_group_tickets (
+        id TEXT PRIMARY KEY,
+        series_id TEXT NOT NULL REFERENCES crm_group_ticket_series(id) ON DELETE RESTRICT,
+        code TEXT NOT NULL UNIQUE,
+        sequence_number INTEGER NOT NULL,
+        padding INTEGER NOT NULL DEFAULT 4,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'open',
+        labels_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+        group_ids_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_from_email_key TEXT DEFAULT '',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_group_tickets_series_id ON crm_group_tickets (series_id);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_group_tickets_code ON crm_group_tickets (code);`);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS crm_group_ticket_emails (
+        ticket_id TEXT NOT NULL REFERENCES crm_group_tickets(id) ON DELETE CASCADE,
+        email_key TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (ticket_id, email_key)
+      );
+    `);
+
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_group_ticket_emails_email_key ON crm_group_ticket_emails (email_key);`);
+
     const store = readState();
     const customGroups = Object.values(store.groups || {}).filter((group) => group?.kind === CUSTOM_GROUP_KIND);
     for (const group of customGroups) {
@@ -1322,6 +1819,15 @@ async function ensureCustomGroupDb() {
       }
       for (const flag of store.groupAttachmentFlags[group.id] || []) {
         await upsertDbGroupAttachmentFlag(group.id, flag);
+      }
+    }
+    for (const series of Object.values(store.groupTicketSeries || {})) {
+      await upsertDbGroupTicketSeries(series);
+    }
+    for (const ticket of Object.values(store.groupTickets || {})) {
+      await upsertDbGroupTicket(ticket);
+      for (const emailKey of store.groupTicketEmails?.[ticket.id] || []) {
+        await upsertDbGroupTicketEmail(ticket.id, emailKey);
       }
     }
   })().catch((error) => {
@@ -1685,12 +2191,24 @@ export async function deleteCustomGroup(groupId) {
   delete store.groupMemberLinks[gid];
   delete store.groupDocuments[gid];
   delete store.groupAttachmentFlags[gid];
+  for (const ticket of Object.values(store.groupTickets || {})) {
+    if (!normalizeGroupIds(ticket?.groupIds).includes(gid)) continue;
+    store.groupTickets[ticket.id] = normalizeGroupTicketInput({
+      ...ticket,
+      groupIds: normalizeGroupIds(ticket.groupIds).filter((entry) => entry !== gid),
+      updatedAt: nowIso(),
+    }, ticket);
+  }
   delete store.groups[gid];
   writeStore(store);
 
   if (db.isEnabled()) {
     try {
       await ensureCustomGroupDb();
+      for (const ticket of Object.values(store.groupTickets || {})) {
+        if (!ticket?.id) continue;
+        await upsertDbGroupTicket(ticket);
+      }
       await db.query(`DELETE FROM crm_custom_groups WHERE id = $1`, [gid]);
     } catch (error) {
       if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Delete Error, central file store kept as source of truth:", error.message);
@@ -1965,6 +2483,402 @@ export async function deleteDocumentFromGroup(groupId, documentId) {
   }
 
   return { ok: true, removed, groupId: gid, documentId: did };
+}
+
+function findSeriesConflict(store, prefix, excludeId = "") {
+  const normalizedPrefix = normalizeTicketPrefix(prefix);
+  return Object.values(store.groupTicketSeries || {}).find((series) =>
+    normalizeTicketPrefix(series?.prefix) === normalizedPrefix && normalizeString(series?.id) !== normalizeString(excludeId)
+  ) || null;
+}
+
+export async function listGroupTicketSeries() {
+  const store = readState();
+  if (db.isEnabled()) {
+    try {
+      await syncGroupTicketsFromDb(store);
+      writeStore(store);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Sync Error, using central file store:", error.message);
+      else console.error("[linkStore] DB Ticket Series Sync Error, using central file store:", error);
+    }
+  }
+  return Object.values(store.groupTicketSeries || {})
+    .map((series) => buildGroupTicketSeriesEntry(store, series))
+    .filter(Boolean)
+    .sort((a, b) =>
+      Number(b.isActive !== false) - Number(a.isActive !== false)
+      || String(a.prefix || "").localeCompare(String(b.prefix || ""), "pt")
+      || String(a.name || "").localeCompare(String(b.name || ""), "pt")
+    );
+}
+
+export async function createGroupTicketSeries(input) {
+  const store = readState();
+  if (db.isEnabled()) {
+    try {
+      await syncGroupTicketsFromDb(store);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Sync Error before create, using central file store:", error.message);
+      else console.error("[linkStore] DB Ticket Series Sync Error before create, using central file store:", error);
+    }
+  }
+
+  const draft = normalizeGroupTicketSeriesInput(input);
+  if (!draft.prefix) throw new Error("Define um prefixo para a serie.");
+  const conflict = findSeriesConflict(store, draft.prefix);
+  if (conflict) throw new Error(`Ja existe uma serie com o prefixo ${draft.prefix}.`);
+
+  draft.updatedAt = nowIso();
+  store.groupTicketSeries[draft.id] = draft;
+  writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await upsertDbGroupTicketSeries(draft);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Create Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Ticket Series Create Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return buildGroupTicketSeriesEntry(store, draft);
+}
+
+export async function updateGroupTicketSeries(seriesId, input) {
+  const store = readState();
+  if (db.isEnabled()) {
+    try {
+      await syncGroupTicketsFromDb(store);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Sync Error before update, using central file store:", error.message);
+      else console.error("[linkStore] DB Ticket Series Sync Error before update, using central file store:", error);
+    }
+  }
+
+  const sid = normalizeString(seriesId);
+  const current = store.groupTicketSeries?.[sid];
+  if (!sid || !current) throw new Error("Serie de ticket invalida.");
+
+  const next = normalizeGroupTicketSeriesInput({ ...current, ...input, id: sid }, current);
+  const conflict = findSeriesConflict(store, next.prefix, sid);
+  if (conflict) throw new Error(`Ja existe uma serie com o prefixo ${next.prefix}.`);
+
+  store.groupTicketSeries[sid] = { ...next, updatedAt: nowIso() };
+
+  for (const ticket of Object.values(store.groupTickets || {})) {
+    if (normalizeString(ticket?.seriesId) !== sid) continue;
+    const merged = normalizeGroupTicketInput({
+      ...ticket,
+      prefix: next.prefix,
+      padding: next.padding,
+      code: buildTicketCode(next.prefix, ticket.sequenceNumber, next.padding),
+      seriesName: next.name,
+      updatedAt: nowIso(),
+    }, ticket);
+    store.groupTickets[merged.id] = merged;
+  }
+
+  writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await upsertDbGroupTicketSeries(store.groupTicketSeries[sid]);
+      for (const ticket of Object.values(store.groupTickets || {})) {
+        if (normalizeString(ticket?.seriesId) !== sid) continue;
+        await upsertDbGroupTicket(ticket);
+      }
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Update Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Ticket Series Update Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return buildGroupTicketSeriesEntry(store, store.groupTicketSeries[sid]);
+}
+
+export async function deleteGroupTicketSeries(seriesId) {
+  const store = readState();
+  if (db.isEnabled()) {
+    try {
+      await syncGroupTicketsFromDb(store);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Sync Error before delete, using central file store:", error.message);
+      else console.error("[linkStore] DB Ticket Series Sync Error before delete, using central file store:", error);
+    }
+  }
+  const sid = normalizeString(seriesId);
+  if (!sid || !store.groupTicketSeries?.[sid]) throw new Error("Serie de ticket invalida.");
+  const usageCount = Object.values(store.groupTickets || {}).filter((ticket) => normalizeString(ticket?.seriesId) === sid).length;
+  if (usageCount > 0) throw new Error("Nao podes eliminar uma serie que ja tem tickets.");
+  delete store.groupTicketSeries[sid];
+  writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await deleteDbGroupTicketSeries(sid);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Delete Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Ticket Series Delete Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return { ok: true, deleted: true, seriesId: sid };
+}
+
+export async function listGroupTickets(query = "", options = {}) {
+  const store = readState();
+  if (db.isEnabled()) {
+    try {
+      await syncGroupTicketsFromDb(store);
+      writeStore(store);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Sync Error, using central file store:", error.message);
+      else console.error("[linkStore] DB Ticket Sync Error, using central file store:", error);
+    }
+  }
+
+  const q = normalizeString(query).toLowerCase();
+  const groupId = normalizeString(options?.groupId);
+  const emailKey = resolveEmailKeyFromInput(store, options?.email || {});
+  const limit = Math.max(1, Math.min(normalizePositiveInt(options?.limit || 50, 50), 200));
+
+  return Object.values(store.groupTickets || {})
+    .map((ticket) => buildGroupTicketEntry(store, ticket, {
+      emailLinked: emailKey ? listTicketIdsByEmailKey(store, emailKey).includes(normalizeString(ticket.id)) : false,
+    }))
+    .filter((ticket) => {
+      if (!ticket) return false;
+      if (groupId && !normalizeGroupIds(ticket.groupIds).includes(groupId)) return false;
+      if (emailKey && !listTicketIdsByEmailKey(store, emailKey).includes(normalizeString(ticket.id))) return false;
+      if (!q) return true;
+      const haystack = [
+        ticket.code,
+        ticket.title,
+        ticket.description,
+        ...(ticket.labels || []),
+        ...(ticket.groups || []).map((group) => group?.name),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    })
+    .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")))
+    .slice(0, limit);
+}
+
+export async function createGroupTicket(input) {
+  const store = readState();
+  if (db.isEnabled()) {
+    try {
+      await syncGroupTicketsFromDb(store);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Sync Error before create, using central file store:", error.message);
+      else console.error("[linkStore] DB Ticket Sync Error before create, using central file store:", error);
+    }
+  }
+
+  const seriesId = normalizeString(input?.seriesId);
+  const series = store.groupTicketSeries?.[seriesId];
+  if (!seriesId || !series) throw new Error("Seleciona uma serie valida.");
+  if (series.isActive === false) throw new Error("A serie selecionada esta desativada.");
+
+  const sequenceNumber = normalizePositiveInt(series.nextNumber, 1);
+  const ticket = normalizeGroupTicketInput({
+    seriesId,
+    seriesName: series.name,
+    prefix: series.prefix,
+    padding: series.padding,
+    sequenceNumber,
+    code: buildTicketCode(series.prefix, sequenceNumber, series.padding),
+    title: normalizeString(input?.title) || buildTicketCode(series.prefix, sequenceNumber, series.padding),
+    description: normalizeString(input?.description),
+    labels: normalizeGroupLabels(input?.labels),
+    groupIds: normalizeGroupIds(input?.groupIds).filter((groupId) => Boolean(store.groups?.[groupId])),
+    createdFromEmailKey: resolveEmailKeyFromInput(store, input?.email || {}),
+    status: DEFAULT_GROUP_TICKET_STATUS,
+  });
+
+  store.groupTickets[ticket.id] = ticket;
+  store.groupTicketSeries[seriesId] = {
+    ...series,
+    nextNumber: sequenceNumber + 1,
+    updatedAt: nowIso(),
+  };
+
+  if (input?.email) {
+    const email = upsertEmail(store, input.email);
+    const emailKey = makePersistentEmailKey(email);
+    ensureTicketEmailLink(store, ticket.id, emailKey);
+    for (const groupId of ticket.groupIds) {
+      addEmailMembership(store, groupId, email.id, { membershipKind: normalizeGroupMembershipKind(input?.membershipKind) });
+    }
+  }
+
+  writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await upsertDbGroupTicketSeries(store.groupTicketSeries[seriesId]);
+      await upsertDbGroupTicket(ticket);
+      for (const emailKey of store.groupTicketEmails?.[ticket.id] || []) {
+        await upsertDbGroupTicketEmail(ticket.id, emailKey);
+      }
+      if (input?.email) {
+        const email = normalizeEmailInput(input.email);
+        const emailKey = resolveEmailKeyFromInput(store, email);
+        for (const groupId of ticket.groupIds) {
+          await upsertDbCustomGroupMember(groupId, { ...email, ...store.emails[resolveEmailId(store, email)] }, normalizeGroupMembershipKind(input?.membershipKind));
+        }
+        if (emailKey) await upsertDbGroupTicketEmail(ticket.id, emailKey);
+      }
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Create Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Ticket Create Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return buildGroupTicketEntry(store, ticket);
+}
+
+export async function updateGroupTicket(ticketId, input) {
+  const store = readState();
+  if (db.isEnabled()) {
+    try {
+      await syncGroupTicketsFromDb(store);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Sync Error before update, using central file store:", error.message);
+      else console.error("[linkStore] DB Ticket Sync Error before update, using central file store:", error);
+    }
+  }
+
+  const tid = normalizeString(ticketId);
+  const current = store.groupTickets?.[tid];
+  if (!tid || !current) throw new Error("Ticket invalido.");
+
+  const nextGroupIds = normalizeGroupIds(
+    Object.prototype.hasOwnProperty.call(input || {}, "groupIds") ? input?.groupIds : current.groupIds
+  ).filter((groupId) => Boolean(store.groups?.[groupId]));
+
+  const next = normalizeGroupTicketInput({
+    ...current,
+    ...input,
+    id: tid,
+    groupIds: nextGroupIds,
+    updatedAt: nowIso(),
+  }, current);
+  store.groupTickets[tid] = next;
+  writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await upsertDbGroupTicket(next);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Update Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Ticket Update Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return buildGroupTicketEntry(store, next);
+}
+
+export async function linkEmailToGroupTicket(ticketId, input) {
+  const store = readState();
+  if (db.isEnabled()) {
+    try {
+      await syncGroupTicketsFromDb(store);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Sync Error before email link, using central file store:", error.message);
+      else console.error("[linkStore] DB Ticket Sync Error before email link, using central file store:", error);
+    }
+  }
+
+  const tid = normalizeString(ticketId);
+  const current = store.groupTickets?.[tid];
+  if (!tid || !current) throw new Error("Ticket invalido.");
+
+  const email = upsertEmail(store, input?.email || {});
+  const emailKey = makePersistentEmailKey(email);
+  const applyGroups = input?.applyGroups !== false;
+  const membershipKind = normalizeGroupMembershipKind(input?.membershipKind || "referencia");
+  const ensuredGroupIds = normalizeGroupIds(input?.groupIds).filter((groupId) => Boolean(store.groups?.[groupId]));
+  const nextGroupIds = Array.from(new Set([...normalizeGroupIds(current.groupIds), ...ensuredGroupIds]));
+
+  store.groupTickets[tid] = normalizeGroupTicketInput({
+    ...current,
+    groupIds: nextGroupIds,
+    updatedAt: nowIso(),
+  }, current);
+  ensureTicketEmailLink(store, tid, emailKey);
+
+  const appliedGroups = [];
+  if (applyGroups) {
+    for (const groupId of nextGroupIds) {
+      const group = store.groups?.[groupId];
+      if (!group) continue;
+      addEmailMembership(store, groupId, email.id, { membershipKind });
+      appliedGroups.push(buildGroupListEntry(store, group));
+    }
+  }
+
+  writeStore(store);
+
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await upsertDbGroupTicket(store.groupTickets[tid]);
+      await upsertDbGroupTicketEmail(tid, emailKey);
+      if (applyGroups) {
+        for (const groupId of nextGroupIds) {
+          const group = store.groups?.[groupId];
+          if (!group) continue;
+          await upsertDbCustomGroup(group);
+          await upsertDbCustomGroupMember(groupId, email, membershipKind);
+        }
+      }
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Email Link Error, central file store kept as source of truth:", error.message);
+      else console.error("[linkStore] DB Ticket Email Link Error, central file store kept as source of truth:", error);
+    }
+  }
+
+  return {
+    ok: true,
+    ticket: buildGroupTicketEntry(store, store.groupTickets[tid], { emailLinked: true }),
+    appliedGroups: appliedGroups.filter(Boolean),
+    email: buildEmailListEntry(email),
+  };
+}
+
+export async function detectGroupTicketsForEmail(input) {
+  const store = readState();
+  if (db.isEnabled()) {
+    try {
+      await syncGroupTicketsFromDb(store);
+      writeStore(store);
+    } catch (error) {
+      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Detect Sync Error, using central file store:", error.message);
+      else console.error("[linkStore] DB Ticket Detect Sync Error, using central file store:", error);
+    }
+  }
+
+  const emailKey = resolveEmailKeyFromInput(store, input);
+  return extractTicketCandidates(store, input).map(({ ticket, matchedCode }) => ({
+    matchedCode,
+    ticket: buildGroupTicketEntry(store, ticket, {
+      emailLinked: emailKey ? listTicketIdsByEmailKey(store, emailKey).includes(normalizeString(ticket.id)) : false,
+    }),
+    emailLinked: emailKey ? listTicketIdsByEmailKey(store, emailKey).includes(normalizeString(ticket.id)) : false,
+    proposedGroups: normalizeGroupIds(ticket.groupIds)
+      .map((groupId) => buildGroupListEntry(store, store.groups?.[groupId]))
+      .filter(Boolean),
+  }));
 }
 
 export async function getRelatedEmails(input) {

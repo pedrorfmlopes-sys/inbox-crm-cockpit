@@ -26,6 +26,7 @@ export type ReferenceCodePosition = "prefix" | "suffix";
 export type GroupStorageProvider = "cloud" | "local" | "onedrive" | "disabled";
 export type Crm2OdooLayoutMode = "description_only" | "structured_project";
 export type Crm2OdooLayoutTarget = "project" | "lead" | "task" | "ticket";
+export type GroupTicketAutoLinkMode = "confirm" | "auto";
 
 export type ReferenceCodeSettings = {
   enabled: boolean;
@@ -45,6 +46,13 @@ export type GroupStorageSettings = {
   autoCreateFolderOnGroupCreate: boolean;
   ignoreInlineAttachments: boolean;
   suggestedViewer: "system" | "inline";
+};
+
+export type GroupTicketUiSettings = {
+  autoLinkMode: GroupTicketAutoLinkMode;
+  suggestDraftOnCreate: boolean;
+  useAiDrafts: boolean;
+  aiInstructions: string;
 };
 
 export type Crm2StructuredLayoutSettings<TModel extends string> = {
@@ -165,6 +173,8 @@ export type CockpitSettingsV1 = {
   groupLabelsManagerEnabled: boolean;
   groupLabelCatalog: string[];
   groupFavoriteIds: string[];
+  groupTicketsEnabled: boolean;
+  groupTicketUi: GroupTicketUiSettings;
 
   // CRM2 Odoo layout strategy for multi-company deployments
   crm2OdooLayout: Crm2OdooLayoutSettings;
@@ -276,6 +286,13 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   groupLabelsManagerEnabled: true,
   groupLabelCatalog: [],
   groupFavoriteIds: [],
+  groupTicketsEnabled: true,
+  groupTicketUi: {
+    autoLinkMode: "confirm",
+    suggestDraftOnCreate: true,
+    useAiDrafts: true,
+    aiInstructions: "Escreve em tom profissional e claro. Indica o numero do ticket e pede que todas as respostas futuras mantenham esse numero no assunto.",
+  },
   crm2OdooLayout: {
     mode: "description_only",
     includeAnchorIndex: true,
@@ -345,6 +362,11 @@ function normalizeGroupStorageProvider(value: unknown): GroupStorageProvider {
 function normalizeCrm2OdooLayoutMode(value: unknown): Crm2OdooLayoutMode {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "structured_project" ? "structured_project" : "description_only";
+}
+
+function normalizeGroupTicketAutoLinkMode(value: unknown): GroupTicketAutoLinkMode {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "auto" ? "auto" : "confirm";
 }
 
 function hasOffice(): boolean {
@@ -481,6 +503,21 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
     groupFavoriteIds: Array.isArray((incoming as any).groupFavoriteIds)
       ? Array.from(new Set((incoming as any).groupFavoriteIds.map((entry: any) => String(entry || "").trim()).filter(Boolean)))
       : base.groupFavoriteIds,
+    groupTicketsEnabled: typeof (incoming as any).groupTicketsEnabled === "boolean"
+      ? Boolean((incoming as any).groupTicketsEnabled)
+      : base.groupTicketsEnabled,
+    groupTicketUi: {
+      ...base.groupTicketUi,
+      ...((incoming as any).groupTicketUi || {}),
+      autoLinkMode: normalizeGroupTicketAutoLinkMode(((incoming as any).groupTicketUi || {}).autoLinkMode ?? base.groupTicketUi.autoLinkMode),
+      suggestDraftOnCreate: typeof ((incoming as any).groupTicketUi || {}).suggestDraftOnCreate === "boolean"
+        ? Boolean(((incoming as any).groupTicketUi || {}).suggestDraftOnCreate)
+        : base.groupTicketUi.suggestDraftOnCreate,
+      useAiDrafts: typeof ((incoming as any).groupTicketUi || {}).useAiDrafts === "boolean"
+        ? Boolean(((incoming as any).groupTicketUi || {}).useAiDrafts)
+        : base.groupTicketUi.useAiDrafts,
+      aiInstructions: String((((incoming as any).groupTicketUi || {}).aiInstructions ?? base.groupTicketUi.aiInstructions) || "").trim(),
+    },
     crm2OdooLayout: {
       ...base.crm2OdooLayout,
       ...incomingLayout,

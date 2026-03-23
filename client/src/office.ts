@@ -791,6 +791,34 @@ export async function displayForwardForm(content: string, isHtml = true): Promis
 }
 
 /**
+ * Opens a brand new email form with pre-filled recipients, subject and body.
+ */
+export async function displayNewMessageForm(params: {
+  toRecipients?: string[];
+  ccRecipients?: string[];
+  bccRecipients?: string[];
+  subject?: string;
+  body?: string;
+  isHtml?: boolean;
+}): Promise<void> {
+  const OfficeAny = await ensureOfficeReady();
+  const mailbox = OfficeAny?.context?.mailbox;
+  if (!mailbox?.displayNewMessageForm) {
+    throw new Error("Funcionalidade de nova mensagem nÃ£o disponÃ­vel neste ambiente.");
+  }
+
+  const isHtml = params.isHtml !== false;
+  mailbox.displayNewMessageForm({
+    toRecipients: Array.isArray(params.toRecipients) ? params.toRecipients : [],
+    ccRecipients: Array.isArray(params.ccRecipients) ? params.ccRecipients : [],
+    bccRecipients: Array.isArray(params.bccRecipients) ? params.bccRecipients : [],
+    subject: params.subject,
+    htmlBody: isHtml ? String(params.body || "") : undefined,
+    body: !isHtml ? String(params.body || "") : undefined,
+  });
+}
+
+/**
  * Opens the New Appointment form with pre-filled details.
  */
 export async function displayNewMeetingForm(params: {

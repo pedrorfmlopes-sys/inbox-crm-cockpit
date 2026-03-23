@@ -13,21 +13,30 @@ import { odooClientFromEnv } from "./odoo.js";
 import {
   addEmailToGroup,
   addLink,
+  createGroupTicket,
+  createGroupTicketSeries,
   createCustomGroup,
+  deleteGroupTicketSeries,
   deleteDocumentFromGroup,
   deleteCustomGroup,
+  detectGroupTicketsForEmail,
   getRelatedEmails,
   listAttachmentFlagsByGroup,
   listDocumentsByGroup,
   listCustomGroups,
+  listGroupTicketSeries,
+  listGroupTickets,
   listKnownEmails,
   listEmailsByGroup,
   listLinksByConversation,
   listLinksByRecord,
+  linkEmailToGroupTicket,
   removeEmailFromGroup,
   registerRelevantEmail,
   saveAttachmentFlagsToGroup,
   saveDocumentsToGroup,
+  updateGroupTicket,
+  updateGroupTicketSeries,
   updateCustomGroup,
 } from "./linkStore.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
@@ -1667,6 +1676,100 @@ app.delete("/api/links/groups/:groupId/documents/:documentId", async (req, res) 
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_document_delete_failed", details: String(e?.message || e) });
+  }
+});
+
+app.get("/api/links/group-ticket-series", async (_req, res) => {
+  try {
+    const series = await listGroupTicketSeries();
+    return res.json({ ok: true, series });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_ticket_series_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/group-ticket-series", async (req, res) => {
+  try {
+    const series = await createGroupTicketSeries(req.body || {});
+    return res.json({ ok: true, series });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_ticket_series_create_failed", details: String(e?.message || e) });
+  }
+});
+
+app.patch("/api/links/group-ticket-series/:seriesId", async (req, res) => {
+  try {
+    const series = await updateGroupTicketSeries(req.params.seriesId, req.body || {});
+    return res.json({ ok: true, series });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_ticket_series_update_failed", details: String(e?.message || e) });
+  }
+});
+
+app.delete("/api/links/group-ticket-series/:seriesId", async (req, res) => {
+  try {
+    const result = await deleteGroupTicketSeries(req.params.seriesId);
+    return res.json(result);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_ticket_series_delete_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/group-tickets/search", async (req, res) => {
+  try {
+    const tickets = await listGroupTickets(String(req.body?.q || ""), {
+      groupId: req.body?.groupId,
+      email: req.body?.email,
+      limit: req.body?.limit,
+    });
+    return res.json({ ok: true, tickets });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_tickets_search_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/group-tickets", async (req, res) => {
+  try {
+    const ticket = await createGroupTicket(req.body || {});
+    return res.json({ ok: true, ticket });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_ticket_create_failed", details: String(e?.message || e) });
+  }
+});
+
+app.patch("/api/links/group-tickets/:ticketId", async (req, res) => {
+  try {
+    const ticket = await updateGroupTicket(req.params.ticketId, req.body || {});
+    return res.json({ ok: true, ticket });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_ticket_update_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/group-tickets/:ticketId/email", async (req, res) => {
+  try {
+    const result = await linkEmailToGroupTicket(req.params.ticketId, req.body || {});
+    return res.json(result);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_ticket_email_link_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/group-tickets/detect", async (req, res) => {
+  try {
+    const matches = await detectGroupTicketsForEmail(req.body?.email || {});
+    return res.json({ ok: true, matches });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_ticket_detect_failed", details: String(e?.message || e) });
   }
 });
 

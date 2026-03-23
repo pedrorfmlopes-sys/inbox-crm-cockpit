@@ -1,27 +1,55 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   addEmailToLinkGroup,
+  createGroupTicket,
+  createGroupTicketSeries,
   createLinkGroup,
   deleteLinkGroup,
+  deleteGroupTicketSeries,
+  detectGroupTicketsForEmail,
   getGroupEmails,
   listLinkGroups,
+  listGroupTicketSeries,
   removeEmailFromLinkGroup,
+  saveGroupDocuments,
   searchKnownEmails,
+  searchGroupTickets,
+  type GroupTicketDetectionMatch,
+  type GroupTicketEntry,
+  type GroupTicketSeriesEntry,
   updateLinkGroup,
+  updateGroupTicketSeries,
+  linkEmailToGroupTicket,
   type LinkGroupEntry,
   type RelatedEmailEntry,
 } from "@/api";
+import { aiGenerate } from "@/ai/aiClient";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { openGroupExplorer, openLinkedOutlookEmail } from "@/office";
+import { displayNewMessageForm, openGroupExplorer, openLinkedOutlookEmail } from "@/office";
 import { saveSettings } from "@/settings";
 import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 
-type GroupManagerView = "groups" | "detail" | "library" | "settings" | "labels";
+type GroupManagerView = "groups" | "detail" | "library" | "settings" | "labels" | "tickets";
 type GroupStatusFilter = "all" | "em_analise" | "em_progresso" | "concluido";
 type GroupArchiveFilter = "active" | "archived" | "all";
 type MembershipKind = "principal" | "referencia";
+
+type TicketSeriesDraft = {
+  name: string;
+  prefix: string;
+  nextNumber: string;
+  padding: string;
+  isActive: boolean;
+};
+
+type TicketUiDraft = {
+  autoLinkMode: "confirm" | "auto";
+  suggestDraftOnCreate: boolean;
+  useAiDrafts: boolean;
+  aiInstructions: string;
+};
 
 type GroupDraft = {
   name: string;
@@ -172,6 +200,49 @@ function draftChanged(group: LinkGroupEntry | null, draft: GroupDraft): boolean 
   );
 }
 
+function createTicketSeriesDraft(series: GroupTicketSeriesEntry | null): TicketSeriesDraft {
+  return {
+    name: String(series?.name || "").trim(),
+    prefix: String(series?.prefix || "").trim(),
+    nextNumber: String(Number(series?.nextNumber || 1) || 1),
+    padding: String(Number(series?.padding || 4) || 4),
+    isActive: series?.isActive !== false,
+  };
+}
+
+function ticketSeriesDraftChanged(series: GroupTicketSeriesEntry | null, draft: TicketSeriesDraft): boolean {
+  if (!series) return false;
+  return (
+    String(series.name || "").trim() !== String(draft.name || "").trim()
+    || String(series.prefix || "").trim() !== String(draft.prefix || "").trim()
+    || Number(series.nextNumber || 1) !== Math.max(1, Number(draft.nextNumber || 1) || 1)
+    || Number(series.padding || 4) !== Math.max(2, Number(draft.padding || 4) || 4)
+    || (series.isActive !== false) !== Boolean(draft.isActive)
+  );
+}
+
+function createTicketUiDraft(value: any): TicketUiDraft {
+  return {
+    autoLinkMode: value?.autoLinkMode === "auto" ? "auto" : "confirm",
+    suggestDraftOnCreate: value?.suggestDraftOnCreate !== false,
+    useAiDrafts: value?.useAiDrafts !== false,
+    aiInstructions: String(value?.aiInstructions || "").trim(),
+  };
+}
+
+function ticketUiDraftChanged(current: TicketUiDraft, next: TicketUiDraft): boolean {
+  return (
+    current.autoLinkMode !== next.autoLinkMode
+    || current.suggestDraftOnCreate !== next.suggestDraftOnCreate
+    || current.useAiDrafts !== next.useAiDrafts
+    || current.aiInstructions !== next.aiInstructions
+  );
+}
+
+function uniqueEmails(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
+}
+
 const LabelPicker: React.FC<{
   value: string;
   onChange: (next: string) => void;
@@ -312,10 +383,27 @@ export const GroupManagerCockpit: React.FC = () => {
   const [newCatalogLabel, setNewCatalogLabel] = useState("");
   const [selectedManagedLabel, setSelectedManagedLabel] = useState("");
   const [renameLabelValue, setRenameLabelValue] = useState("");
+  const [ticketSeries, setTicketSeries] = useState<GroupTicketSeriesEntry[]>([]);
+  const [ticketSeriesLoading, setTicketSeriesLoading] = useState(false);
+  const [selectedTicketSeriesId, setSelectedTicketSeriesId] = useState("");
+  const [ticketSeriesDraft, setTicketSeriesDraft] = useState<TicketSeriesDraft>(createTicketSeriesDraft(null));
+  const [newTicketSeriesDraft, setNewTicketSeriesDraft] = useState<TicketSeriesDraft>({ name: "", prefix: "", nextNumber: "1", padding: "4", isActive: true });
+  const [ticketSearchQuery, setTicketSearchQuery] = useState("");
+  const [ticketSearchResults, setTicketSearchResults] = useState<GroupTicketEntry[]>([]);
+  const [ticketSearchLoading, setTicketSearchLoading] = useState(false);
+  const [currentEmailTickets, setCurrentEmailTickets] = useState<GroupTicketEntry[]>([]);
+  const [ticketMatches, setTicketMatches] = useState<GroupTicketDetectionMatch[]>([]);
+  const [ticketDetectionLoading, setTicketDetectionLoading] = useState(false);
+  const [ticketMatchGroupSelection, setTicketMatchGroupSelection] = useState<Record<string, string[]>>({});
+  const [ticketUiDraft, setTicketUiDraft] = useState<TicketUiDraft>(createTicketUiDraft(settings?.groupTicketUi));
 
   const selectedGroup = useMemo(
     () => groups.find((group) => group.id === selectedGroupId) || null,
     [groups, selectedGroupId]
+  );
+  const selectedTicketSeries = useMemo(
+    () => ticketSeries.find((series) => series.id === selectedTicketSeriesId) || null,
+    [selectedTicketSeriesId, ticketSeries]
   );
 
   const currentEmailPayload = useMemo(
@@ -346,6 +434,15 @@ export const GroupManagerCockpit: React.FC = () => {
   const currentEmailKey = useMemo(() => makeEmailKey(currentEmailPayload), [currentEmailPayload]);
   const favoriteGroupIds = settings?.groupFavoriteIds || [];
   const favoriteGroupSet = useMemo(() => new Set(favoriteGroupIds), [favoriteGroupIds]);
+  const groupTicketsEnabled = settings?.groupTicketsEnabled !== false;
+  const ticketUi = settings?.groupTicketUi;
+  const currentSavableAttachments = useMemo(
+    () =>
+      (attachments || [])
+        .filter((attachment) => String(attachment.name || "").trim() && String(attachment.content || "").trim())
+        .filter((attachment) => !(settings?.groupStorage.ignoreInlineAttachments && attachment.isInline)),
+    [attachments, settings?.groupStorage.ignoreInlineAttachments]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -421,6 +518,154 @@ export const GroupManagerCockpit: React.FC = () => {
       cancelled = true;
     };
   }, [libraryQuery, reloadToken, selectedGroupId, setMsg]);
+
+  useEffect(() => {
+    if (!groupTicketsEnabled) {
+      setTicketSeries([]);
+      setSelectedTicketSeriesId("");
+      return;
+    }
+    let cancelled = false;
+    setTicketSeriesLoading(true);
+    listGroupTicketSeries()
+      .then((rows) => {
+        if (cancelled) return;
+        const nextRows = Array.isArray(rows) ? rows : [];
+        setTicketSeries(nextRows);
+        setSelectedTicketSeriesId((current) => {
+          if (current && nextRows.some((row) => row.id === current)) return current;
+          return nextRows.find((row) => row.isActive !== false)?.id || nextRows[0]?.id || "";
+        });
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        setTicketSeries([]);
+        setMsg(error?.message || "Nao foi possivel carregar as series de tickets.");
+      })
+      .finally(() => {
+        if (!cancelled) setTicketSeriesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [groupTicketsEnabled, reloadToken, setMsg]);
+
+  useEffect(() => {
+    setTicketSeriesDraft(createTicketSeriesDraft(selectedTicketSeries));
+  }, [selectedTicketSeries]);
+
+  useEffect(() => {
+    setTicketUiDraft(createTicketUiDraft(settings?.groupTicketUi));
+  }, [
+    settings?.groupTicketUi?.aiInstructions,
+    settings?.groupTicketUi?.autoLinkMode,
+    settings?.groupTicketUi?.suggestDraftOnCreate,
+    settings?.groupTicketUi?.useAiDrafts,
+  ]);
+
+  useEffect(() => {
+    if (!groupTicketsEnabled || !(currentEmailPayload.itemId || currentEmailPayload.internetMessageId || currentEmailPayload.conversationId)) {
+      setCurrentEmailTickets([]);
+      return;
+    }
+    let cancelled = false;
+    searchGroupTickets({
+      email: currentEmailPayload,
+      limit: 20,
+    })
+      .then((rows) => {
+        if (cancelled) return;
+        setCurrentEmailTickets(Array.isArray(rows) ? rows : []);
+      })
+      .catch((error: any) => {
+        if (!cancelled) setMsg(error?.message || "Nao foi possivel carregar os tickets do email atual.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentEmailKey, currentEmailPayload, groupTicketsEnabled, reloadToken, setMsg]);
+
+  useEffect(() => {
+    if (!groupTicketsEnabled || !(currentEmailPayload.subject || currentEmailPayload.bodyText || currentEmailPayload.bodyHtml)) {
+      setTicketMatches([]);
+      return;
+    }
+    let cancelled = false;
+    setTicketDetectionLoading(true);
+    detectGroupTicketsForEmail({ email: currentEmailPayload })
+      .then(async (matches) => {
+        if (cancelled) return;
+        const nextMatches = Array.isArray(matches) ? matches : [];
+        setTicketMatches(nextMatches);
+        setTicketMatchGroupSelection((current) => {
+          const next = { ...current };
+          for (const match of nextMatches) {
+            if (!next[match.ticket.id]?.length) {
+              next[match.ticket.id] = (match.proposedGroups || []).map((group) => group.id);
+            }
+          }
+          return next;
+        });
+
+        if (ticketUi?.autoLinkMode !== "auto") return;
+        const autoMatches = nextMatches.filter((match) => !match.emailLinked);
+        if (!autoMatches.length) return;
+        for (const match of autoMatches) {
+          await linkEmailToGroupTicket(match.ticket.id, {
+            email: currentEmailPayload,
+            applyGroups: true,
+            groupIds: (match.proposedGroups || []).map((group) => group.id),
+            membershipKind: "referencia",
+          });
+        }
+        if (!cancelled) {
+          setMsg(`${autoMatches.length} ticket(s) detetado(s) e ligado(s) automaticamente ao email atual.`);
+          setReloadToken((value) => value + 1);
+        }
+      })
+      .catch((error: any) => {
+        if (!cancelled) {
+          setTicketMatches([]);
+          setMsg(error?.message || "Nao foi possivel detetar tickets no email atual.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setTicketDetectionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentEmailKey, currentEmailPayload, groupTicketsEnabled, reloadToken, setMsg, ticketUi?.autoLinkMode]);
+
+  useEffect(() => {
+    if (!groupTicketsEnabled) {
+      setTicketSearchResults([]);
+      return;
+    }
+    let cancelled = false;
+    setTicketSearchLoading(true);
+    searchGroupTickets({
+      q: ticketSearchQuery,
+      groupId: selectedGroupId || undefined,
+      limit: 20,
+    })
+      .then((rows) => {
+        if (cancelled) return;
+        setTicketSearchResults(Array.isArray(rows) ? rows : []);
+      })
+      .catch((error: any) => {
+        if (!cancelled) {
+          setTicketSearchResults([]);
+          setMsg(error?.message || "Nao foi possivel pesquisar tickets.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setTicketSearchLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [groupTicketsEnabled, reloadToken, selectedGroupId, setMsg, ticketSearchQuery]);
 
   const allLabels = useMemo(() => {
     return mergeLabelCatalog(
@@ -675,6 +920,280 @@ export const GroupManagerCockpit: React.FC = () => {
     }
   }
 
+  async function handleSaveCurrentAttachmentsToGroup() {
+    if (!selectedGroup) return;
+    if (selectedGroup.documentsEnabled === false) {
+      setMsg("Ativa primeiro os documentos neste grupo.");
+      return;
+    }
+    if (!currentSavableAttachments.length) {
+      setMsg("O email atual nao tem anexos guardaveis neste momento.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const storageProvider = String(settings?.groupStorage.provider || "cloud").trim();
+      const storageBasePath = String(settings?.groupStorage.baseFolderPath || "").trim();
+      const docs = currentSavableAttachments.map((attachment) => ({
+        id: `doc_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${attachment.id || attachment.name}`}`,
+        name: attachment.name,
+        contentType: attachment.contentType,
+        contentBase64: attachment.content,
+        size: attachment.size,
+        sourceEmailKey: currentEmailKey,
+        sourceItemId: String(ctx.itemId || "").trim(),
+        sourceInternetMessageId: String(ctx.internetMessageId || "").trim(),
+        sourceConversationId: String(ctx.conversationId || "").trim(),
+        sourceEmailSubject: String(ctx.subject || "").trim(),
+        storageProvider,
+        storageBasePath,
+      }));
+      await saveGroupDocuments(selectedGroup.id, { documents: docs });
+      await refreshAll();
+      setMsg(`${docs.length} anexo(s) guardado(s) nos documentos do grupo.`);
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel guardar os anexos deste email no grupo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCreateTicketSeries() {
+    const name = String(newTicketSeriesDraft.name || "").trim();
+    const prefix = String(newTicketSeriesDraft.prefix || "").trim();
+    if (!name || !prefix) {
+      setMsg("Define nome e prefixo para a nova serie.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const series = await createGroupTicketSeries({
+        name,
+        prefix,
+        nextNumber: Math.max(1, Number(newTicketSeriesDraft.nextNumber || 1) || 1),
+        padding: Math.max(2, Number(newTicketSeriesDraft.padding || 4) || 4),
+        isActive: newTicketSeriesDraft.isActive,
+      });
+      setSelectedTicketSeriesId(series.id);
+      setNewTicketSeriesDraft({ name: "", prefix: "", nextNumber: "1", padding: "4", isActive: true });
+      setReloadToken((value) => value + 1);
+      setMsg(`Serie ${series.prefix} criada.`);
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel criar a serie.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveTicketSeries() {
+    if (!selectedTicketSeries) return;
+    const name = String(ticketSeriesDraft.name || "").trim();
+    const prefix = String(ticketSeriesDraft.prefix || "").trim();
+    if (!name || !prefix) {
+      setMsg("Define nome e prefixo para a serie.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const updated = await updateGroupTicketSeries(selectedTicketSeries.id, {
+        name,
+        prefix,
+        nextNumber: Math.max(1, Number(ticketSeriesDraft.nextNumber || 1) || 1),
+        padding: Math.max(2, Number(ticketSeriesDraft.padding || 4) || 4),
+        isActive: ticketSeriesDraft.isActive,
+      });
+      setSelectedTicketSeriesId(updated.id);
+      setReloadToken((value) => value + 1);
+      setMsg(`Serie ${updated.prefix} atualizada.`);
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel atualizar a serie.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleResetTicketSeriesCounter() {
+    if (!selectedTicketSeries) return;
+    setBusy(true);
+    try {
+      const updated = await updateGroupTicketSeries(selectedTicketSeries.id, {
+        nextNumber: 1,
+      });
+      setSelectedTicketSeriesId(updated.id);
+      setReloadToken((value) => value + 1);
+      setMsg(`Contador da serie ${updated.prefix} reiniciado.`);
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel reiniciar o contador.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteTicketSeries() {
+    if (!selectedTicketSeries) return;
+    if (!window.confirm(`Eliminar a serie "${selectedTicketSeries.name}"?`)) return;
+    setBusy(true);
+    try {
+      await deleteGroupTicketSeries(selectedTicketSeries.id);
+      setSelectedTicketSeriesId("");
+      setReloadToken((value) => value + 1);
+      setMsg("Serie eliminada.");
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel eliminar a serie.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCreateTicketFromCurrentEmail() {
+    if (!groupTicketsEnabled) {
+      setMsg("Ativa primeiro os tickets em Settings > Grupos.");
+      return;
+    }
+    if (!selectedTicketSeriesId) {
+      setMsg("Seleciona primeiro uma serie.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const ticket = await createGroupTicket({
+        seriesId: selectedTicketSeriesId,
+        title: String(ctx.subject || "").trim() || `Ticket ${selectedGroup?.name || ""}`.trim() || "Ticket",
+        description: String(bodyText || "").trim().slice(0, 2000),
+        labels: selectedGroup?.labels || [],
+        groupIds: selectedGroup ? [selectedGroup.id] : [],
+        email: currentEmailPayload,
+        membershipKind: selectedGroup ? linkKind : "referencia",
+      });
+      setReloadToken((value) => value + 1);
+      setMsg(`Ticket ${ticket.code} criado.`);
+      if (ticketUi?.suggestDraftOnCreate) {
+        await handleOpenTicketDraft(ticket);
+      }
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel criar o ticket.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleLinkCurrentEmailToTicket(ticket: GroupTicketEntry, groupIdsOverride?: string[]) {
+    setBusy(true);
+    try {
+      const ensuredGroupIds = Array.from(
+        new Set([
+          ...(groupIdsOverride || []),
+          ...(selectedGroup ? [selectedGroup.id] : []),
+        ].filter(Boolean))
+      );
+      const result = await linkEmailToGroupTicket(ticket.id, {
+        email: currentEmailPayload,
+        applyGroups: true,
+        groupIds: ensuredGroupIds,
+        membershipKind: selectedGroup ? linkKind : "referencia",
+      });
+      setReloadToken((value) => value + 1);
+      const groupSummary = result.appliedGroups.length ? ` ${result.appliedGroups.length} grupo(s) atualizados.` : "";
+      setMsg(`Email atual ligado ao ticket ${ticket.code}.${groupSummary}`);
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel ligar o email ao ticket.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleTicketMatchGroup(ticketId: string, groupId: string) {
+    setTicketMatchGroupSelection((current) => {
+      const selected = current[ticketId] || [];
+      return {
+        ...current,
+        [ticketId]: selected.includes(groupId)
+          ? selected.filter((entry) => entry !== groupId)
+          : [...selected, groupId],
+      };
+    });
+  }
+
+  async function handleConfirmDetectedTicket(match: GroupTicketDetectionMatch) {
+    const selectedGroupIds = Array.from(
+      new Set([
+        ...(ticketMatchGroupSelection[match.ticket.id] || (match.proposedGroups || []).map((group) => group.id)),
+        ...(selectedGroup ? [selectedGroup.id] : []),
+      ].filter(Boolean))
+    );
+    await handleLinkCurrentEmailToTicket(match.ticket, selectedGroupIds);
+  }
+
+  async function handleOpenTicketDraft(ticket: GroupTicketEntry) {
+    const toRecipients = uniqueEmails([ctx.fromEmail]);
+    const ccRecipients = uniqueEmails((ctx.ccRecipients || []).map((entry) => entry.email)).filter((entry) => !toRecipients.includes(entry));
+    const baseSubject = String(ctx.subject || ticket.title || "Ticket").trim();
+    const subject = baseSubject.includes(ticket.code) ? baseSubject : `[${ticket.code}] ${baseSubject}`.trim();
+    let body = [
+      `<p>Foi aberto o ticket <strong>${ticket.code}</strong>.</p>`,
+      `<p>Nas próximas respostas, pedimos que mantenham este número no assunto do email.</p>`,
+    ].join("");
+
+    if (ticketUi?.useAiDrafts) {
+      try {
+        const response = await aiGenerate({
+          action: "reply",
+          mode: "quality",
+          locale: (settings?.replyLanguage || "pt-PT") as any,
+          tone: "formal",
+          email: {
+            subject: String(ctx.subject || "").trim(),
+            from: String(ctx.fromEmail || "").trim(),
+            to: (ctx.toRecipients || []).map((entry) => entry.email),
+            cc: (ctx.ccRecipients || []).map((entry) => entry.email),
+            bodyText: String(bodyText || "").trim(),
+            bodyScope: "full",
+          },
+          inputText: [
+            `Redige um email de abertura/atualizacao do ticket ${ticket.code}.`,
+            "Resume brevemente o tema do email original.",
+            `Pede explicitamente que todas as respostas futuras incluam ${ticket.code} no assunto.`,
+            String(ticketUi?.aiInstructions || "").trim(),
+          ].filter(Boolean).join("\n"),
+          knowledge: settings?.aiKnowledge || [],
+        } as any);
+        if ((response as any)?.ok) {
+          body = String((response as any).html || "").trim() || `<p>${String((response as any).text || "").trim().replace(/\n/g, "<br/>")}</p>`;
+        }
+      } catch {
+        // fallback static body
+      }
+    }
+
+    await displayNewMessageForm({
+      toRecipients,
+      ccRecipients,
+      subject,
+      body,
+      isHtml: true,
+    });
+    setMsg(`Draft do ticket ${ticket.code} aberto para envio.`);
+  }
+
+  async function handleSaveTicketUi() {
+    setBusy(true);
+    try {
+      await saveSettings({
+        groupTicketUi: {
+          autoLinkMode: ticketUiDraft.autoLinkMode,
+          suggestDraftOnCreate: ticketUiDraft.suggestDraftOnCreate,
+          useAiDrafts: ticketUiDraft.useAiDrafts,
+          aiInstructions: String(ticketUiDraft.aiInstructions || "").trim(),
+        },
+      });
+      setMsg("Settings locais dos tickets guardados.");
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel guardar os settings dos tickets.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSetSelectedEmailsKind(nextKind: MembershipKind) {
     if (!selectedGroup || !selectedGroupEmailRows.length) return;
     setBusy(true);
@@ -835,18 +1354,22 @@ export const GroupManagerCockpit: React.FC = () => {
   }
 
   const trackTransform = view === "groups" ? "translateX(0%)" : view === "detail" ? "translateX(-33.3333%)" : "translateX(-66.6667%)";
-  const configView = view === "settings" || view === "labels";
+  const configView = view === "settings" || view === "labels" || view === "tickets";
 
   const headerTitle = view === "settings"
     ? "Settings dos grupos"
     : view === "labels"
       ? "Gestor de etiquetas"
+      : view === "tickets"
+        ? "Tickets dos grupos"
       : "Grupos";
 
   const headerHint = view === "settings"
     ? "Configuracoes locais."
     : view === "labels"
       ? "Catalogo central."
+      : view === "tickets"
+        ? "Series, contadores e automacao."
       : "Ligacoes manuais.";
 
   return (
@@ -862,7 +1385,7 @@ export const GroupManagerCockpit: React.FC = () => {
             <button
               type="button"
               style={S.secondaryBtn}
-              onClick={() => setView(view === "labels" ? "settings" : "groups")}
+              onClick={() => setView(view === "labels" || view === "tickets" ? "settings" : "groups")}
               disabled={busy}
             >
               Voltar
@@ -905,6 +1428,13 @@ export const GroupManagerCockpit: React.FC = () => {
                   <div style={S.settingEntryTitle}>Etiquetas</div>
                 </div>
                 <span style={S.settingEntryMeta}>{labelsManagerEnabled ? "Ativo" : "Desativado"}</span>
+              </button>
+
+              <button type="button" style={S.settingEntry} onClick={() => setView("tickets")}>
+                <div style={S.settingEntryBody}>
+                  <div style={S.settingEntryTitle}>Tickets</div>
+                </div>
+                <span style={S.settingEntryMeta}>{groupTicketsEnabled ? "Ativo" : "Desativado"}</span>
               </button>
 
               <div style={S.card}>
@@ -1012,6 +1542,234 @@ export const GroupManagerCockpit: React.FC = () => {
                     ) : (
                       <PanelState compact tone="info" title="Seleciona uma etiqueta" description="Escolhe uma etiqueta da lista para a renomear ou eliminar." />
                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        ) : view === "tickets" ? (
+          <section style={S.cleanPanel}>
+            <div style={S.panelHeader}>
+              <div>
+                <div style={S.sectionTitleRow}>
+                  <div style={S.panelTitle}>Tickets dos grupos</div>
+                  <HelpHint text="Ecran limpo para series, contadores e automacao local dos tickets. Nao depende do email ou do grupo aberto." title="Ajuda: Tickets dos grupos" />
+                </div>
+              </div>
+            </div>
+
+            {!groupTicketsEnabled ? (
+              <div style={S.card}>
+                <PanelState
+                  compact
+                  tone="info"
+                  title="Tickets desativados"
+                  description="Ativa a funcionalidade em Settings > Grupos para usar series e automatismos de tickets."
+                />
+                <div style={S.inlineRow}>
+                  <button type="button" style={S.primaryBtn} onClick={() => openSettingsSection("groups")}>
+                    <Icons.Settings size={12} />
+                    Abrir Settings gerais
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={S.settingsGrid}>
+                <div style={S.card}>
+                  <div style={S.sectionTitleRow}>
+                    <div style={S.fieldLabel}>Comportamento</div>
+                    <HelpHint text="Escolhe se a ligacao aos tickets detetados e automatica ou confirmada. Aqui tambem decides se a app abre um draft e se a IA escreve esse rascunho." title="Ajuda: Comportamento dos tickets" />
+                  </div>
+                  <div style={S.inlineRow}>
+                    <select
+                      style={S.compactSelect}
+                      value={ticketUiDraft.autoLinkMode}
+                      onChange={(event) =>
+                        setTicketUiDraft((current) => ({
+                          ...current,
+                          autoLinkMode: event.target.value === "auto" ? "auto" : "confirm",
+                        }))
+                      }
+                    >
+                      <option value="confirm">Confirmar ligacoes</option>
+                      <option value="auto">Ligar automaticamente</option>
+                    </select>
+                    <label style={S.toggleRow}>
+                      <input
+                        type="checkbox"
+                        checked={ticketUiDraft.suggestDraftOnCreate}
+                        onChange={(event) =>
+                          setTicketUiDraft((current) => ({ ...current, suggestDraftOnCreate: event.target.checked }))
+                        }
+                      />
+                      <span>Sugerir draft ao criar</span>
+                    </label>
+                    <label style={S.toggleRow}>
+                      <input
+                        type="checkbox"
+                        checked={ticketUiDraft.useAiDrafts}
+                        onChange={(event) =>
+                          setTicketUiDraft((current) => ({ ...current, useAiDrafts: event.target.checked }))
+                        }
+                      />
+                      <span>Usar IA no draft</span>
+                    </label>
+                  </div>
+                  <textarea
+                    style={S.textarea}
+                    value={ticketUiDraft.aiInstructions}
+                    onChange={(event) => setTicketUiDraft((current) => ({ ...current, aiInstructions: event.target.value }))}
+                    placeholder="Instrucoes extra para a IA dos tickets"
+                  />
+                  <div style={S.inlineRow}>
+                    <button
+                      type="button"
+                      style={S.primaryBtn}
+                      onClick={() => void handleSaveTicketUi()}
+                      disabled={busy || !ticketUiDraftChanged(createTicketUiDraft(settings?.groupTicketUi), ticketUiDraft)}
+                    >
+                      <Icons.Save size={12} />
+                      Guardar settings
+                    </button>
+                  </div>
+                </div>
+
+                <div style={S.settingsColumns}>
+                  <div style={S.managerList}>
+                    <div style={S.fieldLabel}>Series</div>
+                    {ticketSeriesLoading ? (
+                      <PanelState compact tone="loading" title="A carregar series" description="A ler o catalogo central de tickets." />
+                    ) : !ticketSeries.length ? (
+                      <PanelState compact tone="info" title="Sem series" description="Cria a primeira serie para gerar tickets numerados." />
+                    ) : (
+                      ticketSeries.map((series) => {
+                        const active = series.id === selectedTicketSeriesId;
+                        return (
+                          <button
+                            key={series.id}
+                            type="button"
+                            style={active ? S.managerRowActive : S.managerRow}
+                            onClick={() => setSelectedTicketSeriesId(series.id)}
+                          >
+                            <span>{series.prefix}</span>
+                            <span style={S.managerCount}>{series.nextNumber}</span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <div style={S.settingsGrid}>
+                    <div style={S.card}>
+                      <div style={S.fieldLabel}>Nova serie</div>
+                      <div style={S.inlineRow}>
+                        <input
+                          style={S.input}
+                          value={newTicketSeriesDraft.name}
+                          onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, name: event.target.value }))}
+                          placeholder="Nome"
+                        />
+                        <input
+                          style={S.input}
+                          value={newTicketSeriesDraft.prefix}
+                          onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, prefix: event.target.value }))}
+                          placeholder="Prefixo"
+                        />
+                      </div>
+                      <div style={S.inlineRow}>
+                        <input
+                          style={S.input}
+                          value={newTicketSeriesDraft.nextNumber}
+                          onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, nextNumber: event.target.value }))}
+                          placeholder="Proximo numero"
+                        />
+                        <input
+                          style={S.input}
+                          value={newTicketSeriesDraft.padding}
+                          onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, padding: event.target.value }))}
+                          placeholder="Padding"
+                        />
+                        <label style={S.toggleRow}>
+                          <input
+                            type="checkbox"
+                            checked={newTicketSeriesDraft.isActive}
+                            onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, isActive: event.target.checked }))}
+                          />
+                          <span>Ativa</span>
+                        </label>
+                      </div>
+                      <div style={S.inlineRow}>
+                        <button type="button" style={S.primaryBtn} onClick={() => void handleCreateTicketSeries()} disabled={busy}>
+                          <Icons.Plus size={12} />
+                          Criar serie
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={S.card}>
+                      <div style={S.fieldLabel}>Serie selecionada</div>
+                      {selectedTicketSeries ? (
+                        <>
+                          <div style={S.inlineRow}>
+                            <input
+                              style={S.input}
+                              value={ticketSeriesDraft.name}
+                              onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, name: event.target.value }))}
+                              placeholder="Nome"
+                            />
+                            <input
+                              style={S.input}
+                              value={ticketSeriesDraft.prefix}
+                              onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, prefix: event.target.value }))}
+                              placeholder="Prefixo"
+                            />
+                          </div>
+                          <div style={S.inlineRow}>
+                            <input
+                              style={S.input}
+                              value={ticketSeriesDraft.nextNumber}
+                              onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, nextNumber: event.target.value }))}
+                              placeholder="Proximo numero"
+                            />
+                            <input
+                              style={S.input}
+                              value={ticketSeriesDraft.padding}
+                              onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, padding: event.target.value }))}
+                              placeholder="Padding"
+                            />
+                            <label style={S.toggleRow}>
+                              <input
+                                type="checkbox"
+                                checked={ticketSeriesDraft.isActive}
+                                onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, isActive: event.target.checked }))}
+                              />
+                              <span>Ativa</span>
+                            </label>
+                          </div>
+                          <div style={S.inlineRow}>
+                            <button
+                              type="button"
+                              style={S.primaryBtn}
+                              onClick={() => void handleSaveTicketSeries()}
+                              disabled={busy || !ticketSeriesDraftChanged(selectedTicketSeries, ticketSeriesDraft)}
+                            >
+                              <Icons.Save size={12} />
+                              Guardar
+                            </button>
+                            <button type="button" style={S.secondaryBtn} onClick={() => void handleResetTicketSeriesCounter()} disabled={busy}>
+                              <Icons.RefreshCw size={12} />
+                              Reiniciar contador
+                            </button>
+                            <button type="button" style={S.dangerBtn} onClick={() => void handleDeleteTicketSeries()} disabled={busy}>
+                              <Icons.Trash size={12} />
+                              Eliminar
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <PanelState compact tone="info" title="Seleciona uma serie" description="Escolhe uma serie para editar o nome, o prefixo ou o contador." />
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1233,11 +1991,26 @@ export const GroupManagerCockpit: React.FC = () => {
                         <Icons.Link size={12} />
                         Ligar atual
                       </button>
+                      <button
+                        type="button"
+                        style={S.secondaryBtn}
+                        onClick={() => void handleSaveCurrentAttachmentsToGroup()}
+                        disabled={busy || selectedGroup.documentsEnabled === false || !currentSavableAttachments.length}
+                        title="Guardar os anexos do email atual nos documentos do grupo"
+                      >
+                        <Icons.Paperclip size={12} />
+                        Guardar anexos
+                      </button>
                       <button type="button" style={S.secondaryBtn} onClick={() => setView("library")} disabled={busy} title="Abrir biblioteca de emails ja registados">
                         <Icons.Plus size={12} />
                         Biblioteca
                       </button>
                     </div>
+                  </div>
+                  <div style={S.smallMeta}>
+                    {currentSavableAttachments.length
+                      ? `${currentSavableAttachments.length} anexo(s) disponivel(eis) no email atual`
+                      : "Sem anexos guardaveis no email atual"}
                   </div>
                   <div style={S.inlineRow}>
                     <input style={S.input} value={groupEmailQuery} onChange={(event) => setGroupEmailQuery(event.target.value)} placeholder="Filtrar emails do grupo" />
@@ -1289,6 +2062,165 @@ export const GroupManagerCockpit: React.FC = () => {
                     })}
                   </div>
                 </div>
+
+                {groupTicketsEnabled ? (
+                  <div style={S.card}>
+                    <div style={S.sectionRow}>
+                      <div>
+                        <div style={S.sectionTitleRow}>
+                          <div style={S.fieldLabel}>Tickets</div>
+                          <HelpHint text="Cria tickets numerados, liga o email atual a tickets existentes e confirma tickets detetados no assunto ou no corpo do email." title="Ajuda: Tickets" />
+                        </div>
+                        <div style={S.smallMeta}>
+                          {currentEmailTickets.length} ticket(s) ligados ao email atual
+                          {ticketMatches.length ? ` · ${ticketMatches.length} detecao(oes)` : ""}
+                        </div>
+                      </div>
+                      <div style={S.inlineActions}>
+                        <select
+                          style={S.compactSelect}
+                          value={selectedTicketSeriesId}
+                          onChange={(event) => setSelectedTicketSeriesId(event.target.value)}
+                        >
+                          <option value="">Serie</option>
+                          {ticketSeries.filter((entry) => entry.isActive !== false).map((series) => (
+                            <option key={series.id} value={series.id}>
+                              {series.prefix}
+                            </option>
+                          ))}
+                        </select>
+                        <button type="button" style={S.secondaryBtn} onClick={() => setView("tickets")} disabled={busy}>
+                          <Icons.Settings size={12} />
+                          Series
+                        </button>
+                        <button type="button" style={S.primaryBtn} onClick={() => void handleCreateTicketFromCurrentEmail()} disabled={busy || !selectedTicketSeriesId}>
+                          <Icons.Plus size={12} />
+                          Criar ticket
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={S.inlineRow}>
+                      <input
+                        style={S.input}
+                        value={ticketSearchQuery}
+                        onChange={(event) => setTicketSearchQuery(event.target.value)}
+                        placeholder="Pesquisar ticket por codigo, titulo ou etiqueta"
+                      />
+                    </div>
+
+                    {ticketDetectionLoading ? (
+                      <PanelState compact tone="loading" title="A detetar tickets" description="A verificar se o email atual ja menciona tickets conhecidos." />
+                    ) : null}
+
+                    {(ticketUi?.autoLinkMode === "auto" ? false : true) && ticketMatches.length ? (
+                      <div style={S.ticketStack}>
+                        {ticketMatches.map((match) => {
+                          const selectedIds = ticketMatchGroupSelection[match.ticket.id] || (match.proposedGroups || []).map((group) => group.id);
+                          return (
+                            <div key={match.ticket.id} style={S.ticketMatchCard}>
+                              <div style={S.ticketRowHead}>
+                                <div style={S.ticketCode}>{match.ticket.code}</div>
+                                <div style={S.ticketTitleText}>{match.ticket.title || "Ticket detetado"}</div>
+                              </div>
+                              <div style={S.ticketMetaRow}>
+                                {match.emailLinked ? "Email ja ligado" : "Ticket detetado neste email"}
+                              </div>
+                              {match.proposedGroups?.length ? (
+                                <div style={S.chipWrap}>
+                                  {match.proposedGroups.map((group) => {
+                                    const active = selectedIds.includes(group.id);
+                                    return (
+                                      <button
+                                        key={`${match.ticket.id}:${group.id}`}
+                                        type="button"
+                                        style={active ? S.chipActive : S.chip}
+                                        onClick={() => toggleTicketMatchGroup(match.ticket.id, group.id)}
+                                      >
+                                        {group.name}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
+                              <div style={S.inlineRow}>
+                                <button
+                                  type="button"
+                                  style={S.primaryBtn}
+                                  onClick={() => void handleConfirmDetectedTicket(match)}
+                                  disabled={busy || match.emailLinked}
+                                >
+                                  <Icons.Link size={12} />
+                                  {match.emailLinked ? "Ligado" : "Confirmar ligacao"}
+                                </button>
+                                <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenTicketDraft(match.ticket)} disabled={busy}>
+                                  <Icons.ExternalLink size={12} />
+                                  Draft
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    {currentEmailTickets.length ? (
+                      <div style={S.ticketStack}>
+                        {currentEmailTickets.map((ticket) => (
+                          <div key={ticket.id} style={S.ticketRow}>
+                            <div style={S.ticketRowHead}>
+                              <div style={S.ticketCode}>{ticket.code}</div>
+                              <div style={S.ticketTitleText}>{ticket.title || "Ticket"}</div>
+                            </div>
+                            <div style={S.ticketMetaRow}>
+                              {ticket.groupIds?.length || 0} grupo(s) · {ticket.labels?.length || 0} etiqueta(s)
+                            </div>
+                            <div style={S.inlineRow}>
+                              <button type="button" style={S.secondaryBtn} onClick={() => void handleLinkCurrentEmailToTicket(ticket)} disabled={busy}>
+                                <Icons.Link size={12} />
+                                Reforcar ligacao
+                              </button>
+                              <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenTicketDraft(ticket)} disabled={busy}>
+                                <Icons.ExternalLink size={12} />
+                                Draft
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {ticketSearchLoading ? (
+                      <PanelState compact tone="loading" title="A pesquisar tickets" description="A procurar tickets existentes para este grupo." />
+                    ) : ticketSearchQuery.trim() && ticketSearchResults.length ? (
+                      <div style={S.ticketStack}>
+                        {ticketSearchResults.slice(0, 8).map((ticket) => (
+                          <div key={ticket.id} style={S.ticketRow}>
+                            <div style={S.ticketRowHead}>
+                              <div style={S.ticketCode}>{ticket.code}</div>
+                              <div style={S.ticketTitleText}>{ticket.title || "Ticket"}</div>
+                            </div>
+                            <div style={S.ticketMetaRow}>
+                              {ticket.groupIds?.length || 0} grupo(s) · {ticket.labels?.join(", ") || "sem etiquetas"}
+                            </div>
+                            <div style={S.inlineRow}>
+                              <button type="button" style={S.primaryBtn} onClick={() => void handleLinkCurrentEmailToTicket(ticket)} disabled={busy}>
+                                <Icons.Link size={12} />
+                                Ligar email
+                              </button>
+                              <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenTicketDraft(ticket)} disabled={busy}>
+                                <Icons.ExternalLink size={12} />
+                                Draft
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : !currentEmailTickets.length && !ticketMatches.length ? (
+                      <PanelState compact tone="info" title="Sem tickets neste email" description="Cria um ticket novo ou pesquisa um ticket existente para ligar o email atual." />
+                    ) : null}
+                  </div>
+                ) : null}
               </>
             )}
           </section>
@@ -1478,6 +2410,13 @@ const S: Record<string, React.CSSProperties> = {
   emailAssociations: { display: "flex", gap: 6, flexWrap: "wrap" },
   currentEmailBadge: { display: "inline-flex", alignItems: "center", padding: "2px 6px", borderRadius: 999, background: "rgba(16, 185, 129, 0.12)", color: "#047857", fontSize: 9, fontWeight: 700, textTransform: "uppercase" },
   iconOnlyBtn: { ...baseButton, width: 30, height: 30, padding: 0, background: "rgba(255,255,255,0.9)", color: "var(--iccc-text)" },
+  ticketStack: { display: "grid", gap: 6 },
+  ticketRow: { display: "grid", gap: 5, padding: 8, borderRadius: 10, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.84)" },
+  ticketMatchCard: { display: "grid", gap: 6, padding: 8, borderRadius: 10, border: "1px solid rgba(37, 99, 235, 0.18)", background: "rgba(239, 246, 255, 0.8)" },
+  ticketRowHead: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
+  ticketCode: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(15, 23, 42, 0.08)", color: "var(--iccc-text)", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em" },
+  ticketTitleText: { fontSize: 12, fontWeight: 600, color: "var(--iccc-text)" },
+  ticketMetaRow: { fontSize: 10, color: "var(--iccc-text-muted)" },
   labelPicker: { display: "grid", gap: 5 },
   labelSearchRow: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) 34px", gap: 6, alignItems: "center" },
   labelSuggestionList: { display: "grid", gap: 4, padding: 6, borderRadius: 10, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.92)" },

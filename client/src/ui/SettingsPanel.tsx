@@ -985,6 +985,23 @@ export function SettingsPanel(): JSX.Element {
                 </div>
               </label>
 
+              <label style={S.toggleRow}>
+                <input
+                  type="checkbox"
+                  checked={model.groupTicketsEnabled !== false}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      groupTicketsEnabled: e.target.checked,
+                    })
+                  }
+                />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ativar tickets nos grupos</div>
+                  <div style={S.hint}>Liga o extra de tickets dentro da aba Grupos. As séries, contadores e regras de ligação ficam na roda dentada da própria aba.</div>
+                </div>
+              </label>
+
               <PanelState
                 compact
                 tone="info"
@@ -1003,6 +1020,9 @@ export function SettingsPanel(): JSX.Element {
                   </div>
                   <div style={S.hint}>
                     A gestão diária, renomeação e limpeza das etiquetas passa a ser feita diretamente na aba Grupos pela roda dentada.
+                  </div>
+                  <div style={S.hint}>
+                    Tickets: <b>{model.groupTicketsEnabled !== false ? "Ativos" : "Desativados"}</b>
                   </div>
                 </div>
               </div>

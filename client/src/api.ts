@@ -207,6 +207,45 @@ export type GroupAttachmentFlagEntry = {
   updatedAt?: string;
 };
 
+export type GroupTicketSeriesEntry = {
+  id: string;
+  name: string;
+  prefix: string;
+  nextNumber: number;
+  padding: number;
+  isActive?: boolean;
+  usageCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type GroupTicketEntry = {
+  id: string;
+  seriesId: string;
+  seriesName?: string;
+  prefix?: string;
+  code: string;
+  sequenceNumber: number;
+  title: string;
+  description?: string;
+  status?: "open" | "closed" | string;
+  labels?: string[];
+  groupIds?: string[];
+  groups?: LinkGroupEntry[];
+  emailCount?: number;
+  emailLinked?: boolean;
+  createdFromEmailKey?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type GroupTicketDetectionMatch = {
+  matchedCode: string;
+  ticket: GroupTicketEntry;
+  emailLinked: boolean;
+  proposedGroups: LinkGroupEntry[];
+};
+
 export type RelatedReason =
   | {
     kind: "entity";
@@ -691,6 +730,116 @@ export async function deleteGroupDocument(groupId: string, documentId: string): 
     method: "DELETE",
   });
   return { ok: true };
+}
+
+export async function listGroupTicketSeries(): Promise<GroupTicketSeriesEntry[]> {
+  const params = new URLSearchParams();
+  params.set("_ts", String(Date.now()));
+  const response: any = await requestJSON(`/api/links/group-ticket-series?${params.toString()}`);
+  return Array.isArray(response?.series) ? response.series : [];
+}
+
+export async function createGroupTicketSeries(payload: {
+  name: string;
+  prefix: string;
+  nextNumber?: number;
+  padding?: number;
+  isActive?: boolean;
+}): Promise<GroupTicketSeriesEntry> {
+  const response: any = await requestJSON(`/api/links/group-ticket-series`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return response?.series ?? response;
+}
+
+export async function updateGroupTicketSeries(
+  seriesId: string,
+  payload: { name?: string; prefix?: string; nextNumber?: number; padding?: number; isActive?: boolean }
+): Promise<GroupTicketSeriesEntry> {
+  const response: any = await requestJSON(`/api/links/group-ticket-series/${encodeURIComponent(String(seriesId || "").trim())}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return response?.series ?? response;
+}
+
+export async function deleteGroupTicketSeries(seriesId: string): Promise<{ ok: boolean }> {
+  await requestJSON(`/api/links/group-ticket-series/${encodeURIComponent(String(seriesId || "").trim())}`, {
+    method: "DELETE",
+  });
+  return { ok: true };
+}
+
+export async function searchGroupTickets(payload: {
+  q?: string;
+  groupId?: string;
+  email?: RelevantEmailPayload;
+  limit?: number;
+}): Promise<GroupTicketEntry[]> {
+  const response: any = await requestJSON(`/api/links/group-tickets/search`, {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+  });
+  return Array.isArray(response?.tickets) ? response.tickets : [];
+}
+
+export async function createGroupTicket(payload: {
+  seriesId: string;
+  title: string;
+  description?: string;
+  labels?: string[];
+  groupIds?: string[];
+  email?: RelevantEmailPayload;
+  membershipKind?: "principal" | "referencia" | string;
+}): Promise<GroupTicketEntry> {
+  const response: any = await requestJSON(`/api/links/group-tickets`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return response?.ticket ?? response;
+}
+
+export async function updateGroupTicket(
+  ticketId: string,
+  payload: { title?: string; description?: string; labels?: string[]; groupIds?: string[]; status?: string }
+): Promise<GroupTicketEntry> {
+  const response: any = await requestJSON(`/api/links/group-tickets/${encodeURIComponent(String(ticketId || "").trim())}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return response?.ticket ?? response;
+}
+
+export async function linkEmailToGroupTicket(
+  ticketId: string,
+  payload: {
+    email: RelevantEmailPayload;
+    applyGroups?: boolean;
+    groupIds?: string[];
+    membershipKind?: "principal" | "referencia" | string;
+  }
+): Promise<{ ok: boolean; ticket: GroupTicketEntry; appliedGroups: LinkGroupEntry[]; email?: RelatedEmailEntry | null }> {
+  const response: any = await requestJSON(`/api/links/group-tickets/${encodeURIComponent(String(ticketId || "").trim())}/email`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return {
+    ok: Boolean(response?.ok),
+    ticket: response?.ticket,
+    appliedGroups: Array.isArray(response?.appliedGroups) ? response.appliedGroups : [],
+    email: response?.email ? normalizeRelatedEmailEntry(response.email) : null,
+  };
+}
+
+export async function detectGroupTicketsForEmail(payload: {
+  email: RelevantEmailPayload;
+}): Promise<GroupTicketDetectionMatch[]> {
+  const response: any = await requestJSON(`/api/links/group-tickets/detect`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return Array.isArray(response?.matches) ? response.matches : [];
 }
 
 
