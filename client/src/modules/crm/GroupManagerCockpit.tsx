@@ -75,6 +75,12 @@ function normalizeText(value: string | undefined): string {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeTicketPrefixInput(value: string | undefined): string {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "");
+}
+
 function parseLabels(value: string | string[] | undefined): string[] {
   const raw = Array.isArray(value)
     ? value
@@ -203,7 +209,7 @@ function draftChanged(group: LinkGroupEntry | null, draft: GroupDraft): boolean 
 function createTicketSeriesDraft(series: GroupTicketSeriesEntry | null): TicketSeriesDraft {
   return {
     name: String(series?.name || "").trim(),
-    prefix: String(series?.prefix || "").trim(),
+    prefix: normalizeTicketPrefixInput(series?.prefix),
     nextNumber: String(Number(series?.nextNumber || 1) || 1),
     padding: String(Number(series?.padding || 4) || 4),
     isActive: series?.isActive !== false,
@@ -960,7 +966,7 @@ export const GroupManagerCockpit: React.FC = () => {
 
   async function handleCreateTicketSeries() {
     const name = String(newTicketSeriesDraft.name || "").trim();
-    const prefix = String(newTicketSeriesDraft.prefix || "").trim();
+    const prefix = normalizeTicketPrefixInput(newTicketSeriesDraft.prefix);
     if (!name || !prefix) {
       setMsg("Define nome e prefixo para a nova serie.");
       return;
@@ -974,6 +980,13 @@ export const GroupManagerCockpit: React.FC = () => {
         padding: Math.max(2, Number(newTicketSeriesDraft.padding || 4) || 4),
         isActive: newTicketSeriesDraft.isActive,
       });
+      setTicketSeries((current) =>
+        [...current.filter((entry) => entry.id !== series.id), series].sort((a, b) =>
+          Number(b.isActive !== false) - Number(a.isActive !== false)
+          || String(a.prefix || "").localeCompare(String(b.prefix || ""), "pt-PT")
+          || String(a.name || "").localeCompare(String(b.name || ""), "pt-PT")
+        )
+      );
       setSelectedTicketSeriesId(series.id);
       setNewTicketSeriesDraft({ name: "", prefix: "", nextNumber: "1", padding: "4", isActive: true });
       setReloadToken((value) => value + 1);
@@ -988,7 +1001,7 @@ export const GroupManagerCockpit: React.FC = () => {
   async function handleSaveTicketSeries() {
     if (!selectedTicketSeries) return;
     const name = String(ticketSeriesDraft.name || "").trim();
-    const prefix = String(ticketSeriesDraft.prefix || "").trim();
+    const prefix = normalizeTicketPrefixInput(ticketSeriesDraft.prefix);
     if (!name || !prefix) {
       setMsg("Define nome e prefixo para a serie.");
       return;
@@ -1002,6 +1015,16 @@ export const GroupManagerCockpit: React.FC = () => {
         padding: Math.max(2, Number(ticketSeriesDraft.padding || 4) || 4),
         isActive: ticketSeriesDraft.isActive,
       });
+      setTicketSeries((current) =>
+        current
+          .map((entry) => (entry.id === updated.id ? updated : entry))
+          .sort((a, b) =>
+            Number(b.isActive !== false) - Number(a.isActive !== false)
+            || String(a.prefix || "").localeCompare(String(b.prefix || ""), "pt-PT")
+            || String(a.name || "").localeCompare(String(b.name || ""), "pt-PT")
+          )
+      );
+      setTicketSeriesDraft(createTicketSeriesDraft(updated));
       setSelectedTicketSeriesId(updated.id);
       setReloadToken((value) => value + 1);
       setMsg(`Serie ${updated.prefix} atualizada.`);
@@ -1019,6 +1042,8 @@ export const GroupManagerCockpit: React.FC = () => {
       const updated = await updateGroupTicketSeries(selectedTicketSeries.id, {
         nextNumber: 1,
       });
+      setTicketSeries((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
+      setTicketSeriesDraft(createTicketSeriesDraft(updated));
       setSelectedTicketSeriesId(updated.id);
       setReloadToken((value) => value + 1);
       setMsg(`Contador da serie ${updated.prefix} reiniciado.`);
@@ -1035,6 +1060,7 @@ export const GroupManagerCockpit: React.FC = () => {
     setBusy(true);
     try {
       await deleteGroupTicketSeries(selectedTicketSeries.id);
+      setTicketSeries((current) => current.filter((entry) => entry.id !== selectedTicketSeries.id));
       setSelectedTicketSeriesId("");
       setReloadToken((value) => value + 1);
       setMsg("Serie eliminada.");
@@ -1669,12 +1695,12 @@ export const GroupManagerCockpit: React.FC = () => {
                           onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, name: event.target.value }))}
                           placeholder="Nome"
                         />
-                        <input
-                          style={S.input}
-                          value={newTicketSeriesDraft.prefix}
-                          onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, prefix: event.target.value }))}
-                          placeholder="Prefixo"
-                        />
+                          <input
+                            style={S.input}
+                            value={newTicketSeriesDraft.prefix}
+                            onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, prefix: normalizeTicketPrefixInput(event.target.value) }))}
+                            placeholder="Prefixo"
+                          />
                       </div>
                       <div style={S.inlineRow}>
                         <input
@@ -1717,12 +1743,12 @@ export const GroupManagerCockpit: React.FC = () => {
                               onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, name: event.target.value }))}
                               placeholder="Nome"
                             />
-                            <input
-                              style={S.input}
-                              value={ticketSeriesDraft.prefix}
-                              onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, prefix: event.target.value }))}
-                              placeholder="Prefixo"
-                            />
+                              <input
+                                style={S.input}
+                                value={ticketSeriesDraft.prefix}
+                                onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, prefix: normalizeTicketPrefixInput(event.target.value) }))}
+                                placeholder="Prefixo"
+                              />
                           </div>
                           <div style={S.inlineRow}>
                             <input
