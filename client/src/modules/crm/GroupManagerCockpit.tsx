@@ -17,6 +17,7 @@ import {
   type GroupTicketDetectionMatch,
   type GroupTicketEntry,
   type GroupTicketSeriesEntry,
+  updateGroupTicket,
   updateLinkGroup,
   updateGroupTicketSeries,
   linkEmailToGroupTicket,
@@ -31,7 +32,7 @@ import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 
-type GroupManagerView = "groups" | "detail" | "library" | "settings" | "labels" | "tickets";
+type GroupManagerView = "groups" | "detail" | "library" | "quicklink" | "settings" | "labels" | "tickets";
 type GroupStatusFilter = "all" | "em_analise" | "em_progresso" | "concluido";
 type GroupArchiveFilter = "active" | "archived" | "all";
 type MembershipKind = "principal" | "referencia";
@@ -51,6 +52,16 @@ type TicketUiDraft = {
   suggestDraftOnCreate: boolean;
   useAiDrafts: boolean;
   aiInstructions: string;
+};
+
+type QuickLinkDraft = {
+  ticketMode: "none" | "existing" | "new";
+  ticketId: string;
+  ticketSeriesId: string;
+  ticketStatus: "open" | "closed" | string;
+  principalGroupId: string;
+  secondaryGroupIds: string[];
+  labelsText: string;
 };
 
 type GroupDraft = {
@@ -85,6 +96,11 @@ const TICKET_SEPARATOR_OPTIONS: Array<{ value: TicketSeriesDraft["separator"]; l
   { value: "_", label: "_" },
   { value: " ", label: "Espaco" },
   { value: "", label: "Sem separador" },
+];
+
+const TICKET_STATUS_OPTIONS: Array<{ value: "open" | "closed"; label: string }> = [
+  { value: "open", label: "Aberto" },
+  { value: "closed", label: "Fechado" },
 ];
 
 function normalizeText(value: string | undefined): string {
@@ -287,6 +303,30 @@ function ticketUiDraftChanged(current: TicketUiDraft, next: TicketUiDraft): bool
   );
 }
 
+function createQuickLinkDraft(partial: Partial<QuickLinkDraft> = {}): QuickLinkDraft {
+  return {
+    ticketMode: partial.ticketMode === "existing" || partial.ticketMode === "new" ? partial.ticketMode : "none",
+    ticketId: String(partial.ticketId || "").trim(),
+    ticketSeriesId: String(partial.ticketSeriesId || "").trim(),
+    ticketStatus: String(partial.ticketStatus || "").trim() || "open",
+    principalGroupId: String(partial.principalGroupId || "").trim(),
+    secondaryGroupIds: Array.from(new Set((partial.secondaryGroupIds || []).map((entry) => String(entry || "").trim()).filter(Boolean))),
+    labelsText: String(partial.labelsText || "").trim(),
+  };
+}
+
+function createQuickLinkDraftFromTicket(ticket: GroupTicketEntry | null): QuickLinkDraft {
+  const groupIds = Array.from(new Set((ticket?.groupIds || []).map((entry) => String(entry || "").trim()).filter(Boolean)));
+  return createQuickLinkDraft({
+    ticketMode: ticket ? "existing" : "none",
+    ticketId: String(ticket?.id || "").trim(),
+    ticketStatus: String(ticket?.status || "").trim() || "open",
+    principalGroupId: groupIds[0] || "",
+    secondaryGroupIds: groupIds.slice(1),
+    labelsText: labelsToText(ticket?.labels),
+  });
+}
+
 function uniqueEmails(values: Array<string | undefined>): string[] {
   return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
 }
@@ -444,6 +484,12 @@ export const GroupManagerCockpit: React.FC = () => {
   const [ticketDetectionLoading, setTicketDetectionLoading] = useState(false);
   const [ticketMatchGroupSelection, setTicketMatchGroupSelection] = useState<Record<string, string[]>>({});
   const [ticketUiDraft, setTicketUiDraft] = useState<TicketUiDraft>(createTicketUiDraft(settings?.groupTicketUi));
+  const [quickLinkDraft, setQuickLinkDraft] = useState<QuickLinkDraft>(createQuickLinkDraft());
+  const [quickLinkTicketQuery, setQuickLinkTicketQuery] = useState("");
+  const [quickLinkTicketResults, setQuickLinkTicketResults] = useState<GroupTicketEntry[]>([]);
+  const [quickLinkTicketLoading, setQuickLinkTicketLoading] = useState(false);
+  const [quickLinkPrimaryQuery, setQuickLinkPrimaryQuery] = useState("");
+  const [quickLinkSecondaryQuery, setQuickLinkSecondaryQuery] = useState("");
 
   const selectedGroup = useMemo(
     () => groups.find((group) => group.id === selectedGroupId) || null,
@@ -715,6 +761,40 @@ export const GroupManagerCockpit: React.FC = () => {
     };
   }, [groupTicketsEnabled, reloadToken, selectedGroupId, setMsg, ticketSearchQuery]);
 
+  useEffect(() => {
+    if (view !== "quicklink" || !groupTicketsEnabled) {
+      setQuickLinkTicketResults([]);
+      setQuickLinkTicketLoading(false);
+      return;
+    }
+    if (!String(quickLinkTicketQuery || "").trim()) {
+      setQuickLinkTicketResults([]);
+      setQuickLinkTicketLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setQuickLinkTicketLoading(true);
+    searchGroupTickets({
+      q: quickLinkTicketQuery,
+      limit: 12,
+    })
+      .then((rows) => {
+        if (!cancelled) setQuickLinkTicketResults(Array.isArray(rows) ? rows : []);
+      })
+      .catch((error: any) => {
+        if (!cancelled) {
+          setQuickLinkTicketResults([]);
+          setMsg(error?.message || "Nao foi possivel pesquisar tickets para a ligacao rapida.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setQuickLinkTicketLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [groupTicketsEnabled, quickLinkTicketQuery, setMsg, view]);
+
   const allLabels = useMemo(() => {
     return mergeLabelCatalog(
       settings?.groupLabelCatalog || [],
@@ -828,6 +908,69 @@ export const GroupManagerCockpit: React.FC = () => {
   );
 
   const currentEmailAlreadyLinked = groupEmails.some((email) => makeEmailKey(email) === currentEmailKey || isCurrentContextEmail(email, ctx));
+  const rankedGroups = useMemo(
+    () =>
+      [...groups].sort((a, b) => {
+        const favoriteDelta = Number(favoriteGroupSet.has(b.id)) - Number(favoriteGroupSet.has(a.id));
+        if (favoriteDelta) return favoriteDelta;
+        const aUpdated = String(a.updatedAt || a.createdAt || "");
+        const bUpdated = String(b.updatedAt || b.createdAt || "");
+        if (aUpdated !== bUpdated) return bUpdated.localeCompare(aUpdated);
+        return String(a.name || "").localeCompare(String(b.name || ""), "pt-PT");
+      }),
+    [favoriteGroupSet, groups]
+  );
+
+  const quickLinkTicketCatalog = useMemo(() => {
+    const map = new Map<string, GroupTicketEntry>();
+    for (const ticket of [
+      ...currentEmailTickets,
+      ...ticketMatches.map((entry) => entry.ticket),
+      ...quickLinkTicketResults,
+      ...ticketSearchResults,
+    ]) {
+      const id = String(ticket?.id || "").trim();
+      if (!id) continue;
+      map.set(id, ticket);
+    }
+    return Array.from(map.values());
+  }, [currentEmailTickets, quickLinkTicketResults, ticketMatches, ticketSearchResults]);
+
+  const quickLinkSelectedTicket = useMemo(
+    () => quickLinkTicketCatalog.find((ticket) => ticket.id === quickLinkDraft.ticketId) || null,
+    [quickLinkDraft.ticketId, quickLinkTicketCatalog]
+  );
+
+  const quickLinkLabels = useMemo(
+    () => parseLabels(quickLinkDraft.labelsText),
+    [quickLinkDraft.labelsText]
+  );
+
+  const quickLinkPrimaryCandidates = useMemo(() => {
+    const query = normalizeText(quickLinkPrimaryQuery);
+    return rankedGroups
+      .filter((group) => !group.isArchived)
+      .filter((group) => {
+        if (!query) return true;
+        const haystack = [group.name, group.description, ...(group.labels || [])].filter(Boolean).join(" ").toLowerCase();
+        return haystack.includes(query);
+      })
+      .slice(0, 8);
+  }, [quickLinkPrimaryQuery, rankedGroups]);
+
+  const quickLinkSecondaryCandidates = useMemo(() => {
+    const query = normalizeText(quickLinkSecondaryQuery);
+    return rankedGroups
+      .filter((group) => !group.isArchived)
+      .filter((group) => group.id !== quickLinkDraft.principalGroupId)
+      .filter((group) => !quickLinkDraft.secondaryGroupIds.includes(group.id))
+      .filter((group) => {
+        if (!query) return true;
+        const haystack = [group.name, group.description, ...(group.labels || [])].filter(Boolean).join(" ").toLowerCase();
+        return haystack.includes(query);
+      })
+      .slice(0, 8);
+  }, [quickLinkDraft.principalGroupId, quickLinkDraft.secondaryGroupIds, quickLinkSecondaryQuery, rankedGroups]);
 
   async function refreshAll() {
     setReloadToken((value) => value + 1);
@@ -857,6 +1000,222 @@ export const GroupManagerCockpit: React.FC = () => {
     const nextCatalog = mergeLabelCatalog(settings?.groupLabelCatalog || [], [label]);
     await persistLabelCatalog(nextCatalog);
     return nextCatalog.find((entry) => normalizeText(entry) === normalizeText(label)) || label;
+  }
+
+  function openQuickLinkView() {
+    const suggestedTicket = currentEmailTickets[0] || ticketMatches[0]?.ticket || null;
+    setQuickLinkDraft(
+      suggestedTicket
+        ? createQuickLinkDraftFromTicket(suggestedTicket)
+        : createQuickLinkDraft({
+          principalGroupId: selectedGroupId || "",
+        })
+    );
+    setQuickLinkTicketQuery("");
+    setQuickLinkPrimaryQuery("");
+    setQuickLinkSecondaryQuery("");
+    setView("quicklink");
+  }
+
+  function applyQuickLinkTicket(ticket: GroupTicketEntry) {
+    setQuickLinkDraft((current) => {
+      const next = createQuickLinkDraftFromTicket(ticket);
+      return {
+        ...next,
+        ticketSeriesId: current.ticketSeriesId || ticket.seriesId || "",
+      };
+    });
+    setQuickLinkTicketQuery(ticket.code || "");
+  }
+
+  function clearQuickLinkTicket() {
+    setQuickLinkDraft((current) =>
+      createQuickLinkDraft({
+        ...current,
+        ticketMode: "none",
+        ticketId: "",
+        ticketStatus: "open",
+      })
+    );
+    setQuickLinkTicketQuery("");
+  }
+
+  function enableQuickLinkNewTicket() {
+    setQuickLinkDraft((current) =>
+      createQuickLinkDraft({
+        ...current,
+        ticketMode: "new",
+        ticketId: "",
+        ticketSeriesId: current.ticketSeriesId || selectedTicketSeriesId || ticketSeries.find((entry) => entry.isActive !== false)?.id || "",
+        ticketStatus: "open",
+      })
+    );
+  }
+
+  function setQuickLinkPrimaryGroup(groupId: string) {
+    const normalizedId = String(groupId || "").trim();
+    setQuickLinkDraft((current) =>
+      createQuickLinkDraft({
+        ...current,
+        principalGroupId: normalizedId,
+        secondaryGroupIds: current.secondaryGroupIds.filter((entry) => entry !== normalizedId),
+      })
+    );
+    setQuickLinkPrimaryQuery("");
+  }
+
+  function toggleQuickLinkSecondaryGroup(groupId: string) {
+    const normalizedId = String(groupId || "").trim();
+    if (!normalizedId) return;
+    setQuickLinkDraft((current) => {
+      const nextSecondary = current.secondaryGroupIds.includes(normalizedId)
+        ? current.secondaryGroupIds.filter((entry) => entry !== normalizedId)
+        : [...current.secondaryGroupIds, normalizedId];
+      return createQuickLinkDraft({
+        ...current,
+        secondaryGroupIds: nextSecondary.filter((entry) => entry !== current.principalGroupId),
+      });
+    });
+    setQuickLinkSecondaryQuery("");
+  }
+
+  async function createQuickLinkGroupFromQuery(rawValue: string, kind: "principal" | "secondary") {
+    const name = String(rawValue || "").trim();
+    if (!name) {
+      setMsg("Escreve um nome para criar o grupo.");
+      return;
+    }
+    const existing = groups.find((group) => normalizeText(group.name) === normalizeText(name));
+    if (existing) {
+      if (kind === "principal") setQuickLinkPrimaryGroup(existing.id);
+      else toggleQuickLinkSecondaryGroup(existing.id);
+      return;
+    }
+    setBusy(true);
+    try {
+      const group = await createLinkGroup("/", {
+        name,
+        description: "",
+        status: "em_analise",
+        labels: [],
+        documentsEnabled: true,
+        isArchived: false,
+      });
+      setGroups((current) => [group, ...current.filter((entry) => entry.id !== group.id)]);
+      if (kind === "principal") setQuickLinkPrimaryGroup(group.id);
+      else toggleQuickLinkSecondaryGroup(group.id);
+      setMsg(`Grupo ${group.name} criado.`);
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel criar o grupo na ligacao rapida.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveQuickLink() {
+    const principalGroupId = String(quickLinkDraft.principalGroupId || "").trim();
+    const secondaryGroupIds = Array.from(
+      new Set(
+        quickLinkDraft.secondaryGroupIds
+          .map((entry) => String(entry || "").trim())
+          .filter((entry) => entry && entry !== principalGroupId)
+      )
+    );
+    const groupIds = [principalGroupId, ...secondaryGroupIds].filter(Boolean);
+    const labels = parseLabels(quickLinkDraft.labelsText);
+
+    if (!groupIds.length && quickLinkDraft.ticketMode !== "existing") {
+      setMsg("Seleciona pelo menos um grupo ou usa um ticket existente.");
+      return;
+    }
+    if (quickLinkDraft.ticketMode === "new" && !quickLinkDraft.ticketSeriesId) {
+      setMsg("Seleciona uma serie para criar o ticket.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      if (principalGroupId) {
+        await addEmailToLinkGroup(principalGroupId, {
+          ...currentEmailPayload,
+          membershipKind: "principal",
+        });
+
+        if (labels.length) {
+          const principalGroup = groups.find((entry) => entry.id === principalGroupId);
+          if (principalGroup) {
+            const mergedLabels = await ensureCatalogLabels(mergeLabelCatalog(principalGroup.labels || [], labels));
+            await updateLinkGroup(principalGroupId, {
+              name: principalGroup.name,
+              description: principalGroup.description,
+              status: principalGroup.status,
+              labels: mergedLabels,
+              documentsEnabled: principalGroup.documentsEnabled !== false,
+              isArchived: principalGroup.isArchived === true,
+            });
+          }
+        }
+      }
+
+      for (const groupId of secondaryGroupIds) {
+        await addEmailToLinkGroup(groupId, {
+          ...currentEmailPayload,
+          membershipKind: "referencia",
+        });
+      }
+
+      let finalTicket: GroupTicketEntry | null = null;
+      if (quickLinkDraft.ticketMode === "existing" && quickLinkDraft.ticketId) {
+        finalTicket = await updateGroupTicket(quickLinkDraft.ticketId, {
+          labels,
+          groupIds,
+          status: quickLinkDraft.ticketStatus,
+        });
+        finalTicket = (await linkEmailToGroupTicket(quickLinkDraft.ticketId, {
+          email: currentEmailPayload,
+          applyGroups: false,
+          groupIds,
+        })).ticket;
+      } else if (quickLinkDraft.ticketMode === "new" && quickLinkDraft.ticketSeriesId) {
+        finalTicket = await createGroupTicket({
+          seriesId: quickLinkDraft.ticketSeriesId,
+          title: String(currentEmailPayload.subject || "").trim() || "Ticket",
+          description: String(currentEmailPayload.bodyText || "").trim().slice(0, 4000),
+          labels,
+          groupIds,
+        });
+        if ((quickLinkDraft.ticketStatus || "open") !== "open") {
+          finalTicket = await updateGroupTicket(finalTicket.id, {
+            labels,
+            groupIds,
+            status: quickLinkDraft.ticketStatus,
+          });
+        }
+        finalTicket = (await linkEmailToGroupTicket(finalTicket.id, {
+          email: currentEmailPayload,
+          applyGroups: false,
+          groupIds,
+        })).ticket;
+      }
+
+      if (principalGroupId) {
+        setSelectedGroupId(principalGroupId);
+        setActiveGroupForCurrentEmail(principalGroupId);
+        setView("detail");
+      } else {
+        setView("groups");
+      }
+      await refreshAll();
+      setMsg(
+        finalTicket
+          ? `Email ligado com ticket ${finalTicket.code}.`
+          : `Email ligado a ${groupIds.length} grupo(s).`
+      );
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel guardar a ligacao rapida.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleCreateGroup() {
@@ -1434,6 +1793,8 @@ export const GroupManagerCockpit: React.FC = () => {
       ? "Gestor de etiquetas"
       : view === "tickets"
         ? "Tickets dos grupos"
+        : view === "quicklink"
+          ? "Ligacao rapida"
       : "Grupos";
 
   const headerHint = view === "settings"
@@ -1442,6 +1803,8 @@ export const GroupManagerCockpit: React.FC = () => {
       ? "Catalogo central."
       : view === "tickets"
         ? "Series, contadores e automacao."
+        : view === "quicklink"
+          ? "Ligacao simplificada do email atual."
       : "Ligacoes manuais.";
 
   return (
@@ -1885,6 +2248,287 @@ export const GroupManagerCockpit: React.FC = () => {
               </div>
             )}
           </section>
+        ) : view === "quicklink" ? (
+          <section style={S.cleanPanel}>
+            <div style={S.panelHeader}>
+              <button type="button" style={S.backBtn} onClick={() => setView("groups")}>Voltar</button>
+              <div>
+                <div style={S.sectionTitleRow}>
+                  <div style={S.panelTitle}>Ligacao rapida</div>
+                  <HelpHint text="Liga o email atual sem abrir um grupo. O ticket e opcional e, se ja existir, pode preencher logo grupos e etiquetas." title="Ajuda: Ligacao rapida" />
+                </div>
+              </div>
+            </div>
+
+            <div style={S.card}>
+              <div style={S.sectionTitleRow}>
+                <div style={S.fieldLabel}>Ticket</div>
+                <HelpHint text="Opcional. Se o ticket ja existir, a app preenche logo grupos, etiquetas e estado para so confirmares ou ajustares." title="Ajuda: Ticket" />
+              </div>
+
+              <div style={S.togglePillBar}>
+                <button type="button" style={quickLinkDraft.ticketMode === "none" ? S.togglePillActive : S.togglePill} onClick={() => clearQuickLinkTicket()}>
+                  Sem ticket
+                </button>
+                <button
+                  type="button"
+                  style={quickLinkDraft.ticketMode === "existing" ? S.togglePillActive : S.togglePill}
+                  onClick={() => {
+                    const fallback = currentEmailTickets[0] || ticketMatches[0]?.ticket || quickLinkTicketCatalog[0];
+                    if (fallback) applyQuickLinkTicket(fallback);
+                  }}
+                  disabled={!quickLinkTicketCatalog.length}
+                >
+                  Ticket existente
+                </button>
+                <button
+                  type="button"
+                  style={quickLinkDraft.ticketMode === "new" ? S.togglePillActive : S.togglePill}
+                  onClick={() => enableQuickLinkNewTicket()}
+                  disabled={!groupTicketsEnabled}
+                >
+                  Novo ticket
+                </button>
+              </div>
+
+              {groupTicketsEnabled && (ticketMatches.length || currentEmailTickets.length) ? (
+                <div style={S.chipWrap}>
+                  {ticketMatches.map((match) => (
+                    <button key={`match:${match.ticket.id}`} type="button" style={quickLinkDraft.ticketId === match.ticket.id ? S.chipActive : S.chip} onClick={() => applyQuickLinkTicket(match.ticket)}>
+                      {match.ticket.code}
+                    </button>
+                  ))}
+                  {currentEmailTickets
+                    .filter((ticket) => !ticketMatches.some((match) => match.ticket.id === ticket.id))
+                    .map((ticket) => (
+                      <button key={`current:${ticket.id}`} type="button" style={quickLinkDraft.ticketId === ticket.id ? S.chipActive : S.chip} onClick={() => applyQuickLinkTicket(ticket)}>
+                        {ticket.code}
+                      </button>
+                    ))}
+                </div>
+              ) : null}
+
+              {groupTicketsEnabled ? (
+                <>
+                  <div style={S.labelSearchRow}>
+                    <input
+                      style={S.input}
+                      value={quickLinkTicketQuery}
+                      onChange={(event) => setQuickLinkTicketQuery(event.target.value)}
+                      placeholder="Pesquisar ticket existente"
+                    />
+                    <button type="button" style={S.iconGhostBtn} title="Pesquisar tickets">
+                      <Icons.Search size={12} />
+                    </button>
+                  </div>
+
+                  {quickLinkTicketLoading ? (
+                    <PanelState compact tone="loading" title="A pesquisar tickets" description="A procurar tickets existentes para preencher o contexto." />
+                  ) : quickLinkTicketQuery.trim() && quickLinkTicketResults.length ? (
+                    <div style={S.listWrap}>
+                      {quickLinkTicketResults.slice(0, 6).map((ticket) => (
+                        <button key={ticket.id} type="button" style={quickLinkDraft.ticketId === ticket.id ? S.managerRowActive : S.managerRow} onClick={() => applyQuickLinkTicket(ticket)}>
+                          <span>{ticket.code}</span>
+                          <span style={S.managerCount}>{ticket.groupIds?.length || 0}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+
+              {quickLinkDraft.ticketMode === "existing" && quickLinkSelectedTicket ? (
+                <div style={S.ticketRow}>
+                  <div style={S.ticketRowHead}>
+                    <div style={S.ticketCode}>{quickLinkSelectedTicket.code}</div>
+                    <div style={S.ticketTitleText}>{quickLinkSelectedTicket.title || "Ticket"}</div>
+                  </div>
+                  <div style={S.inlineRow}>
+                    <select
+                      style={S.compactSelect}
+                      value={quickLinkDraft.ticketStatus}
+                      onChange={(event) => setQuickLinkDraft((current) => createQuickLinkDraft({ ...current, ticketStatus: event.target.value }))}
+                    >
+                      {TICKET_STATUS_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <div style={S.smallMeta}>
+                      {quickLinkSelectedTicket.groupIds?.length || 0} grupo(s) · {quickLinkSelectedTicket.labels?.length || 0} etiqueta(s)
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {quickLinkDraft.ticketMode === "new" ? (
+                <div style={S.inlineRow}>
+                  <select
+                    style={S.select}
+                    value={quickLinkDraft.ticketSeriesId}
+                    onChange={(event) => setQuickLinkDraft((current) => createQuickLinkDraft({ ...current, ticketSeriesId: event.target.value }))}
+                  >
+                    <option value="">Serie</option>
+                    {ticketSeries.filter((entry) => entry.isActive !== false).map((series) => (
+                      <option key={series.id} value={series.id}>{series.prefix}</option>
+                    ))}
+                  </select>
+                  <select
+                    style={S.compactSelect}
+                    value={quickLinkDraft.ticketStatus}
+                    onChange={(event) => setQuickLinkDraft((current) => createQuickLinkDraft({ ...current, ticketStatus: event.target.value }))}
+                  >
+                    {TICKET_STATUS_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              {quickLinkDraft.ticketMode === "new" && quickLinkDraft.ticketSeriesId ? (
+                <div style={S.smallMeta}>
+                  Preview: {
+                    (() => {
+                      const series = ticketSeries.find((entry) => entry.id === quickLinkDraft.ticketSeriesId);
+                      return series
+                        ? buildTicketSeriesPreview({
+                          prefix: series.prefix,
+                          yearMode: series.yearMode === "yy" || series.yearMode === "yyyy" ? series.yearMode : "none",
+                          separator: series.separator === "/" || series.separator === "_" || series.separator === " " || series.separator === "" ? series.separator : "-",
+                          nextNumber: String(series.nextNumber || 1),
+                          padding: String(series.padding || 4),
+                        })
+                        : "Sem preview";
+                    })()
+                  }
+                </div>
+              ) : null}
+            </div>
+
+            <div style={S.card}>
+              <div style={S.sectionTitleRow}>
+                <div style={S.fieldLabel}>Grupo principal</div>
+                <HelpHint text="O email fica guardado aqui como principal. So pode existir um." title="Ajuda: Grupo principal" />
+              </div>
+              <div style={S.labelSearchRow}>
+                <input
+                  style={S.input}
+                  value={quickLinkPrimaryQuery}
+                  onChange={(event) => setQuickLinkPrimaryQuery(event.target.value)}
+                  placeholder="Pesquisar ou criar grupo principal"
+                />
+                <button
+                  type="button"
+                  style={!groups.some((group) => normalizeText(group.name) === normalizeText(quickLinkPrimaryQuery)) && quickLinkPrimaryQuery.trim() ? S.primaryBtn : S.iconGhostBtn}
+                  onClick={() => void createQuickLinkGroupFromQuery(quickLinkPrimaryQuery, "principal")}
+                  disabled={busy || !quickLinkPrimaryQuery.trim()}
+                  title="Selecionar ou criar grupo principal"
+                >
+                  {!groups.some((group) => normalizeText(group.name) === normalizeText(quickLinkPrimaryQuery)) && quickLinkPrimaryQuery.trim() ? <Icons.Plus size={12} /> : <Icons.Search size={12} />}
+                </button>
+              </div>
+              {quickLinkDraft.principalGroupId ? (
+                <div style={S.selectedLabelRow}>
+                  {groups.filter((group) => group.id === quickLinkDraft.principalGroupId).map((group) => (
+                    <button key={group.id} type="button" style={S.selectedLabelChip} onClick={() => setQuickLinkPrimaryGroup("")}>
+                      <span>{group.name}</span>
+                      <span style={S.selectedLabelRemove}>×</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div style={S.listWrap}>
+                {quickLinkPrimaryCandidates.map((group) => (
+                  <button key={group.id} type="button" style={quickLinkDraft.principalGroupId === group.id ? S.managerRowActive : S.managerRow} onClick={() => setQuickLinkPrimaryGroup(group.id)}>
+                    <span>{group.name}</span>
+                    <span style={S.managerCount}>{group.memberCount || 0}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={S.card}>
+              <div style={S.sectionTitleRow}>
+                <div style={S.fieldLabel}>Grupos secundarios</div>
+                <HelpHint text="Estes grupos ficam com referencia ao email, sem o duplicar como registo principal." title="Ajuda: Grupos secundarios" />
+              </div>
+              <div style={S.labelSearchRow}>
+                <input
+                  style={S.input}
+                  value={quickLinkSecondaryQuery}
+                  onChange={(event) => setQuickLinkSecondaryQuery(event.target.value)}
+                  placeholder="Pesquisar ou criar grupo secundario"
+                />
+                <button
+                  type="button"
+                  style={!groups.some((group) => normalizeText(group.name) === normalizeText(quickLinkSecondaryQuery)) && quickLinkSecondaryQuery.trim() ? S.primaryBtn : S.iconGhostBtn}
+                  onClick={() => void createQuickLinkGroupFromQuery(quickLinkSecondaryQuery, "secondary")}
+                  disabled={busy || !quickLinkSecondaryQuery.trim()}
+                  title="Selecionar ou criar grupo secundario"
+                >
+                  {!groups.some((group) => normalizeText(group.name) === normalizeText(quickLinkSecondaryQuery)) && quickLinkSecondaryQuery.trim() ? <Icons.Plus size={12} /> : <Icons.Search size={12} />}
+                </button>
+              </div>
+              {quickLinkDraft.secondaryGroupIds.length ? (
+                <div style={S.selectedLabelRow}>
+                  {groups
+                    .filter((group) => quickLinkDraft.secondaryGroupIds.includes(group.id))
+                    .map((group) => (
+                      <button key={group.id} type="button" style={S.selectedLabelChip} onClick={() => toggleQuickLinkSecondaryGroup(group.id)}>
+                        <span>{group.name}</span>
+                        <span style={S.selectedLabelRemove}>×</span>
+                      </button>
+                    ))}
+                </div>
+              ) : null}
+              <div style={S.listWrap}>
+                {quickLinkSecondaryCandidates.map((group) => (
+                  <button key={group.id} type="button" style={S.managerRow} onClick={() => toggleQuickLinkSecondaryGroup(group.id)}>
+                    <span>{group.name}</span>
+                    <span style={S.managerCount}>{group.memberCount || 0}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={S.card}>
+              <div style={S.sectionTitleRow}>
+                <div style={S.fieldLabel}>Etiquetas</div>
+                <HelpHint text="Campo rapido de pesquisa. Se a etiqueta nao existir, podes cria-la logo aqui." title="Ajuda: Etiquetas" />
+              </div>
+              <LabelPicker
+                value={quickLinkDraft.labelsText}
+                onChange={(next) => setQuickLinkDraft((current) => createQuickLinkDraft({ ...current, labelsText: next }))}
+                catalog={allLabels}
+                enabled={labelsManagerEnabled}
+                busy={busy}
+                placeholder="Pesquisar etiqueta"
+                helpText="Pesquisa, escolhe ou cria etiquetas para este contexto."
+                onCreateLabel={createCatalogLabel}
+              />
+            </div>
+
+            <div style={S.card}>
+              <div style={S.sectionTitleRow}>
+                <div style={S.fieldLabel}>Resumo</div>
+                <HelpHint text="Confirma aqui o principal, as referencias, as etiquetas e o ticket antes de gravar." title="Ajuda: Resumo" />
+              </div>
+              <div style={S.quickLinkSummaryList}>
+                <div><b>Principal:</b> {groups.find((group) => group.id === quickLinkDraft.principalGroupId)?.name || "Sem grupo principal"}</div>
+                <div><b>Referencias:</b> {groups.filter((group) => quickLinkDraft.secondaryGroupIds.includes(group.id)).map((group) => group.name).join(", ") || "Sem referencias"}</div>
+                <div><b>Etiquetas:</b> {quickLinkLabels.join(", ") || "Sem etiquetas"}</div>
+                <div><b>Ticket:</b> {quickLinkDraft.ticketMode === "existing" && quickLinkSelectedTicket ? quickLinkSelectedTicket.code : quickLinkDraft.ticketMode === "new" ? "Novo ticket" : "Sem ticket"}</div>
+              </div>
+              <div style={S.inlineRow}>
+                <button type="button" style={S.primaryBtn} onClick={() => void handleSaveQuickLink()} disabled={busy}>
+                  <Icons.Save size={12} />
+                  Guardar ligacao
+                </button>
+                <button type="button" style={S.secondaryBtn} onClick={() => setView("groups")} disabled={busy}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </section>
         ) : (
           <div style={{ ...S.track, transform: trackTransform }}>
           <section style={S.panel}>
@@ -1894,6 +2538,12 @@ export const GroupManagerCockpit: React.FC = () => {
                   <div style={S.panelTitle}>Grupos</div>
                   <HelpHint text="Seleciona um grupo para o gerir. Usa os filtros para reduzir a lista e abre o detalhe so quando precisares." title="Ajuda: Grupos" />
                 </div>
+              </div>
+              <div style={S.inlineActions}>
+                <button type="button" style={S.primaryBtn} onClick={() => openQuickLinkView()} disabled={busy}>
+                  <Icons.Link size={12} />
+                  Ligar email
+                </button>
               </div>
             </div>
 
@@ -2527,6 +3177,7 @@ const S: Record<string, React.CSSProperties> = {
   ticketCode: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(15, 23, 42, 0.08)", color: "var(--iccc-text)", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em" },
   ticketTitleText: { fontSize: 12, fontWeight: 600, color: "var(--iccc-text)" },
   ticketMetaRow: { fontSize: 10, color: "var(--iccc-text-muted)" },
+  quickLinkSummaryList: { display: "grid", gap: 4, fontSize: 11, color: "var(--iccc-text)" },
   labelPicker: { display: "grid", gap: 5 },
   labelSearchRow: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) 34px", gap: 6, alignItems: "center" },
   labelSuggestionList: { display: "grid", gap: 4, padding: 6, borderRadius: 10, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.92)" },
