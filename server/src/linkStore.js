@@ -961,6 +961,18 @@ function resolveEmailKeyFromInput(store, input) {
   const normalized = normalizeEmailInput(input);
   const directKey = normalizeString(input?.emailKey);
   if (directKey) return directKey;
+  if (
+    !normalized.itemId
+    && !normalized.internetMessageId
+    && !normalized.conversationId
+    && !normalized.subject
+    && !normalized.fromEmail
+    && !normalized.messageDateIso
+    && !normalized.receivedAtIso
+    && !normalized.linkedAt
+  ) {
+    return "";
+  }
   const emailId = resolveEmailId(store, normalized);
   if (emailId && store.emails[emailId]) {
     return makePersistentEmailKey(store.emails[emailId]);
