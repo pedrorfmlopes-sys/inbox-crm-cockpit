@@ -2732,8 +2732,11 @@ export async function listGroupTickets(query = "", options = {}) {
       if (!q) return true;
       const haystack = [
         ticket.code,
+        ticket.seriesName,
+        ticket.prefix,
         ticket.title,
         ticket.description,
+        ticket.status,
         ...(ticket.labels || []),
         ...(ticket.groups || []).map((group) => group?.name),
       ]

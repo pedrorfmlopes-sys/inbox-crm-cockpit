@@ -767,11 +767,6 @@ export const GroupManagerCockpit: React.FC = () => {
       setQuickLinkTicketLoading(false);
       return;
     }
-    if (!String(quickLinkTicketQuery || "").trim()) {
-      setQuickLinkTicketResults([]);
-      setQuickLinkTicketLoading(false);
-      return;
-    }
     let cancelled = false;
     setQuickLinkTicketLoading(true);
     searchGroupTickets({
@@ -2314,25 +2309,41 @@ export const GroupManagerCockpit: React.FC = () => {
                     <input
                       style={S.input}
                       value={quickLinkTicketQuery}
-                      onChange={(event) => setQuickLinkTicketQuery(event.target.value)}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        setQuickLinkTicketQuery(nextValue);
+                        if (String(nextValue || "").trim()) {
+                          setQuickLinkDraft((current) => createQuickLinkDraft({ ...current, ticketMode: current.ticketMode === "new" ? "new" : "existing" }));
+                        }
+                      }}
                       placeholder="Pesquisar ticket existente"
                     />
-                    <button type="button" style={S.iconGhostBtn} title="Pesquisar tickets">
+                    <button
+                      type="button"
+                      style={S.iconGhostBtn}
+                      title="Pesquisar tickets"
+                      onClick={() => setQuickLinkDraft((current) => createQuickLinkDraft({ ...current, ticketMode: current.ticketMode === "new" ? "new" : "existing" }))}
+                    >
                       <Icons.Search size={12} />
                     </button>
                   </div>
 
                   {quickLinkTicketLoading ? (
                     <PanelState compact tone="loading" title="A pesquisar tickets" description="A procurar tickets existentes para preencher o contexto." />
-                  ) : quickLinkTicketQuery.trim() && quickLinkTicketResults.length ? (
-                    <div style={S.listWrap}>
-                      {quickLinkTicketResults.slice(0, 6).map((ticket) => (
-                        <button key={ticket.id} type="button" style={quickLinkDraft.ticketId === ticket.id ? S.managerRowActive : S.managerRow} onClick={() => applyQuickLinkTicket(ticket)}>
-                          <span>{ticket.code}</span>
-                          <span style={S.managerCount}>{ticket.groupIds?.length || 0}</span>
-                        </button>
-                      ))}
+                  ) : quickLinkTicketResults.length ? (
+                    <div style={S.cardSoft}>
+                      <div style={S.smallMeta}>{quickLinkTicketQuery.trim() ? "Resultados" : "Tickets recentes"}</div>
+                      <div style={S.listWrap}>
+                        {quickLinkTicketResults.slice(0, 6).map((ticket) => (
+                          <button key={ticket.id} type="button" style={quickLinkDraft.ticketId === ticket.id ? S.managerRowActive : S.managerRow} onClick={() => applyQuickLinkTicket(ticket)}>
+                            <span>{ticket.code}</span>
+                            <span style={S.managerCount}>{ticket.groupIds?.length || 0}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
+                  ) : quickLinkDraft.ticketMode === "existing" || quickLinkTicketQuery.trim() ? (
+                    <PanelState compact tone="info" title="Sem tickets encontrados" description="Nao apareceu nenhum ticket com esse codigo, serie, titulo, estado, grupo ou etiqueta." />
                   ) : null}
                 </>
               ) : null}
@@ -3128,6 +3139,7 @@ const S: Record<string, React.CSSProperties> = {
   iconGhostBtn: { ...baseButton, width: 34, height: 34, padding: 0, background: "rgba(255,255,255,0.9)", color: "var(--iccc-text)" },
   dangerBtn: { ...baseButton, background: "rgba(254, 226, 226, 0.95)", color: "#b91c1c", border: "1px solid rgba(239, 68, 68, 0.25)" },
   card: { display: "grid", gap: 6, padding: 10, borderRadius: 12, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.72)" },
+  cardSoft: { display: "grid", gap: 6, padding: 8, borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.5)" },
   fieldLabel: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--iccc-text-muted)", letterSpacing: "0.05em" },
   input: { width: "100%", borderRadius: 10, border: "1px solid var(--iccc-card-border)", padding: "8px 10px", background: "#fff", fontSize: 12, color: "var(--iccc-text)", boxSizing: "border-box" },
   compactSelect: { borderRadius: 10, border: "1px solid var(--iccc-card-border)", padding: "7px 9px", background: "#fff", fontSize: 11, color: "var(--iccc-text)", minWidth: 120 },
