@@ -302,7 +302,7 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     aiInstructions: "Escreve em tom profissional e claro. Indica o numero do ticket e pede que todas as respostas futuras mantenham esse numero no assunto.",
   },
   groupOutlookCategories: {
-    enabled: false,
+    enabled: true,
     includeGroups: true,
     includeTickets: true,
     includeStatuses: true,

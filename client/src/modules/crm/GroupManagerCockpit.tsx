@@ -26,7 +26,7 @@ import {
 } from "@/api";
 import { aiGenerate } from "@/ai/aiClient";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { displayNewMessageForm, displayReplyForm, openGroupExplorer, openLinkedOutlookEmail } from "@/office";
+import { displayNewMessageForm, displayReplyForm, openGroupExplorer, openLinkedOutlookEmail, syncManagedOutlookCategories } from "@/office";
 import { saveSettings } from "@/settings";
 import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
@@ -345,12 +345,12 @@ function buildSeriesReplyGuidance(series: GroupTicketSeriesEntry | null, ticket:
   ].join(" ").toLowerCase();
 
   if (/(encomenda|pedido|orcamento|cotacao)/.test(raw)) {
-    return "Agradece o pedido recebido, confirma a rececao do email e informa que vamos dar seguimento ao mesmo com brevidade.";
+    return "Agradece o pedido ou encomenda recebida, confirma que vamos dar seguimento e informa que, assim que houver atualizacoes, iremos comunicar.";
   }
   if (/(reclam|incid|suporte|assistencia|pos[- ]?venda)/.test(raw)) {
-    return "Agradece o contacto, confirma a rececao da situacao reportada e informa que vamos analisar e dar seguimento com brevidade.";
+    return "Agradece o contacto, confirma a rececao da situacao reportada e informa que vamos analisar o caso, dar seguimento e comunicar assim que existirem atualizacoes.";
   }
-  return "Agradece o contacto, confirma a rececao do email e informa que vamos dar seguimento ao assunto com brevidade.";
+  return "Agradece o contacto, confirma a rececao do email e informa que vamos dar seguimento ao assunto, comunicando assim que existirem atualizacoes.";
 }
 
 const LabelPicker: React.FC<{
@@ -925,6 +925,27 @@ export const GroupManagerCockpit: React.FC = () => {
   );
 
   const currentEmailAlreadyLinked = groupEmails.some((email) => makeEmailKey(email) === currentEmailKey || isCurrentContextEmail(email, ctx));
+  async function syncCurrentEmailTicketCategories(ticket: GroupTicketEntry | null, explicitGroupIds?: string[]) {
+    if (settings?.groupOutlookCategories?.enabled !== true) return;
+    const groupIds = Array.from(
+      new Set((explicitGroupIds || ticket?.groupIds || []).map((entry) => String(entry || "").trim()).filter(Boolean))
+    );
+    const linkedGroups = groupIds
+      .map((groupId) => groups.find((group) => group.id === groupId) || null)
+      .filter((group): group is LinkGroupEntry => Boolean(group));
+    await syncManagedOutlookCategories({
+      groupNames: settings?.groupOutlookCategories?.includeGroups !== false
+        ? Array.from(new Set(linkedGroups.map((group) => String(group.name || "").trim()).filter(Boolean)))
+        : [],
+      ticketCodes: settings?.groupOutlookCategories?.includeTickets !== false && ticket?.code
+        ? [String(ticket.code || "").trim()]
+        : [],
+      statuses: settings?.groupOutlookCategories?.includeStatuses !== false
+        ? Array.from(new Set(linkedGroups.map((group) => String(group.status || "").trim()).filter(Boolean)))
+        : [],
+    });
+  }
+
   const rankedGroups = useMemo(
     () =>
       [...groups].sort((a, b) => {
@@ -1223,6 +1244,9 @@ export const GroupManagerCockpit: React.FC = () => {
         setView("groups");
       }
       await refreshAll();
+      if (finalTicket) {
+        await syncCurrentEmailTicketCategories(finalTicket, groupIds);
+      }
       if (finalTicket && quickLinkDraft.ticketMode === "new" && ticketUi?.suggestDraftOnCreate) {
         await handleOpenTicketReplyDraft(finalTicket);
       }
@@ -1518,6 +1542,7 @@ export const GroupManagerCockpit: React.FC = () => {
         email: currentEmailPayload,
         membershipKind: selectedGroup ? linkKind : "referencia",
       });
+      await syncCurrentEmailTicketCategories(ticket, selectedGroup ? [selectedGroup.id] : []);
       setReloadToken((value) => value + 1);
       setMsg(`Ticket ${ticket.code} criado.`);
       if (ticketUi?.suggestDraftOnCreate) {
@@ -1545,6 +1570,7 @@ export const GroupManagerCockpit: React.FC = () => {
         groupIds: ensuredGroupIds,
         membershipKind: selectedGroup ? linkKind : "referencia",
       });
+      await syncCurrentEmailTicketCategories(result.ticket, ensuredGroupIds);
       setReloadToken((value) => value + 1);
       const groupSummary = result.appliedGroups.length ? ` ${result.appliedGroups.length} grupo(s) atualizados.` : "";
       setMsg(`Email atual ligado ao ticket ${ticket.code}.${groupSummary}`);
