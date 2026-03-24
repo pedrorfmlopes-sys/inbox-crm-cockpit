@@ -419,6 +419,7 @@ function normalizeGroupTicketSeriesInput(input = {}, current = {}) {
     id: normalizeString(input?.id) || normalizeString(current?.id) || `ticket_series_${crypto.randomUUID()}`,
     name,
     prefix,
+    replyInstructions: normalizeString(input?.replyInstructions ?? current?.replyInstructions),
     yearMode,
     separator,
     nextNumber: normalizePositiveInt(input?.nextNumber ?? current?.nextNumber ?? 1, 1),
@@ -1111,6 +1112,7 @@ function mapDbGroupTicketSeriesRow(row) {
     id: row.id,
     name: row.name,
     prefix: row.prefix,
+    replyInstructions: row.reply_instructions,
     yearMode: row.year_mode,
     separator: row.separator,
     nextNumber: row.next_number,
@@ -1150,11 +1152,12 @@ async function upsertDbGroupTicketSeries(input) {
   const series = normalizeGroupTicketSeriesInput(input);
   if (!series.id || !series.prefix) return;
   await db.query(
-    `INSERT INTO crm_group_ticket_series (id, name, prefix, year_mode, separator, next_number, padding, is_active, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO crm_group_ticket_series (id, name, prefix, reply_instructions, year_mode, separator, next_number, padding, is_active, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name,
        prefix = EXCLUDED.prefix,
+       reply_instructions = EXCLUDED.reply_instructions,
        year_mode = EXCLUDED.year_mode,
        separator = EXCLUDED.separator,
        next_number = EXCLUDED.next_number,
@@ -1165,6 +1168,7 @@ async function upsertDbGroupTicketSeries(input) {
       series.id,
       series.name,
       series.prefix,
+      series.replyInstructions,
       series.yearMode,
       series.separator,
       series.nextNumber,
@@ -1843,6 +1847,7 @@ async function ensureCustomGroupDb() {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         prefix TEXT NOT NULL,
+        reply_instructions TEXT NOT NULL DEFAULT '',
         year_mode TEXT NOT NULL DEFAULT 'none',
         separator TEXT NOT NULL DEFAULT '-',
         next_number INTEGER NOT NULL DEFAULT 1,
@@ -1877,6 +1882,7 @@ async function ensureCustomGroupDb() {
 
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_group_tickets_series_id ON crm_group_tickets (series_id);`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_group_tickets_code ON crm_group_tickets (code);`);
+    await db.query(`ALTER TABLE crm_group_ticket_series ADD COLUMN IF NOT EXISTS reply_instructions TEXT NOT NULL DEFAULT '';`);
     await db.query(`ALTER TABLE crm_group_ticket_series ADD COLUMN IF NOT EXISTS year_mode TEXT NOT NULL DEFAULT 'none';`);
     await db.query(`ALTER TABLE crm_group_ticket_series ADD COLUMN IF NOT EXISTS separator TEXT NOT NULL DEFAULT '-';`);
     await db.query(`ALTER TABLE crm_group_tickets ADD COLUMN IF NOT EXISTS prefix TEXT NOT NULL DEFAULT '';`);

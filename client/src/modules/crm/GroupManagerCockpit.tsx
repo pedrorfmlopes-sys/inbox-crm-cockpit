@@ -26,7 +26,7 @@ import {
 } from "@/api";
 import { aiGenerate } from "@/ai/aiClient";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { displayNewMessageForm, openGroupExplorer, openLinkedOutlookEmail } from "@/office";
+import { displayNewMessageForm, displayReplyForm, openGroupExplorer, openLinkedOutlookEmail } from "@/office";
 import { saveSettings } from "@/settings";
 import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
@@ -40,6 +40,7 @@ type MembershipKind = "principal" | "referencia";
 type TicketSeriesDraft = {
   name: string;
   prefix: string;
+  replyInstructions: string;
   yearMode: "none" | "yy" | "yyyy";
   separator: "-" | "/" | "_" | " " | "";
   nextNumber: string;
@@ -262,6 +263,7 @@ function createTicketSeriesDraft(series: GroupTicketSeriesEntry | null): TicketS
   return {
     name: String(series?.name || "").trim(),
     prefix: normalizeTicketPrefixInput(series?.prefix),
+    replyInstructions: String(series?.replyInstructions || "").trim(),
     yearMode: series?.yearMode === "yy" || series?.yearMode === "yyyy" ? series.yearMode : "none",
     separator: series?.separator === "/" || series?.separator === "_" || series?.separator === " " || series?.separator === ""
       ? series.separator
@@ -277,6 +279,7 @@ function ticketSeriesDraftChanged(series: GroupTicketSeriesEntry | null, draft: 
   return (
     String(series.name || "").trim() !== String(draft.name || "").trim()
     || String(series.prefix || "").trim() !== String(draft.prefix || "").trim()
+    || String(series.replyInstructions || "").trim() !== String(draft.replyInstructions || "").trim()
     || String(series.yearMode || "none") !== String(draft.yearMode || "none")
     || String(series.separator || "-") !== String(draft.separator || "-")
     || Number(series.nextNumber || 1) !== Math.max(1, Number(draft.nextNumber || 1) || 1)
@@ -329,6 +332,25 @@ function createQuickLinkDraftFromTicket(ticket: GroupTicketEntry | null): QuickL
 
 function uniqueEmails(values: Array<string | undefined>): string[] {
   return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
+}
+
+function buildSeriesReplyGuidance(series: GroupTicketSeriesEntry | null, ticket: GroupTicketEntry | null): string {
+  const explicit = String(series?.replyInstructions || "").trim();
+  if (explicit) return explicit;
+
+  const raw = [
+    String(series?.name || "").trim(),
+    String(series?.prefix || "").trim(),
+    String(ticket?.title || "").trim(),
+  ].join(" ").toLowerCase();
+
+  if (/(encomenda|pedido|orcamento|cotacao)/.test(raw)) {
+    return "Agradece o pedido recebido, confirma a rececao do email e informa que vamos dar seguimento ao mesmo com brevidade.";
+  }
+  if (/(reclam|incid|suporte|assistencia|pos[- ]?venda)/.test(raw)) {
+    return "Agradece o contacto, confirma a rececao da situacao reportada e informa que vamos analisar e dar seguimento com brevidade.";
+  }
+  return "Agradece o contacto, confirma a rececao do email e informa que vamos dar seguimento ao assunto com brevidade.";
 }
 
 const LabelPicker: React.FC<{
@@ -475,7 +497,7 @@ export const GroupManagerCockpit: React.FC = () => {
   const [ticketSeriesLoading, setTicketSeriesLoading] = useState(false);
   const [selectedTicketSeriesId, setSelectedTicketSeriesId] = useState("");
   const [ticketSeriesDraft, setTicketSeriesDraft] = useState<TicketSeriesDraft>(createTicketSeriesDraft(null));
-  const [newTicketSeriesDraft, setNewTicketSeriesDraft] = useState<TicketSeriesDraft>({ name: "", prefix: "", yearMode: "none", separator: "-", nextNumber: "1", padding: "4", isActive: true });
+  const [newTicketSeriesDraft, setNewTicketSeriesDraft] = useState<TicketSeriesDraft>({ name: "", prefix: "", replyInstructions: "", yearMode: "none", separator: "-", nextNumber: "1", padding: "4", isActive: true });
   const [ticketSearchQuery, setTicketSearchQuery] = useState("");
   const [ticketSearchResults, setTicketSearchResults] = useState<GroupTicketEntry[]>([]);
   const [ticketSearchLoading, setTicketSearchLoading] = useState(false);
@@ -1201,6 +1223,9 @@ export const GroupManagerCockpit: React.FC = () => {
         setView("groups");
       }
       await refreshAll();
+      if (finalTicket && quickLinkDraft.ticketMode === "new" && ticketUi?.suggestDraftOnCreate) {
+        await handleOpenTicketReplyDraft(finalTicket);
+      }
       setMsg(
         finalTicket
           ? `Email ligado com ticket ${finalTicket.code}.`
@@ -1372,6 +1397,7 @@ export const GroupManagerCockpit: React.FC = () => {
       const series = await createGroupTicketSeries({
         name,
         prefix,
+        replyInstructions: String(newTicketSeriesDraft.replyInstructions || "").trim(),
         yearMode: newTicketSeriesDraft.yearMode,
         separator: newTicketSeriesDraft.separator,
         nextNumber: Math.max(1, Number(newTicketSeriesDraft.nextNumber || 1) || 1),
@@ -1386,7 +1412,7 @@ export const GroupManagerCockpit: React.FC = () => {
         )
       );
       setSelectedTicketSeriesId(series.id);
-      setNewTicketSeriesDraft({ name: "", prefix: "", yearMode: "none", separator: "-", nextNumber: "1", padding: "4", isActive: true });
+      setNewTicketSeriesDraft({ name: "", prefix: "", replyInstructions: "", yearMode: "none", separator: "-", nextNumber: "1", padding: "4", isActive: true });
       setReloadToken((value) => value + 1);
       setMsg(`Serie ${series.prefix} criada.`);
     } catch (error: any) {
@@ -1409,6 +1435,7 @@ export const GroupManagerCockpit: React.FC = () => {
       const updated = await updateGroupTicketSeries(selectedTicketSeries.id, {
         name,
         prefix,
+        replyInstructions: String(ticketSeriesDraft.replyInstructions || "").trim(),
         yearMode: ticketSeriesDraft.yearMode,
         separator: ticketSeriesDraft.separator,
         nextNumber: Math.max(1, Number(ticketSeriesDraft.nextNumber || 1) || 1),
@@ -1494,7 +1521,7 @@ export const GroupManagerCockpit: React.FC = () => {
       setReloadToken((value) => value + 1);
       setMsg(`Ticket ${ticket.code} criado.`);
       if (ticketUi?.suggestDraftOnCreate) {
-        await handleOpenTicketDraft(ticket);
+        await handleOpenTicketReplyDraft(ticket);
       }
     } catch (error: any) {
       setMsg(error?.message || "Nao foi possivel criar o ticket.");
@@ -1551,10 +1578,7 @@ export const GroupManagerCockpit: React.FC = () => {
   }
 
   async function handleOpenTicketDraft(ticket: GroupTicketEntry) {
-    const toRecipients = uniqueEmails([ctx.fromEmail]);
-    const ccRecipients = uniqueEmails((ctx.ccRecipients || []).map((entry) => entry.email)).filter((entry) => !toRecipients.includes(entry));
-    const baseSubject = String(ctx.subject || ticket.title || "Ticket").trim();
-    const subject = baseSubject.includes(ticket.code) ? baseSubject : `[${ticket.code}] ${baseSubject}`.trim();
+    const relatedSeries = ticketSeries.find((series) => series.id === ticket.seriesId) || selectedTicketSeries || null;
     let body = [
       `<p>Foi aberto o ticket <strong>${ticket.code}</strong>.</p>`,
       `<p>Nas próximas respostas, pedimos que mantenham este número no assunto do email.</p>`,
@@ -1599,6 +1623,52 @@ export const GroupManagerCockpit: React.FC = () => {
       isHtml: true,
     });
     setMsg(`Draft do ticket ${ticket.code} aberto para envio.`);
+  }
+
+  async function handleOpenTicketReplyDraft(ticket: GroupTicketEntry) {
+    const relatedSeries = ticketSeries.find((series) => series.id === ticket.seriesId) || selectedTicketSeries || null;
+    let body = [
+      `<p>Foi aberto o ticket <strong>${ticket.code}</strong>.</p>`,
+      `<p>Agradecemos o seu email. Vamos dar seguimento ao assunto com a maior brevidade possivel.</p>`,
+      `<p>Nas proximas respostas, pedimos que mantenham este numero no assunto do email.</p>`,
+    ].join("");
+
+    if (ticketUi?.useAiDrafts) {
+      try {
+        const response = await aiGenerate({
+          action: "reply",
+          mode: "quality",
+          locale: (settings?.replyLanguage || "pt-PT") as any,
+          tone: "formal",
+          email: {
+            subject: String(ctx.subject || "").trim(),
+            from: String(ctx.fromEmail || "").trim(),
+            to: (ctx.toRecipients || []).map((entry) => entry.email),
+            cc: (ctx.ccRecipients || []).map((entry) => entry.email),
+            bodyText: String(bodyText || "").trim(),
+            bodyScope: "full",
+          },
+          inputText: [
+            `Redige uma resposta ao email original para abertura ou atualizacao do ticket ${ticket.code}.`,
+            "A resposta deve manter o contexto da conversa e soar como reply ao email recebido.",
+            "Agradece o contacto e confirma a rececao do email.",
+            buildSeriesReplyGuidance(relatedSeries, ticket),
+            "Resume brevemente o tema do email original sem copiar o email.",
+            `Pede explicitamente que todas as respostas futuras incluam ${ticket.code} no assunto.`,
+            String(ticketUi?.aiInstructions || "").trim(),
+          ].filter(Boolean).join("\n"),
+          knowledge: settings?.aiKnowledge || [],
+        } as any);
+        if ((response as any)?.ok) {
+          body = String((response as any).html || "").trim() || `<p>${String((response as any).text || "").trim().replace(/\n/g, "<br/>")}</p>`;
+        }
+      } catch {
+        // fallback static body
+      }
+    }
+
+    await displayReplyForm(body, true, { replyAll: true });
+    setMsg(`Resposta ao ticket ${ticket.code} aberta em reply all.`);
   }
 
   async function handleSaveTicketUi() {
@@ -2146,6 +2216,12 @@ export const GroupManagerCockpit: React.FC = () => {
                             <span>Ativa</span>
                           </label>
                       </div>
+                      <textarea
+                        style={S.textarea}
+                        value={newTicketSeriesDraft.replyInstructions}
+                        onChange={(event) => setNewTicketSeriesDraft((current) => ({ ...current, replyInstructions: event.target.value }))}
+                        placeholder="Instrucoes de resposta para esta serie. Ex.: agradecer o pedido e informar que vamos dar seguimento."
+                      />
                       <div style={S.smallMeta}>Preview: {buildTicketSeriesPreview(newTicketSeriesDraft)}</div>
                       <div style={S.inlineRow}>
                         <button type="button" style={S.primaryBtn} onClick={() => void handleCreateTicketSeries()} disabled={busy}>
@@ -2213,6 +2289,12 @@ export const GroupManagerCockpit: React.FC = () => {
                                 <span>Ativa</span>
                               </label>
                           </div>
+                          <textarea
+                            style={S.textarea}
+                            value={ticketSeriesDraft.replyInstructions}
+                            onChange={(event) => setTicketSeriesDraft((current) => ({ ...current, replyInstructions: event.target.value }))}
+                            placeholder="Instrucoes de resposta para esta serie. Ex.: agradecer a reclamacao e informar que vamos analisar e dar seguimento."
+                          />
                           <div style={S.smallMeta}>Preview: {buildTicketSeriesPreview(ticketSeriesDraft)}</div>
                           <div style={S.inlineRow}>
                             <button
@@ -2924,7 +3006,7 @@ export const GroupManagerCockpit: React.FC = () => {
                                   <Icons.Link size={12} />
                                   {match.emailLinked ? "Ligado" : "Confirmar ligacao"}
                                 </button>
-                                <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenTicketDraft(match.ticket)} disabled={busy}>
+                                <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenTicketReplyDraft(match.ticket)} disabled={busy}>
                                   <Icons.ExternalLink size={12} />
                                   Draft
                                 </button>
@@ -2951,7 +3033,7 @@ export const GroupManagerCockpit: React.FC = () => {
                                 <Icons.Link size={12} />
                                 Reforcar ligacao
                               </button>
-                              <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenTicketDraft(ticket)} disabled={busy}>
+                              <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenTicketReplyDraft(ticket)} disabled={busy}>
                                 <Icons.ExternalLink size={12} />
                                 Draft
                               </button>
@@ -2979,7 +3061,7 @@ export const GroupManagerCockpit: React.FC = () => {
                                 <Icons.Link size={12} />
                                 Ligar email
                               </button>
-                              <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenTicketDraft(ticket)} disabled={busy}>
+                              <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenTicketReplyDraft(ticket)} disabled={busy}>
                                 <Icons.ExternalLink size={12} />
                                 Draft
                               </button>

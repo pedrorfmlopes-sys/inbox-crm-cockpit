@@ -782,7 +782,7 @@ export async function insertTextToBody(content: string, isHtml = true): Promise<
 /**
  * Opens a new Reply form with pre-filled content.
  */
-export async function displayReplyForm(content: string, isHtml = true): Promise<void> {
+export async function displayReplyForm(content: string, isHtml = true, options?: { replyAll?: boolean }): Promise<void> {
   const OfficeAny = await ensureOfficeReady();
   const item = OfficeAny?.context?.mailbox?.item;
   if (!item?.displayReplyAllForm && !item?.displayReplyForm) {
@@ -790,6 +790,13 @@ export async function displayReplyForm(content: string, isHtml = true): Promise<
   }
 
   const finalContent = isHtml ? content.replace(/\n/g, "<br/>") : content;
+  const replyAll = options?.replyAll !== false;
+
+  if (replyAll && typeof item.displayReplyAllForm === "function") {
+    if (isHtml) item.displayReplyAllForm({ htmlBody: finalContent });
+    else item.displayReplyAllForm(finalContent);
+    return;
+  }
 
   if (typeof item.displayReplyForm === "function") {
     if (isHtml) item.displayReplyForm({ htmlBody: finalContent });

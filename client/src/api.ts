@@ -211,6 +211,7 @@ export type GroupTicketSeriesEntry = {
   id: string;
   name: string;
   prefix: string;
+  replyInstructions?: string;
   yearMode?: "none" | "yy" | "yyyy";
   separator?: "-" | "/" | "_" | " " | "";
   nextNumber: number;
@@ -749,6 +750,7 @@ export async function listGroupTicketSeries(): Promise<GroupTicketSeriesEntry[]>
 export async function createGroupTicketSeries(payload: {
   name: string;
   prefix: string;
+  replyInstructions?: string;
   yearMode?: "none" | "yy" | "yyyy";
   separator?: "-" | "/" | "_" | " " | "";
   nextNumber?: number;
@@ -767,6 +769,7 @@ export async function updateGroupTicketSeries(
   payload: {
     name?: string;
     prefix?: string;
+    replyInstructions?: string;
     yearMode?: "none" | "yy" | "yyyy";
     separator?: "-" | "/" | "_" | " " | "";
     nextNumber?: number;
