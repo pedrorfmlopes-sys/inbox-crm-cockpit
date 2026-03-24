@@ -97,6 +97,17 @@ function normalizeTicketPrefixInput(value: string | undefined): string {
     .replace(/[^A-Z0-9]+/g, "");
 }
 
+function confirmAction(message: string): boolean {
+  if (typeof window === "undefined" || typeof window.confirm !== "function") {
+    return true;
+  }
+  try {
+    return window.confirm(message);
+  } catch {
+    return true;
+  }
+}
+
 function buildTicketSeriesPreview(draft: Pick<TicketSeriesDraft, "prefix" | "yearMode" | "separator" | "padding" | "nextNumber">): string {
   const prefix = normalizeTicketPrefixInput(draft.prefix) || "TCK";
   const separator = draft.separator ?? "-";
@@ -903,7 +914,7 @@ export const GroupManagerCockpit: React.FC = () => {
 
   async function handleDeleteGroup() {
     if (!selectedGroup) return;
-    if (!window.confirm(`Eliminar o grupo "${selectedGroup.name}" e todas as ligacoes?`)) return;
+    if (!confirmAction(`Eliminar o grupo "${selectedGroup.name}" e todas as ligacoes?`)) return;
     setBusy(true);
     try {
       await deleteLinkGroup(selectedGroup.id);
@@ -1091,7 +1102,7 @@ export const GroupManagerCockpit: React.FC = () => {
 
   async function handleDeleteTicketSeries() {
     if (!selectedTicketSeries) return;
-    if (!window.confirm(`Eliminar a serie "${selectedTicketSeries.name}"?`)) return;
+    if (!confirmAction(`Eliminar a serie "${selectedTicketSeries.name}"?`)) return;
     setBusy(true);
     try {
       await deleteGroupTicketSeries(selectedTicketSeries.id);
@@ -1382,7 +1393,7 @@ export const GroupManagerCockpit: React.FC = () => {
       setMsg("Seleciona primeiro uma etiqueta.");
       return;
     }
-    if (!window.confirm(`Eliminar a etiqueta "${label}" de todos os grupos?`)) return;
+    if (!confirmAction(`Eliminar a etiqueta "${label}" de todos os grupos?`)) return;
     setBusy(true);
     try {
       for (const group of groups) {

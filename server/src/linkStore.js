@@ -29,6 +29,9 @@ function nowIso() {
 }
 
 function normalizeString(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  }
   return String(value || "").trim();
 }
 
