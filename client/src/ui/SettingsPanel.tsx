@@ -1002,6 +1002,96 @@ export function SettingsPanel(): JSX.Element {
                 </div>
               </label>
 
+              <label style={S.toggleRow}>
+                <input
+                  type="checkbox"
+                  checked={model.groupOutlookCategories?.enabled === true}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      groupOutlookCategories: {
+                        enabled: e.target.checked,
+                        includeGroups: model.groupOutlookCategories?.includeGroups !== false,
+                        includeTickets: model.groupOutlookCategories?.includeTickets !== false,
+                        includeStatuses: model.groupOutlookCategories?.includeStatuses !== false,
+                      },
+                    })
+                  }
+                />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Escrever categorias no Outlook</div>
+                  <div style={S.hint}>Aplica categorias automáticas no email atual com base em grupos, tickets e estado.</div>
+                </div>
+              </label>
+
+              {model.groupOutlookCategories?.enabled === true && (
+                <div style={{ ...S.referenceCard, display: "grid", gap: 10 }}>
+                  <div style={S.fieldLabel}>Categorias automáticas</div>
+                  <label style={S.toggleRow}>
+                    <input
+                      type="checkbox"
+                      checked={model.groupOutlookCategories?.includeGroups !== false}
+                      onChange={(e) =>
+                        setModel({
+                          ...model,
+                          groupOutlookCategories: {
+                            ...model.groupOutlookCategories,
+                            enabled: true,
+                            includeGroups: e.target.checked,
+                          },
+                        })
+                      }
+                    />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Grupo</div>
+                      <div style={S.hint}>Exemplo: <b>Grupo: Encomendas</b></div>
+                    </div>
+                  </label>
+
+                  <label style={S.toggleRow}>
+                    <input
+                      type="checkbox"
+                      checked={model.groupOutlookCategories?.includeTickets !== false}
+                      onChange={(e) =>
+                        setModel({
+                          ...model,
+                          groupOutlookCategories: {
+                            ...model.groupOutlookCategories,
+                            enabled: true,
+                            includeTickets: e.target.checked,
+                          },
+                        })
+                      }
+                    />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ticket</div>
+                      <div style={S.hint}>Exemplo: <b>Ticket: RTK-26-0001</b></div>
+                    </div>
+                  </label>
+
+                  <label style={S.toggleRow}>
+                    <input
+                      type="checkbox"
+                      checked={model.groupOutlookCategories?.includeStatuses !== false}
+                      onChange={(e) =>
+                        setModel({
+                          ...model,
+                          groupOutlookCategories: {
+                            ...model.groupOutlookCategories,
+                            enabled: true,
+                            includeStatuses: e.target.checked,
+                          },
+                        })
+                      }
+                    />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Estado</div>
+                      <div style={S.hint}>Exemplo: <b>Estado: Em analise</b></div>
+                    </div>
+                  </label>
+                </div>
+              )}
+
               <PanelState
                 compact
                 tone="info"
@@ -1023,6 +1113,9 @@ export function SettingsPanel(): JSX.Element {
                   </div>
                   <div style={S.hint}>
                     Tickets: <b>{model.groupTicketsEnabled !== false ? "Ativos" : "Desativados"}</b>
+                  </div>
+                  <div style={S.hint}>
+                    Categorias Outlook: <b>{model.groupOutlookCategories?.enabled === true ? "Ativas" : "Desativadas"}</b>
                   </div>
                 </div>
               </div>

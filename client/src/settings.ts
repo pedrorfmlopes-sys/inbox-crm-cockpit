@@ -55,6 +55,13 @@ export type GroupTicketUiSettings = {
   aiInstructions: string;
 };
 
+export type GroupOutlookCategorySettings = {
+  enabled: boolean;
+  includeGroups: boolean;
+  includeTickets: boolean;
+  includeStatuses: boolean;
+};
+
 export type Crm2StructuredLayoutSettings<TModel extends string> = {
   model: TModel;
   mode: Crm2OdooLayoutMode;
@@ -175,6 +182,7 @@ export type CockpitSettingsV1 = {
   groupFavoriteIds: string[];
   groupTicketsEnabled: boolean;
   groupTicketUi: GroupTicketUiSettings;
+  groupOutlookCategories: GroupOutlookCategorySettings;
 
   // CRM2 Odoo layout strategy for multi-company deployments
   crm2OdooLayout: Crm2OdooLayoutSettings;
@@ -292,6 +300,12 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     suggestDraftOnCreate: true,
     useAiDrafts: true,
     aiInstructions: "Escreve em tom profissional e claro. Indica o numero do ticket e pede que todas as respostas futuras mantenham esse numero no assunto.",
+  },
+  groupOutlookCategories: {
+    enabled: false,
+    includeGroups: true,
+    includeTickets: true,
+    includeStatuses: true,
   },
   crm2OdooLayout: {
     mode: "description_only",
@@ -517,6 +531,22 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
         ? Boolean(((incoming as any).groupTicketUi || {}).useAiDrafts)
         : base.groupTicketUi.useAiDrafts,
       aiInstructions: String((((incoming as any).groupTicketUi || {}).aiInstructions ?? base.groupTicketUi.aiInstructions) || "").trim(),
+    },
+    groupOutlookCategories: {
+      ...base.groupOutlookCategories,
+      ...((incoming as any).groupOutlookCategories || {}),
+      enabled: typeof ((incoming as any).groupOutlookCategories || {}).enabled === "boolean"
+        ? Boolean(((incoming as any).groupOutlookCategories || {}).enabled)
+        : base.groupOutlookCategories.enabled,
+      includeGroups: typeof ((incoming as any).groupOutlookCategories || {}).includeGroups === "boolean"
+        ? Boolean(((incoming as any).groupOutlookCategories || {}).includeGroups)
+        : base.groupOutlookCategories.includeGroups,
+      includeTickets: typeof ((incoming as any).groupOutlookCategories || {}).includeTickets === "boolean"
+        ? Boolean(((incoming as any).groupOutlookCategories || {}).includeTickets)
+        : base.groupOutlookCategories.includeTickets,
+      includeStatuses: typeof ((incoming as any).groupOutlookCategories || {}).includeStatuses === "boolean"
+        ? Boolean(((incoming as any).groupOutlookCategories || {}).includeStatuses)
+        : base.groupOutlookCategories.includeStatuses,
     },
     crm2OdooLayout: {
       ...base.crm2OdooLayout,

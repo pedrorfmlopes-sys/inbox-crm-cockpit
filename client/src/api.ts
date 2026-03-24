@@ -581,6 +581,7 @@ export async function getRelatedEmailContext(payload: RelevantEmailPayload): Pro
   email: RelatedEmailEntry | null;
   emails: RelatedEmailEntry[];
   groups: LinkGroupEntry[];
+  tickets: GroupTicketEntry[];
 }> {
   const params = new URLSearchParams();
   if (payload.conversationId) params.set("conversationId", String(payload.conversationId).trim());
@@ -594,6 +595,7 @@ export async function getRelatedEmailContext(payload: RelevantEmailPayload): Pro
     email: response?.email ? normalizeRelatedEmailEntry(response.email) : null,
     emails: Array.isArray(response?.emails) ? response.emails.map(normalizeRelatedEmailEntry) : [],
     groups: Array.isArray(response?.groups) ? response.groups : [],
+    tickets: Array.isArray(response?.tickets) ? response.tickets : [],
   };
 }
 

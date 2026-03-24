@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, syncManualGroupCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, syncManagedOutlookCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -247,7 +247,15 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         emailKey: "",
         groupId: null,
     });
-    const [currentCustomGroupNames, setCurrentCustomGroupNames] = useState<string[]>([]);
+    const [currentCustomGroupContext, setCurrentCustomGroupContext] = useState<{
+        names: string[];
+        statuses: string[];
+        ticketCodes: string[];
+    }>({
+        names: [],
+        statuses: [],
+        ticketCodes: [],
+    });
     const [startupChecks, setStartupChecks] = useState<StartupCheck[]>(() => createStartupChecks());
     const [startupNoticeState, setStartupNoticeState] = useState<StartupNotice | null>(null);
     const [startupNoticeDismissed, setStartupNoticeDismissed] = useState(false);
@@ -1033,7 +1041,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     useEffect(() => {
         const hasContextIdentity = Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
         if (!hasContextIdentity) {
-            setCurrentCustomGroupNames([]);
+            setCurrentCustomGroupContext({ names: [], statuses: [], ticketCodes: [] });
             return;
         }
         let cancelled = false;
@@ -1050,16 +1058,23 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         getRelatedEmailContext(payload)
             .then((response) => {
                 if (cancelled) return;
-                const names = Array.isArray(response?.groups)
+                const customGroups = Array.isArray(response?.groups)
                     ? response.groups
                         .filter((group) => group.kind === "custom")
-                        .map((group) => String(group.name || "").trim())
-                        .filter(Boolean)
                     : [];
-                setCurrentCustomGroupNames(names);
+                const names = Array.from(new Set(customGroups.map((group) => String(group.name || "").trim()).filter(Boolean)));
+                const statuses = Array.from(new Set(customGroups.map((group) => String(group.status || "").trim()).filter(Boolean)));
+                const ticketCodes = Array.from(
+                    new Set(
+                        (Array.isArray(response?.tickets) ? response.tickets : [])
+                            .map((ticket) => String(ticket?.code || "").trim())
+                            .filter(Boolean)
+                    )
+                );
+                setCurrentCustomGroupContext({ names, statuses, ticketCodes });
             })
             .catch(() => {
-                if (!cancelled) setCurrentCustomGroupNames([]);
+                if (!cancelled) setCurrentCustomGroupContext({ names: [], statuses: [], ticketCodes: [] });
             });
 
         return () => {
@@ -1074,10 +1089,20 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         syncOdooLinkedNotification(links.length > 0, links.length).catch(() => {
             // best-effort host hint only
         });
-        syncManualGroupCategories(currentCustomGroupNames).catch(() => {
+        syncManagedOutlookCategories({
+            groupNames: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeGroups !== false
+                ? currentCustomGroupContext.names
+                : [],
+            ticketCodes: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeTickets !== false
+                ? currentCustomGroupContext.ticketCodes
+                : [],
+            statuses: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeStatuses !== false
+                ? currentCustomGroupContext.statuses
+                : [],
+        }).catch(() => {
             // best-effort host hint only
         });
-    }, [ctx.itemId, currentCustomGroupNames, links.length]);
+    }, [ctx.itemId, currentCustomGroupContext, links.length, settings?.groupOutlookCategories]);
 
     const setAiState = (update: Partial<AiState>) => {
         if (!ctx.conversationId) return;

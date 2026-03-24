@@ -190,6 +190,8 @@ export const getSelectedMessageContext = getOutlookContext;
 
 const ODOO_LINKED_CATEGORY = "Odoo Linked";
 const GROUP_CATEGORY_PREFIX = "Grupo: ";
+const TICKET_CATEGORY_PREFIX = "Ticket: ";
+const STATUS_CATEGORY_PREFIX = "Estado: ";
 const ODOO_LINKED_NOTICE = "iccc-odoo-linked";
 
 
@@ -463,18 +465,38 @@ export async function syncOdooLinkedCategory(hasLinks: boolean): Promise<void> {
   await removeCategoryFromCurrentItem(ODOO_LINKED_CATEGORY);
 }
 
-export async function syncManualGroupCategories(groupNames: string[]): Promise<void> {
-  const uniqueNames = Array.from(
-    new Set(
-      (groupNames || [])
-        .map((name) => String(name || "").trim())
-        .filter(Boolean)
-    )
-  );
-  const desiredCategories = uniqueNames.map((name) => `${GROUP_CATEGORY_PREFIX}${name}`);
+function normalizeUniqueCategoryValues(values: string[] | undefined): string[] {
+  return Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)));
+}
+
+function normalizeStatusCategoryLabel(value: string | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "concluido") return "Concluido";
+  if (normalized === "em_progresso") return "Em progresso";
+  if (normalized === "em_analise") return "Em analise";
+  return String(value || "").trim();
+}
+
+export async function syncManagedOutlookCategories(input: {
+  groupNames?: string[];
+  ticketCodes?: string[];
+  statuses?: string[];
+}): Promise<void> {
+  const desiredCategories = [
+    ...normalizeUniqueCategoryValues(input?.groupNames).map((name) => `${GROUP_CATEGORY_PREFIX}${name}`),
+    ...normalizeUniqueCategoryValues(input?.ticketCodes).map((code) => `${TICKET_CATEGORY_PREFIX}${code}`),
+    ...normalizeUniqueCategoryValues(input?.statuses)
+      .map((status) => normalizeStatusCategoryLabel(status))
+      .filter(Boolean)
+      .map((label) => `${STATUS_CATEGORY_PREFIX}${label}`),
+  ];
   const currentCategories = await getCurrentItemCategoryNames();
-  const currentGroupCategories = currentCategories.filter((name) => name.startsWith(GROUP_CATEGORY_PREFIX));
-  const toRemove = currentGroupCategories.filter((name) => !desiredCategories.includes(name));
+  const currentManagedCategories = currentCategories.filter((name) =>
+    name.startsWith(GROUP_CATEGORY_PREFIX)
+    || name.startsWith(TICKET_CATEGORY_PREFIX)
+    || name.startsWith(STATUS_CATEGORY_PREFIX)
+  );
+  const toRemove = currentManagedCategories.filter((name) => !desiredCategories.includes(name));
   const toAdd = desiredCategories.filter((name) => !currentCategories.includes(name));
 
   for (const categoryName of toAdd) {
@@ -482,6 +504,10 @@ export async function syncManualGroupCategories(groupNames: string[]): Promise<v
   }
   await addCategoriesToCurrentItem(toAdd);
   await removeCategoriesFromCurrentItem(toRemove);
+}
+
+export async function syncManualGroupCategories(groupNames: string[]): Promise<void> {
+  await syncManagedOutlookCategories({ groupNames });
 }
 
 export async function syncOdooLinkedNotification(hasLinks: boolean, count = 0): Promise<void> {

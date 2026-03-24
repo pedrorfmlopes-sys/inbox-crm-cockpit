@@ -1601,7 +1601,7 @@ async function listDbEmailsByGroup(groupId) {
 }
 
 async function getDbCustomGroupContext(input) {
-  if (!db.isEnabled()) return { groups: [], emails: [] };
+  if (!db.isEnabled()) return { groups: [], emails: [], tickets: [] };
 
   const normalized = normalizeEmailInput(input);
   const emailKey = makePersistentEmailKey(normalized);
@@ -1624,10 +1624,10 @@ async function getDbCustomGroupContext(input) {
     params.push(emailKey);
     where.push(`m.email_key = $${params.length}`);
   }
-  if (!where.length) return { groups: [], emails: [] };
+  if (!where.length) return { groups: [], emails: [], tickets: [] };
 
   const currentMemberships = await db.query(
-    `SELECT DISTINCT g.id, g.name, g.description, g.created_at, g.updated_at, m.email_key
+    `SELECT DISTINCT g.id, g.name, g.description, g.status, g.is_archived, g.archived_at, g.labels_json, g.documents_enabled, g.created_at, g.updated_at, m.email_key
      FROM crm_custom_group_members m
      JOIN crm_custom_groups g ON g.id = m.group_id
      WHERE ${where.join(" OR ")}`,
@@ -1635,15 +1635,26 @@ async function getDbCustomGroupContext(input) {
   );
 
   const membershipRows = currentMemberships?.rows || [];
-  if (!membershipRows.length) return { groups: [], emails: [] };
+  if (!membershipRows.length) {
+    const tickets = emailKey
+      ? (await listDbGroupTickets("", { emailKey, limit: 100 })).map((ticket) =>
+          buildGroupTicketEntry({ groups: {}, groupTicketSeries: {}, groupTicketEmails: {} }, ticket, { emailLinked: true })
+        )
+      : [];
+    return { groups: [], emails: [], tickets };
+  }
 
   const currentEmailKeys = new Set(membershipRows.map((row) => normalizeString(row.email_key)).filter(Boolean));
+  const primaryEmailKey = emailKey || Array.from(currentEmailKeys)[0] || "";
   const groups = Array.from(
     new Map(membershipRows.map((row) => [normalizeString(row.id), mapDbGroupRow(row)])).values()
   ).filter(Boolean);
 
   const groupIds = groups.map((group) => group.id).filter(Boolean);
-  if (!groupIds.length) return { groups, emails: [] };
+  const tickets = primaryEmailKey
+    ? (await listDbGroupTickets("", { emailKey: primaryEmailKey, limit: 100 })).map((ticket) => buildGroupTicketEntry({ groups: Object.fromEntries(groups.map((group) => [group.id, group])), groupTicketSeries: {}, groupTicketEmails: {} }, ticket, { emailLinked: true }))
+    : [];
+  if (!groupIds.length) return { groups, emails: [], tickets };
 
   const relatedRows = await db.query(
     `SELECT m.*, g.name AS group_name
@@ -1692,6 +1703,7 @@ async function getDbCustomGroupContext(input) {
 
   return {
     groups: groups.map((group) => ({ ...group, memberCount: 0 })),
+    tickets,
     emails: Array.from(aggregated.values()).sort((a, b) =>
       String(b.messageDateIso || b.receivedAtIso || "").localeCompare(String(a.messageDateIso || a.receivedAtIso || ""))
     ),
@@ -2987,6 +2999,9 @@ export async function getRelatedEmails(input) {
   const store = readState();
   const currentEmailIds = getMatchedEmailIds(store, input);
   const currentEmailSet = new Set(currentEmailIds);
+  const primaryEmailKey = currentEmailIds[0] && store.emails[currentEmailIds[0]]
+    ? makePersistentEmailKey(store.emails[currentEmailIds[0]])
+    : resolveEmailKeyFromInput(store, input);
   const aggregated = new Map();
 
   function appendReason(emailId, reason) {
@@ -3077,6 +3092,11 @@ export async function getRelatedEmails(input) {
       ...group,
       memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
     })),
+    tickets: primaryEmailKey
+      ? listTicketIdsByEmailKey(store, primaryEmailKey)
+        .map((ticketId) => buildGroupTicketEntry(store, store.groupTickets?.[ticketId], { emailLinked: true }))
+        .filter(Boolean)
+      : [],
     emails: Array.from(aggregated.values()).sort((a, b) =>
       String(b.messageDateIso || b.receivedAtIso || "").localeCompare(String(a.messageDateIso || a.receivedAtIso || ""))
     ),
@@ -3099,6 +3119,10 @@ export async function getRelatedEmails(input) {
       return {
         email: fileResult.email,
         groups: Array.from(mergedGroups.values()),
+        tickets: Array.from(
+          new Map([...fileResult.tickets, ...(dbResult.tickets || [])].filter(Boolean).map((ticket) => [normalizeString(ticket.id), ticket]))
+            .values()
+        ),
         emails: dedupeEmailLinks([...fileResult.emails, ...dbResult.emails]),
       };
     } catch (error) {
