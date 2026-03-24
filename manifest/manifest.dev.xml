@@ -6,11 +6,11 @@
   xsi:type="MailApp">
 
   <Id>f4c5f9f1-8a75-4a66-a2d6-7b2f0cb1b7e3</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.0.0.1</Version>
   <ProviderName>Divitek</ProviderName>
   <DefaultLocale>pt-PT</DefaultLocale>
 
-  <DisplayName DefaultValue="Inbox CRM Cockpit (DEV)"/>
+  <DisplayName DefaultValue="Inbox CRM Cockpit (DEV RW)"/>
   <Description DefaultValue="Inbox CRM Cockpit — dev mode (local)"/>
   <IconUrl DefaultValue="https://localhost:5173/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://localhost:5173/icon-80.png"/>
@@ -44,7 +44,7 @@
     </Form>
   </FormSettings>
 
-  <Permissions>ReadItem</Permissions>
+  <Permissions>ReadWriteItem</Permissions>
 
   <Rule xsi:type="RuleCollection" Mode="Or">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>

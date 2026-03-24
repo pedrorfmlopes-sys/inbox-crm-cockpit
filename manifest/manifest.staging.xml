@@ -6,11 +6,11 @@
   xsi:type="MailApp">
 
   <Id>f4c5f9f1-8a75-4a66-a2d6-7b2f0cb1b7e3</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.0.0.1</Version>
   <ProviderName>Divitek</ProviderName>
   <DefaultLocale>pt-PT</DefaultLocale>
 
-  <DisplayName DefaultValue="Inbox CRM Cockpit (STAGING)"/>
+  <DisplayName DefaultValue="Inbox CRM Cockpit (STAGING RW)"/>
   <Description DefaultValue="Inbox CRM Cockpit — staging mode (Render)"/>
   <IconUrl DefaultValue="https://inbox-cockpit-staging.onrender.com/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://inbox-cockpit-staging.onrender.com/icon-80.png"/>
@@ -44,7 +44,7 @@
     </Form>
   </FormSettings>
 
-  <Permissions>ReadItem</Permissions>
+  <Permissions>ReadWriteItem</Permissions>
 
   <Rule xsi:type="RuleCollection" Mode="Or">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
