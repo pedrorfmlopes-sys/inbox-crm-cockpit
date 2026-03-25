@@ -224,6 +224,9 @@ export function createOptionalPgStore(label) {
 
   return {
     query,
+    isConfigured() {
+      return Boolean(DATABASE_URL);
+    },
     isEnabled() {
       return canUseDb();
     },

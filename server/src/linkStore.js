@@ -24,6 +24,46 @@ const DEFAULT_GROUP_TICKET_SEPARATOR = "-";
 const db = createOptionalPgStore("linkStore");
 let customGroupDbInitPromise = null;
 
+function hasDurablePersistence() {
+  return typeof db.isConfigured === "function" && db.isConfigured();
+}
+
+function durablePersistenceError(action, error) {
+  const detail = normalizeString(error?.message);
+  const suffix = detail ? ` Detalhe tecnico: ${detail}` : "";
+  return new Error(
+    `Nao foi possivel ${action} porque a persistencia segura em PostgreSQL esta indisponivel. Nenhuma alteracao foi guardada.${suffix}`
+  );
+}
+
+async function requireDurablePersistence(action, options = {}) {
+  if (!hasDurablePersistence()) return false;
+  if (!db.isEnabled()) {
+    throw durablePersistenceError(action);
+  }
+  try {
+    await ensureCustomGroupDb();
+    if (typeof options.syncStore === "function") {
+      await options.syncStore();
+    }
+    return true;
+  } catch (error) {
+    throw durablePersistenceError(action, error);
+  }
+}
+
+function writeCacheStore(store) {
+  try {
+    writeStore(store);
+  } catch (error) {
+    if (hasDurablePersistence()) {
+      console.warn("[linkStore] Local cache write failed after durable persistence success:", error?.message || error);
+      return;
+    }
+    throw error;
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -2049,7 +2089,7 @@ function writeStateWithEmail(store, email) {
     const group = ensureConversationGroup(store, email.conversationId, email);
     if (group) addEmailMembership(store, group.id, email.id);
   }
-  writeStore(store);
+  writeCacheStore(store);
 }
 
 export async function registerRelevantEmail(input) {
@@ -2063,6 +2103,7 @@ export async function registerRelevantEmail(input) {
 
 export async function createCustomGroup(input) {
   const store = readState();
+  const useDurableDb = await requireDurablePersistence("criar o grupo");
   const group = ensureGroup(store, {
     kind: CUSTOM_GROUP_KIND,
     name: normalizeString(input?.name) || "Grupo sem nome",
@@ -2073,21 +2114,20 @@ export async function createCustomGroup(input) {
     archivedAt: normalizeString(input?.archivedAt),
     documentsEnabled: typeof input?.documentsEnabled === "boolean" ? input.documentsEnabled : true,
   });
-  writeStore(store);
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       await upsertDbCustomGroup(group);
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Insert Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Custom Group Insert Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("criar o grupo", error);
     }
   }
+  writeCacheStore(store);
   return buildGroupListEntry(store, group);
 }
 
 export async function updateCustomGroup(groupId, input) {
   const store = readState();
+  const useDurableDb = await requireDurablePersistence("atualizar o grupo");
   const gid = normalizeString(groupId);
   const current = store.groups[gid];
   if (!gid || !current || current.kind !== CUSTOM_GROUP_KIND) {
@@ -2123,18 +2163,14 @@ export async function updateCustomGroup(groupId, input) {
         ? input.documentsEnabled
         : current.documentsEnabled,
   });
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       await upsertDbCustomGroup(group);
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Update Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Custom Group Update Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("atualizar o grupo", error);
     }
   }
-
+  writeCacheStore(store);
   return buildGroupListEntry(store, group);
 }
 
@@ -2153,6 +2189,9 @@ export async function listCustomGroups(query = "") {
     .map((group) => buildGroupListEntry(store, group))
     .filter(Boolean);
 
+  if (hasDurablePersistence() && !db.isEnabled()) {
+    throw durablePersistenceError("carregar os grupos");
+  }
   if (db.isEnabled()) {
     try {
       await ensureCustomGroupDb();
@@ -2169,6 +2208,7 @@ export async function listCustomGroups(query = "") {
         String(a?.name || "").localeCompare(String(b?.name || ""), "pt")
       );
     } catch (error) {
+      if (hasDurablePersistence()) throw durablePersistenceError("carregar os grupos", error);
       if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Query Error, falling back to central file store:", error.message);
       else console.error("[linkStore] DB Custom Group Query Error, falling back to central file store:", error);
     }
@@ -2179,14 +2219,13 @@ export async function listCustomGroups(query = "") {
 
 export async function addEmailToGroup(groupId, input) {
   const store = readState();
+  const useDurableDb = await requireDurablePersistence("ligar o email ao grupo");
   let existingDbGroup = null;
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       existingDbGroup = await getDbCustomGroupById(groupId);
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Read Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Custom Group Read Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("ligar o email ao grupo", error);
     }
   }
 
@@ -2208,18 +2247,15 @@ export async function addEmailToGroup(groupId, input) {
     if (conversationGroup) addEmailMembership(store, conversationGroup.id, email.id, { membershipKind: DEFAULT_GROUP_MEMBERSHIP_KIND });
   }
   addEmailMembership(store, group.id, email.id, { membershipKind });
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       await upsertDbCustomGroup(group);
       await upsertDbCustomGroupMember(group.id, email, membershipKind);
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Membership Insert Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Group Membership Insert Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("ligar o email ao grupo", error);
     }
   }
+  writeCacheStore(store);
 
   return {
     group: buildGroupListEntry(store, group),
@@ -2229,6 +2265,7 @@ export async function addEmailToGroup(groupId, input) {
 
 export async function removeEmailFromGroup(groupId, input) {
   const store = readState();
+  const useDurableDb = await requireDurablePersistence("remover o email do grupo");
   const gid = normalizeString(groupId);
   const emailKey = normalizeString(input?.emailKey);
   let emailId = "";
@@ -2252,18 +2289,15 @@ export async function removeEmailFromGroup(groupId, input) {
     if (match) removed = removeEmailMembership(store, gid, match);
   }
 
-  if (removed) {
-    writeStore(store);
-  }
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       await removeDbCustomGroupMember(groupId, input);
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Membership Delete Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Group Membership Delete Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("remover o email do grupo", error);
     }
+  }
+  if (removed) {
+    writeCacheStore(store);
   }
 
   return {
@@ -2276,6 +2310,7 @@ export async function removeEmailFromGroup(groupId, input) {
 
 export async function deleteCustomGroup(groupId) {
   const store = readState();
+  const useDurableDb = await requireDurablePersistence("eliminar o grupo");
   const gid = normalizeString(groupId);
   if (!gid) return { ok: true, deleted: false };
 
@@ -2296,21 +2331,18 @@ export async function deleteCustomGroup(groupId) {
     }, ticket);
   }
   delete store.groups[gid];
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       for (const ticket of Object.values(store.groupTickets || {})) {
         if (!ticket?.id) continue;
         await upsertDbGroupTicket(ticket);
       }
       await db.query(`DELETE FROM crm_custom_groups WHERE id = $1`, [gid]);
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Custom Group Delete Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Custom Group Delete Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("eliminar o grupo", error);
     }
   }
+  writeCacheStore(store);
 
   return { ok: true, deleted: true, groupId: gid };
 }
@@ -2428,6 +2460,9 @@ export async function listDocumentsByGroup(groupId) {
     ? store.groupDocuments[gid].map((doc) => normalizeGroupDocumentInput(doc))
     : [];
 
+  if (hasDurablePersistence() && !db.isEnabled()) {
+    throw durablePersistenceError("carregar os documentos do grupo");
+  }
   if (db.isEnabled()) {
     try {
       await ensureCustomGroupDb();
@@ -2439,6 +2474,7 @@ export async function listDocumentsByGroup(groupId) {
       }
       return Array.from(merged.values()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
     } catch (error) {
+      if (hasDurablePersistence()) throw durablePersistenceError("carregar os documentos do grupo", error);
       if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Document Query Error, falling back to central file store:", error.message);
       else console.error("[linkStore] DB Group Document Query Error, falling back to central file store:", error);
     }
@@ -2454,6 +2490,9 @@ export async function listAttachmentFlagsByGroup(groupId) {
     ? store.groupAttachmentFlags[gid].map((entry) => normalizeAttachmentFlagInput(entry)).filter((entry) => entry.attachmentKey)
     : [];
 
+  if (hasDurablePersistence() && !db.isEnabled()) {
+    throw durablePersistenceError("carregar a configuracao de anexos do grupo");
+  }
   if (db.isEnabled()) {
     try {
       await ensureCustomGroupDb();
@@ -2465,6 +2504,7 @@ export async function listAttachmentFlagsByGroup(groupId) {
       }
       return Array.from(merged.values()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
     } catch (error) {
+      if (hasDurablePersistence()) throw durablePersistenceError("carregar a configuracao de anexos do grupo", error);
       if (error?.optionalDbFallback) console.warn("[linkStore] DB Attachment Flag Query Error, falling back to central file store:", error.message);
       else console.error("[linkStore] DB Attachment Flag Query Error, falling back to central file store:", error);
     }
@@ -2475,6 +2515,7 @@ export async function listAttachmentFlagsByGroup(groupId) {
 
 export async function saveAttachmentFlagsToGroup(groupId, input) {
   const store = readState();
+  const useDurableDb = await requireDurablePersistence("guardar a configuracao de anexos do grupo");
   const gid = normalizeString(groupId);
   const group = store.groups[gid];
   if (!gid || !group || group.kind !== CUSTOM_GROUP_KIND) throw new Error("Grupo inválido.");
@@ -2498,25 +2539,23 @@ export async function saveAttachmentFlagsToGroup(groupId, input) {
   }
   store.groupAttachmentFlags[gid] = Array.from(byKey.values()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
   if (store.groups[gid]) store.groups[gid].updatedAt = nowIso();
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       for (const entry of entries) {
         await upsertDbGroupAttachmentFlag(gid, entry);
       }
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Attachment Flag Save Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Attachment Flag Save Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("guardar a configuracao de anexos do grupo", error);
     }
   }
+  writeCacheStore(store);
 
   return { ok: true, flags: await listAttachmentFlagsByGroup(gid) };
 }
 
 export async function saveDocumentsToGroup(groupId, input) {
   const store = readState();
+  const useDurableDb = await requireDurablePersistence("guardar documentos no grupo");
   const gid = normalizeString(groupId);
   const group = store.groups[gid];
   if (group?.documentsEnabled === false) throw new Error("A gestao documental esta desativada neste grupo.");
@@ -2536,19 +2575,16 @@ export async function saveDocumentsToGroup(groupId, input) {
   }
   store.groupDocuments[gid] = Array.from(byId.values()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
   if (store.groups[gid]) store.groups[gid].updatedAt = nowIso();
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       for (const doc of docs) {
         await upsertDbGroupDocument(gid, doc);
       }
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Document Save Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Group Document Save Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("guardar documentos no grupo", error);
     }
   }
+  writeCacheStore(store);
 
   return {
     ok: true,
@@ -2559,6 +2595,7 @@ export async function saveDocumentsToGroup(groupId, input) {
 
 export async function deleteDocumentFromGroup(groupId, documentId) {
   const store = readState();
+  const useDurableDb = await requireDurablePersistence("eliminar o documento do grupo");
   const gid = normalizeString(groupId);
   const did = normalizeString(documentId);
   const current = Array.isArray(store.groupDocuments[gid]) ? store.groupDocuments[gid] : [];
@@ -2566,17 +2603,14 @@ export async function deleteDocumentFromGroup(groupId, documentId) {
   const removed = next.length !== current.length;
   store.groupDocuments[gid] = next;
   if (removed && store.groups[gid]) store.groups[gid].updatedAt = nowIso();
-  if (removed) writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb && removed) {
     try {
-      await ensureCustomGroupDb();
       await deleteDbGroupDocument(gid, did);
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Group Document Delete Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Group Document Delete Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("eliminar o documento do grupo", error);
     }
   }
+  if (removed) writeCacheStore(store);
 
   return { ok: true, removed, groupId: gid, documentId: did };
 }
@@ -2590,11 +2624,15 @@ function findSeriesConflict(store, prefix, excludeId = "") {
 
 export async function listGroupTicketSeries() {
   const store = readState();
+  if (hasDurablePersistence() && !db.isEnabled()) {
+    throw durablePersistenceError("carregar as series de tickets");
+  }
   if (db.isEnabled()) {
     try {
       await syncGroupTicketsFromDb(store);
-      writeStore(store);
+      writeCacheStore(store);
     } catch (error) {
+      if (hasDurablePersistence()) throw durablePersistenceError("carregar as series de tickets", error);
       if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Sync Error, using central file store:", error.message);
       else console.error("[linkStore] DB Ticket Series Sync Error, using central file store:", error);
     }
@@ -2611,14 +2649,11 @@ export async function listGroupTicketSeries() {
 
 export async function createGroupTicketSeries(input) {
   const store = readState();
-  if (db.isEnabled()) {
-    try {
+  const useDurableDb = await requireDurablePersistence("criar a serie de tickets", {
+    syncStore: async () => {
       await syncGroupTicketsFromDb(store);
-    } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Sync Error before create, using central file store:", error.message);
-      else console.error("[linkStore] DB Ticket Series Sync Error before create, using central file store:", error);
-    }
-  }
+    },
+  });
 
   const draft = normalizeGroupTicketSeriesInput(input);
   if (!draft.prefix) throw new Error("Define um prefixo para a serie.");
@@ -2627,31 +2662,25 @@ export async function createGroupTicketSeries(input) {
 
   draft.updatedAt = nowIso();
   store.groupTicketSeries[draft.id] = draft;
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       await upsertDbGroupTicketSeries(draft);
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Create Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Ticket Series Create Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("criar a serie de tickets", error);
     }
   }
+  writeCacheStore(store);
 
   return buildGroupTicketSeriesEntry(store, draft);
 }
 
 export async function updateGroupTicketSeries(seriesId, input) {
   const store = readState();
-  if (db.isEnabled()) {
-    try {
+  const useDurableDb = await requireDurablePersistence("atualizar a serie de tickets", {
+    syncStore: async () => {
       await syncGroupTicketsFromDb(store);
-    } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Sync Error before update, using central file store:", error.message);
-      else console.error("[linkStore] DB Ticket Series Sync Error before update, using central file store:", error);
-    }
-  }
+    },
+  });
 
   const sid = normalizeString(seriesId);
   const current = store.groupTicketSeries?.[sid];
@@ -2684,63 +2713,57 @@ export async function updateGroupTicketSeries(seriesId, input) {
     }, ticket);
     store.groupTickets[merged.id] = merged;
   }
-
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       await upsertDbGroupTicketSeries(store.groupTicketSeries[sid]);
       for (const ticket of Object.values(store.groupTickets || {})) {
         if (normalizeString(ticket?.seriesId) !== sid) continue;
         await upsertDbGroupTicket(ticket);
       }
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Update Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Ticket Series Update Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("atualizar a serie de tickets", error);
     }
   }
+  writeCacheStore(store);
 
   return buildGroupTicketSeriesEntry(store, store.groupTicketSeries[sid]);
 }
 
 export async function deleteGroupTicketSeries(seriesId) {
   const store = readState();
-  if (db.isEnabled()) {
-    try {
+  const useDurableDb = await requireDurablePersistence("eliminar a serie de tickets", {
+    syncStore: async () => {
       await syncGroupTicketsFromDb(store);
-    } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Sync Error before delete, using central file store:", error.message);
-      else console.error("[linkStore] DB Ticket Series Sync Error before delete, using central file store:", error);
-    }
-  }
+    },
+  });
   const sid = normalizeString(seriesId);
   if (!sid || !store.groupTicketSeries?.[sid]) throw new Error("Serie de ticket invalida.");
   const usageCount = Object.values(store.groupTickets || {}).filter((ticket) => normalizeString(ticket?.seriesId) === sid).length;
   if (usageCount > 0) throw new Error("Nao podes eliminar uma serie que ja tem tickets.");
   delete store.groupTicketSeries[sid];
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       await deleteDbGroupTicketSeries(sid);
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Series Delete Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Ticket Series Delete Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("eliminar a serie de tickets", error);
     }
   }
+  writeCacheStore(store);
 
   return { ok: true, deleted: true, seriesId: sid };
 }
 
 export async function listGroupTickets(query = "", options = {}) {
   const store = readState();
+  if (hasDurablePersistence() && !db.isEnabled()) {
+    throw durablePersistenceError("carregar os tickets");
+  }
   if (db.isEnabled()) {
     try {
       await syncGroupTicketsFromDb(store);
-      writeStore(store);
+      writeCacheStore(store);
     } catch (error) {
+      if (hasDurablePersistence()) throw durablePersistenceError("carregar os tickets", error);
       if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Sync Error, using central file store:", error.message);
       else console.error("[linkStore] DB Ticket Sync Error, using central file store:", error);
     }
@@ -2781,14 +2804,11 @@ export async function listGroupTickets(query = "", options = {}) {
 
 export async function createGroupTicket(input) {
   const store = readState();
-  if (db.isEnabled()) {
-    try {
+  const useDurableDb = await requireDurablePersistence("criar o ticket", {
+    syncStore: async () => {
       await syncGroupTicketsFromDb(store);
-    } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Sync Error before create, using central file store:", error.message);
-      else console.error("[linkStore] DB Ticket Sync Error before create, using central file store:", error);
-    }
-  }
+    },
+  });
 
   const seriesId = normalizeString(input?.seriesId);
   const series = store.groupTicketSeries?.[seriesId];
@@ -2838,12 +2858,8 @@ export async function createGroupTicket(input) {
       addEmailMembership(store, groupId, email.id, { membershipKind: normalizeGroupMembershipKind(input?.membershipKind) });
     }
   }
-
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       await upsertDbGroupTicketSeries(store.groupTicketSeries[seriesId]);
       await upsertDbGroupTicket(ticket);
       for (const emailKey of store.groupTicketEmails?.[ticket.id] || []) {
@@ -2858,24 +2874,21 @@ export async function createGroupTicket(input) {
         if (emailKey) await upsertDbGroupTicketEmail(ticket.id, emailKey);
       }
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Create Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Ticket Create Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("criar o ticket", error);
     }
   }
+  writeCacheStore(store);
 
   return buildGroupTicketEntry(store, ticket);
 }
 
 export async function updateGroupTicket(ticketId, input) {
   const store = readState();
-  if (db.isEnabled()) {
-    try {
+  const useDurableDb = await requireDurablePersistence("atualizar o ticket", {
+    syncStore: async () => {
       await syncGroupTicketsFromDb(store);
-    } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Sync Error before update, using central file store:", error.message);
-      else console.error("[linkStore] DB Ticket Sync Error before update, using central file store:", error);
-    }
-  }
+    },
+  });
 
   const tid = normalizeString(ticketId);
   const current = store.groupTickets?.[tid];
@@ -2893,31 +2906,25 @@ export async function updateGroupTicket(ticketId, input) {
     updatedAt: nowIso(),
   }, current);
   store.groupTickets[tid] = next;
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       await upsertDbGroupTicket(next);
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Update Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Ticket Update Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("atualizar o ticket", error);
     }
   }
+  writeCacheStore(store);
 
   return buildGroupTicketEntry(store, next);
 }
 
 export async function linkEmailToGroupTicket(ticketId, input) {
   const store = readState();
-  if (db.isEnabled()) {
-    try {
+  const useDurableDb = await requireDurablePersistence("ligar o email ao ticket", {
+    syncStore: async () => {
       await syncGroupTicketsFromDb(store);
-    } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Sync Error before email link, using central file store:", error.message);
-      else console.error("[linkStore] DB Ticket Sync Error before email link, using central file store:", error);
-    }
-  }
+    },
+  });
 
   const tid = normalizeString(ticketId);
   const current = store.groupTickets?.[tid];
@@ -2946,12 +2953,8 @@ export async function linkEmailToGroupTicket(ticketId, input) {
       appliedGroups.push(buildGroupListEntry(store, group));
     }
   }
-
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
-      await ensureCustomGroupDb();
       await upsertDbGroupTicket(store.groupTickets[tid]);
       await upsertDbGroupTicketEmail(tid, emailKey);
       if (applyGroups) {
@@ -2963,10 +2966,10 @@ export async function linkEmailToGroupTicket(ticketId, input) {
         }
       }
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Email Link Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Ticket Email Link Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("ligar o email ao ticket", error);
     }
   }
+  writeCacheStore(store);
 
   return {
     ok: true,
@@ -2978,11 +2981,15 @@ export async function linkEmailToGroupTicket(ticketId, input) {
 
 export async function detectGroupTicketsForEmail(input) {
   const store = readState();
+  if (hasDurablePersistence() && !db.isEnabled()) {
+    throw durablePersistenceError("detetar tickets para o email");
+  }
   if (db.isEnabled()) {
     try {
       await syncGroupTicketsFromDb(store);
-      writeStore(store);
+      writeCacheStore(store);
     } catch (error) {
+      if (hasDurablePersistence()) throw durablePersistenceError("detetar tickets para o email", error);
       if (error?.optionalDbFallback) console.warn("[linkStore] DB Ticket Detect Sync Error, using central file store:", error.message);
       else console.error("[linkStore] DB Ticket Detect Sync Error, using central file store:", error);
     }
@@ -3229,13 +3236,12 @@ export async function addLink(conversationId, entry) {
   if (!resolvedConversationId) throw new Error("Missing conversationId");
 
   const store = readState();
+  const useDurableDb = await requireDurablePersistence("gravar a ligacao CRM");
   const email = upsertEmail(store, { ...entry, conversationId: resolvedConversationId });
   const conversationGroup = ensureConversationGroup(store, resolvedConversationId, email);
   if (conversationGroup) addEmailMembership(store, conversationGroup.id, email.id);
   const nextLink = linkEmailToEntity(store, email.id, { ...entry, conversationId: resolvedConversationId });
-  writeStore(store);
-
-  if (db.isEnabled()) {
+  if (useDurableDb) {
     try {
       await db.query(
         `INSERT INTO crm_links
@@ -3261,10 +3267,10 @@ export async function addLink(conversationId, entry) {
         ]
       );
     } catch (error) {
-      if (error?.optionalDbFallback) console.warn("[linkStore] DB Insert Error, central file store kept as source of truth:", error.message);
-      else console.error("[linkStore] DB Insert Error, central file store kept as source of truth:", error);
+      throw durablePersistenceError("gravar a ligacao CRM", error);
     }
   }
+  writeCacheStore(store);
 
   return await listLinksByConversation(resolvedConversationId, email.internetMessageId, email.itemId);
 }
