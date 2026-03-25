@@ -7,6 +7,7 @@ import {
   deleteLinkGroup,
   deleteGroupTicketSeries,
   detectGroupTicketsForEmail,
+  getRelatedEmailContext,
   getGroupEmails,
   listLinkGroups,
   listGroupTicketSeries,
@@ -22,6 +23,7 @@ import {
   updateGroupTicketSeries,
   linkEmailToGroupTicket,
   type LinkGroupEntry,
+  type RelevantEmailPayload,
   type RelatedEmailEntry,
 } from "@/api";
 import { aiGenerate } from "@/ai/aiClient";
@@ -151,6 +153,54 @@ function parseLabels(value: string | string[] | undefined): string[] {
     labels.push(label);
   }
   return labels.sort((a, b) => a.localeCompare(b, "pt-PT"));
+}
+
+function stripEmailPayloadAttachmentContent<T extends { attachments?: RelevantEmailPayload["attachments"] }>(payload: T): T {
+  if (!payload || !Array.isArray(payload.attachments) || !payload.attachments.length) {
+    return payload;
+  }
+  return {
+    ...payload,
+    attachments: payload.attachments.map(({ content: _content, ...attachment }) => attachment),
+  };
+}
+
+function splitDocumentsIntoBatches<T extends { contentBase64?: string }>(documents: T[], maxBatchChars = 8_000_000): T[][] {
+  const batches: T[][] = [];
+  let currentBatch: T[] = [];
+  let currentSize = 0;
+
+  for (const document of documents) {
+    const size = String(document?.contentBase64 || "").length;
+    if (currentBatch.length && currentSize + size > maxBatchChars) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentSize = 0;
+    }
+    currentBatch.push(document);
+    currentSize += size;
+  }
+
+  if (currentBatch.length) batches.push(currentBatch);
+  return batches;
+}
+
+function makeAttachmentSelectionKey(attachment: {
+  id?: string;
+  name?: string;
+  size?: number;
+  contentId?: string;
+  contentType?: string;
+}): string {
+  return (
+    String(attachment?.id || "").trim()
+    || [
+      String(attachment?.name || "").trim(),
+      String(attachment?.size || "").trim(),
+      String(attachment?.contentId || "").trim(),
+      String(attachment?.contentType || "").trim(),
+    ].join("|")
+  );
 }
 
 function mergeLabelCatalog(...sources: Array<string[] | undefined>): string[] {
@@ -484,6 +534,7 @@ export const GroupManagerCockpit: React.FC = () => {
   const [groupEmailsLoading, setGroupEmailsLoading] = useState(false);
   const [groupEmailQuery, setGroupEmailQuery] = useState("");
   const [selectedGroupEmailKeys, setSelectedGroupEmailKeys] = useState<string[]>([]);
+  const [selectedCurrentAttachmentKeys, setSelectedCurrentAttachmentKeys] = useState<string[]>([]);
   const [linkKind, setLinkKind] = useState<MembershipKind>("principal");
 
   const [libraryQuery, setLibraryQuery] = useState("");
@@ -541,13 +592,13 @@ export const GroupManagerCockpit: React.FC = () => {
         size: attachment.size,
         isInline: attachment.isInline,
         contentId: attachment.contentId,
-        content: attachment.content,
       })),
     }),
     [attachments, bodyHtml, bodyText, ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject]
   );
 
-  const currentEmailKey = useMemo(() => makeEmailKey(currentEmailPayload), [currentEmailPayload]);
+  const currentEmailLinkPayload = useMemo(() => stripEmailPayloadAttachmentContent(currentEmailPayload), [currentEmailPayload]);
+  const currentEmailKey = useMemo(() => makeEmailKey(currentEmailLinkPayload), [currentEmailLinkPayload]);
   const favoriteGroupIds = settings?.groupFavoriteIds || [];
   const favoriteGroupSet = useMemo(() => new Set(favoriteGroupIds), [favoriteGroupIds]);
   const groupTicketsEnabled = settings?.groupTicketsEnabled !== false;
@@ -559,6 +610,14 @@ export const GroupManagerCockpit: React.FC = () => {
         .filter((attachment) => !(settings?.groupStorage.ignoreInlineAttachments && attachment.isInline)),
     [attachments, settings?.groupStorage.ignoreInlineAttachments]
   );
+  const selectedCurrentAttachments = useMemo(() => {
+    const selectedSet = new Set(selectedCurrentAttachmentKeys);
+    return currentSavableAttachments.filter((attachment) => selectedSet.has(makeAttachmentSelectionKey(attachment)));
+  }, [currentSavableAttachments, selectedCurrentAttachmentKeys]);
+
+  useEffect(() => {
+    setSelectedCurrentAttachmentKeys(currentSavableAttachments.map((attachment) => makeAttachmentSelectionKey(attachment)));
+  }, [currentEmailKey, currentSavableAttachments]);
 
   useEffect(() => {
     let cancelled = false;
@@ -680,13 +739,13 @@ export const GroupManagerCockpit: React.FC = () => {
   ]);
 
   useEffect(() => {
-    if (!groupTicketsEnabled || !(currentEmailPayload.itemId || currentEmailPayload.internetMessageId || currentEmailPayload.conversationId)) {
+    if (!groupTicketsEnabled || !(currentEmailLinkPayload.itemId || currentEmailLinkPayload.internetMessageId || currentEmailLinkPayload.conversationId)) {
       setCurrentEmailTickets([]);
       return;
     }
     let cancelled = false;
     searchGroupTickets({
-      email: currentEmailPayload,
+      email: currentEmailLinkPayload,
       limit: 20,
     })
       .then((rows) => {
@@ -699,16 +758,16 @@ export const GroupManagerCockpit: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [currentEmailKey, currentEmailPayload, groupTicketsEnabled, reloadToken, setMsg]);
+  }, [currentEmailKey, currentEmailLinkPayload, groupTicketsEnabled, reloadToken, setMsg]);
 
   useEffect(() => {
-    if (!groupTicketsEnabled || !(currentEmailPayload.subject || currentEmailPayload.bodyText || currentEmailPayload.bodyHtml)) {
+    if (!groupTicketsEnabled || !(currentEmailLinkPayload.subject || currentEmailLinkPayload.bodyText || currentEmailLinkPayload.bodyHtml)) {
       setTicketMatches([]);
       return;
     }
     let cancelled = false;
     setTicketDetectionLoading(true);
-    detectGroupTicketsForEmail({ email: currentEmailPayload })
+    detectGroupTicketsForEmail({ email: currentEmailLinkPayload })
       .then(async (matches) => {
         if (cancelled) return;
         const nextMatches = Array.isArray(matches) ? matches : [];
@@ -728,7 +787,7 @@ export const GroupManagerCockpit: React.FC = () => {
         if (!autoMatches.length) return;
         for (const match of autoMatches) {
           await linkEmailToGroupTicket(match.ticket.id, {
-            email: currentEmailPayload,
+            email: currentEmailLinkPayload,
             applyGroups: true,
             groupIds: (match.proposedGroups || []).map((group) => group.id),
             membershipKind: "referencia",
@@ -751,7 +810,7 @@ export const GroupManagerCockpit: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [currentEmailKey, currentEmailPayload, groupTicketsEnabled, reloadToken, setMsg, ticketUi?.autoLinkMode]);
+  }, [currentEmailKey, currentEmailLinkPayload, groupTicketsEnabled, reloadToken, setMsg, ticketUi?.autoLinkMode]);
 
   useEffect(() => {
     if (!groupTicketsEnabled) {
@@ -902,17 +961,17 @@ export const GroupManagerCockpit: React.FC = () => {
     const hasCurrent = rows.some((row) => makeEmailKey(row) === currentEmailKey);
     if (
       !hasCurrent
-      && (currentEmailPayload.itemId || currentEmailPayload.internetMessageId || currentEmailPayload.conversationId)
+      && (currentEmailLinkPayload.itemId || currentEmailLinkPayload.internetMessageId || currentEmailLinkPayload.conversationId)
       && (!selectedGroupId || !groupEmails.some((row) => makeEmailKey(row) === currentEmailKey))
     ) {
       rows.unshift({
-        ...currentEmailPayload,
+        ...currentEmailLinkPayload,
         relatedGroups: [],
         relatedRecords: [],
       });
     }
     return rows;
-  }, [currentEmailKey, currentEmailPayload, groupEmails, libraryEmails, selectedGroupId]);
+  }, [currentEmailKey, currentEmailLinkPayload, groupEmails, libraryEmails, selectedGroupId]);
 
   const selectedLibraryRows = useMemo(
     () => visibleLibraryEmails.filter((row) => selectedLibraryKeys.includes(makeEmailKey(row))),
@@ -925,6 +984,36 @@ export const GroupManagerCockpit: React.FC = () => {
   );
 
   const currentEmailAlreadyLinked = groupEmails.some((email) => makeEmailKey(email) === currentEmailKey || isCurrentContextEmail(email, ctx));
+  async function collectCurrentThreadEmails(): Promise<RelevantEmailPayload[]> {
+    const collected = new Map<string, RelevantEmailPayload>();
+    const register = (email: Partial<RelatedEmailEntry> | RelevantEmailPayload | null | undefined) => {
+      if (!email) return;
+      const normalized = stripEmailPayloadAttachmentContent(email as RelevantEmailPayload);
+      const key = makeEmailKey(normalized as Partial<RelatedEmailEntry>);
+      if (!key) return;
+      if (currentEmailLinkPayload.conversationId && normalized.conversationId && normalized.conversationId !== currentEmailLinkPayload.conversationId) {
+        return;
+      }
+      collected.set(key, normalized);
+    };
+
+    register(currentEmailLinkPayload);
+
+    if (!currentEmailLinkPayload.conversationId && !currentEmailLinkPayload.internetMessageId && !currentEmailLinkPayload.itemId) {
+      return Array.from(collected.values());
+    }
+
+    try {
+      const related = await getRelatedEmailContext(currentEmailLinkPayload);
+      for (const email of related.emails || []) register(email);
+      if (related.email) register(related.email);
+    } catch {
+      // best effort; current email still links
+    }
+
+    return Array.from(collected.values());
+  }
+
   async function syncCurrentEmailTicketCategories(ticket: GroupTicketEntry | null, explicitGroupIds?: string[]) {
     if (settings?.groupOutlookCategories?.enabled !== true) return;
     const groupIds = Array.from(
@@ -1173,11 +1262,14 @@ export const GroupManagerCockpit: React.FC = () => {
 
     setBusy(true);
     try {
+      const threadEmails = await collectCurrentThreadEmails();
       if (principalGroupId) {
-        await addEmailToLinkGroup(principalGroupId, {
-          ...currentEmailPayload,
-          membershipKind: "principal",
-        });
+        for (const email of threadEmails) {
+          await addEmailToLinkGroup(principalGroupId, {
+            ...email,
+            membershipKind: "principal",
+          });
+        }
 
         if (labels.length) {
           const principalGroup = groups.find((entry) => entry.id === principalGroupId);
@@ -1196,10 +1288,12 @@ export const GroupManagerCockpit: React.FC = () => {
       }
 
       for (const groupId of secondaryGroupIds) {
-        await addEmailToLinkGroup(groupId, {
-          ...currentEmailPayload,
-          membershipKind: "referencia",
-        });
+        for (const email of threadEmails) {
+          await addEmailToLinkGroup(groupId, {
+            ...email,
+            membershipKind: "referencia",
+          });
+        }
       }
 
       let finalTicket: GroupTicketEntry | null = null;
@@ -1210,10 +1304,17 @@ export const GroupManagerCockpit: React.FC = () => {
           status: quickLinkDraft.ticketStatus,
         });
         finalTicket = (await linkEmailToGroupTicket(quickLinkDraft.ticketId, {
-          email: currentEmailPayload,
+          email: currentEmailLinkPayload,
           applyGroups: false,
           groupIds,
         })).ticket;
+        for (const email of threadEmails.filter((entry) => makeEmailKey(entry as Partial<RelatedEmailEntry>) !== currentEmailKey)) {
+          await linkEmailToGroupTicket(quickLinkDraft.ticketId, {
+            email,
+            applyGroups: false,
+            groupIds,
+          });
+        }
       } else if (quickLinkDraft.ticketMode === "new" && quickLinkDraft.ticketSeriesId) {
         finalTicket = await createGroupTicket({
           seriesId: quickLinkDraft.ticketSeriesId,
@@ -1230,10 +1331,17 @@ export const GroupManagerCockpit: React.FC = () => {
           });
         }
         finalTicket = (await linkEmailToGroupTicket(finalTicket.id, {
-          email: currentEmailPayload,
+          email: currentEmailLinkPayload,
           applyGroups: false,
           groupIds,
         })).ticket;
+        for (const email of threadEmails.filter((entry) => makeEmailKey(entry as Partial<RelatedEmailEntry>) !== currentEmailKey)) {
+          await linkEmailToGroupTicket(finalTicket!.id, {
+            email,
+            applyGroups: false,
+            groupIds,
+          });
+        }
       }
 
       if (principalGroupId) {
@@ -1246,14 +1354,16 @@ export const GroupManagerCockpit: React.FC = () => {
       await refreshAll();
       if (finalTicket) {
         await syncCurrentEmailTicketCategories(finalTicket, groupIds);
+      } else if (groupIds.length) {
+        await syncCurrentEmailTicketCategories(null, groupIds);
       }
       if (finalTicket && quickLinkDraft.ticketMode === "new" && ticketUi?.suggestDraftOnCreate) {
         await handleOpenTicketReplyDraft(finalTicket);
       }
       setMsg(
         finalTicket
-          ? `Email ligado com ticket ${finalTicket.code}.`
-          : `Email ligado a ${groupIds.length} grupo(s).`
+          ? `${threadEmails.length} email(s) da thread ligados com ticket ${finalTicket.code}.`
+          : `${threadEmails.length} email(s) da thread ligados a ${groupIds.length} grupo(s).`
       );
     } catch (error: any) {
       setMsg(error?.message || "Nao foi possivel guardar a ligacao rapida.");
@@ -1336,13 +1446,21 @@ export const GroupManagerCockpit: React.FC = () => {
     if (!selectedGroup) return;
     setBusy(true);
     try {
-      await addEmailToLinkGroup(selectedGroup.id, {
-        ...currentEmailPayload,
-        membershipKind: linkKind,
-      });
+      const threadEmails = await collectCurrentThreadEmails();
+      for (const email of threadEmails) {
+        await addEmailToLinkGroup(selectedGroup.id, {
+          ...email,
+          membershipKind: linkKind,
+        });
+      }
       setActiveGroupForCurrentEmail(selectedGroup.id);
       await refreshAll();
-      setMsg(`Email atual associado ao grupo como ${membershipKindLabel(linkKind).toLowerCase()}.`);
+      await syncCurrentEmailTicketCategories(null, [selectedGroup.id]);
+      setMsg(
+        threadEmails.length > 1
+          ? `${threadEmails.length} email(s) da thread associados ao grupo como ${membershipKindLabel(linkKind).toLowerCase()}.`
+          : `Email atual associado ao grupo como ${membershipKindLabel(linkKind).toLowerCase()}.`
+      );
     } catch (error: any) {
       setMsg(error?.message || "Nao foi possivel associar o email atual.");
     } finally {
@@ -1356,7 +1474,7 @@ export const GroupManagerCockpit: React.FC = () => {
     try {
       for (const email of selectedLibraryRows) {
         await addEmailToLinkGroup(selectedGroup.id, {
-          ...email,
+          ...stripEmailPayloadAttachmentContent(email),
           membershipKind: linkKind,
         });
       }
@@ -1381,11 +1499,15 @@ export const GroupManagerCockpit: React.FC = () => {
       setMsg("O email atual nao tem anexos guardaveis neste momento.");
       return;
     }
+    if (!selectedCurrentAttachments.length) {
+      setMsg("Seleciona pelo menos um anexo para guardar no grupo.");
+      return;
+    }
     setBusy(true);
     try {
       const storageProvider = String(settings?.groupStorage.provider || "cloud").trim();
       const storageBasePath = String(settings?.groupStorage.baseFolderPath || "").trim();
-      const docs = currentSavableAttachments.map((attachment) => ({
+      const docs = selectedCurrentAttachments.map((attachment) => ({
         id: `doc_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${attachment.id || attachment.name}`}`,
         name: attachment.name,
         contentType: attachment.contentType,
@@ -1399,9 +1521,16 @@ export const GroupManagerCockpit: React.FC = () => {
         storageProvider,
         storageBasePath,
       }));
-      await saveGroupDocuments(selectedGroup.id, { documents: docs });
+      const batches = splitDocumentsIntoBatches(docs);
+      for (const batch of batches) {
+        await saveGroupDocuments(selectedGroup.id, { documents: batch });
+      }
       await refreshAll();
-      setMsg(`${docs.length} anexo(s) guardado(s) nos documentos do grupo.`);
+      setMsg(
+        batches.length > 1
+          ? `${docs.length} anexo(s) guardado(s) nos documentos do grupo em ${batches.length} lotes.`
+          : `${docs.length} anexo(s) guardado(s) nos documentos do grupo.`
+      );
     } catch (error: any) {
       setMsg(error?.message || "Nao foi possivel guardar os anexos deste email no grupo.");
     } finally {
@@ -1533,18 +1662,31 @@ export const GroupManagerCockpit: React.FC = () => {
     }
     setBusy(true);
     try {
+      const threadEmails = await collectCurrentThreadEmails();
       const ticket = await createGroupTicket({
         seriesId: selectedTicketSeriesId,
         title: String(ctx.subject || "").trim() || `Ticket ${selectedGroup?.name || ""}`.trim() || "Ticket",
         description: String(bodyText || "").trim().slice(0, 2000),
         labels: selectedGroup?.labels || [],
         groupIds: selectedGroup ? [selectedGroup.id] : [],
-        email: currentEmailPayload,
+        email: currentEmailLinkPayload,
         membershipKind: selectedGroup ? linkKind : "referencia",
       });
+      for (const email of threadEmails.filter((entry) => makeEmailKey(entry as Partial<RelatedEmailEntry>) !== currentEmailKey)) {
+        await linkEmailToGroupTicket(ticket.id, {
+          email,
+          applyGroups: true,
+          groupIds: selectedGroup ? [selectedGroup.id] : [],
+          membershipKind: selectedGroup ? linkKind : "referencia",
+        });
+      }
       await syncCurrentEmailTicketCategories(ticket, selectedGroup ? [selectedGroup.id] : []);
       setReloadToken((value) => value + 1);
-      setMsg(`Ticket ${ticket.code} criado.`);
+      setMsg(
+        threadEmails.length > 1
+          ? `Ticket ${ticket.code} criado e ligado a ${threadEmails.length} email(s) da thread.`
+          : `Ticket ${ticket.code} criado.`
+      );
       if (ticketUi?.suggestDraftOnCreate) {
         await handleOpenTicketReplyDraft(ticket);
       }
@@ -1558,6 +1700,7 @@ export const GroupManagerCockpit: React.FC = () => {
   async function handleLinkCurrentEmailToTicket(ticket: GroupTicketEntry, groupIdsOverride?: string[]) {
     setBusy(true);
     try {
+      const threadEmails = await collectCurrentThreadEmails();
       const ensuredGroupIds = Array.from(
         new Set([
           ...(groupIdsOverride || []),
@@ -1565,15 +1708,27 @@ export const GroupManagerCockpit: React.FC = () => {
         ].filter(Boolean))
       );
       const result = await linkEmailToGroupTicket(ticket.id, {
-        email: currentEmailPayload,
+        email: currentEmailLinkPayload,
         applyGroups: true,
         groupIds: ensuredGroupIds,
         membershipKind: selectedGroup ? linkKind : "referencia",
       });
+      for (const email of threadEmails.filter((entry) => makeEmailKey(entry as Partial<RelatedEmailEntry>) !== currentEmailKey)) {
+        await linkEmailToGroupTicket(ticket.id, {
+          email,
+          applyGroups: true,
+          groupIds: ensuredGroupIds,
+          membershipKind: selectedGroup ? linkKind : "referencia",
+        });
+      }
       await syncCurrentEmailTicketCategories(result.ticket, ensuredGroupIds);
       setReloadToken((value) => value + 1);
       const groupSummary = result.appliedGroups.length ? ` ${result.appliedGroups.length} grupo(s) atualizados.` : "";
-      setMsg(`Email atual ligado ao ticket ${ticket.code}.${groupSummary}`);
+      setMsg(
+        threadEmails.length > 1
+          ? `${threadEmails.length} email(s) da thread ligados ao ticket ${ticket.code}.${groupSummary}`
+          : `Email atual ligado ao ticket ${ticket.code}.${groupSummary}`
+      );
     } catch (error: any) {
       setMsg(error?.message || "Nao foi possivel ligar o email ao ticket.");
     } finally {
@@ -1722,7 +1877,7 @@ export const GroupManagerCockpit: React.FC = () => {
     try {
       for (const email of selectedGroupEmailRows) {
         await addEmailToLinkGroup(selectedGroup.id, {
-          ...email,
+          ...stripEmailPayloadAttachmentContent(email),
           membershipKind: nextKind,
         });
       }
@@ -2874,7 +3029,7 @@ export const GroupManagerCockpit: React.FC = () => {
                         type="button"
                         style={S.secondaryBtn}
                         onClick={() => void handleSaveCurrentAttachmentsToGroup()}
-                        disabled={busy || selectedGroup.documentsEnabled === false || !currentSavableAttachments.length}
+                        disabled={busy || selectedGroup.documentsEnabled === false || !selectedCurrentAttachments.length}
                         title="Guardar os anexos do email atual nos documentos do grupo"
                       >
                         <Icons.Paperclip size={12} />
@@ -2888,9 +3043,48 @@ export const GroupManagerCockpit: React.FC = () => {
                   </div>
                   <div style={S.smallMeta}>
                     {currentSavableAttachments.length
-                      ? `${currentSavableAttachments.length} anexo(s) disponivel(eis) no email atual`
+                      ? `${selectedCurrentAttachments.length}/${currentSavableAttachments.length} anexo(s) selecionado(s) no email atual`
                       : "Sem anexos guardaveis no email atual"}
                   </div>
+                  {currentSavableAttachments.length ? (
+                    <div style={S.chipWrap}>
+                      <button
+                        type="button"
+                        style={selectedCurrentAttachments.length === currentSavableAttachments.length ? S.chipActive : S.chip}
+                        onClick={() => setSelectedCurrentAttachmentKeys(currentSavableAttachments.map((attachment) => makeAttachmentSelectionKey(attachment)))}
+                      >
+                        Todos
+                      </button>
+                      <button
+                        type="button"
+                        style={selectedCurrentAttachments.length === 0 ? S.chipActive : S.chip}
+                        onClick={() => setSelectedCurrentAttachmentKeys([])}
+                      >
+                        Nenhum
+                      </button>
+                      {currentSavableAttachments.map((attachment) => {
+                        const attachmentKey = makeAttachmentSelectionKey(attachment);
+                        const selected = selectedCurrentAttachmentKeys.includes(attachmentKey);
+                        return (
+                          <button
+                            key={attachmentKey}
+                            type="button"
+                            style={selected ? S.chipActive : S.chip}
+                            title={attachment.name}
+                            onClick={() =>
+                              setSelectedCurrentAttachmentKeys((current) =>
+                                current.includes(attachmentKey)
+                                  ? current.filter((entry) => entry !== attachmentKey)
+                                  : [...current, attachmentKey]
+                              )
+                            }
+                          >
+                            {attachment.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   <div style={S.inlineRow}>
                     <input style={S.input} value={groupEmailQuery} onChange={(event) => setGroupEmailQuery(event.target.value)} placeholder="Filtrar emails do grupo" />
                     <button type="button" style={S.secondaryBtn} onClick={() => void handleSetSelectedEmailsKind("principal")} disabled={busy || !selectedGroupEmailRows.length}>

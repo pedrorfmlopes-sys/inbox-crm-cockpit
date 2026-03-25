@@ -54,7 +54,7 @@ process.on("unhandledRejection", (reason) => {
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: "80mb" }));
 
 app.use("/api/links", (_req, res, next) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
