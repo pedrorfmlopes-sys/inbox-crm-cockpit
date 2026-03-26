@@ -328,6 +328,8 @@ export const AiCockpit: React.FC = () => {
         });
     }, [attachments, files]);
 
+    const selectedAction: AiAction = aiState.action === "forward" ? "forward" : "reply";
+
     useEffect(() => {
         if (!Array.isArray(attachments) || attachments.length === 0) return;
         const shouldPrimeForward = selectedAction === "forward" && !Object.values(fileUsage || {}).some((flags) => flags?.forward);
@@ -419,7 +421,6 @@ export const AiCockpit: React.FC = () => {
         }
     }, [emailKey, settings]);
 
-    const selectedAction: AiAction = aiState.action === "forward" ? "forward" : "reply";
     const effectiveLocale = (aiState.locale && aiState.locale !== "auto"
         ? aiState.locale
         : ((settings?.replyLanguage || settings?.readingLanguage || "auto") as AiLocale));
