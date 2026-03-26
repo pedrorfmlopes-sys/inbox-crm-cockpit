@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
-import { insertTextToBody, isComposeMode, displayReplyForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings, addBase64AttachmentToCompose } from "@/office";
+import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings, addBase64AttachmentToCompose } from "@/office";
 import { getSettings } from "@/settings";
 import { logLearningInteraction } from "@/api";
 import { buildAiContextBundle, type AiContextBundle } from "./contextBundle";
@@ -256,6 +256,34 @@ export const AiCockpit: React.FC = () => {
         });
     }, [attachments, files]);
 
+    useEffect(() => {
+        if (!Array.isArray(attachments) || attachments.length === 0) return;
+        const shouldPrimeForward = selectedAction === "forward" && !Object.values(fileUsage || {}).some((flags) => flags?.forward);
+        let changed = false;
+
+        setFileUsage((prev) => {
+            const next: Record<string, FileUsageState> = { ...(prev || {}) };
+            for (const attachment of attachments) {
+                const name = String(attachment?.name || "").trim();
+                if (!name) continue;
+
+                if (!next[name]) {
+                    next[name] = { analyze: true, forward: shouldPrimeForward };
+                    syncAttachmentSelection(name, next[name]);
+                    changed = true;
+                    continue;
+                }
+
+                if (shouldPrimeForward && !next[name].forward) {
+                    next[name] = { ...next[name], analyze: true, forward: true };
+                    syncAttachmentSelection(name, next[name]);
+                    changed = true;
+                }
+            }
+            return changed ? next : prev;
+        });
+    }, [attachments, selectedAction]);
+
     function hasEmailIdentity() {
         return Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
     }
@@ -342,6 +370,9 @@ export const AiCockpit: React.FC = () => {
             content: entry.content || "",
         }))
         .filter((entry) => entry.name && entry.content);
+    const availableAttachmentCount = (attachments || [])
+        .filter((entry) => String(entry?.name || "").trim() && String(entry?.content || "").trim())
+        .length;
 
     function setGenerationAction(nextAction: "reply" | "forward") {
         setAiState({ action: nextAction });
@@ -851,6 +882,19 @@ export const AiCockpit: React.FC = () => {
             const effectiveAction = selectedAction;
 
             if (effectiveAction === "forward") {
+                const canUseNativeForwardWithOriginalAttachments =
+                    selectedForwardFiles.length > 0 &&
+                    selectedForwardFiles.length === availableAttachmentCount &&
+                    draftTo.length === 0 &&
+                    draftCc.length === 0;
+
+                if (canUseNativeForwardWithOriginalAttachments) {
+                    await displayForwardForm(output, true);
+                    setMsg(`Reencaminhamento aberto com ${selectedForwardFiles.length} anexo(s) original(is).`);
+                    setTimeout(() => setMsg(""), 4000);
+                    return;
+                }
+
                 const forwardSubject = String(draftSubject || ctx.subject || "").trim() || "Fwd";
                 await displayNewMessageForm({
                     toRecipients: draftTo,
@@ -868,7 +912,7 @@ export const AiCockpit: React.FC = () => {
                         setMsg(`${selectedForwardFiles.length} anexo(s) adicionados ao rascunho.`);
                     } catch (attachError) {
                         console.warn("[AiCockpit] Could not attach selected forward files automatically:", attachError);
-                        setMsg("Draft de reencaminhamento aberto. Reve manualmente os anexos antes de enviar.");
+                        setMsg("Draft de reencaminhamento aberto. O Outlook pode exigir validação manual dos anexos nesta ação.");
                     }
                 }
             } else {

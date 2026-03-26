@@ -3,6 +3,60 @@ import { openaiCreateResponse, openaiListModels } from "./openaiProvider.js";
 import { geminiCreateResponse, geminiListModels } from "./geminiProvider.js";
 import { extractTextFromPdfBuffer } from "./pdfHelper.js";
 
+function stripBase64Prefix(content = "") {
+  return String(content || "").trim().replace(/^data:[^,]+,/, "");
+}
+
+function isPdfLikeFile(file) {
+  const type = String(file?.type || "").toLowerCase();
+  const name = String(file?.name || "").toLowerCase();
+  return type === "application/pdf" || name.endsWith(".pdf");
+}
+
+function truncateForAi(text, maxChars = 18000) {
+  const normalized = String(text || "").trim();
+  if (!normalized) return "";
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars)}\n\n[texto truncado para caber no contexto da IA]`;
+}
+
+async function prepareOpenAiPayload({ instructions, files = [] }) {
+  let nextInstructions = instructions || "";
+  const passthroughFiles = [];
+  const extractedPdfSections = [];
+
+  for (const file of files || []) {
+    if (!file) continue;
+
+    if (String(file?.type || "").startsWith("image/")) {
+      passthroughFiles.push(file);
+      continue;
+    }
+
+    if (isPdfLikeFile(file) && file.content) {
+      try {
+        const buffer = Buffer.from(stripBase64Prefix(file.content), "base64");
+        const text = await extractTextFromPdfBuffer(buffer);
+        const trimmed = truncateForAi(text);
+        if (trimmed) {
+          extractedPdfSections.push(`--- PDF EXTRAIDO: ${file.name || "documento.pdf"} ---\n${trimmed}\n---`);
+          continue;
+        }
+      } catch (error) {
+        console.warn(`[ai] Failed to extract PDF text for OpenAI (${file?.name || "pdf"}): ${error?.message || error}`);
+      }
+    }
+
+    passthroughFiles.push(file);
+  }
+
+  if (extractedPdfSections.length) {
+    nextInstructions = `${nextInstructions || ""}\n\n[ANEXOS PDF EXTRAIDOS PARA ANALISE]\n${extractedPdfSections.join("\n\n")}`.trim();
+  }
+
+  return { instructions: nextInstructions, files: passthroughFiles };
+}
+
 export function getAiMeta() {
   const cfg = getAiConfig();
   return {
@@ -69,13 +123,14 @@ export async function aiCreateText(args) {
       if (provider === "openai") {
         const apiKey = customModels.openaiApiKey || cfg.openai.apiKey;
         const model = customModels.openaiModelFast || (mode === "quality" ? cfg.openai.modelQuality : cfg.openai.modelFast);
+        const prepared = await prepareOpenAiPayload({ instructions, files });
         console.log(`[ai] Calling OpenAI (${model})...`);
         return await openaiCreateResponse({
           apiKey,
           model,
-          instructions,
+          instructions: prepared.instructions,
           input,
-          files,
+          files: prepared.files,
           history,
           max_output_tokens,
           temperature,
