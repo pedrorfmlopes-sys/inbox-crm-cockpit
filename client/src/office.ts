@@ -349,7 +349,15 @@ async function ensureMasterCategory(displayName: string): Promise<void> {
         const exists = list.some((c: any) => (c.displayName || c.name) === displayName);
         if (exists) return resolve();
         const color = OfficeAny.MailboxEnums?.CategoryColor?.Preset0;
-        OfficeAny.context.mailbox.masterCategories.addAsync([{ displayName, color }], () => resolve());
+        OfficeAny.context.mailbox.masterCategories.addAsync([{ displayName, color }], (addResult: any) => {
+          if (addResult?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+            clientLog.warn("[office] masterCategories.addAsync failed", {
+              displayName,
+              error: addResult?.error?.message || addResult?.error?.code || "unknown",
+            });
+          }
+          resolve();
+        });
       });
     } catch {
       resolve();
@@ -389,7 +397,15 @@ async function addCategoriesToCurrentItem(displayNames: string[]): Promise<void>
 
   await new Promise<void>((resolve) => {
     try {
-      OfficeAny.context.mailbox.item.categories.addAsync(uniqueNames, () => resolve());
+      OfficeAny.context.mailbox.item.categories.addAsync(uniqueNames, (result: any) => {
+        if (result?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+          clientLog.warn("[office] item.categories.addAsync failed", {
+            categories: uniqueNames,
+            error: result?.error?.message || result?.error?.code || "unknown",
+          });
+        }
+        resolve();
+      });
     } catch {
       resolve();
     }
@@ -417,7 +433,15 @@ async function removeCategoriesFromCurrentItem(displayNames: string[]): Promise<
 
   await new Promise<void>((resolve) => {
     try {
-      OfficeAny.context.mailbox.item.categories.removeAsync(uniqueNames, () => resolve());
+      OfficeAny.context.mailbox.item.categories.removeAsync(uniqueNames, (result: any) => {
+        if (result?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+          clientLog.warn("[office] item.categories.removeAsync failed", {
+            categories: uniqueNames,
+            error: result?.error?.message || result?.error?.code || "unknown",
+          });
+        }
+        resolve();
+      });
     } catch {
       resolve();
     }
