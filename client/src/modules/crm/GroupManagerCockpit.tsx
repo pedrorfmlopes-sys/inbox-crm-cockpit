@@ -28,7 +28,7 @@ import {
 } from "@/api";
 import { aiGenerate } from "@/ai/aiClient";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { displayNewMessageForm, displayReplyForm, openGroupExplorer, openLinkedOutlookEmail, setSubject, syncManagedOutlookCategories } from "@/office";
+import { displayNewMessageForm, displayReplyForm, openGroupExplorer, openGroupSettings, openLinkedOutlookEmail, setSubject, syncManagedOutlookCategories } from "@/office";
 import { saveSettings } from "@/settings";
 import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
@@ -534,9 +534,24 @@ const LabelPicker: React.FC<{
   );
 };
 
-export const GroupManagerCockpit: React.FC = () => {
+type GroupManagerCockpitProps = {
+  initialView?: GroupManagerView;
+  standaloneSettings?: boolean;
+};
+
+function normalizeGroupSettingsView(view: GroupManagerView | undefined, standaloneSettings: boolean): GroupManagerView {
+  if (standaloneSettings) {
+    return view === "labels" || view === "tickets" ? view : "settings";
+  }
+  return view || "groups";
+}
+
+export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
+  initialView,
+  standaloneSettings = false,
+}) => {
   const { ctx, bodyText, bodyHtml, attachments, setMsg, setActiveGroupForCurrentEmail, settings, openSettingsSection } = useCockpit();
-  const [view, setView] = useState<GroupManagerView>("groups");
+  const [view, setView] = useState<GroupManagerView>(() => normalizeGroupSettingsView(initialView, standaloneSettings));
   const [groups, setGroups] = useState<LinkGroupEntry[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [groupsError, setGroupsError] = useState("");
@@ -633,6 +648,13 @@ export const GroupManagerCockpit: React.FC = () => {
     const selectedSet = new Set(selectedCurrentAttachmentKeys);
     return currentSavableAttachments.filter((attachment) => selectedSet.has(makeAttachmentSelectionKey(attachment)));
   }, [currentSavableAttachments, selectedCurrentAttachmentKeys]);
+
+  useEffect(() => {
+    if (!standaloneSettings) return;
+    if (view !== "settings" && view !== "labels" && view !== "tickets") {
+      setView("settings");
+    }
+  }, [standaloneSettings, view]);
 
   useEffect(() => {
     setSelectedCurrentAttachmentKeys(currentSavableAttachments.map((attachment) => makeAttachmentSelectionKey(attachment)));
@@ -2102,7 +2124,18 @@ export const GroupManagerCockpit: React.FC = () => {
           <div style={S.headerHint}>{headerHint}</div>
         </div>
         <div style={S.headerActions}>
-          {configView ? (
+          {standaloneSettings ? (
+            view === "labels" || view === "tickets" ? (
+              <button
+                type="button"
+                style={S.secondaryBtn}
+                onClick={() => setView("settings")}
+                disabled={busy}
+              >
+                Voltar
+              </button>
+            ) : null
+          ) : configView ? (
             <button
               type="button"
               style={S.secondaryBtn}
@@ -2120,7 +2153,7 @@ export const GroupManagerCockpit: React.FC = () => {
               <button
                 type="button"
                 style={S.iconGearBtn}
-                onClick={() => setView("settings")}
+                onClick={() => void openGroupSettings()}
                 disabled={busy}
                 title="Settings dos grupos"
               >
@@ -3212,7 +3245,7 @@ export const GroupManagerCockpit: React.FC = () => {
                             </option>
                           ))}
                         </select>
-                        <button type="button" style={S.secondaryBtn} onClick={() => setView("tickets")} disabled={busy}>
+                        <button type="button" style={S.secondaryBtn} onClick={() => void openGroupSettings({ section: "tickets" })} disabled={busy}>
                           <Icons.Settings size={12} />
                           Series
                         </button>
