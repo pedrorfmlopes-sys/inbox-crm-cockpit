@@ -4,7 +4,7 @@ import { getSettings, saveSettings, type CockpitSettingsV1 } from "./settings";
 let _sessionToken: string | null = null;
 let _sessionBootstrapPromise: Promise<string | null> | null = null;
 const SESSION_BOOTSTRAP_TIMEOUT_MS = 10000;
-const API_REQUEST_TIMEOUT_MS = 10000;
+const API_REQUEST_TIMEOUT_MS = 30000;
 
 export function setApiSessionToken(token: string | null) {
   _sessionToken = token;
@@ -340,7 +340,8 @@ async function requestJSON<T = Json>(path: string, init?: RequestInit, allowOdoo
   }
 
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+  const timeoutMessage = `Pedido excedeu ${Math.round(API_REQUEST_TIMEOUT_MS / 1000)}s: ${String(path || "")}`;
+  const id = setTimeout(() => controller.abort(timeoutMessage), API_REQUEST_TIMEOUT_MS);
 
   try {
     const res = await fetch(path, {
@@ -383,6 +384,16 @@ async function requestJSON<T = Json>(path: string, init?: RequestInit, allowOdoo
     }
 
     return body as T;
+  } catch (error: any) {
+    const aborted = controller.signal.aborted || error?.name === "AbortError";
+    if (aborted) {
+      const reason =
+        typeof controller.signal.reason === "string" && controller.signal.reason.trim()
+          ? controller.signal.reason.trim()
+          : timeoutMessage;
+      throw new Error(reason);
+    }
+    throw error;
   } finally {
     clearTimeout(id);
   }
