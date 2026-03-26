@@ -519,17 +519,17 @@ export default function AiSettingsApp() {
 }
 
 const S: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", background: "#F7F8FC", color: "#111827", fontFamily: "\"Segoe UI\", system-ui, sans-serif", padding: 16 },
-  window: { maxWidth: 1160, margin: "0 auto", minHeight: "calc(100vh - 32px)", borderRadius: 22, background: "#FFFFFF", border: "1px solid #E5E7EB", boxShadow: "0 16px 40px rgba(15, 23, 42, 0.08)", display: "grid", gridTemplateRows: "auto 1fr", overflow: "hidden" },
+  root: { height: "100vh", background: "#F7F8FC", color: "#111827", fontFamily: "\"Segoe UI\", system-ui, sans-serif", padding: 16, overflow: "hidden" },
+  window: { maxWidth: 1160, margin: "0 auto", height: "calc(100vh - 32px)", borderRadius: 22, background: "#FFFFFF", border: "1px solid #E5E7EB", boxShadow: "0 16px 40px rgba(15, 23, 42, 0.08)", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", overflow: "hidden" },
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 22px", borderBottom: "1px solid #EEF2F7" },
   headerEyebrow: { fontSize: 13, fontWeight: 700, color: "#6B7280" },
   headerTitle: { fontSize: 24, fontWeight: 800, color: "#111827" },
-  body: { display: "grid", gridTemplateColumns: "280px 1fr", minHeight: 0 },
-  sidebar: { display: "grid", alignContent: "start", gap: 4, padding: 14, borderRight: "1px solid #EEF2F7", background: "#FBFCFF" },
+  body: { display: "grid", gridTemplateColumns: "280px 1fr", minHeight: 0, overflow: "hidden" },
+  sidebar: { display: "grid", alignContent: "start", gap: 4, padding: 14, borderRight: "1px solid #EEF2F7", background: "#FBFCFF", minHeight: 0, overflowY: "auto" },
   sideItem: { display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", border: "none", background: "transparent", borderRadius: 12, padding: "10px 12px", color: "#4B5563", fontSize: 14, fontWeight: 600, cursor: "pointer" },
   sideItemOn: { display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", border: "1px solid #DDE3F4", background: "#EEF2FF", borderRadius: 12, padding: "10px 12px", color: "#1D4ED8", fontSize: 14, fontWeight: 700, cursor: "pointer" },
   sidebarHelp: { marginTop: 22, padding: "10px 12px", fontSize: 13, fontWeight: 700, color: "#6B7280" },
-  content: { padding: 22, overflowY: "auto", display: "grid", alignContent: "start", gap: 16 },
+  content: { padding: 22, overflowY: "auto", minHeight: 0, display: "grid", alignContent: "start", gap: 16 },
   sectionStack: { display: "grid", gap: 18 },
   fieldLabelRow: { display: "flex", alignItems: "center", gap: 6 },
   fieldLabel: { fontSize: 12, fontWeight: 800, letterSpacing: "0.02em", color: "#374151" },

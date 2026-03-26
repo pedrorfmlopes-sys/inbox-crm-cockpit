@@ -2116,7 +2116,13 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       : "Ligacoes manuais.";
 
   return (
-    <div style={S.root}>
+    <div
+      style={
+        standaloneSettings
+          ? { ...S.root, minHeight: "100%", gridTemplateRows: "auto minmax(0, 1fr)" }
+          : S.root
+      }
+    >
       <div style={S.header}>
         <div>
           <div style={S.kicker}>Gestor de Grupos</div>
@@ -2164,7 +2170,13 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
         </div>
       </div>
 
-      <div style={S.viewport}>
+      <div
+        style={
+          standaloneSettings
+            ? { ...S.viewport, minHeight: 0, overflowY: "auto" }
+            : S.viewport
+        }
+      >
         {view === "settings" ? (
           <section style={S.cleanPanel}>
             <div style={S.panelHeader}>

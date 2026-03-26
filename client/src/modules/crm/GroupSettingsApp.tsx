@@ -30,12 +30,13 @@ export default function GroupSettingsApp(): JSX.Element {
     <CockpitProvider>
       <div
         style={{
-          minHeight: "100vh",
+          height: "100vh",
           padding: 12,
           boxSizing: "border-box",
           background: "var(--iccc-bg)",
           color: "var(--iccc-text)",
           fontFamily: "var(--iccc-font)",
+          overflow: "hidden",
         }}
       >
         <GroupManagerCockpit initialView={initialSection} standaloneSettings />
