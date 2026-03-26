@@ -20,6 +20,40 @@ export type ContactAlias = {
   email: string;
 };
 
+export type AiCustomTone = {
+  id: string;
+  name: string;
+  instructions: string;
+};
+
+export type AiTextShortcut = {
+  id: string;
+  trigger: string;
+  content: string;
+};
+
+export type AiAutoLabelId =
+  | "to_respond"
+  | "meeting"
+  | "fyi"
+  | "notification"
+  | "internal_update"
+  | "awaiting_reply"
+  | "marketing"
+  | "done";
+
+export type AiAutoLabelSettings = {
+  enabled: boolean;
+  autoDraftEnabled: boolean;
+  labels: Record<AiAutoLabelId, boolean>;
+};
+
+export type AiFontPreference = {
+  family: string;
+  size: number;
+  color: string;
+};
+
 export type ReferenceEntityKey = "lead" | "project" | "task" | "ticket";
 export type ReferenceCounterMode = "per_type" | "global";
 export type ReferenceCodePosition = "prefix" | "suffix";
@@ -170,6 +204,12 @@ export type CockpitSettingsV1 = {
   // New: Contact Aliases (Forwarding Shortcuts)
   contactAliases: ContactAlias[];
 
+  // AI module settings (MailMaestro-like per-module configuration)
+  aiCustomTones: AiCustomTone[];
+  aiTextShortcuts: AiTextShortcut[];
+  aiAutoLabel: AiAutoLabelSettings;
+  aiFontPreference: AiFontPreference;
+
   // Configurable reference codes for Odoo-created records
   referenceCodes: ReferenceCodeSettings;
 
@@ -263,6 +303,27 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     { id: "c1", name: "Ragno", email: "info@ragno.it" },
     { id: "c2", name: "Marazzi", email: "contact@marazzi.it" }
   ],
+  aiCustomTones: [],
+  aiTextShortcuts: [],
+  aiAutoLabel: {
+    enabled: false,
+    autoDraftEnabled: false,
+    labels: {
+      to_respond: true,
+      meeting: true,
+      fyi: true,
+      notification: true,
+      internal_update: true,
+      awaiting_reply: true,
+      marketing: false,
+      done: true,
+    },
+  },
+  aiFontPreference: {
+    family: "Segoe UI",
+    size: 12,
+    color: "#172B4D",
+  },
   referenceCodes: {
     enabled: false,
     prefixes: {
@@ -487,6 +548,45 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
     signatureImageMaxWidth: { ...(base.signatureImageMaxWidth || {}), ...((incoming as any).signatureImageMaxWidth || {}) },
     aiKnowledge: Array.isArray(incoming.aiKnowledge) ? incoming.aiKnowledge : base.aiKnowledge,
     aiManualOnly: typeof incoming.aiManualOnly === "boolean" ? incoming.aiManualOnly : base.aiManualOnly,
+    aiCustomTones: Array.isArray((incoming as any).aiCustomTones)
+      ? (incoming as any).aiCustomTones
+        .map((entry: any) => ({
+          id: String(entry?.id || "").trim(),
+          name: String(entry?.name || "").trim(),
+          instructions: String(entry?.instructions || "").trim(),
+        }))
+        .filter((entry: AiCustomTone) => entry.id && entry.name)
+      : base.aiCustomTones,
+    aiTextShortcuts: Array.isArray((incoming as any).aiTextShortcuts)
+      ? (incoming as any).aiTextShortcuts
+        .map((entry: any) => ({
+          id: String(entry?.id || "").trim(),
+          trigger: String(entry?.trigger || "").trim(),
+          content: String(entry?.content || "").trim(),
+        }))
+        .filter((entry: AiTextShortcut) => entry.id && entry.trigger)
+      : base.aiTextShortcuts,
+    aiAutoLabel: {
+      ...base.aiAutoLabel,
+      ...((incoming as any).aiAutoLabel || {}),
+      enabled: typeof ((incoming as any).aiAutoLabel || {}).enabled === "boolean"
+        ? Boolean(((incoming as any).aiAutoLabel || {}).enabled)
+        : base.aiAutoLabel.enabled,
+      autoDraftEnabled: typeof ((incoming as any).aiAutoLabel || {}).autoDraftEnabled === "boolean"
+        ? Boolean(((incoming as any).aiAutoLabel || {}).autoDraftEnabled)
+        : base.aiAutoLabel.autoDraftEnabled,
+      labels: {
+        ...base.aiAutoLabel.labels,
+        ...((((incoming as any).aiAutoLabel || {}).labels) || {}),
+      },
+    },
+    aiFontPreference: {
+      ...base.aiFontPreference,
+      ...((incoming as any).aiFontPreference || {}),
+      family: String((((incoming as any).aiFontPreference || {}).family ?? base.aiFontPreference.family) || "").trim() || base.aiFontPreference.family,
+      size: Math.max(9, Math.min(20, Number((((incoming as any).aiFontPreference || {}).size ?? base.aiFontPreference.size) || base.aiFontPreference.size))),
+      color: String((((incoming as any).aiFontPreference || {}).color ?? base.aiFontPreference.color) || "").trim() || base.aiFontPreference.color,
+    },
     referenceCodes: {
       ...base.referenceCodes,
       ...((incoming as any).referenceCodes || {}),

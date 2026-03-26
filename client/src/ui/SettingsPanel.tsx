@@ -167,6 +167,12 @@ export function SettingsPanel(): JSX.Element {
     return "Proteção (O Moat)";
   }, [section]);
 
+  useEffect(() => {
+    if (section === "ai" || section === "persona" || section === "signature") {
+      setSection("general");
+    }
+  }, [section, setSection]);
+
   async function onSave() {
     if (!model) return;
     setSaving(true);
@@ -313,15 +319,6 @@ export function SettingsPanel(): JSX.Element {
           </button>
           <button style={section === "conns" ? S.sideItemOn : S.sideItem} onClick={() => setSection("conns")}>
             Ligações
-          </button>
-          <button style={section === "ai" ? S.sideItemOn : S.sideItem} onClick={() => setSection("ai")}>
-            IA Knowledge
-          </button>
-          <button style={section === "persona" ? S.sideItemOn : S.sideItem} onClick={() => setSection("persona")}>
-            Minha Persona
-          </button>
-          <button style={section === "signature" ? S.sideItemOn : S.sideItem} onClick={() => setSection("signature")}>
-            Assinatura
           </button>
           <button style={section === "references" ? S.sideItemOn : S.sideItem} onClick={() => setSection("references")}>
             Referencias

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
-import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMeetingForm, setRecipients, setSubject } from "@/office";
+import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings } from "@/office";
 import { getSettings } from "@/settings";
 import { logLearningInteraction } from "@/api";
 import * as Icons from "@/ui/icons";
@@ -1116,6 +1116,30 @@ export const AiCockpit: React.FC = () => {
                     box-shadow: 0 6px 14px rgba(0,80,200,0.15), inset 0 1px 0 rgba(255,255,255,1), inset 0 -1px 0 rgba(0,0,0,0.06) !important;
                 }
             `}</style>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "6px" }}>
+                <button
+                    type="button"
+                    style={{
+                        width: "30px",
+                        height: "30px",
+                        borderRadius: "999px",
+                        border: "1px solid rgba(148, 163, 184, 0.24)",
+                        background: "rgba(255,255,255,0.86)",
+                        color: "#64748b",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                        boxShadow: "0 4px 12px rgba(15, 23, 42, 0.08)",
+                    }}
+                    onClick={() => void openAiSettings()}
+                    title="Settings da IA"
+                    aria-label="Abrir settings da IA"
+                >
+                    <Icons.Settings size={14} />
+                </button>
+            </div>
 
             {/* 30-Second Briefing Card */}
             {isFetchingBriefing && (

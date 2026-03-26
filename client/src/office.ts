@@ -783,6 +783,16 @@ export async function openGroupManager(params: Record<string, string> = {}) {
   }
 }
 
+export async function openAiSettings(params: Record<string, string> = {}) {
+  try {
+    return await openCockpitView("ai-settings", params, { height: 84, width: 60, displayInIframe: true });
+  } catch (error) {
+    const url = buildCockpitViewUrl("ai-settings", params);
+    clientLog.warn("[office] ai settings fallback to same-window navigation", error);
+    window.location.assign(url.toString());
+  }
+}
+
 export async function requestCockpitHostAction(action: CockpitHostAction): Promise<boolean> {
   try {
     const OfficeAny = await ensureOfficeReady();
