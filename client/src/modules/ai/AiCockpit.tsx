@@ -72,6 +72,13 @@ function htmlToPlainText(html: string): string {
         .trim();
 }
 
+function normalizeForwardSubject(subject: string): string {
+    const cleaned = String(subject || "")
+        .replace(/^\s*((re|fw|fwd)\s*:\s*)+/i, "")
+        .trim();
+    return cleaned || String(subject || "").trim();
+}
+
 function normalizeExtractedTasks(rawValue: unknown): Array<{ title: string; dueDate?: string; owner?: string }> {
     const list = Array.isArray(rawValue)
         ? rawValue
@@ -561,18 +568,33 @@ export const AiCockpit: React.FC = () => {
 
     // Sync draft defaults from context OR persistent aiState
     useEffect(() => {
-        // If we have AI-suggested metadata, use it
-        if (aiState.suggestedSubject || (aiState.suggestedTo && aiState.suggestedTo.length > 0)) {
+        const hasSuggestedRecipients = Array.isArray(aiState.suggestedTo) && aiState.suggestedTo.length > 0;
+        const hasSuggestedCc = Array.isArray(aiState.suggestedCc) && aiState.suggestedCc.length > 0;
+        const hasSuggestedSubject = Boolean(String(aiState.suggestedSubject || "").trim());
+
+        if (selectedAction === "forward") {
+            if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
+                setDraftTo(aiState.suggestedTo || []);
+                setDraftCc(aiState.suggestedCc || []);
+                setDraftSubject(String(aiState.suggestedSubject || "").trim() || normalizeForwardSubject(ctx.subject || ""));
+            } else {
+                setDraftTo([]);
+                setDraftCc([]);
+                setDraftSubject(normalizeForwardSubject(ctx.subject || ""));
+            }
+            return;
+        }
+
+        if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
             setDraftTo(aiState.suggestedTo || []);
             setDraftCc(aiState.suggestedCc || []);
             setDraftSubject(aiState.suggestedSubject || "");
         } else {
-            // Fallback to email context defaults
             setDraftTo((ctx.toRecipients || []).map((r: any) => r.email));
             setDraftCc((ctx.ccRecipients || []).map((r: any) => r.email));
             setDraftSubject(ctx.subject || "");
         }
-    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo, aiState.suggestedCc]);
+    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo, aiState.suggestedCc, selectedAction]);
 
     const handlePromptChange = (val: string) => {
         setPrompt(val);

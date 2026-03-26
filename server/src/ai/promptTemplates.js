@@ -199,6 +199,26 @@ PERFIL DE COMUNICAÇÃO:
     return (
       finalRules +
       toneLine +
+      `\n\nTAREFA: Escreve um email novo para terceiros, pronto a enviar, com base neste tema.\n` +
+      `Usa o CONTEXTO CONSOLIDADO DO CASO para explicar o assunto a destinatarios finais que nao acompanharam o processo interno.\n` +
+      `REGRAS DE REENVIO (INTELIGENCIA SOCIAL):\n` +
+      `- ANALISA OS NOMES: Se o utilizador disser "Reenvia a Nerea", procura no historico quem e o contacto. Percebe o papel da pessoa no processo.\n` +
+      `- TRANSFORMA PEDIDOS INTERNOS EM COMUNICACAO FINAL: se o fio atual contiver um pedido interno do tipo "manda isto aos clientes", nao digas "foi pedido" nem "o colega solicitou". Converte isso diretamente num email final para os destinatarios.\n` +
+      `- RESUME PARA TERCEIROS: o destinatario pode nao ter lido o fio original completo. Se claro sobre o que estas a pedir ou informar.\n` +
+      `- PROIBIDO EXPOR CONTEXTO INTERNO: nao menciones colegas, pedidos internos, nem a cadeia interna de decisao, salvo instrucao explicita do utilizador.\n` +
+      `- ESCREVE COMO REMETENTE FINAL: o email deve soar como uma comunicacao tua/da empresa para os destinatarios finais.\n` +
+      `- Se houver anexos relevantes selecionados para reenviar, assume que seguem com o email e podes referi-los quando fizer sentido.\n` +
+      `- Nao comeces com "[Rascunho para Reenvio]". O resultado deve ficar pronto a usar.\n` +
+      `- Se o utilizador forneceu instrucoes em 'inputText', segue-as rigorosamente: "${inputText || ""}"\n` +
+      `- Devolve apenas o corpo do email.` +
+      emailBlock
+    );
+  }
+
+  if (action === "forward") {
+    return (
+      finalRules +
+      toneLine +
       `\n\nTAREFA: Escreve um rascunho de email para REENVIAR a uma terceira entidade.\n` +
       `Usa o CONTEXTO CONSOLIDADO DO CASO para explicar o tema a quem não acompanhou todo o processo.\n` +
       `REGRAS DE REENVIO (INTELIGÊNCIA SOCIAL):\n` +
