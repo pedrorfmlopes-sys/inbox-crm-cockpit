@@ -33,6 +33,7 @@ export default function GroupSettingsApp(): JSX.Element {
           height: "100vh",
           padding: 12,
           boxSizing: "border-box",
+          display: "grid",
           background: "var(--iccc-bg)",
           color: "var(--iccc-text)",
           fontFamily: "var(--iccc-font)",

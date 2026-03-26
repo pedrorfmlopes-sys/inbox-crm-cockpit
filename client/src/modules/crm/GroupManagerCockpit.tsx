@@ -2119,7 +2119,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     <div
       style={
         standaloneSettings
-          ? { ...S.root, minHeight: "100%", gridTemplateRows: "auto minmax(0, 1fr)" }
+          ? { ...S.root, height: "100%", minHeight: 0, gridTemplateRows: "auto minmax(0, 1fr)", overflow: "hidden" }
           : S.root
       }
     >
@@ -2173,7 +2173,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       <div
         style={
           standaloneSettings
-            ? { ...S.viewport, minHeight: 0, overflowY: "auto" }
+            ? { ...S.viewport, height: "100%", minHeight: 0, overflowY: "auto" }
             : S.viewport
         }
       >
