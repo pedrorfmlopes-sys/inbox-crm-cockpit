@@ -2095,25 +2095,55 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   const trackTransform = view === "groups" ? "translateX(0%)" : view === "detail" ? "translateX(-33.3333%)" : "translateX(-66.6667%)";
   const configView = view === "settings" || view === "labels" || view === "tickets";
 
-  const headerTitle = view === "settings"
+  const headerTitle = standaloneSettings && configView
     ? "Settings dos grupos"
-    : view === "labels"
-      ? "Gestor de etiquetas"
-      : view === "tickets"
-        ? "Tickets dos grupos"
-        : view === "quicklink"
-          ? "Ligacao rapida"
-      : "Grupos";
+    : view === "settings"
+      ? "Settings dos grupos"
+      : view === "labels"
+        ? "Gestor de etiquetas"
+        : view === "tickets"
+          ? "Tickets dos grupos"
+          : view === "quicklink"
+            ? "Ligacao rapida"
+            : "Grupos";
 
-  const headerHint = view === "settings"
-    ? "Configuracoes locais."
-    : view === "labels"
-      ? "Catalogo central."
-      : view === "tickets"
-        ? "Series, contadores e automacao."
-        : view === "quicklink"
-          ? "Ligacao simplificada do email atual."
-      : "Ligacoes manuais.";
+  const headerHint = standaloneSettings && configView
+    ? "Configuracao do modulo."
+    : view === "settings"
+      ? "Configuracoes locais."
+      : view === "labels"
+        ? "Catalogo central."
+        : view === "tickets"
+          ? "Series, contadores e automacao."
+          : view === "quicklink"
+            ? "Ligacao simplificada do email atual."
+            : "Ligacoes manuais.";
+
+  const standaloneSettingsMenu = standaloneSettings ? (
+    <aside style={S.standaloneSettingsSidebar}>
+      <button
+        type="button"
+        style={view === "settings" ? S.standaloneSettingsNavItemOn : S.standaloneSettingsNavItem}
+        onClick={() => setView("settings")}
+      >
+        General
+      </button>
+      <button
+        type="button"
+        style={view === "labels" ? S.standaloneSettingsNavItemOn : S.standaloneSettingsNavItem}
+        onClick={() => setView("labels")}
+      >
+        Etiquetas
+      </button>
+      <button
+        type="button"
+        style={view === "tickets" ? S.standaloneSettingsNavItemOn : S.standaloneSettingsNavItem}
+        onClick={() => setView("tickets")}
+      >
+        Tickets
+      </button>
+    </aside>
+  ) : null;
 
   return (
     <div
@@ -2130,18 +2160,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
           <div style={S.headerHint}>{headerHint}</div>
         </div>
         <div style={S.headerActions}>
-          {standaloneSettings ? (
-            view === "labels" || view === "tickets" ? (
-              <button
-                type="button"
-                style={S.secondaryBtn}
-                onClick={() => setView("settings")}
-                disabled={busy}
-              >
-                Voltar
-              </button>
-            ) : null
-          ) : configView ? (
+          {standaloneSettings ? null : configView ? (
             <button
               type="button"
               style={S.secondaryBtn}
@@ -2178,7 +2197,9 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
         }
       >
         {view === "settings" ? (
-          <section style={S.cleanPanel}>
+          <section style={standaloneSettings ? S.standaloneSettingsSection : S.cleanPanel}>
+            {standaloneSettingsMenu}
+            <div style={standaloneSettings ? S.standaloneSettingsContent : undefined}>
             <div style={S.panelHeader}>
               <div>
                 <div style={S.sectionTitleRow}>
@@ -2214,9 +2235,12 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                 </div>
               </div>
             </div>
+            </div>
           </section>
         ) : view === "labels" ? (
-          <section style={S.cleanPanel}>
+          <section style={standaloneSettings ? S.standaloneSettingsSection : S.cleanPanel}>
+            {standaloneSettingsMenu}
+            <div style={standaloneSettings ? S.standaloneSettingsContent : undefined}>
             <div style={S.panelHeader}>
               <div>
                 <div style={S.sectionTitleRow}>
@@ -2312,9 +2336,12 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                 </div>
               </div>
             )}
+            </div>
           </section>
         ) : view === "tickets" ? (
-          <section style={S.cleanPanel}>
+          <section style={standaloneSettings ? S.standaloneSettingsSection : S.cleanPanel}>
+            {standaloneSettingsMenu}
+            <div style={standaloneSettings ? S.standaloneSettingsContent : undefined}>
             <div style={S.panelHeader}>
               <div>
                 <div style={S.sectionTitleRow}>
@@ -2600,6 +2627,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                 </div>
               </div>
             )}
+            </div>
           </section>
         ) : view === "quicklink" ? (
           <section style={S.cleanPanel}>
@@ -3518,6 +3546,11 @@ const S: Record<string, React.CSSProperties> = {
   managerRowActive: { width: "100%", borderRadius: 10, border: "1px solid rgba(37, 99, 235, 0.28)", background: "rgba(219, 234, 254, 0.72)", padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, cursor: "pointer", color: "var(--iccc-text)", fontSize: 12, fontWeight: 600 },
   managerCount: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, borderRadius: 999, background: "rgba(15, 23, 42, 0.06)", color: "var(--iccc-text)", fontSize: 10, fontWeight: 700 },
   viewport: { overflow: "hidden", borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "var(--iccc-card-bg)", boxShadow: "var(--iccc-shadow)" },
+  standaloneSettingsSection: { display: "grid", gridTemplateColumns: "190px minmax(0, 1fr)", minHeight: "100%", alignItems: "stretch" },
+  standaloneSettingsSidebar: { display: "grid", alignContent: "start", gap: 4, padding: 12, borderRight: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.54)", minHeight: 0, overflowY: "auto" },
+  standaloneSettingsNavItem: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid transparent", background: "transparent", color: "var(--iccc-text-muted)", padding: "9px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  standaloneSettingsNavItemOn: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(37, 99, 235, 0.22)", background: "rgba(219, 234, 254, 0.72)", color: "#1d4ed8", padding: "9px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer" },
+  standaloneSettingsContent: { padding: 10, minHeight: 0, overflowY: "auto", display: "grid", alignContent: "start", gap: 10 },
   track: { width: "300%", display: "flex", transition: "transform 0.22s ease" },
   panel: { width: "33.3333%", padding: 10, display: "grid", alignContent: "start", gap: 10, minHeight: "calc(100vh - 220px)", boxSizing: "border-box" },
   cleanPanel: { padding: 10, display: "grid", alignContent: "start", gap: 10, minHeight: "calc(100vh - 220px)", boxSizing: "border-box" },

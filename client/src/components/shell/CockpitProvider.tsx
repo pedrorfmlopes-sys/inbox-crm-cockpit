@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, syncManagedOutlookCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, openAppSettings, syncManagedOutlookCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -201,7 +201,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     function readPersistedTab(): CockpitTab {
         try {
             const raw = sessionStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
-            return raw === "ai" || raw === "crm" || raw === "crm2" || raw === "related" || raw === "groups" || raw === "files" || raw === "settings"
+            return raw === "ai" || raw === "crm" || raw === "crm2" || raw === "related" || raw === "groups" || raw === "files"
                 ? raw
                 : "ai";
         } catch {
@@ -228,6 +228,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     const warmStartupRef = useRef<boolean>(hasWarmBootHint());
+    const currentViewRef = useRef<string>((new URLSearchParams(window.location.search).get("view") || "taskpane").toLowerCase());
     const [tab, setTab] = useState<CockpitTab>(() => readPersistedTab());
     const [settingsSection, setSettingsSectionState] = useState<SettingsPanelSection>(() => readPersistedSettingsSection());
     const [ctx, setCtx] = useState<OutlookMessageContext>({});
@@ -369,7 +370,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const openSettingsSection = (section: SettingsPanelSection) => {
         setSettingsSectionState(section);
-        setTab("settings");
+        if (currentViewRef.current === "app-settings") return;
+        void openAppSettings({ section });
     };
 
     // AI History Persistence

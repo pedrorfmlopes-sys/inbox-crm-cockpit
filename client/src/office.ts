@@ -803,6 +803,16 @@ export async function openGroupSettings(params: Record<string, string> = {}) {
   }
 }
 
+export async function openAppSettings(params: Record<string, string> = {}) {
+  try {
+    return await openCockpitView("app-settings", params, { height: 86, width: 64, displayInIframe: true });
+  } catch (error) {
+    const url = buildCockpitViewUrl("app-settings", params);
+    clientLog.warn("[office] app settings fallback to same-window navigation", error);
+    window.location.assign(url.toString());
+  }
+}
+
 export async function requestCockpitHostAction(action: CockpitHostAction): Promise<boolean> {
   try {
     const OfficeAny = await ensureOfficeReady();

@@ -23,8 +23,14 @@ export const Navigation: React.FC = () => {
                 return (
                     <div key={t.id} style={S.tabSlot}>
                         <button
-                            style={tab === t.id ? S.tabActive : S.tab}
-                            onClick={() => setTab(t.id)}
+                            style={t.id !== "settings" && tab === t.id ? S.tabActive : S.tab}
+                            onClick={() => {
+                                if (t.id === "settings") {
+                                    openSettingsSection("general");
+                                    return;
+                                }
+                                setTab(t.id);
+                            }}
                         >
                             <span style={S.icon}>{t.icon}</span>
                             <span style={S.label}>{t.label}</span>

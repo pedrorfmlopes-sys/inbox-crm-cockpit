@@ -6,6 +6,7 @@ import GroupExplorerApp from "@/modules/crm/GroupExplorerApp";
 import GroupManagerApp from "@/modules/crm/GroupManagerApp";
 import AiSettingsApp from "@/modules/ai/AiSettingsApp";
 import GroupSettingsApp from "@/modules/crm/GroupSettingsApp";
+import SettingsApp from "@/ui/SettingsApp";
 
 const WARM_BOOT_STORAGE_KEY = "iccc_warm_boot_v1";
 
@@ -84,6 +85,7 @@ function Boot() {
   if (view === "group-manager") return <GroupManagerApp />;
   if (view === "ai-settings") return <AiSettingsApp />;
   if (view === "group-settings") return <GroupSettingsApp />;
+  if (view === "app-settings") return <SettingsApp />;
   return <UniversalApp />;
 }
 
