@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
-import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings, addBase64AttachmentToCompose } from "@/office";
+import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings, addBase64AttachmentToCompose, openAiReplyTargetPicker, type AiReplyTargetSelection } from "@/office";
 import { getSettings } from "@/settings";
 import { logLearningInteraction } from "@/api";
 import { buildAiContextBundle, type AiContextBundle } from "./contextBundle";
@@ -24,6 +24,7 @@ type HistoryEntry = {
     draftCc: string[];
     draftSubject: string;
     customToneId?: string;
+    replyTarget?: AiReplyTargetSelection | null;
 };
 
 type QuickPanelId = "lang" | "mode" | "presets" | "intents" | "contacts" | "files" | null;
@@ -151,6 +152,27 @@ function normalizeForwardSubject(subject: string): string {
     return cleaned || String(subject || "").trim();
 }
 
+function normalizeReplySubject(subject: string): string {
+    const cleaned = String(subject || "").trim();
+    if (!cleaned) return "Re:";
+    if (/^\s*re\s*:/i.test(cleaned)) return cleaned;
+    return `Re: ${normalizeForwardSubject(cleaned) || cleaned}`;
+}
+
+function formatDateLabel(value: string): string {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return raw;
+    return parsed.toLocaleString("pt-PT", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
 function normalizeExtractedTasks(rawValue: unknown): Array<{ title: string; dueDate?: string; owner?: string }> {
     const list = Array.isArray(rawValue)
         ? rawValue
@@ -256,6 +278,7 @@ export const AiCockpit: React.FC = () => {
     const emailKey = getEmailKey(ctx);
     const [activePanel, setActivePanel] = useState<QuickPanelId>(null);
     const [selectedCustomToneId, setSelectedCustomToneId] = useState<string>("");
+    const [replyTargetEmail, setReplyTargetEmail] = useState<AiReplyTargetSelection | null>(null);
     const [fileUsage, setFileUsage] = useState<Record<string, FileUsageState>>({});
 
     // Responsive UI Scale
@@ -288,7 +311,8 @@ export const AiCockpit: React.FC = () => {
         setPrompt(aiState.prompt);
         setOutput(aiState.output);
         setDebugLog(""); // Clear debug log on switch
-        setHistory(loadHistory().filter(h => h.emailKey === emailKey));
+        const nextHistory = loadHistory().filter(h => h.emailKey === emailKey);
+        setHistory(nextHistory);
     }, [ctx.conversationId, emailKey]);
 
     useEffect(() => {
@@ -304,6 +328,7 @@ export const AiCockpit: React.FC = () => {
         setActivePanel(null);
         setHistoryExpanded(false);
         setSelectedCustomToneId("");
+        setReplyTargetEmail(null);
         setFileUsage({});
     }, [emailKey]);
 
@@ -458,6 +483,7 @@ export const AiCockpit: React.FC = () => {
         setDraftCc(Array.isArray(entry.draftCc) ? entry.draftCc : []);
         setDraftSubject(String(entry.draftSubject || ""));
         setSelectedCustomToneId(String(entry.customToneId || ""));
+        setReplyTargetEmail(entry.replyTarget || null);
         setShowDraftPreview(true);
         setAiState({
             prompt: entry.prompt || "",
@@ -670,6 +696,27 @@ export const AiCockpit: React.FC = () => {
         }
     }
 
+    async function handlePickReplyTarget() {
+        try {
+            const selection = await openAiReplyTargetPicker({
+                conversationId: String(ctx.conversationId || ""),
+                internetMessageId: String(ctx.internetMessageId || ""),
+                itemId: String(ctx.itemId || ""),
+                subject: String(ctx.subject || ""),
+                fromEmail: String(ctx.fromEmail || ""),
+                fromName: String(ctx.fromName || ""),
+                receivedAtIso: String(ctx.receivedDateTimeIso || ""),
+                selectedEmailKey: String(replyTargetEmail?.emailKey || ""),
+            });
+            if (!selection?.emailKey) return;
+            setReplyTargetEmail(selection);
+            setShowDraftPreview(true);
+            setMsg(`Email-alvo selecionado: ${selection.subject || selection.fromEmail || selection.emailKey}`);
+        } catch (error: any) {
+            setMsg(String(error?.message || error || "Nao foi possivel abrir a selecao de emails relacionados."));
+        }
+    }
+
     // Sync draft defaults from context OR persistent aiState
     useEffect(() => {
         const hasSuggestedRecipients = Array.isArray(aiState.suggestedTo) && aiState.suggestedTo.length > 0;
@@ -689,6 +736,19 @@ export const AiCockpit: React.FC = () => {
             return;
         }
 
+        if (replyTargetEmail?.fromEmail) {
+            if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
+                setDraftTo(aiState.suggestedTo || [replyTargetEmail.fromEmail]);
+                setDraftCc(aiState.suggestedCc || []);
+                setDraftSubject(String(aiState.suggestedSubject || "").trim() || normalizeReplySubject(replyTargetEmail.subject || ctx.subject || ""));
+            } else {
+                setDraftTo([replyTargetEmail.fromEmail]);
+                setDraftCc([]);
+                setDraftSubject(normalizeReplySubject(replyTargetEmail.subject || ctx.subject || ""));
+            }
+            return;
+        }
+
         if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
             setDraftTo(aiState.suggestedTo || []);
             setDraftCc(aiState.suggestedCc || []);
@@ -698,7 +758,7 @@ export const AiCockpit: React.FC = () => {
             setDraftCc((ctx.ccRecipients || []).map((r: any) => r.email));
             setDraftSubject(ctx.subject || "");
         }
-    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo, aiState.suggestedCc, selectedAction]);
+    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo, aiState.suggestedCc, selectedAction, replyTargetEmail]);
 
     const handlePromptChange = (val: string) => {
         setPrompt(val);
@@ -813,9 +873,24 @@ export const AiCockpit: React.FC = () => {
         const isRefining = action === "rewrite" || action === "refine";
         const resolvedAction: AiAction = (action === "reply" || action === "forward") ? selectedAction : action;
         const rawPrompt = extraPrompt || (action === "refine" ? refineInput : prompt);
-        const finalPrompt = rawPrompt || (resolvedAction === "forward"
+        let finalPrompt = rawPrompt || (resolvedAction === "forward"
             ? "Cria um email novo para terceiros com base neste tema. Nao respondas ao pedido interno; escreve para os destinatarios finais, usando o contexto completo do assunto e os anexos relevantes."
-            : rawPrompt);
+            : "");
+
+        if (resolvedAction === "reply" && replyTargetEmail) {
+            const targetExcerpt = String(replyTargetEmail.bodyText || "").trim() || htmlToPlainText(String(replyTargetEmail.bodyHtml || ""));
+            const replyTargetInstructions = [
+                "INSTRUCOES INTERNAS PARA O ALVO DA RESPOSTA:",
+                "- Esta resposta deve ser orientada ao email-alvo selecionado no dossier, e nao apenas ao email atualmente aberto no Outlook.",
+                `- Email-alvo assunto: ${replyTargetEmail.subject || "(sem assunto)"}`,
+                `- Email-alvo remetente: ${replyTargetEmail.fromName || replyTargetEmail.fromEmail || "--"}`,
+                `- Assunto a manter na resposta: ${normalizeReplySubject(replyTargetEmail.subject || ctx.subject || "")}`,
+                targetExcerpt ? `- Conteudo relevante do email-alvo: ${targetExcerpt.slice(0, 1600)}` : "",
+                "- Usa o email atual como atualizacao/contexto complementar do caso.",
+                "- Nao expliques este raciocinio ao destinatario final; usa-o apenas para fundamentar a resposta.",
+            ].filter(Boolean).join("\n");
+            finalPrompt = [finalPrompt, replyTargetInstructions].filter(Boolean).join("\n\n");
+        }
 
         if (!isRefining && aiState.history.length > 0) {
             setAiState({ history: [] });
@@ -908,6 +983,7 @@ export const AiCockpit: React.FC = () => {
                     draftCc,
                     draftSubject,
                     customToneId: selectedCustomToneId || undefined,
+                    replyTarget: replyTargetEmail,
                 };
                 const fullHist = [entry, ...loadHistory()];
                 saveHistory(fullHist);
@@ -995,8 +1071,41 @@ export const AiCockpit: React.FC = () => {
                     }
                 }
             } else {
-                // Default to Reply (including for refine, rewrite, etc.)
-                await displayReplyForm(output);
+                const currentItemId = String(ctx.itemId || "").trim();
+                const currentMessageId = String(ctx.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+                const targetItemId = String(replyTargetEmail?.itemId || "").trim();
+                const targetMessageId = String(replyTargetEmail?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+                const isCurrentReplyTarget = Boolean(
+                    replyTargetEmail
+                    && ((targetItemId && currentItemId && targetItemId === currentItemId) || (targetMessageId && currentMessageId && targetMessageId === currentMessageId))
+                );
+
+                if (replyTargetEmail && !isCurrentReplyTarget) {
+                    await displayNewMessageForm({
+                        toRecipients: draftTo.length ? draftTo : (replyTargetEmail.fromEmail ? [replyTargetEmail.fromEmail] : []),
+                        ccRecipients: draftCc,
+                        subject: normalizeReplySubject(draftSubject || replyTargetEmail.subject || ctx.subject || ""),
+                        body: output,
+                        isHtml: true,
+                    });
+                    if (selectedForwardFiles.length) {
+                        try {
+                            await new Promise((resolve) => setTimeout(resolve, 900));
+                            for (const attachment of selectedForwardFiles) {
+                                await addBase64AttachmentToCompose(attachment.name, attachment.content);
+                            }
+                            setMsg(`${selectedForwardFiles.length} anexo(s) adicionados ao rascunho de resposta.`);
+                        } catch (attachError) {
+                            console.warn("[AiCockpit] Could not attach selected reply files automatically:", attachError);
+                            setMsg("Rascunho criado para o email selecionado. O Outlook pode exigir validacao manual dos anexos.");
+                        }
+                    } else {
+                        setMsg("Rascunho criado para o email guardado selecionado.");
+                    }
+                } else {
+                    // Default to Reply (including for refine, rewrite, etc.)
+                    await displayReplyForm(output);
+                }
             }
             setDebugLog("Janela aberta.");
         } catch (e: any) {
@@ -1060,6 +1169,7 @@ export const AiCockpit: React.FC = () => {
         setSelectedCustomToneId("");
         setActivePanel(null);
         setHistoryExpanded(false);
+        setReplyTargetEmail(null);
         clearFiles();
     };
 
@@ -1502,6 +1612,67 @@ export const AiCockpit: React.FC = () => {
             background: "linear-gradient(180deg, rgba(80, 160, 255, 0.95) 0%, rgba(0, 100, 210, 0.85) 100%)",
             color: "#FFFFFF",
             cursor: "pointer",
+        },
+        replyTargetRow: {
+            display: "flex",
+            alignItems: "stretch",
+            gap: "6px",
+            marginBottom: "4px",
+        },
+        replyTargetBtn: {
+            ...{
+                boxSizing: "border-box",
+                height: px(22),
+                borderRadius: "999px",
+                border: "1px solid rgba(200, 210, 230, 0.6)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: `0 ${px(10)}`,
+                fontSize: fpx(9),
+                fontWeight: 700,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
+                color: "#475569",
+                cursor: "pointer",
+            },
+            gap: "6px",
+            flexShrink: 0,
+        },
+        replyTargetSummary: {
+            flex: 1,
+            minWidth: 0,
+            borderRadius: "12px",
+            border: "1px solid rgba(37, 99, 235, 0.14)",
+            background: "rgba(239, 246, 255, 0.9)",
+            padding: "6px 8px",
+            display: "grid",
+            gap: "2px",
+        },
+        replyTargetTitle: {
+            fontSize: "10px",
+            fontWeight: 800,
+            color: "#1d4ed8",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+        },
+        replyTargetMeta: {
+            fontSize: "10px",
+            color: "#475569",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+        },
+        replyTargetClear: {
+            border: "none",
+            background: "transparent",
+            color: "#64748b",
+            fontSize: "11px",
+            cursor: "pointer",
+            padding: "0 2px",
+            alignSelf: "flex-start",
         },
         quickPanel: {
             background: "var(--iccc-card-bg)",
@@ -2205,6 +2376,36 @@ export const AiCockpit: React.FC = () => {
                         </div>
                     ) : null}
                 </div>
+                {selectedAction === "reply" ? (
+                    <div style={S.replyTargetRow}>
+                        <button
+                            type="button"
+                            style={S.replyTargetBtn}
+                            onClick={() => void handlePickReplyTarget()}
+                            title="Escolher um email guardado para usar como alvo desta resposta"
+                        >
+                            <Icons.MessageSquare size={11} />
+                            Email alvo
+                        </button>
+                        {replyTargetEmail ? (
+                            <div style={S.replyTargetSummary}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                                    <div style={S.replyTargetTitle}>{replyTargetEmail.subject || "(sem assunto)"}</div>
+                                    <button type="button" style={S.replyTargetClear} onClick={() => setReplyTargetEmail(null)} title="Limpar email-alvo">×</button>
+                                </div>
+                                <div style={S.replyTargetMeta}>
+                                    {replyTargetEmail.fromName || replyTargetEmail.fromEmail || "--"}
+                                    {replyTargetEmail.receivedAtIso || replyTargetEmail.messageDateIso ? ` · ${formatDateLabel(replyTargetEmail.receivedAtIso || replyTargetEmail.messageDateIso || "")}` : ""}
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ ...S.replyTargetSummary, borderColor: "rgba(148, 163, 184, 0.18)", background: "rgba(248,250,252,0.92)" }}>
+                                <div style={{ ...S.replyTargetTitle, color: "#475569" }}>Sem email-alvo selecionado</div>
+                                <div style={S.replyTargetMeta}>Abre a janela e escolhe o email guardado a que queres responder usando este contexto.</div>
+                            </div>
+                        )}
+                    </div>
+                ) : null}
                 {(attachments || []).length > 0 && (
                     <div style={{ display: "flex", alignItems: "center", gap: "4px", marginBottom: "6px", padding: "2px 6px", background: "rgba(59, 130, 246, 0.05)", borderRadius: "4px", width: "fit-content" }}>
                         <Icons.Files size={10} color="var(--iccc-pill-active-bg)" />

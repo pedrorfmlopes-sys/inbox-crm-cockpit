@@ -641,6 +641,21 @@ export async function syncOdooLinkedNotification(hasLinks: boolean, count = 0): 
 
 let activeDialog: any = null;
 
+export type AiReplyTargetSelection = {
+  emailKey: string;
+  itemId?: string;
+  emailWebLink?: string;
+  internetMessageId?: string;
+  conversationId?: string;
+  subject?: string;
+  fromEmail?: string;
+  fromName?: string;
+  messageDateIso?: string;
+  receivedAtIso?: string;
+  bodyText?: string;
+  bodyHtml?: string;
+};
+
 type CockpitHostAction =
   | { type: "close" }
   | { type: "open-email"; itemId?: string; emailWebLink?: string }
@@ -696,7 +711,7 @@ function buildCockpitViewUrl(view: string, params: Record<string, string>) {
  * Opens a separate window using Office Dialog API.
  * Guard: only one dialog at a time (evita "já existe uma dialog ativa").
  */
-async function openCockpitView(view: string, params: Record<string, string>, options?: { height?: number; width?: number; displayInIframe?: boolean }) {
+async function openCockpitView<T = void>(view: string, params: Record<string, string>, options?: { height?: number; width?: number; displayInIframe?: boolean }) {
   const OfficeAny = await ensureOfficeReady();
   const url = buildCockpitViewUrl(view, params);
 
@@ -708,12 +723,12 @@ async function openCockpitView(view: string, params: Record<string, string>, opt
   } catch { }
   activeDialog = null;
 
-  return await new Promise<void>((resolve, reject) => {
+  return await new Promise<T | null>((resolve, reject) => {
     let settled = false;
-    const resolveOnce = () => {
+    const resolveOnce = (value: T | null = null) => {
       if (settled) return;
       settled = true;
-      resolve();
+      resolve(value);
     };
     const rejectOnce = (error: Error) => {
       if (settled) return;
@@ -740,14 +755,25 @@ async function openCockpitView(view: string, params: Record<string, string>, opt
 
         dialog.addEventHandler(OfficeAny.EventType.DialogMessageReceived, (arg: any) => {
           const action = tryParseCockpitHostMessage(arg?.message);
-          if (!action) return;
-          void executeCockpitHostAction(action)
-            .catch((error) => clientLog.error("[office] host action failed", error))
-            .finally(() => {
-              if (action.type === "close") {
-                resolveOnce();
-              }
-            });
+          if (action) {
+            void executeCockpitHostAction(action)
+              .catch((error) => clientLog.error("[office] host action failed", error))
+              .finally(() => {
+                if (action.type === "close") {
+                  resolveOnce();
+                }
+              });
+            return;
+          }
+
+          const resultPayload = tryParseCockpitDialogResult<T>(arg?.message);
+          if (typeof resultPayload !== "undefined") {
+            try {
+              if (activeDialog) activeDialog.close();
+            } catch { }
+            activeDialog = null;
+            resolveOnce(resultPayload);
+          }
         });
 
         dialog.addEventHandler(OfficeAny.EventType.DialogEventReceived, () => {
@@ -770,6 +796,18 @@ export async function openGroupExplorer(params: Record<string, string>) {
     const url = buildCockpitViewUrl("group-explorer", params);
     clientLog.warn("[office] group explorer fallback to same-window navigation", error);
     window.location.assign(url.toString());
+  }
+}
+
+function tryParseCockpitDialogResult<T>(rawMessage: any): T | undefined {
+  const text = String(rawMessage || "").trim();
+  if (!text) return undefined;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?.type !== "dialog-result") return undefined;
+    return parsed.result as T;
+  } catch {
+    return undefined;
   }
 }
 
@@ -811,6 +849,10 @@ export async function openAppSettings(params: Record<string, string> = {}) {
     clientLog.warn("[office] app settings fallback to same-window navigation", error);
     window.location.assign(url.toString());
   }
+}
+
+export async function openAiReplyTargetPicker(params: Record<string, string> = {}) {
+  return await openCockpitView<AiReplyTargetSelection>("ai-reply-target-picker", params, { height: 84, width: 74, displayInIframe: true });
 }
 
 export async function requestCockpitHostAction(action: CockpitHostAction): Promise<boolean> {

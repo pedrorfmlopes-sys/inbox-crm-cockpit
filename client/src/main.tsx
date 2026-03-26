@@ -5,6 +5,7 @@ import DialogApp from "@/ui/DialogApp";
 import GroupExplorerApp from "@/modules/crm/GroupExplorerApp";
 import GroupManagerApp from "@/modules/crm/GroupManagerApp";
 import AiSettingsApp from "@/modules/ai/AiSettingsApp";
+import AiReplyTargetPickerApp from "@/modules/ai/AiReplyTargetPickerApp";
 import GroupSettingsApp from "@/modules/crm/GroupSettingsApp";
 import SettingsApp from "@/ui/SettingsApp";
 
@@ -84,6 +85,7 @@ function Boot() {
   if (view === "group-explorer") return <GroupExplorerApp />;
   if (view === "group-manager") return <GroupManagerApp />;
   if (view === "ai-settings") return <AiSettingsApp />;
+  if (view === "ai-reply-target-picker") return <AiReplyTargetPickerApp />;
   if (view === "group-settings") return <GroupSettingsApp />;
   if (view === "app-settings") return <SettingsApp />;
   return <UniversalApp />;
