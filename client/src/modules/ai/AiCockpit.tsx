@@ -869,13 +869,19 @@ export const AiCockpit: React.FC = () => {
                     suggestedCc: res.suggestedRecipients?.cc || [],
                     suggestedSubject: res.suggestedSubject || ""
                 });
-                let fullText = formattedText;
-                let current = "";
-                const words = fullText.split(/(\s+)/);
-                for (let i = 0; i < words.length; i++) {
-                    current += words[i];
-                    setOutput(current);
-                    await new Promise((resolve) => setTimeout(resolve, 20));
+                const fullText = formattedText;
+                if (looksLikeHtml(fullText)) {
+                    // Rendering partial HTML fragments during the typewriter effect can corrupt
+                    // the preview pane in Outlook WebView and blank the add-in surface.
+                    setOutput(fullText);
+                } else {
+                    let current = "";
+                    const words = fullText.split(/(\s+)/);
+                    for (let i = 0; i < words.length; i++) {
+                        current += words[i];
+                        setOutput(current);
+                        await new Promise((resolve) => setTimeout(resolve, 20));
+                    }
                 }
 
                 const newHistory = [
