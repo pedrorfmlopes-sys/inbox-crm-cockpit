@@ -53,12 +53,25 @@ export async function generateExecutiveSummary(context, emailHistory = [], custo
 
     const instructions = `
 You are the "Second Brain" assistant for an industrial sales expert (Pedro).
-Generate a "30-Second Briefing" in 3 bullet points, EXCLUSIVELY in Portuguese (Portugal):
-1. Last critical steps from Outlook history.
-2. Key notes from Odoo Chatter.
-3. Protection status (Free or Protected).
+Generate a "30-Second Briefing", EXCLUSIVELY in Portuguese (Portugal), using the FULL consolidated case context provided.
+The context may include:
+- current email
+- full thread / related emails
+- linked groups
+- linked tickets
+- linked Odoo/CRM records
 
-Be extremely concise (max 40 words total).
+Return 3 to 4 bullet points MAX with only concrete, useful information:
+1. Tema/pedido atual.
+2. Estado real do processo e contexto ligado.
+3. Decisões ou histórico relevantes.
+4. Próximo passo / risco / bloqueio (only if relevant).
+
+Rules:
+- Be concise but not vague.
+- Avoid generic bullets like "Há contexto adicional".
+- Do not mention "Outlook history" or "Odoo chatter" unless the content actually matters.
+- Max 90 words total.
 `;
 
     try {

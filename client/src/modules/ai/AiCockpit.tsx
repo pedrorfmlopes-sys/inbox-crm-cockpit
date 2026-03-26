@@ -4,6 +4,7 @@ import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiCl
 import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings } from "@/office";
 import { getSettings } from "@/settings";
 import { logLearningInteraction } from "@/api";
+import { buildAiContextBundle, type AiContextBundle } from "./contextBundle";
 import * as Icons from "@/ui/icons";
 
 // --- PERSISTENCE HELPERS ---
@@ -116,7 +117,7 @@ function parseExtractedTasks(rawValue: unknown): Array<{ title: string; dueDate?
 
 export const AiCockpit: React.FC = () => {
     const isDevRuntime = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-    const { ctx, bodyText, bodyHtml, setMsg, aiState, setAiState, files, addFile, clearFiles, settings } = useCockpit() as any;
+    const { ctx, bodyText, bodyHtml, links, attachments, setMsg, aiState, setAiState, files, addFile, clearFiles, settings } = useCockpit() as any;
     const aiManualOnly = settings?.aiManualOnly !== false;
 
     // Local state for immediate typing feel
@@ -131,6 +132,9 @@ export const AiCockpit: React.FC = () => {
     const [isExtractingContacts, setIsExtractingContacts] = useState(false);
     const [briefingExpanded, setBriefingExpanded] = useState(false);
     const [debugLog, setDebugLog] = useState("");
+    const [contextBundle, setContextBundle] = useState<AiContextBundle | null>(null);
+    const contextBundleCacheRef = useRef<Map<string, AiContextBundle>>(new Map());
+    const contextBundlePendingRef = useRef<Map<string, Promise<AiContextBundle | null>>>(new Map());
 
     // Draft Preview State
     const [draftTo, setDraftTo] = useState<string[]>([]);
@@ -198,7 +202,51 @@ export const AiCockpit: React.FC = () => {
         setShowTaskReview(false);
         setContactSearch("");
         setIntentSearch("");
+        setContextBundle(null);
     }, [emailKey]);
+
+    function hasEmailIdentity() {
+        return Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
+    }
+
+    async function ensureContextBundle(force = false): Promise<AiContextBundle | null> {
+        if (!hasEmailIdentity()) return null;
+
+        if (!force) {
+            const cached = contextBundleCacheRef.current.get(emailKey);
+            if (cached) {
+                if (!contextBundle) setContextBundle(cached);
+                return cached;
+            }
+            const pending = contextBundlePendingRef.current.get(emailKey);
+            if (pending) return pending;
+        }
+
+        const promise = buildAiContextBundle({
+            ctx,
+            bodyText,
+            bodyHtml,
+            links: Array.isArray(links) ? links : [],
+            attachments: Array.isArray(attachments) ? attachments : [],
+        })
+            .then((bundle) => {
+                contextBundleCacheRef.current.set(emailKey, bundle);
+                setContextBundle(bundle);
+                return bundle;
+            })
+            .catch((error) => {
+                if (force) {
+                    console.error("[AiCockpit] Failed to build AI context bundle:", error);
+                }
+                return null;
+            })
+            .finally(() => {
+                contextBundlePendingRef.current.delete(emailKey);
+            });
+
+        contextBundlePendingRef.current.set(emailKey, promise);
+        return promise;
+    }
 
     useEffect(() => {
         if (aiManualOnly || !ctx.conversationId || ctx.isCompose) return;
@@ -268,6 +316,8 @@ export const AiCockpit: React.FC = () => {
         setIsFetchingIntents(true);
         try {
             const nextSettings = await getSettings();
+            const bundle = await ensureContextBundle(false);
+            const effectiveBodyText = String(bodyText || "").trim() || htmlToPlainText(bodyHtml || "");
             const res = await aiGenerate({
                 action: "intent_proposals",
                 mode: "fast",
@@ -278,10 +328,11 @@ export const AiCockpit: React.FC = () => {
                     from: ctx.fromEmail || "",
                     to: (ctx.toRecipients || []).map((r: any) => r.email),
                     cc: (ctx.ccRecipients || []).map((r: any) => r.email),
-                    bodyText: bodyText || "",
+                    bodyText: effectiveBodyText,
                     bodyScope: nextSettings.bodyScope || "main"
                 },
                 briefing: briefing,
+                contextBundle: bundle?.promptContext || "",
                 persona: {
                     userRole: nextSettings.userRole,
                     styleContext: nextSettings.styleContext,
@@ -308,7 +359,13 @@ export const AiCockpit: React.FC = () => {
         try {
             setIsFetchingBriefing(true);
             const { aiGenerateBriefing } = await import("@/api");
-            const res = await aiGenerateBriefing(bodyText || "", [], {}, ctx.conversationId);
+            const bundle = await ensureContextBundle(true);
+            const effectiveBodyText = String(bodyText || "").trim() || htmlToPlainText(bodyHtml || "");
+            const briefingContext = bundle?.briefingContext || effectiveBodyText;
+            const briefingCacheKey = bundle?.cacheKey
+                ? `${ctx.conversationId || emailKey}|${bundle.cacheKey}`
+                : (ctx.conversationId || emailKey);
+            const res = await aiGenerateBriefing(briefingContext, [], {}, ctx.conversationId, briefingCacheKey);
             if (res.ok) {
                 setBriefing(res.summary || "");
             }
@@ -505,6 +562,8 @@ export const AiCockpit: React.FC = () => {
 
         try {
             const settings = await getSettings();
+            const bundle = await ensureContextBundle(true);
+            const effectiveBodyText = String(bodyText || "").trim() || htmlToPlainText(bodyHtml || "");
             const res = await aiGenerate({
                 action,
                 mode: "quality",
@@ -513,12 +572,13 @@ export const AiCockpit: React.FC = () => {
                 inputText: finalPrompt,
                 files: files || [],
                 briefing: briefing, // Pass the thread summary for isolation
+                contextBundle: bundle?.promptContext || "",
                 email: {
                     subject: ctx.subject || "",
                     from: ctx.fromEmail || "",
                     to: (ctx.toRecipients || []).map((r: any) => r.email),
                     cc: (ctx.ccRecipients || []).map((r: any) => r.email),
-                    bodyText: bodyText || "",
+                    bodyText: effectiveBodyText,
                     bodyScope: settings.bodyScope || "main"
                 },
                 persona: {

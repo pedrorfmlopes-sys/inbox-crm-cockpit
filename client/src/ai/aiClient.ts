@@ -29,6 +29,7 @@ export type AiGenerateRequest = {
   files?: any[]; // optional: raw files
   history?: Array<{ role: "user" | "assistant"; content: string }>; // NEW: Chat history
   filesContext?: string; // optional: pre-extracted text context
+  contextBundle?: string | null;
   persona?: any; // NEW: User persona / style
   briefing?: string | null; // NEW: Automated contextual briefing
   contactAliases?: Array<{ id: string; name: string; email: string }>; // NEW: Contact aliases

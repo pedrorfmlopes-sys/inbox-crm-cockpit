@@ -2,7 +2,7 @@
 // Centralized prompt templates for the "MailMaestro-like" features.
 // Keep these versioned and isolated from Odoo/CRM code.
 
-export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "", persona = {}, briefing = null, contactAliases = [], currentTime = null }) {
+export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "", contextBundle = "", persona = {}, briefing = null, contactAliases = [], currentTime = null }) {
   const LOCALE_HUMAN = {
     "pt-PT": "Português (Portugal)",
     "es-ES": "Espanhol",
@@ -104,7 +104,15 @@ PERFIL DE COMUNICAÇÃO:
     ? `\nTABELA DE ATALHOS DE CONTACTOS (Resolve estes nomes para os respetivos emails se o utilizador os mencionar):\n${contactAliases.map(c => `- ${c.name}: ${c.email}`).join('\n')}\n`
     : "";
 
-  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock + briefingBlock + contactBlock;
+  const contextBundleBlock = contextBundle
+    ? `\nCONTEXTO CONSOLIDADO DO CASO (USA INTERNAMENTE; NÃO COPIES PARA A RESPOSTA FINAL A MENOS QUE SEJA MESMO NECESSÁRIO):\n` +
+      `- Este bloco junta o thread, emails relacionados, grupos, tickets e registos Odoo/CRM ligados.\n` +
+      `- Usa este contexto para perceber o estado real do tema, pendências, decisões anteriores e relações entre emails.\n` +
+      `- PROIBIDO despejar este bloco para o utilizador. Ele serve apenas para fundamentar melhor a resposta.\n` +
+      `- Quando o email atual for curto, ambíguo ou parcial, prioriza este contexto consolidado antes de responder.\n\n${contextBundle}\n`
+    : "";
+
+  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock + briefingBlock + contactBlock + contextBundleBlock;
   const toneLine = `Tom: ${tone}.`;
 
   const emailBlock = email
@@ -132,6 +140,7 @@ PERFIL DE COMUNICAÇÃO:
       finalRules +
       toneLine +
       `\n\nTAREFA: Resume o email (e os anexos) com foco executivo.\n` +
+      `O resumo deve considerar o EMAIL ATUAL e todo o CONTEXTO CONSOLIDADO DO CASO quando existir.\n` +
       `Estrutura obrigatória:\n` +
       `<p><strong>Resumo</strong></p><ul>... (máximo 6 pontos claros)</ul>\n` +
       `<p><strong>Próximos passos / Ações</strong></p><ul>... (objetivos e acionáveis)</ul>\n` +
@@ -146,6 +155,8 @@ PERFIL DE COMUNICAÇÃO:
       finalRules +
       toneLine +
       `\n\nTAREFA: Cria uma resposta profissional sugerida ao email.\n` +
+      `Antes de responder, integra mentalmente o email atual, o briefing e o CONTEXTO CONSOLIDADO DO CASO.\n` +
+      `A resposta final deve refletir o estado real do assunto, mesmo que o último email isolado seja curto.\n` +
       `ESTRUTURA (Pragmatismo Pedro):\n` +
       `1. Agradecimento ou confirmação de receção (curto).\n` +
       `2. Próximo passo ou decisão (se necessário).\n` +
@@ -189,6 +200,7 @@ PERFIL DE COMUNICAÇÃO:
       finalRules +
       toneLine +
       `\n\nTAREFA: Escreve um rascunho de email para REENVIAR a uma terceira entidade.\n` +
+      `Usa o CONTEXTO CONSOLIDADO DO CASO para explicar o tema a quem não acompanhou todo o processo.\n` +
       `REGRAS DE REENVIO (INTELIGÊNCIA SOCIAL):\n` +
       `- ANALISA OS NOMES: Se o utilizador disser "Reenvia à Nerea", procura no histórico quem é o contacto. Percebe o papel da pessoa no processo.\n` +
       `- RESUME PARA TERCEIROS: O destinatário pode não ter lido o fio original completo. Sê claro sobre o que estás a pedir/informar.\n` +
@@ -212,6 +224,7 @@ PERFIL DE COMUNICAÇÃO:
     return (
       finalRules +
       `\n\nTAREFA: Analisa o email e propõe 3 intenções de resposta curta (Smart Replies).\n` +
+      `As propostas devem considerar o contexto consolidado do tema quando existir, não apenas a última mensagem.\n` +
       `As propostas devem ser dinâmicas e contextuais (ex: se for convite -> Aceitar, Recusar, Propor nova hora).\n` +
       `REGRAS:\n` +
       `- Devolve APENAS as 3 frases curtas separadas por ponto e vírgula.\n` +

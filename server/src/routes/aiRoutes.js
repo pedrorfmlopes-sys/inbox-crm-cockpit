@@ -140,6 +140,7 @@ export function createAiRouter() {
         knowledge = [],
         history = [], // NEW: Support for chat refinement
         filesContext: clientFilesContext = "",
+        contextBundle = "",
         persona = {}, // NEW: Persona / Style mimic
         files = [],   // NEW: Direct files support
         customModels = {}, // NEW: Custom models from client
@@ -201,6 +202,7 @@ export function createAiRouter() {
         inputText: String(inputText || ""),
         knowledge: Array.isArray(knowledge) ? knowledge.map(String) : [],
         filesContext: clientFilesContext,
+        contextBundle: String(contextBundle || ""),
         persona: {
           ...persona,
           learnedProfile: learnedProfile?.styleData || null,
@@ -269,13 +271,14 @@ ${currentDraft}`
 
   router.post("/briefing", async (req, res) => {
     try {
-      const { context, history, customModels, conversationId } = req.body;
+      const { context, history, customModels, conversationId, cacheKey } = req.body;
+      const effectiveCacheKey = String(cacheKey || conversationId || "").trim();
 
       // 1. Try cache first
-      if (conversationId) {
-        const cached = await getBriefing(conversationId);
+      if (effectiveCacheKey) {
+        const cached = await getBriefing(effectiveCacheKey);
         if (cached) {
-          console.log(`[ai] Cache HIT for briefing: ${conversationId}`);
+          console.log(`[ai] Cache HIT for briefing: ${effectiveCacheKey}`);
           return res.json({ ok: true, summary: cached, cached: true });
         }
       }
@@ -285,8 +288,8 @@ ${currentDraft}`
       const summary = await generateExecutiveSummary(context, history, customModels);
 
       // 3. Save to cache
-      if (conversationId && summary) {
-        await saveBriefing(conversationId, summary);
+      if (effectiveCacheKey && summary) {
+        await saveBriefing(effectiveCacheKey, summary);
       }
 
       res.json({ ok: true, summary, cached: false });
