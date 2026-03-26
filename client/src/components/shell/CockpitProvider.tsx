@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from "react";
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
 import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, openAppSettings, syncManagedOutlookCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
@@ -364,15 +364,15 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
     }, [settingsSection]);
 
-    const setSettingsSection = (section: SettingsPanelSection) => {
+    const setSettingsSection = useCallback((section: SettingsPanelSection) => {
         setSettingsSectionState(section);
-    };
+    }, []);
 
-    const openSettingsSection = (section: SettingsPanelSection) => {
+    const openSettingsSection = useCallback((section: SettingsPanelSection) => {
         setSettingsSectionState(section);
         if (currentViewRef.current === "app-settings") return;
         void openAppSettings({ section });
-    };
+    }, []);
 
     // AI History Persistence
     const [aiCache, setAiCache] = useState<Record<string, AiState>>(() => {

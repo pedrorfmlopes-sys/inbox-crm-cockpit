@@ -173,6 +173,20 @@ function formatDateLabel(value: string): string {
     });
 }
 
+function isSameStoredEmailTarget(
+    ctx: any,
+    target: AiReplyTargetSelection | null | undefined,
+): boolean {
+    const currentItemId = String(ctx?.itemId || "").trim();
+    const currentMessageId = String(ctx?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+    const targetItemId = String(target?.itemId || "").trim();
+    const targetMessageId = String(target?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+    return Boolean(
+        target
+        && ((targetItemId && currentItemId && targetItemId === currentItemId) || (targetMessageId && currentMessageId && targetMessageId === currentMessageId))
+    );
+}
+
 function normalizeExtractedTasks(rawValue: unknown): Array<{ title: string; dueDate?: string; owner?: string }> {
     const list = Array.isArray(rawValue)
         ? rawValue
@@ -725,13 +739,13 @@ export const AiCockpit: React.FC = () => {
 
         if (selectedAction === "forward") {
             if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
-                setDraftTo(aiState.suggestedTo || []);
+                setDraftTo(aiState.suggestedTo || (replyTargetEmail?.fromEmail ? [replyTargetEmail.fromEmail] : []));
                 setDraftCc(aiState.suggestedCc || []);
-                setDraftSubject(String(aiState.suggestedSubject || "").trim() || normalizeForwardSubject(ctx.subject || ""));
+                setDraftSubject(String(aiState.suggestedSubject || "").trim() || normalizeForwardSubject(replyTargetEmail?.subject || ctx.subject || ""));
             } else {
-                setDraftTo([]);
+                setDraftTo(replyTargetEmail?.fromEmail ? [replyTargetEmail.fromEmail] : []);
                 setDraftCc([]);
-                setDraftSubject(normalizeForwardSubject(ctx.subject || ""));
+                setDraftSubject(normalizeForwardSubject(replyTargetEmail?.subject || ctx.subject || ""));
             }
             return;
         }
@@ -877,16 +891,28 @@ export const AiCockpit: React.FC = () => {
             ? "Cria um email novo para terceiros com base neste tema. Nao respondas ao pedido interno; escreve para os destinatarios finais, usando o contexto completo do assunto e os anexos relevantes."
             : "");
 
-        if (resolvedAction === "reply" && replyTargetEmail) {
+        if ((resolvedAction === "reply" || resolvedAction === "forward") && replyTargetEmail) {
             const targetExcerpt = String(replyTargetEmail.bodyText || "").trim() || htmlToPlainText(String(replyTargetEmail.bodyHtml || ""));
+            const targetActionTitle = resolvedAction === "forward"
+                ? "INSTRUCOES INTERNAS PARA O ALVO DO REENCAMINHAMENTO:"
+                : "INSTRUCOES INTERNAS PARA O ALVO DA RESPOSTA:";
+            const targetSubject = resolvedAction === "forward"
+                ? normalizeForwardSubject(replyTargetEmail.subject || ctx.subject || "")
+                : normalizeReplySubject(replyTargetEmail.subject || ctx.subject || "");
+            const actionInstruction = resolvedAction === "forward"
+                ? "- Este email deve ser escrito para o email-alvo selecionado no dossier, como comunicacao final para esse destinatario, e nao como resposta ao email atualmente aberto no Outlook."
+                : "- Esta resposta deve ser orientada ao email-alvo selecionado no dossier, e nao apenas ao email atualmente aberto no Outlook.";
+            const targetUseInstruction = resolvedAction === "forward"
+                ? "- Usa o email atual como atualizacao/contexto complementar do caso, mas escreve como mensagem nova para o destinatario final."
+                : "- Usa o email atual como atualizacao/contexto complementar do caso.";
             const replyTargetInstructions = [
-                "INSTRUCOES INTERNAS PARA O ALVO DA RESPOSTA:",
-                "- Esta resposta deve ser orientada ao email-alvo selecionado no dossier, e nao apenas ao email atualmente aberto no Outlook.",
+                targetActionTitle,
+                actionInstruction,
                 `- Email-alvo assunto: ${replyTargetEmail.subject || "(sem assunto)"}`,
                 `- Email-alvo remetente: ${replyTargetEmail.fromName || replyTargetEmail.fromEmail || "--"}`,
-                `- Assunto a manter na resposta: ${normalizeReplySubject(replyTargetEmail.subject || ctx.subject || "")}`,
+                `- Assunto a manter na resposta: ${targetSubject}`,
                 targetExcerpt ? `- Conteudo relevante do email-alvo: ${targetExcerpt.slice(0, 1600)}` : "",
-                "- Usa o email atual como atualizacao/contexto complementar do caso.",
+                targetUseInstruction,
                 "- Nao expliques este raciocinio ao destinatario final; usa-o apenas para fundamentar a resposta.",
             ].filter(Boolean).join("\n");
             finalPrompt = [finalPrompt, replyTargetInstructions].filter(Boolean).join("\n\n");
@@ -1036,9 +1062,10 @@ export const AiCockpit: React.FC = () => {
             // If not in compose mode, try to open a Draft based on action
             setDebugLog("A abrir rascunho (não é modo edição)...");
             const effectiveAction = selectedAction;
+            const isCurrentReplyTarget = isSameStoredEmailTarget(ctx, replyTargetEmail);
 
             if (effectiveAction === "forward") {
-                if (selectedForwardFiles.length > 0) {
+                if (selectedForwardFiles.length > 0 && (!replyTargetEmail || isCurrentReplyTarget)) {
                     await displayForwardForm(output, true);
                     const usedAllOriginals = selectedForwardFiles.length === availableAttachmentCount;
                     setMsg(
@@ -1050,9 +1077,9 @@ export const AiCockpit: React.FC = () => {
                     return;
                 }
 
-                const forwardSubject = String(draftSubject || ctx.subject || "").trim() || "Fwd";
+                const forwardSubject = String(draftSubject || replyTargetEmail?.subject || ctx.subject || "").trim() || "Fwd";
                 await displayNewMessageForm({
-                    toRecipients: draftTo,
+                    toRecipients: draftTo.length ? draftTo : (replyTargetEmail?.fromEmail ? [replyTargetEmail.fromEmail] : []),
                     ccRecipients: draftCc,
                     subject: forwardSubject,
                     body: output,
@@ -1069,17 +1096,10 @@ export const AiCockpit: React.FC = () => {
                         console.warn("[AiCockpit] Could not attach selected forward files automatically:", attachError);
                         setMsg("Draft de reencaminhamento aberto. O Outlook pode exigir validação manual dos anexos nesta ação.");
                     }
+                } else if (replyTargetEmail && !isCurrentReplyTarget) {
+                    setMsg("Rascunho criado para o email guardado selecionado.");
                 }
             } else {
-                const currentItemId = String(ctx.itemId || "").trim();
-                const currentMessageId = String(ctx.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
-                const targetItemId = String(replyTargetEmail?.itemId || "").trim();
-                const targetMessageId = String(replyTargetEmail?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
-                const isCurrentReplyTarget = Boolean(
-                    replyTargetEmail
-                    && ((targetItemId && currentItemId && targetItemId === currentItemId) || (targetMessageId && currentMessageId && targetMessageId === currentMessageId))
-                );
-
                 if (replyTargetEmail && !isCurrentReplyTarget) {
                     await displayNewMessageForm({
                         toRecipients: draftTo.length ? draftTo : (replyTargetEmail.fromEmail ? [replyTargetEmail.fromEmail] : []),
@@ -2376,7 +2396,7 @@ export const AiCockpit: React.FC = () => {
                         </div>
                     ) : null}
                 </div>
-                {selectedAction === "reply" ? (
+                {selectedAction === "reply" || selectedAction === "forward" ? (
                     <div style={S.replyTargetRow}>
                         <button
                             type="button"
@@ -2401,7 +2421,11 @@ export const AiCockpit: React.FC = () => {
                         ) : (
                             <div style={{ ...S.replyTargetSummary, borderColor: "rgba(148, 163, 184, 0.18)", background: "rgba(248,250,252,0.92)" }}>
                                 <div style={{ ...S.replyTargetTitle, color: "#475569" }}>Sem email-alvo selecionado</div>
-                                <div style={S.replyTargetMeta}>Abre a janela e escolhe o email guardado a que queres responder usando este contexto.</div>
+                                <div style={S.replyTargetMeta}>
+                                    {selectedAction === "forward"
+                                        ? "Abre a janela e escolhe o email guardado que queres usar como base deste reencaminhamento."
+                                        : "Abre a janela e escolhe o email guardado a que queres responder usando este contexto."}
+                                </div>
                             </div>
                         )}
                     </div>

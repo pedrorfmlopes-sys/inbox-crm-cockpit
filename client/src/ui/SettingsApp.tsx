@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { CockpitProvider, useCockpit, type SettingsPanelSection } from "@/components/shell/CockpitProvider";
 import { getSettings } from "@/settings";
 import { applySkin } from "@/ui/skins";
@@ -25,8 +25,11 @@ function getInitialSection(): SettingsPanelSection {
 
 function SettingsAppBody({ initialSection }: { initialSection: SettingsPanelSection }) {
   const { setSettingsSection } = useCockpit();
+  const initializedRef = useRef(false);
 
   useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
     setSettingsSection(initialSection);
   }, [initialSection, setSettingsSection]);
 
