@@ -72,6 +72,78 @@ function htmlToPlainText(html: string): string {
         .trim();
 }
 
+function escapeHtml(value: string): string {
+    return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function looksLikeHtml(value: string): boolean {
+    return /<\/?(p|br|ul|ol|li|strong|em|a|div|span|h[1-6]|table|tr|td|blockquote)\b/i.test(String(value || ""));
+}
+
+function formatEmailHtml(raw: string): string {
+    const source = String(raw || "").trim();
+    if (!source) return "";
+
+    if (looksLikeHtml(source)) {
+        return `<div style="font-family:Aptos,Segoe UI,Arial,sans-serif;font-size:11pt;line-height:1.55;color:#1f2937;">${source}</div>`;
+    }
+
+    const normalized = source
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n")
+        .replace(/([A-Za-zÀ-ÿ]+,)\s+([A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ\[])/g, "$1\n\n$2")
+        .replace(/(Com os melhores cumprimentos,|Melhores cumprimentos,|Cumprimentos,|Obrigado,|Muito obrigado,|Obrigado pela atenção,|Obrigado pela atencao,)\s+/gi, "$1\n\n")
+        .replace(/\|\s*/g, "\n");
+
+    const lines = normalized.split("\n");
+    const blocks: string[] = [];
+    let paragraph: string[] = [];
+    let listItems: string[] = [];
+
+    const flushParagraph = () => {
+        if (!paragraph.length) return;
+        blocks.push(`<p style="margin:0 0 14px;">${escapeHtml(paragraph.join(" ")).replace(/\n/g, "<br/>")}</p>`);
+        paragraph = [];
+    };
+
+    const flushList = () => {
+        if (!listItems.length) return;
+        blocks.push(`<ul style="margin:0 0 14px 18px;padding:0;">${listItems.map((item) => `<li style="margin:0 0 6px;">${escapeHtml(item)}</li>`).join("")}</ul>`);
+        listItems = [];
+    };
+
+    for (const rawLine of lines) {
+        const line = String(rawLine || "").trim();
+        if (!line) {
+            flushParagraph();
+            flushList();
+            continue;
+        }
+
+        if (/^[-*•]\s+/.test(line)) {
+            flushParagraph();
+            listItems.push(line.replace(/^[-*•]\s+/, ""));
+            continue;
+        }
+
+        if (listItems.length) {
+            flushList();
+        }
+
+        paragraph.push(line);
+    }
+
+    flushParagraph();
+    flushList();
+
+    return `<div style="font-family:Aptos,Segoe UI,Arial,sans-serif;font-size:11pt;line-height:1.55;color:#1f2937;">${blocks.join("")}</div>`;
+}
+
 function normalizeForwardSubject(subject: string): string {
     const cleaned = String(subject || "")
         .replace(/^\s*((re|fw|fwd)\s*:\s*)+/i, "")
@@ -789,18 +861,19 @@ export const AiCockpit: React.FC = () => {
             }); //inputText is already extraPrompt || prompt
 
             if (res.ok) {
+                const formattedText = formatEmailHtml(res.text);
                 setAiState({
                     action: resolvedAction,
-                    output: res.text,
+                    output: formattedText,
                     suggestedTo: res.suggestedRecipients?.to || [],
                     suggestedCc: res.suggestedRecipients?.cc || [],
                     suggestedSubject: res.suggestedSubject || ""
                 });
-                let fullText = res.text;
+                let fullText = formattedText;
                 let current = "";
-                const words = fullText.split(" ");
+                const words = fullText.split(/(\s+)/);
                 for (let i = 0; i < words.length; i++) {
-                    current += words[i] + " ";
+                    current += words[i];
                     setOutput(current);
                     await new Promise((resolve) => setTimeout(resolve, 20));
                 }
@@ -882,15 +955,14 @@ export const AiCockpit: React.FC = () => {
             const effectiveAction = selectedAction;
 
             if (effectiveAction === "forward") {
-                const canUseNativeForwardWithOriginalAttachments =
-                    selectedForwardFiles.length > 0 &&
-                    selectedForwardFiles.length === availableAttachmentCount &&
-                    draftTo.length === 0 &&
-                    draftCc.length === 0;
-
-                if (canUseNativeForwardWithOriginalAttachments) {
+                if (selectedForwardFiles.length > 0) {
                     await displayForwardForm(output, true);
-                    setMsg(`Reencaminhamento aberto com ${selectedForwardFiles.length} anexo(s) original(is).`);
+                    const usedAllOriginals = selectedForwardFiles.length === availableAttachmentCount;
+                    setMsg(
+                        usedAllOriginals
+                            ? `Reencaminhamento aberto com ${selectedForwardFiles.length} anexo(s) original(is).`
+                            : "Reencaminhamento aberto com os anexos originais do email. Remove manualmente os que não quiseres enviar."
+                    );
                     setTimeout(() => setMsg(""), 4000);
                     return;
                 }
