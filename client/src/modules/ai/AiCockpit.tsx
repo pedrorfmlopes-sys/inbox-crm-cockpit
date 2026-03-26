@@ -419,13 +419,13 @@ export const AiCockpit: React.FC = () => {
         }
     }, [emailKey, settings]);
 
+    const selectedAction: AiAction = aiState.action === "forward" ? "forward" : "reply";
     const effectiveLocale = (aiState.locale && aiState.locale !== "auto"
         ? aiState.locale
         : ((settings?.replyLanguage || settings?.readingLanguage || "auto") as AiLocale));
 
     const baseTone = aiState.tone || settings?.tone || "neutro";
     const currentCustomTone = (settings?.aiCustomTones || []).find((entry: any) => entry.id === selectedCustomToneId) || null;
-    const selectedAction: AiAction = aiState.action === "forward" ? "forward" : "reply";
     const selectedAnalyzeFiles = (attachments || [])
         .filter((entry) => fileUsage[String(entry?.name || "").trim()]?.analyze)
         .map((entry) => ({
