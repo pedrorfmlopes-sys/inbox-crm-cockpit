@@ -28,7 +28,7 @@ import {
 } from "@/api";
 import { aiGenerate } from "@/ai/aiClient";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { displayNewMessageForm, displayReplyForm, openGroupExplorer, openLinkedOutlookEmail, syncManagedOutlookCategories } from "@/office";
+import { displayNewMessageForm, displayReplyForm, openGroupExplorer, openLinkedOutlookEmail, setSubject, syncManagedOutlookCategories } from "@/office";
 import { saveSettings } from "@/settings";
 import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
@@ -54,6 +54,7 @@ type TicketUiDraft = {
   autoLinkMode: "confirm" | "auto";
   suggestDraftOnCreate: boolean;
   useAiDrafts: boolean;
+  includeTicketCodeInSubject: boolean;
   aiInstructions: string;
 };
 
@@ -343,6 +344,7 @@ function createTicketUiDraft(value: any): TicketUiDraft {
     autoLinkMode: value?.autoLinkMode === "auto" ? "auto" : "confirm",
     suggestDraftOnCreate: value?.suggestDraftOnCreate !== false,
     useAiDrafts: value?.useAiDrafts !== false,
+    includeTicketCodeInSubject: value?.includeTicketCodeInSubject !== false,
     aiInstructions: String(value?.aiInstructions || "").trim(),
   };
 }
@@ -352,8 +354,25 @@ function ticketUiDraftChanged(current: TicketUiDraft, next: TicketUiDraft): bool
     current.autoLinkMode !== next.autoLinkMode
     || current.suggestDraftOnCreate !== next.suggestDraftOnCreate
     || current.useAiDrafts !== next.useAiDrafts
+    || current.includeTicketCodeInSubject !== next.includeTicketCodeInSubject
     || current.aiInstructions !== next.aiInstructions
   );
+}
+
+function buildTicketEmailSubject(baseSubject: string | undefined, ticketCode: string | undefined, includeTicketCode: boolean): string {
+  const code = String(ticketCode || "").trim();
+  const raw = String(baseSubject || "").trim();
+  if (!includeTicketCode || !code) return raw;
+  if (raw.toLowerCase().includes(code.toLowerCase())) return raw;
+
+  const prefixMatch = raw.match(/^((?:(?:re|fw|fwd)\s*:\s*)+)/i);
+  const prefixes = prefixMatch?.[1] || "";
+  const remainder = raw.slice(prefixes.length).trim();
+
+  if (prefixes) {
+    return `${prefixes}[${code}] ${remainder || "Ticket"}`.trim();
+  }
+  return `[${code}] ${raw || "Ticket"}`.trim();
 }
 
 function createQuickLinkDraft(partial: Partial<QuickLinkDraft> = {}): QuickLinkDraft {
@@ -1760,6 +1779,13 @@ export const GroupManagerCockpit: React.FC = () => {
 
   async function handleOpenTicketDraft(ticket: GroupTicketEntry) {
     const relatedSeries = ticketSeries.find((series) => series.id === ticket.seriesId) || selectedTicketSeries || null;
+    const toRecipients = uniqueEmails([String(ctx.fromEmail || "").trim()]);
+    const ccRecipients = uniqueEmails((ctx.ccRecipients || []).map((entry: any) => entry?.email));
+    const subject = buildTicketEmailSubject(
+      String(ctx.subject || "").trim() || `Ticket ${ticket.code}`,
+      ticket.code,
+      ticketUi?.includeTicketCodeInSubject !== false,
+    );
     let body = [
       `<p>Foi aberto o ticket <strong>${ticket.code}</strong>.</p>`,
       `<p>Nas próximas respostas, pedimos que mantenham este número no assunto do email.</p>`,
@@ -1808,6 +1834,11 @@ export const GroupManagerCockpit: React.FC = () => {
 
   async function handleOpenTicketReplyDraft(ticket: GroupTicketEntry) {
     const relatedSeries = ticketSeries.find((series) => series.id === ticket.seriesId) || selectedTicketSeries || null;
+    const replySubject = buildTicketEmailSubject(
+      String(ctx.subject || "").trim() || `Ticket ${ticket.code}`,
+      ticket.code,
+      ticketUi?.includeTicketCodeInSubject !== false,
+    );
     let body = [
       `<p>Foi aberto o ticket <strong>${ticket.code}</strong>.</p>`,
       `<p>Agradecemos o seu email. Vamos dar seguimento ao assunto com a maior brevidade possivel.</p>`,
@@ -1849,6 +1880,14 @@ export const GroupManagerCockpit: React.FC = () => {
     }
 
     await displayReplyForm(body, true, { replyAll: true });
+    if (ticketUi?.includeTicketCodeInSubject !== false && replySubject) {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        await setSubject(replySubject);
+      } catch (error) {
+        console.warn("[GroupManager] Could not update reply draft subject with ticket code:", error);
+      }
+    }
     setMsg(`Resposta ao ticket ${ticket.code} aberta em reply all.`);
   }
 
@@ -1860,6 +1899,7 @@ export const GroupManagerCockpit: React.FC = () => {
           autoLinkMode: ticketUiDraft.autoLinkMode,
           suggestDraftOnCreate: ticketUiDraft.suggestDraftOnCreate,
           useAiDrafts: ticketUiDraft.useAiDrafts,
+          includeTicketCodeInSubject: ticketUiDraft.includeTicketCodeInSubject,
           aiInstructions: String(ticketUiDraft.aiInstructions || "").trim(),
         },
       });
@@ -2294,6 +2334,16 @@ export const GroupManagerCockpit: React.FC = () => {
                         }
                       />
                       <span>Usar IA no draft</span>
+                    </label>
+                    <label style={S.toggleRow}>
+                      <input
+                        type="checkbox"
+                        checked={ticketUiDraft.includeTicketCodeInSubject}
+                        onChange={(event) =>
+                          setTicketUiDraft((current) => ({ ...current, includeTicketCodeInSubject: event.target.checked }))
+                        }
+                      />
+                      <span>Incluir ticket no assunto</span>
                     </label>
                   </div>
                   <textarea

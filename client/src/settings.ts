@@ -86,6 +86,7 @@ export type GroupTicketUiSettings = {
   autoLinkMode: GroupTicketAutoLinkMode;
   suggestDraftOnCreate: boolean;
   useAiDrafts: boolean;
+  includeTicketCodeInSubject: boolean;
   aiInstructions: string;
 };
 
@@ -360,6 +361,7 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     autoLinkMode: "confirm",
     suggestDraftOnCreate: true,
     useAiDrafts: true,
+    includeTicketCodeInSubject: true,
     aiInstructions: "Escreve em tom profissional e claro. Indica o numero do ticket e pede que todas as respostas futuras mantenham esse numero no assunto.",
   },
   groupOutlookCategories: {
@@ -630,6 +632,9 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
       useAiDrafts: typeof ((incoming as any).groupTicketUi || {}).useAiDrafts === "boolean"
         ? Boolean(((incoming as any).groupTicketUi || {}).useAiDrafts)
         : base.groupTicketUi.useAiDrafts,
+      includeTicketCodeInSubject: typeof ((incoming as any).groupTicketUi || {}).includeTicketCodeInSubject === "boolean"
+        ? Boolean(((incoming as any).groupTicketUi || {}).includeTicketCodeInSubject)
+        : base.groupTicketUi.includeTicketCodeInSubject,
       aiInstructions: String((((incoming as any).groupTicketUi || {}).aiInstructions ?? base.groupTicketUi.aiInstructions) || "").trim(),
     },
     groupOutlookCategories: {
