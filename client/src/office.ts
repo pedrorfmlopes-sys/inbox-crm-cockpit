@@ -194,6 +194,64 @@ const TICKET_CATEGORY_PREFIX = "Ticket: ";
 const STATUS_CATEGORY_PREFIX = "Estado: ";
 const ODOO_LINKED_NOTICE = "iccc-odoo-linked";
 
+function firstCategoryColor(colors: any, candidates: string[]): any {
+  for (const candidate of candidates) {
+    if (colors?.[candidate]) return colors[candidate];
+  }
+  return colors?.Preset0;
+}
+
+function hashCategorySeed(value: string): number {
+  let hash = 0;
+  for (const char of String(value || "")) {
+    hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function extractTicketSeriesKey(ticketCode: string): string {
+  const raw = String(ticketCode || "").trim().replace(/^Ticket:\s*/i, "");
+  return String(raw.split(/[-/_\s]/)[0] || "").trim().toUpperCase();
+}
+
+function resolveManagedCategoryColor(displayName: string, colors: any): any {
+  const label = String(displayName || "").trim();
+  if (!label || !colors) return colors?.Preset0;
+
+  if (label === ODOO_LINKED_CATEGORY) {
+    return firstCategoryColor(colors, ["Preset22", "Preset7", "Preset0"]);
+  }
+
+  if (label.startsWith(GROUP_CATEGORY_PREFIX)) {
+    return firstCategoryColor(colors, ["Preset22", "Preset7", "Preset0"]);
+  }
+
+  if (label.startsWith(STATUS_CATEGORY_PREFIX)) {
+    const normalized = label.slice(STATUS_CATEGORY_PREFIX.length).trim().toLowerCase();
+    if (normalized === "em analise") return firstCategoryColor(colors, ["Preset3", "Preset1", "Preset0"]);
+    if (normalized === "em progresso") return firstCategoryColor(colors, ["Preset1", "Preset5", "Preset0"]);
+    if (normalized === "concluido") return firstCategoryColor(colors, ["Preset4", "Preset14", "Preset0"]);
+    return firstCategoryColor(colors, ["Preset12", "Preset0"]);
+  }
+
+  if (label.startsWith(TICKET_CATEGORY_PREFIX)) {
+    const seriesKey = extractTicketSeriesKey(label.slice(TICKET_CATEGORY_PREFIX.length));
+    if (/^(RCL|REC|CLA|RET|RMA)$/i.test(seriesKey)) {
+      return firstCategoryColor(colors, ["Preset6", "Preset9", "Preset0"]);
+    }
+    if (/^(EDD|ENC|ORD|PED|PO)$/i.test(seriesKey)) {
+      return firstCategoryColor(colors, ["Preset22", "Preset7", "Preset0"]);
+    }
+    if (/^(SUP|TCK|INC|SRV|TEC)$/i.test(seriesKey)) {
+      return firstCategoryColor(colors, ["Preset5", "Preset8", "Preset0"]);
+    }
+    const palette = ["Preset22", "Preset5", "Preset8", "Preset4", "Preset1", "Preset6", "Preset9", "Preset14"];
+    return firstCategoryColor(colors, [palette[hashCategorySeed(seriesKey) % palette.length], "Preset0"]);
+  }
+
+  return colors?.Preset0;
+}
+
 
 export type OutlookContactSuggestion = {
   name?: string;
@@ -340,24 +398,41 @@ export async function getCurrentItemToken(): Promise<string> {
 async function ensureMasterCategory(displayName: string): Promise<void> {
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
   if (!OfficeAny?.context?.mailbox?.masterCategories) return;
+  const categoryColor = resolveManagedCategoryColor(displayName, OfficeAny.MailboxEnums?.CategoryColor);
 
   await new Promise<void>((resolve) => {
     try {
       OfficeAny.context.mailbox.masterCategories.getAsync((res: any) => {
         if (res.status !== OfficeAny.AsyncResultStatus.Succeeded) return resolve();
         const list = Array.isArray(res.value) ? res.value : [];
-        const exists = list.some((c: any) => (c.displayName || c.name) === displayName);
-        if (exists) return resolve();
-        const color = OfficeAny.MailboxEnums?.CategoryColor?.Preset0;
-        OfficeAny.context.mailbox.masterCategories.addAsync([{ displayName, color }], (addResult: any) => {
-          if (addResult?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
-            clientLog.warn("[office] masterCategories.addAsync failed", {
-              displayName,
-              error: addResult?.error?.message || addResult?.error?.code || "unknown",
-            });
-          }
-          resolve();
-        });
+        const existing = list.find((c: any) => (c.displayName || c.name) === displayName);
+        const addCategory = () =>
+          OfficeAny.context.mailbox.masterCategories.addAsync([{ displayName, color: categoryColor }], (addResult: any) => {
+            if (addResult?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+              clientLog.warn("[office] masterCategories.addAsync failed", {
+                displayName,
+                error: addResult?.error?.message || addResult?.error?.code || "unknown",
+              });
+            }
+            resolve();
+          });
+
+        if (existing) {
+          if (!categoryColor || String(existing?.color || "") === String(categoryColor)) return resolve();
+          if (typeof OfficeAny.context.mailbox.masterCategories.removeAsync !== "function") return resolve();
+          return OfficeAny.context.mailbox.masterCategories.removeAsync([displayName], (removeResult: any) => {
+            if (removeResult?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+              clientLog.warn("[office] masterCategories.removeAsync failed", {
+                displayName,
+                error: removeResult?.error?.message || removeResult?.error?.code || "unknown",
+              });
+              return resolve();
+            }
+            addCategory();
+          });
+        }
+
+        addCategory();
       });
     } catch {
       resolve();
@@ -523,7 +598,7 @@ export async function syncManagedOutlookCategories(input: {
   const toRemove = currentManagedCategories.filter((name) => !desiredCategories.includes(name));
   const toAdd = desiredCategories.filter((name) => !currentCategories.includes(name));
 
-  for (const categoryName of toAdd) {
+  for (const categoryName of desiredCategories) {
     await ensureMasterCategory(categoryName);
   }
   await addCategoriesToCurrentItem(toAdd);
