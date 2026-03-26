@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
-import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings } from "@/office";
+import { insertTextToBody, isComposeMode, displayReplyForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings, addBase64AttachmentToCompose } from "@/office";
 import { getSettings } from "@/settings";
 import { logLearningInteraction } from "@/api";
 import { buildAiContextBundle, type AiContextBundle } from "./contextBundle";
@@ -17,7 +17,20 @@ type HistoryEntry = {
     ts: number;
     output: string;
     prompt: string;
-    action: string;
+    action: AiAction;
+    tone: AiTone;
+    locale: AiLocale;
+    draftTo: string[];
+    draftCc: string[];
+    draftSubject: string;
+    customToneId?: string;
+};
+
+type QuickPanelId = "lang" | "mode" | "presets" | "intents" | "contacts" | "files" | null;
+
+type FileUsageState = {
+    analyze: boolean;
+    forward: boolean;
 };
 
 function getEmailKey(ctx: any) {
@@ -117,7 +130,7 @@ function parseExtractedTasks(rawValue: unknown): Array<{ title: string; dueDate?
 
 export const AiCockpit: React.FC = () => {
     const isDevRuntime = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-    const { ctx, bodyText, bodyHtml, links, attachments, setMsg, aiState, setAiState, files, addFile, clearFiles, settings } = useCockpit() as any;
+    const { ctx, bodyText, bodyHtml, links, attachments, setMsg, aiState, setAiState, files, addFile, removeFile, clearFiles, settings } = useCockpit() as any;
     const aiManualOnly = settings?.aiManualOnly !== false;
 
     // Local state for immediate typing feel
@@ -156,10 +169,15 @@ export const AiCockpit: React.FC = () => {
     const [presetSearch, setPresetSearch] = useState("");
     const [intentSearch, setIntentSearch] = useState("");
     const [contactSearch, setContactSearch] = useState("");
+    const [fileSearch, setFileSearch] = useState("");
 
     // History / Rollback
     const [history, setHistory] = useState<HistoryEntry[]>([]);
+    const [historyExpanded, setHistoryExpanded] = useState(false);
     const emailKey = getEmailKey(ctx);
+    const [activePanel, setActivePanel] = useState<QuickPanelId>(null);
+    const [selectedCustomToneId, setSelectedCustomToneId] = useState<string>("");
+    const [fileUsage, setFileUsage] = useState<Record<string, FileUsageState>>({});
 
     // Responsive UI Scale
     const paneRef = useRef<HTMLDivElement>(null);
@@ -202,8 +220,34 @@ export const AiCockpit: React.FC = () => {
         setShowTaskReview(false);
         setContactSearch("");
         setIntentSearch("");
+        setFileSearch("");
         setContextBundle(null);
+        setActivePanel(null);
+        setHistoryExpanded(false);
+        setSelectedCustomToneId("");
+        setFileUsage({});
     }, [emailKey]);
+
+    useEffect(() => {
+        const nextUsage: Record<string, FileUsageState> = {};
+        for (const file of files || []) {
+            const name = String(file?.name || "").trim();
+            if (!name) continue;
+            nextUsage[name] = { analyze: true, forward: false };
+        }
+        setFileUsage((prev) => {
+            const merged: Record<string, FileUsageState> = {};
+            for (const att of attachments || []) {
+                const name = String(att?.name || "").trim();
+                if (!name) continue;
+                merged[name] = prev[name] || nextUsage[name] || { analyze: false, forward: false };
+            }
+            for (const [name, flags] of Object.entries(nextUsage)) {
+                merged[name] = merged[name] || flags;
+            }
+            return merged;
+        });
+    }, [attachments, files]);
 
     function hasEmailIdentity() {
         return Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
@@ -256,6 +300,96 @@ export const AiCockpit: React.FC = () => {
         if (bodyText) void handleExtractContacts(false);
         if ((bodyText || "").length >= 50) void handleExtractTasksReview();
     }, [aiManualOnly, emailKey, ctx.conversationId, ctx.isCompose, bodyText]);
+
+    useEffect(() => {
+        if (!settings) return;
+        if (!aiState.prompt && !aiState.output && !aiState.history.length) {
+            setAiState({
+                tone: settings.tone || "neutro",
+                locale: (settings.replyLanguage || "auto") as AiLocale,
+                action: "reply",
+            });
+        }
+    }, [emailKey, settings]);
+
+    const effectiveLocale = (aiState.locale && aiState.locale !== "auto"
+        ? aiState.locale
+        : ((settings?.replyLanguage || settings?.readingLanguage || "auto") as AiLocale));
+
+    const baseTone = aiState.tone || settings?.tone || "neutro";
+    const currentCustomTone = (settings?.aiCustomTones || []).find((entry: any) => entry.id === selectedCustomToneId) || null;
+    const selectedAction: AiAction = aiState.action === "forward" ? "forward" : "reply";
+    const selectedAnalyzeFiles = (attachments || [])
+        .filter((entry) => fileUsage[String(entry?.name || "").trim()]?.analyze)
+        .map((entry) => ({
+            name: entry.name,
+            type: entry.contentType,
+            content: entry.content || "",
+        }))
+        .filter((entry) => entry.name && entry.content);
+    const selectedForwardFiles = (attachments || [])
+        .filter((entry) => fileUsage[String(entry?.name || "").trim()]?.forward)
+        .map((entry) => ({
+            name: entry.name,
+            type: entry.contentType,
+            content: entry.content || "",
+        }))
+        .filter((entry) => entry.name && entry.content);
+
+    function setGenerationAction(nextAction: "reply" | "forward") {
+        setAiState({ action: nextAction });
+    }
+
+    function applyHistoryEntry(entry: HistoryEntry) {
+        setOutput(entry.output || "");
+        setPrompt(entry.prompt || "");
+        setDraftTo(Array.isArray(entry.draftTo) ? entry.draftTo : []);
+        setDraftCc(Array.isArray(entry.draftCc) ? entry.draftCc : []);
+        setDraftSubject(String(entry.draftSubject || ""));
+        setSelectedCustomToneId(String(entry.customToneId || ""));
+        setShowDraftPreview(true);
+        setAiState({
+            prompt: entry.prompt || "",
+            output: entry.output || "",
+            action: entry.action || "reply",
+            tone: entry.tone || "neutro",
+            locale: entry.locale || "auto",
+            suggestedTo: Array.isArray(entry.draftTo) ? entry.draftTo : [],
+            suggestedCc: Array.isArray(entry.draftCc) ? entry.draftCc : [],
+            suggestedSubject: String(entry.draftSubject || ""),
+        });
+    }
+
+    function syncAttachmentSelection(name: string, nextFlags: FileUsageState) {
+        const fileName = String(name || "").trim();
+        if (!fileName) return;
+        const sourceAttachment = (attachments || []).find((entry) => String(entry?.name || "").trim() === fileName);
+        if (!sourceAttachment) return;
+
+        const shouldKeep = Boolean(nextFlags.analyze || nextFlags.forward);
+        const exists = (files || []).some((entry: any) => String(entry?.name || "").trim() === fileName);
+        if (shouldKeep && !exists) {
+            addFile({
+                name: sourceAttachment.name,
+                type: sourceAttachment.contentType,
+                content: sourceAttachment.content || "",
+            });
+        }
+        if (!shouldKeep && exists) {
+            removeFile(fileName);
+        }
+    }
+
+    function setAttachmentUsage(name: string, patch: Partial<FileUsageState>) {
+        const fileName = String(name || "").trim();
+        if (!fileName) return;
+        setFileUsage((prev) => {
+            const current = prev[fileName] || { analyze: false, forward: false };
+            const next = { ...current, ...patch };
+            syncAttachmentSelection(fileName, next);
+            return { ...prev, [fileName]: next };
+        });
+    }
 
     async function handleExtractTasksReview() {
         const effectiveBodyText = String(bodyText || "").trim() || htmlToPlainText(bodyHtml || "");
@@ -410,16 +544,16 @@ export const AiCockpit: React.FC = () => {
     }
 
     function toggleIntentsMenu() {
-        const nextOpen = activeMenu !== "intents";
-        setActiveMenu(nextOpen ? "intents" : null);
+        const nextOpen = activePanel !== "intents";
+        setActivePanel(nextOpen ? "intents" : null);
         if (nextOpen && !aiState.smartReplies.length) {
             void handleFetchIntents(true);
         }
     }
 
     function toggleContactsMenu() {
-        const nextOpen = activeMenu !== "contacts";
-        setActiveMenu(nextOpen ? "contacts" : null);
+        const nextOpen = activePanel !== "contacts";
+        setActivePanel(nextOpen ? "contacts" : null);
         if (nextOpen && !suggestedContacts.length) {
             void handleExtractContacts(true);
         }
@@ -438,7 +572,7 @@ export const AiCockpit: React.FC = () => {
             setDraftCc((ctx.ccRecipients || []).map((r: any) => r.email));
             setDraftSubject(ctx.subject || "");
         }
-    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo]);
+    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo, aiState.suggestedCc]);
 
     const handlePromptChange = (val: string) => {
         setPrompt(val);
@@ -551,7 +685,11 @@ export const AiCockpit: React.FC = () => {
         setIsGenerating(true);
         // If we are starting a NEW task (not refining), clear previous history
         const isRefining = action === "rewrite" || action === "refine";
-        const finalPrompt = extraPrompt || (action === "refine" ? refineInput : prompt);
+        const resolvedAction: AiAction = (action === "reply" || action === "forward") ? selectedAction : action;
+        const rawPrompt = extraPrompt || (action === "refine" ? refineInput : prompt);
+        const finalPrompt = rawPrompt || (resolvedAction === "forward"
+            ? "Cria um email novo para terceiros com base neste tema. Nao respondas ao pedido interno; escreve para os destinatarios finais, usando o contexto completo do assunto e os anexos relevantes."
+            : rawPrompt);
 
         if (!isRefining && aiState.history.length > 0) {
             setAiState({ history: [] });
@@ -564,13 +702,17 @@ export const AiCockpit: React.FC = () => {
             const settings = await getSettings();
             const bundle = await ensureContextBundle(true);
             const effectiveBodyText = String(bodyText || "").trim() || htmlToPlainText(bodyHtml || "");
+            const knowledge = [...(settings.aiKnowledge || [])];
+            if (currentCustomTone?.instructions) {
+                knowledge.push(`[TOM PERSONALIZADO ATIVO] ${String(currentCustomTone.instructions).trim()}`);
+            }
             const res = await aiGenerate({
-                action,
+                action: resolvedAction,
                 mode: "quality",
-                tone: aiState.tone || settings.tone || "neutro",
-                locale: aiState.locale || settings.replyLanguage || "pt-PT",
+                tone: baseTone,
+                locale: effectiveLocale,
                 inputText: finalPrompt,
-                files: files || [],
+                files: selectedAnalyzeFiles,
                 briefing: briefing, // Pass the thread summary for isolation
                 contextBundle: bundle?.promptContext || "",
                 email: {
@@ -587,7 +729,7 @@ export const AiCockpit: React.FC = () => {
                     styleExamples: settings.styleExamples,
                 },
                 history: isRefining ? aiState.history : [],
-                knowledge: settings.aiKnowledge || [],
+                knowledge,
                 contactAliases: settings.contactAliases || [],
                 // For refine: send the current editor content as explicit draft
                 draftText: action === "refine" ? (output || aiState.output || "") : undefined,
@@ -595,7 +737,7 @@ export const AiCockpit: React.FC = () => {
 
             if (res.ok) {
                 setAiState({
-                    action,
+                    action: resolvedAction,
                     output: res.text,
                     suggestedTo: res.suggestedRecipients?.to || [],
                     suggestedCc: res.suggestedRecipients?.cc || [],
@@ -626,7 +768,13 @@ export const AiCockpit: React.FC = () => {
                     ts: Date.now(),
                     output: fullText,
                     prompt: finalPrompt,
-                    action
+                    action: resolvedAction,
+                    tone: baseTone,
+                    locale: effectiveLocale,
+                    draftTo,
+                    draftCc,
+                    draftSubject,
+                    customToneId: selectedCustomToneId || undefined,
                 };
                 const fullHist = [entry, ...loadHistory()];
                 saveHistory(fullHist);
@@ -678,10 +826,29 @@ export const AiCockpit: React.FC = () => {
 
             // If not in compose mode, try to open a Draft based on action
             setDebugLog("A abrir rascunho (não é modo edição)...");
-            const effectiveAction = aiState.action || "reply";
+            const effectiveAction = selectedAction;
 
             if (effectiveAction === "forward") {
-                await displayForwardForm(output);
+                const forwardSubject = String(draftSubject || ctx.subject || "").trim() || "Fwd";
+                await displayNewMessageForm({
+                    toRecipients: draftTo,
+                    ccRecipients: draftCc,
+                    subject: forwardSubject,
+                    body: output,
+                    isHtml: true,
+                });
+                if (selectedForwardFiles.length) {
+                    try {
+                        await new Promise((resolve) => setTimeout(resolve, 900));
+                        for (const attachment of selectedForwardFiles) {
+                            await addBase64AttachmentToCompose(attachment.name, attachment.content);
+                        }
+                        setMsg(`${selectedForwardFiles.length} anexo(s) adicionados ao rascunho.`);
+                    } catch (attachError) {
+                        console.warn("[AiCockpit] Could not attach selected forward files automatically:", attachError);
+                        setMsg("Draft de reencaminhamento aberto. Reve manualmente os anexos antes de enviar.");
+                    }
+                }
             } else {
                 // Default to Reply (including for refine, rewrite, etc.)
                 await displayReplyForm(output);
@@ -707,16 +874,9 @@ export const AiCockpit: React.FC = () => {
         URL.revokeObjectURL(url);
     };
 
-    const [activeMenu, setActiveMenu] = useState<"lang" | "mode" | "presets" | "intents" | "contacts" | null>(null);
+    const activeMenu: QuickPanelId = null;
+    const setActiveMenu = (_next: QuickPanelId) => { /* legacy dropdowns disabled in favor of inline quick panels */ };
     const menuRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        const handleClickOutside = (e: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(e.target as Node)) setActiveMenu(null);
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
 
     const handleKeyDown = (e: React.KeyboardEvent, action: AiAction = "reply") => {
         // Alt + Enter: New Line (allow default)
@@ -740,7 +900,8 @@ export const AiCockpit: React.FC = () => {
             smartReplies: [],
             suggestedTo: [],
             suggestedCc: [],
-            suggestedSubject: ""
+            suggestedSubject: "",
+            action: "reply",
         });
         setPrompt("");
         setOutput("");
@@ -751,6 +912,9 @@ export const AiCockpit: React.FC = () => {
         setDraftCc([]);
         setDraftSubject("");
         setSuggestedContacts([]);
+        setSelectedCustomToneId("");
+        setActivePanel(null);
+        setHistoryExpanded(false);
         clearFiles();
     };
 
@@ -1154,7 +1318,446 @@ export const AiCockpit: React.FC = () => {
             cursor: "pointer",
             transition: "all 0.2s ease",
         },
+        actionToggleRow: {
+            display: "flex",
+            gap: "6px",
+            alignItems: "center",
+            marginBottom: "4px",
+        },
+        actionToggleBtn: {
+            boxSizing: "border-box",
+            height: px(22),
+            borderRadius: "999px",
+            border: "1px solid rgba(200, 210, 230, 0.6)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: `0 ${px(10)}`,
+            fontSize: fpx(9),
+            fontWeight: 600,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(220,228,245,0.85) 100%)",
+            color: "#475569",
+            cursor: "pointer",
+        },
+        actionToggleBtnOn: {
+            boxSizing: "border-box",
+            height: px(22),
+            borderRadius: "999px",
+            border: "1px solid rgba(0, 80, 180, 0.4)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: `0 ${px(10)}`,
+            fontSize: fpx(9),
+            fontWeight: 700,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            background: "linear-gradient(180deg, rgba(80, 160, 255, 0.95) 0%, rgba(0, 100, 210, 0.85) 100%)",
+            color: "#FFFFFF",
+            cursor: "pointer",
+        },
+        quickPanel: {
+            background: "var(--iccc-card-bg)",
+            border: "1px solid var(--iccc-card-border)",
+            borderRadius: "12px",
+            padding: "8px",
+            display: "grid",
+            gap: "8px",
+            boxShadow: "0 1px 4px rgba(0,0,0,0.03)",
+        },
+        quickPanelHeader: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "8px",
+            fontSize: "10px",
+            fontWeight: 700,
+            color: "#475569",
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+        },
+        quickPanelBody: {
+            display: "grid",
+            gap: "6px",
+            maxHeight: "240px",
+            overflowY: "auto",
+            paddingRight: "2px",
+        },
+        quickPanelSearch: {
+            width: "100%",
+            background: "#fff",
+            border: "1px solid #dbe3f3",
+            borderRadius: "10px",
+            fontSize: "11px",
+            color: "#172B4D",
+            outline: "none",
+            padding: "6px 10px",
+        },
+        quickPanelItem: {
+            border: "1px solid #dbe3f3",
+            background: "#fff",
+            borderRadius: "10px",
+            padding: "8px 10px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "8px",
+            fontSize: "11px",
+            color: "#172B4D",
+        },
+        quickPanelItemBtn: {
+            border: "1px solid #dbe3f3",
+            background: "#fff",
+            borderRadius: "10px",
+            padding: "8px 10px",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            fontSize: "11px",
+            color: "#172B4D",
+            cursor: "pointer",
+            textAlign: "left",
+        },
+        purposeChip: {
+            border: "1px solid #dbe3f3",
+            background: "#fff",
+            borderRadius: "999px",
+            padding: "3px 8px",
+            fontSize: "9px",
+            color: "#475569",
+            cursor: "pointer",
+        },
+        purposeChipOn: {
+            border: "1px solid rgba(37, 99, 235, 0.2)",
+            background: "rgba(37, 99, 235, 0.08)",
+            borderRadius: "999px",
+            padding: "3px 8px",
+            fontSize: "9px",
+            color: "#1d4ed8",
+            cursor: "pointer",
+        },
     };
+
+    const filteredPresets = (settings?.responsePresets || [])
+        .filter((p: any) =>
+            !presetSearch ||
+            p.name.toLowerCase().includes(presetSearch.toLowerCase()) ||
+            p.prompt.toLowerCase().includes(presetSearch.toLowerCase())
+        )
+        .slice(0, 12);
+
+    const filteredIntents = aiState.smartReplies
+        .filter((intent: string) => !intentSearch || intent.toLowerCase().includes(intentSearch.toLowerCase()));
+
+    const filteredContacts = [
+        ...suggestedContacts
+            .filter((email) => !contactSearch || email.toLowerCase().includes(contactSearch.toLowerCase()))
+            .map((email) => ({ kind: "email" as const, id: email, label: email, value: email })),
+        ...((settings?.contactAliases || [])
+            .filter((entry: any) => !contactSearch || entry.name.toLowerCase().includes(contactSearch.toLowerCase()) || entry.email.toLowerCase().includes(contactSearch.toLowerCase()))
+            .map((entry: any) => ({ kind: "alias" as const, id: entry.id, label: entry.name, value: entry.email }))),
+    ];
+
+    const filteredAttachments = (attachments || [])
+        .filter((entry) => {
+            const name = String(entry?.name || "").trim().toLowerCase();
+            return !fileSearch || name.includes(fileSearch.toLowerCase());
+        });
+
+    function renderQuickPanel() {
+        if (!activePanel) return null;
+
+        const closeButton = (
+            <button
+                type="button"
+                style={{ ...S.actionBtn, fontSize: "10px" }}
+                onClick={() => setActivePanel(null)}
+            >
+                Fechar
+            </button>
+        );
+
+        if (activePanel === "lang") {
+            return (
+                <div style={S.quickPanel}>
+                    <div style={S.quickPanelHeader}>
+                        <span>Idioma</span>
+                        {closeButton}
+                    </div>
+                    <div style={S.quickPanelBody}>
+                        {localeOptions.map((opt) => (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                style={S.quickPanelItemBtn}
+                                onClick={() => {
+                                    setAiState({ locale: opt.value });
+                                    setActivePanel(null);
+                                    if (output) void handleGenerate("rewrite", output);
+                                }}
+                            >
+                                <div style={{ width: "16px", height: "16px", borderRadius: "50%", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.05)" }}>
+                                    <MiniFlag locale={opt.value} />
+                                </div>
+                                <div style={{ display: "grid", gap: "2px" }}>
+                                    <span style={{ fontSize: "11px", fontWeight: 700 }}>{opt.label}</span>
+                                    <span style={{ fontSize: "9px", color: "#64748b" }}>{opt.value === effectiveLocale ? "Ativo" : "Selecionar"}</span>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        if (activePanel === "presets") {
+            return (
+                <div style={S.quickPanel}>
+                    <div style={S.quickPanelHeader}>
+                        <span>MODS</span>
+                        {closeButton}
+                    </div>
+                    <input
+                        style={S.quickPanelSearch}
+                        placeholder="Procurar modelo..."
+                        value={presetSearch}
+                        onChange={(e) => setPresetSearch(e.target.value)}
+                    />
+                    <div style={S.quickPanelBody}>
+                        {filteredPresets.map((preset: any) => (
+                            <button
+                                key={preset.id}
+                                type="button"
+                                style={S.quickPanelItemBtn}
+                                onClick={() => {
+                                    setActivePanel(null);
+                                    setPresetSearch("");
+                                    void handleGenerate(selectedAction, preset.prompt);
+                                }}
+                            >
+                                <Icons.ArrowRight size={12} />
+                                <div style={{ display: "grid", gap: "2px", flex: 1 }}>
+                                    <span style={{ fontSize: "11px", fontWeight: 700 }}>{preset.name}</span>
+                                    <span style={{ fontSize: "9px", color: "#64748b", whiteSpace: "normal" }}>{preset.prompt}</span>
+                                </div>
+                            </button>
+                        ))}
+                        {!filteredPresets.length ? <div style={{ ...S.quickPanelItem, color: "#64748b" }}>Sem modelos configurados.</div> : null}
+                    </div>
+                </div>
+            );
+        }
+
+        if (activePanel === "intents") {
+            return (
+                <div style={S.quickPanel}>
+                    <div style={S.quickPanelHeader}>
+                        <span>Dicas</span>
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                            <button type="button" style={{ ...S.actionBtn, fontSize: "10px" }} onClick={() => { void handleFetchIntents(true); }}>
+                                Atualizar
+                            </button>
+                            {closeButton}
+                        </div>
+                    </div>
+                    <input
+                        style={S.quickPanelSearch}
+                        placeholder="Procurar sugestão..."
+                        value={intentSearch}
+                        onChange={(e) => setIntentSearch(e.target.value)}
+                    />
+                    <div style={S.quickPanelBody}>
+                        {isFetchingIntents ? <div style={{ ...S.quickPanelItem, color: "#64748b" }}>A gerar sugestões...</div> : null}
+                        {!isFetchingIntents && filteredIntents.map((intent: string, idx: number) => (
+                            <button
+                                key={`${intent}-${idx}`}
+                                type="button"
+                                style={S.quickPanelItemBtn}
+                                onClick={() => {
+                                    setPrompt(intent);
+                                    setActivePanel(null);
+                                    setIntentSearch("");
+                                    void handleGenerate(selectedAction, intent);
+                                }}
+                            >
+                                <Icons.Sparkles size={12} />
+                                <span style={{ fontSize: "11px", fontWeight: 700, whiteSpace: "normal" }}>{intent}</span>
+                            </button>
+                        ))}
+                        {!isFetchingIntents && !filteredIntents.length ? <div style={{ ...S.quickPanelItem, color: "#64748b" }}>Sem sugestões disponíveis.</div> : null}
+                    </div>
+                </div>
+            );
+        }
+
+        if (activePanel === "contacts") {
+            return (
+                <div style={S.quickPanel}>
+                    <div style={S.quickPanelHeader}>
+                        <span>Destinatários</span>
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                            <button type="button" style={{ ...S.actionBtn, fontSize: "10px" }} onClick={() => { void handleExtractContacts(true); }}>
+                                Atualizar
+                            </button>
+                            {closeButton}
+                        </div>
+                    </div>
+                    <input
+                        style={S.quickPanelSearch}
+                        placeholder="Procurar contacto..."
+                        value={contactSearch}
+                        onChange={(e) => setContactSearch(e.target.value)}
+                    />
+                    <div style={S.quickPanelBody}>
+                        {filteredContacts.map((entry) => (
+                            <div key={`${entry.kind}-${entry.id}`} style={S.quickPanelItem}>
+                                <div style={{ display: "grid", gap: "2px", flex: 1 }}>
+                                    <span style={{ fontSize: "11px", fontWeight: 700 }}>{entry.label}</span>
+                                    <span style={{ fontSize: "9px", color: "#64748b" }}>{entry.value}</span>
+                                </div>
+                                <div style={{ display: "flex", gap: "6px" }}>
+                                    <button
+                                        type="button"
+                                        style={draftTo.includes(entry.value) ? S.purposeChipOn : S.purposeChip}
+                                        onClick={() => setDraftTo((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : [...prev, entry.value])}
+                                    >
+                                        To
+                                    </button>
+                                    <button
+                                        type="button"
+                                        style={draftCc.includes(entry.value) ? S.purposeChipOn : S.purposeChip}
+                                        onClick={() => setDraftCc((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : [...prev, entry.value])}
+                                    >
+                                        Cc
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                        {!filteredContacts.length ? <div style={{ ...S.quickPanelItem, color: "#64748b" }}>Sem contactos disponíveis.</div> : null}
+                    </div>
+                </div>
+            );
+        }
+
+        if (activePanel === "files") {
+            return (
+                <div style={S.quickPanel}>
+                    <div style={S.quickPanelHeader}>
+                        <span>Ficheiros</span>
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                            <button
+                                type="button"
+                                style={{ ...S.actionBtn, fontSize: "10px" }}
+                                onClick={() => {
+                                    for (const attachment of attachments || []) {
+                                        setAttachmentUsage(String(attachment?.name || ""), { analyze: true });
+                                    }
+                                }}
+                            >
+                                Usar todos
+                            </button>
+                            {closeButton}
+                        </div>
+                    </div>
+                    <input
+                        style={S.quickPanelSearch}
+                        placeholder="Procurar ficheiro..."
+                        value={fileSearch}
+                        onChange={(e) => setFileSearch(e.target.value)}
+                    />
+                    <div style={S.quickPanelBody}>
+                        {filteredAttachments.map((attachment) => {
+                            const name = String(attachment?.name || "").trim();
+                            const usage = fileUsage[name] || { analyze: false, forward: false };
+                            return (
+                                <div key={name} style={S.quickPanelItem}>
+                                    <div style={{ display: "grid", gap: "2px", flex: 1 }}>
+                                        <span style={{ fontSize: "11px", fontWeight: 700 }}>{name}</span>
+                                        <span style={{ fontSize: "9px", color: "#64748b" }}>
+                                            {[attachment.contentType, attachment.size ? `${Math.round(Number(attachment.size) / 1024)} KB` : ""].filter(Boolean).join(" | ")}
+                                        </span>
+                                    </div>
+                                    <div style={{ display: "flex", gap: "6px" }}>
+                                        <button
+                                            type="button"
+                                            style={usage.analyze ? S.purposeChipOn : S.purposeChip}
+                                            onClick={() => setAttachmentUsage(name, { analyze: !usage.analyze })}
+                                        >
+                                            Analisar
+                                        </button>
+                                        <button
+                                            type="button"
+                                            style={usage.forward ? S.purposeChipOn : S.purposeChip}
+                                            onClick={() => setAttachmentUsage(name, { forward: !usage.forward })}
+                                        >
+                                            Reenviar
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {!filteredAttachments.length ? <div style={{ ...S.quickPanelItem, color: "#64748b" }}>Sem anexos disponíveis neste email.</div> : null}
+                    </div>
+                </div>
+            );
+        }
+
+        if (activePanel === "mode") {
+            return (
+                <div style={S.quickPanel}>
+                    <div style={S.quickPanelHeader}>
+                        <span>Modo</span>
+                        {closeButton}
+                    </div>
+                    <div style={S.quickPanelBody}>
+                        {toneRefiners.map((toneOption) => (
+                            <button
+                                key={toneOption.tone}
+                                type="button"
+                                style={S.quickPanelItemBtn}
+                                onClick={() => {
+                                    setAiState({ tone: toneOption.tone });
+                                    setSelectedCustomToneId("");
+                                    setActivePanel(null);
+                                    if (output) void handleGenerate("rewrite", output);
+                                }}
+                            >
+                                {toneOption.icon}
+                                <div style={{ display: "grid", gap: "2px", flex: 1 }}>
+                                    <span style={{ fontSize: "11px", fontWeight: 700 }}>{toneOption.label}</span>
+                                    <span style={{ fontSize: "9px", color: "#64748b" }}>{baseTone === toneOption.tone && !selectedCustomToneId ? "Ativo" : "Selecionar"}</span>
+                                </div>
+                            </button>
+                        ))}
+                        {(settings?.aiCustomTones || []).map((toneEntry: any) => (
+                            <button
+                                key={toneEntry.id}
+                                type="button"
+                                style={S.quickPanelItemBtn}
+                                onClick={() => {
+                                    setSelectedCustomToneId(toneEntry.id);
+                                    setActivePanel(null);
+                                    if (output) void handleGenerate("rewrite", output);
+                                }}
+                            >
+                                <Icons.Sparkles size={12} />
+                                <div style={{ display: "grid", gap: "2px", flex: 1 }}>
+                                    <span style={{ fontSize: "11px", fontWeight: 700 }}>{toneEntry.name}</span>
+                                    <span style={{ fontSize: "9px", color: "#64748b", whiteSpace: "normal" }}>
+                                        {selectedCustomToneId === toneEntry.id ? "Ativo" : String(toneEntry.instructions || "").trim() || "Tom personalizado"}
+                                    </span>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        return null;
+    }
 
 
     return (
@@ -1436,20 +2039,41 @@ export const AiCockpit: React.FC = () => {
             )}
 
             <div style={S.inputCard}>
-                {files && files.length > 0 && (
+                <div style={S.actionToggleRow}>
+                    <button
+                        type="button"
+                        style={selectedAction === "reply" ? S.actionToggleBtnOn : S.actionToggleBtn}
+                        onClick={() => setGenerationAction("reply")}
+                    >
+                        Reply
+                    </button>
+                    <button
+                        type="button"
+                        style={selectedAction === "forward" ? S.actionToggleBtnOn : S.actionToggleBtn}
+                        onClick={() => setGenerationAction("forward")}
+                    >
+                        Forward
+                    </button>
+                    {(attachments || []).length > 0 ? (
+                        <div style={{ marginLeft: "auto", fontSize: "9px", color: "#64748b" }}>
+                            {selectedAnalyzeFiles.length} analisar / {selectedForwardFiles.length} reenviar
+                        </div>
+                    ) : null}
+                </div>
+                {(attachments || []).length > 0 && (
                     <div style={{ display: "flex", alignItems: "center", gap: "4px", marginBottom: "6px", padding: "2px 6px", background: "rgba(59, 130, 246, 0.05)", borderRadius: "4px", width: "fit-content" }}>
                         <Icons.Files size={10} color="var(--iccc-pill-active-bg)" />
                         <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--iccc-pill-active-bg)" }}>
-                            {files.length} {files.length === 1 ? "anexo pronto" : "anexos prontos"}
+                            {(attachments || []).length} {(attachments || []).length === 1 ? "anexo disponivel" : "anexos disponiveis"}
                         </span>
                     </div>
                 )}
                 <textarea
                     style={S.textarea}
-                    placeholder="O que queres escrever ou perguntar sobre este email?"
+                    placeholder={selectedAction === "forward" ? "O que queres dizer no reencaminhamento?" : "O que queres escrever ou perguntar sobre este email?"}
                     value={prompt}
                     onChange={(e) => handlePromptChange(e.target.value)}
-                    onKeyDown={(e) => handleKeyDown(e, "reply")}
+                    onKeyDown={(e) => handleKeyDown(e, selectedAction)}
                     onFocus={() => setDictationTarget("main")}
                 />
                 <div style={S.inputFooter}>
@@ -1474,7 +2098,7 @@ export const AiCockpit: React.FC = () => {
                             style={S.secondaryBtnPill}
                             onClick={() => handleGenerate("summarize")}
                             disabled={isGenerating}
-                            title={files.length > 0 ? "Resumir email e anexos identificados" : "Resumir este email"}
+                            title={selectedAnalyzeFiles.length > 0 ? "Resumir email e anexos selecionados" : "Resumir este email"}
                             aria-label="Resumir"
                         >
 
@@ -1494,33 +2118,22 @@ export const AiCockpit: React.FC = () => {
                         <button
                             className="iccc-glossy-pill iccc-secondary-pill"
                             style={S.secondaryBtnPill}
-                            onClick={() => handleGenerate("forward")}
-                            disabled={isGenerating}
-                            title="Reenviar (Rascunho)"
+                            onClick={() => setActivePanel(activePanel === "files" ? null : "files")}
+                            title="Selecionar anexos"
                         >
 
-                            <Icons.Send size={12} />
-                        </button>
-                        <button
-                            className="iccc-glossy-pill iccc-secondary-pill"
-                            style={S.secondaryBtnPill}
-                            onClick={handleImportAttachments}
-                            disabled={isImporting}
-                            title="Importar anexos deste email"
-                        >
-
-                            {isImporting ? <Icons.RotateCcw size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Icons.Paperclip size={12} />}
+                            <Icons.Paperclip size={12} />
                         </button>
                     </div>
                     <button
                         className="iccc-glossy-pill iccc-primary-pill"
                         style={S.primaryBtnPill}
-                        onClick={() => handleGenerate("reply")}
+                        onClick={() => handleGenerate(selectedAction)}
                         disabled={isGenerating}
                     >
 
                         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                            {isGenerating ? "A GERAR..." : "GERAR RESPOSTA"}
+                            {isGenerating ? "A GERAR..." : (selectedAction === "forward" ? "GERAR EMAIL" : "GERAR RESPOSTA")}
                             <Icons.Sparkles size={11} />
                         </div>
                     </button>
@@ -1539,7 +2152,7 @@ export const AiCockpit: React.FC = () => {
                             justifyContent: "flex-start",
                             padding: isNarrow ? "0 6px" : "0 6px"
                         }}
-                        onClick={() => setActiveMenu(activeMenu === "lang" ? null : "lang")}
+                        onClick={() => setActivePanel(activePanel === "lang" ? null : "lang")}
                         title="Idioma"
                         aria-label="Idioma"
                     >
@@ -1557,11 +2170,11 @@ export const AiCockpit: React.FC = () => {
                             flexShrink: 0,
                             boxShadow: "0 1px 2px rgba(0,0,0,0.12)"
                         }}>
-                            <MiniFlag locale={aiState.locale || "auto"} />
+                            <MiniFlag locale={effectiveLocale || "auto"} />
                         </div>
                         {!isNarrow && (
                             <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 400 }}>
-                                {(aiState.locale || "auto").split("-")[0].toUpperCase()}
+                                {(effectiveLocale || "auto").split("-")[0].toUpperCase()}
                             </span>
                         )}
                     </button>
@@ -1623,7 +2236,7 @@ export const AiCockpit: React.FC = () => {
                             justifyContent: "flex-start",
                             padding: isNarrow ? "0 6px" : "0 8px"
                         }}
-                        onClick={() => setActiveMenu(activeMenu === "presets" ? null : "presets")}
+                        onClick={() => setActivePanel(activePanel === "presets" ? null : "presets")}
                         title="Modelos de Resposta Rápidos (MODS)"
                         aria-label="Modelos de Resposta Rápidos (MODS)"
                     >
@@ -1875,7 +2488,7 @@ export const AiCockpit: React.FC = () => {
                     <button
                         className="iccc-glossy-pill iccc-secondary-pill"
                         style={{ ...S.secondaryBtnLink, width: "64px", minWidth: "64px", justifyContent: "flex-start", padding: "0 6px" }}
-                        onClick={() => setActiveMenu(activeMenu === "mode" ? null : "mode")}
+                        onClick={() => setActivePanel(activePanel === "mode" ? null : "mode")}
                     >
                         <div style={{
                             width: "16px",
@@ -1890,7 +2503,7 @@ export const AiCockpit: React.FC = () => {
                             flexShrink: 0,
                             boxShadow: "0 1px 2px rgba(0,0,0,0.12)"
                         }}>
-                            {toneRefiners.find(t => t.tone === aiState.tone)?.icon || <Icons.Settings size={11} />}
+                            {selectedCustomToneId ? <Icons.Sparkles size={11} /> : (toneRefiners.find(t => t.tone === baseTone)?.icon || <Icons.Settings size={11} />)}
                         </div>
                         <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 400 }}>MODO</span>
                     </button>
@@ -1924,6 +2537,8 @@ export const AiCockpit: React.FC = () => {
                 </div>
             </div>
 
+            {renderQuickPanel()}
+
             {
                 (output || isGenerating || aiState.history.length > 0 || history.length > 0) && (
                     <div style={S.outputCard}>
@@ -1945,13 +2560,13 @@ export const AiCockpit: React.FC = () => {
                                                 padding: !output ? "4px 8px" : "0",
                                                 borderRadius: "4px"
                                             }}
-                                            onClick={() => setActiveMenu(activeMenu === "rollback" as any ? null : "rollback" as any)}
+                                            onClick={() => setHistoryExpanded((prev) => !prev)}
                                             title="Histórico"
                                             aria-label="Histórico"
                                         >
                                             <Icons.RotateCcw size={15} />
                                         </button>
-                                        {activeMenu === "rollback" as any && (
+                                        {false && (activeMenu === "rollback" as any) && (
                                             <div style={{ ...S.cascadeMenu, width: "220px", right: 0, left: "auto", top: "24px" }}>
                                                 {history.slice(1).map((h, _i) => (
                                                     <button
@@ -1959,8 +2574,7 @@ export const AiCockpit: React.FC = () => {
                                                         className="iccc-glossy-pill iccc-secondary-pill"
                                                         style={{ ...S.cascadeItem, height: "auto", padding: "6px 10px", flexDirection: "column", alignItems: "flex-start", gap: "2px" }}
                                                         onClick={() => {
-                                                            setOutput(h.output);
-                                                            setActiveMenu(null);
+                                                            applyHistoryEntry(h);
                                                             setMsg("Versão anterior restaurada.");
                                                         }}
                                                     >
@@ -2021,6 +2635,43 @@ export const AiCockpit: React.FC = () => {
                                 </button>
                             </div>
                         </div>
+
+                        {historyExpanded && (
+                            <div style={S.quickPanel}>
+                                <div style={S.quickPanelHeader}>
+                                    <span>Histórico</span>
+                                    <button type="button" style={{ ...S.actionBtn, fontSize: "10px" }} onClick={() => setHistoryExpanded(false)}>
+                                        Fechar
+                                    </button>
+                                </div>
+                                <div style={S.quickPanelBody}>
+                                    {history.slice(1).map((entry) => (
+                                        <button
+                                            key={entry.id}
+                                            type="button"
+                                            style={{ ...S.quickPanelItemBtn, flexDirection: "column", alignItems: "flex-start" }}
+                                            onClick={() => {
+                                                applyHistoryEntry(entry);
+                                                setHistoryExpanded(false);
+                                                setMsg("Versão anterior restaurada.");
+                                            }}
+                                        >
+                                            <div style={{ display: "flex", alignItems: "center", gap: "6px", width: "100%" }}>
+                                                <Icons.Clock size={10} style={{ opacity: 0.6 }} />
+                                                <span style={{ fontSize: "9px", color: "#64748b" }}>{new Date(entry.ts).toLocaleString()}</span>
+                                                <span style={{ marginLeft: "auto", fontSize: "9px", color: "#475569" }}>{String(entry.action || "reply").toUpperCase()}</span>
+                                            </div>
+                                            <div style={{ fontSize: "11px", fontWeight: 700, color: "#172B4D", whiteSpace: "normal" }}>
+                                                {entry.prompt.length > 64 ? `${entry.prompt.slice(0, 64)}...` : entry.prompt || "(Sem instrução)"}
+                                            </div>
+                                            <div style={{ fontSize: "9px", color: "#64748b", whiteSpace: "normal" }}>
+                                                {entry.output.length > 96 ? `${htmlToPlainText(entry.output).slice(0, 96)}...` : htmlToPlainText(entry.output)}
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {showDraftPreview && (
                             <div style={S.draftCard}>
