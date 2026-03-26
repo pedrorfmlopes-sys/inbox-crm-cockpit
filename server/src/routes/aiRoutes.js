@@ -53,6 +53,12 @@ function ensureBasicHtml(out) {
   return escaped;
 }
 
+function looksLikeGenericDraftRefusal(text) {
+  const value = String(text || "").trim();
+  if (!value) return true;
+  return /(desculpa|lamento|sorry).{0,48}(nao posso|não posso|nao consigo|não consigo|can't help|cannot help)/i.test(value);
+}
+
 function trimEmailBody(raw) {
   if (!raw) return "";
   let s = String(raw);
@@ -217,6 +223,7 @@ export function createAiRouter() {
       // Fallback to last assistant message in history if draftText not provided.
       const lastAssistant = [...history].reverse().find(m => m.role === "assistant" && typeof m.content === "string");
       const currentDraft = String(draftText || lastAssistant?.content || "");
+      const normalizedInputText = String(inputText || "").trim();
       const providerInput = action === "refine"
         ? `INSTRUÇÃO DO UTILIZADOR: ${inputText || "Melhora o rascunho"}
 RASCUNHO ATUAL (edita APENAS este texto, não inventar factos/prazos/preços/referências):
@@ -229,9 +236,13 @@ ${currentDraft}`
               ? "Propõe apenas 3 intenções curtas separadas por ponto e vírgula."
               : action === "summarize_actions"
                 ? "Devolve apenas JSON válido com summary e actions."
-                : "ok";
+                : action === "forward"
+                  ? (normalizedInputText || "Redige agora o email final de reencaminhamento com base em todo o contexto fornecido, pronto a enviar ao destinatario final.")
+                  : action === "reply"
+                    ? (normalizedInputText || "Redige agora a resposta final pronta a enviar com base em todo o contexto fornecido.")
+                    : (normalizedInputText || "Executa a tarefa pedida com base em todo o contexto fornecido.");
 
-      const result = await aiCreateText({
+      let result = await aiCreateText({
         mode,
         instructions,
         input: providerInput,
@@ -241,6 +252,26 @@ ${currentDraft}`
         temperature: action === "refine" ? 0 : 0.1,
         customModels,
       });
+
+      if ((action === "reply" || action === "forward") && looksLikeGenericDraftRefusal(result.text)) {
+        const retryInstructions = `${instructions}
+
+[OVERRIDE OPERACIONAL]
+- O pedido do utilizador e redigir correspondencia empresarial comum com base em emails, anexos e contexto ligado.
+- Nao devolvas recusas genericas se o pedido for apenas criar um draft profissional legitimo.
+- Produz o rascunho final pronto a enviar, salvo se o pedido for claramente ilegal ou perigoso, o que nao se verifica aqui.`;
+
+        result = await aiCreateText({
+          mode,
+          instructions: retryInstructions,
+          input: providerInput,
+          files: action === "refine" ? [] : files,
+          history: action === "refine" ? [] : history,
+          max_output_tokens: action === "summarize" || action === "tasks" || action === "summarize_actions" ? 800 : 700,
+          temperature: action === "refine" ? 0 : 0.1,
+          customModels,
+        });
+      }
 
       const data = tryParseAiJsonPayload(result.text);
 

@@ -887,9 +887,19 @@ export const AiCockpit: React.FC = () => {
         const isRefining = action === "rewrite" || action === "refine";
         const resolvedAction: AiAction = (action === "reply" || action === "forward") ? selectedAction : action;
         const rawPrompt = extraPrompt || (action === "refine" ? refineInput : prompt);
-        let finalPrompt = rawPrompt || (resolvedAction === "forward"
-            ? "Cria um email novo para terceiros com base neste tema. Nao respondas ao pedido interno; escreve para os destinatarios finais, usando o contexto completo do assunto e os anexos relevantes."
-            : "");
+        let finalPrompt = rawPrompt;
+
+        if (!finalPrompt) {
+            if (resolvedAction === "forward") {
+                finalPrompt = replyTargetEmail
+                    ? "Com base neste email, nos anexos selecionados e no contexto completo do caso, cria um email final para o destinatario do email-alvo selecionado. Nao respondas ao pedido interno nem menciones colegas; escreve a comunicacao final pronta a enviar."
+                    : "Cria um email novo para terceiros com base neste tema. Nao respondas ao pedido interno; escreve para os destinatarios finais, usando o contexto completo do assunto e os anexos relevantes.";
+            } else if (resolvedAction === "reply") {
+                finalPrompt = replyTargetEmail
+                    ? "Com base neste email, nos anexos relevantes e no contexto completo do caso, cria uma resposta final para o email-alvo selecionado. Usa o email atual como atualizacao do processo e escreve a resposta pronta a enviar."
+                    : "Cria uma resposta profissional pronta a enviar com base no email atual e no contexto completo do caso.";
+            }
+        }
 
         if ((resolvedAction === "reply" || resolvedAction === "forward") && replyTargetEmail) {
             const targetExcerpt = String(replyTargetEmail.bodyText || "").trim() || htmlToPlainText(String(replyTargetEmail.bodyHtml || ""));
