@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
-import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings, addBase64AttachmentToCompose, openAiReplyTargetPicker, type AiReplyTargetSelection } from "@/office";
+import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings, addBase64AttachmentToCompose, openAiReplyTargetPicker, syncLinkCategoriesToComposeDraft, type AiReplyTargetSelection } from "@/office";
 import { getSettings } from "@/settings";
-import { logLearningInteraction } from "@/api";
+import { getRelatedEmailContext, logLearningInteraction, type RelevantEmailPayload } from "@/api";
 import { buildAiContextBundle, type AiContextBundle } from "./contextBundle";
 import * as Icons from "@/ui/icons";
 
@@ -185,6 +185,22 @@ function isSameStoredEmailTarget(
         target
         && ((targetItemId && currentItemId && targetItemId === currentItemId) || (targetMessageId && currentMessageId && targetMessageId === currentMessageId))
     );
+}
+
+function mergeUniqueStrings(...sources: Array<string[] | undefined>): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const source of sources) {
+        for (const raw of source || []) {
+            const value = String(raw || "").trim();
+            if (!value) continue;
+            const key = value.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            result.push(value);
+        }
+    }
+    return result;
 }
 
 function normalizeExtractedTasks(rawValue: unknown): Array<{ title: string; dueDate?: string; owner?: string }> {
@@ -731,6 +747,76 @@ export const AiCockpit: React.FC = () => {
         }
     }
 
+    async function loadDraftLinkCategories(): Promise<{
+        groupNames: string[];
+        ticketCodes: string[];
+        statuses: string[];
+        hasOdooLinks: boolean;
+    } | null> {
+        if (settings?.groupOutlookCategories?.enabled !== true) return null;
+
+        const buildPayloadFromCurrent = (): RelevantEmailPayload => ({
+            itemId: String(ctx.itemId || "").trim() || undefined,
+            internetMessageId: String(ctx.internetMessageId || "").trim() || undefined,
+            conversationId: String(ctx.conversationId || "").trim() || undefined,
+            subject: String(ctx.subject || "").trim() || undefined,
+            fromEmail: String(ctx.fromEmail || "").trim() || undefined,
+            fromName: String(ctx.fromName || "").trim() || undefined,
+            receivedAtIso: String(ctx.receivedDateTimeIso || "").trim() || undefined,
+            messageDateIso: String(ctx.receivedDateTimeIso || "").trim() || undefined,
+        });
+
+        const buildPayloadFromTarget = (): RelevantEmailPayload | null => {
+            if (!replyTargetEmail) return null;
+            return {
+                itemId: String(replyTargetEmail.itemId || "").trim() || undefined,
+                internetMessageId: String(replyTargetEmail.internetMessageId || "").trim() || undefined,
+                conversationId: String(replyTargetEmail.conversationId || "").trim() || undefined,
+                subject: String(replyTargetEmail.subject || "").trim() || undefined,
+                fromEmail: String(replyTargetEmail.fromEmail || "").trim() || undefined,
+                fromName: String(replyTargetEmail.fromName || "").trim() || undefined,
+                receivedAtIso: String(replyTargetEmail.receivedAtIso || replyTargetEmail.messageDateIso || "").trim() || undefined,
+                messageDateIso: String(replyTargetEmail.messageDateIso || replyTargetEmail.receivedAtIso || "").trim() || undefined,
+            };
+        };
+
+        const collectSnapshot = async (payload: RelevantEmailPayload | null, fallbackHasOdooLinks = false) => {
+            if (!payload) {
+                return { groupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: fallbackHasOdooLinks };
+            }
+            const response = await getRelatedEmailContext(payload);
+            const customGroups = Array.isArray(response?.groups)
+                ? response.groups.filter((group: any) => String(group?.kind || "").trim().toLowerCase() === "custom")
+                : [];
+            const groupNames = customGroups.map((group: any) => String(group?.name || "").trim()).filter(Boolean);
+            const statuses = customGroups.map((group: any) => String(group?.status || "").trim()).filter(Boolean);
+            const ticketCodes = (Array.isArray(response?.tickets) ? response.tickets : [])
+                .map((ticket: any) => String(ticket?.code || "").trim())
+                .filter(Boolean);
+            const hasOdooLinks = fallbackHasOdooLinks || Boolean(response?.email?.relatedRecords?.length);
+            return { groupNames, ticketCodes, statuses, hasOdooLinks };
+        };
+
+        const currentSnapshot = await collectSnapshot(buildPayloadFromCurrent(), links.length > 0);
+        const shouldIncludeTarget = Boolean(replyTargetEmail && !isSameStoredEmailTarget(ctx, replyTargetEmail));
+        const targetSnapshot = shouldIncludeTarget
+            ? await collectSnapshot(buildPayloadFromTarget(), false)
+            : { groupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: false };
+
+        return {
+            groupNames: settings?.groupOutlookCategories?.includeGroups !== false
+                ? mergeUniqueStrings(currentSnapshot.groupNames, targetSnapshot.groupNames)
+                : [],
+            ticketCodes: settings?.groupOutlookCategories?.includeTickets !== false
+                ? mergeUniqueStrings(currentSnapshot.ticketCodes, targetSnapshot.ticketCodes)
+                : [],
+            statuses: settings?.groupOutlookCategories?.includeStatuses !== false
+                ? mergeUniqueStrings(currentSnapshot.statuses, targetSnapshot.statuses)
+                : [],
+            hasOdooLinks: currentSnapshot.hasOdooLinks || targetSnapshot.hasOdooLinks,
+        };
+    }
+
     // Sync draft defaults from context OR persistent aiState
     useEffect(() => {
         const hasSuggestedRecipients = Array.isArray(aiState.suggestedTo) && aiState.suggestedTo.length > 0;
@@ -1053,6 +1139,13 @@ export const AiCockpit: React.FC = () => {
                 // Insert body
                 await insertTextToBody(output);
 
+                const composeDraftCategories = await loadDraftLinkCategories().catch(() => null);
+                if (composeDraftCategories) {
+                    await syncLinkCategoriesToComposeDraft(composeDraftCategories, { attempts: 1, delayMs: 0 }).catch(() => {
+                        // best-effort
+                    });
+                }
+
                 // Silently log for learning
                 logLearningInteraction({
                     conversationId: ctx.conversationId,
@@ -1073,10 +1166,22 @@ export const AiCockpit: React.FC = () => {
             setDebugLog("A abrir rascunho (não é modo edição)...");
             const effectiveAction = selectedAction;
             const isCurrentReplyTarget = isSameStoredEmailTarget(ctx, replyTargetEmail);
+            const draftLinkCategoriesPromise = loadDraftLinkCategories();
+            const queueDraftCategorySync = () => {
+                void draftLinkCategoriesPromise
+                    .then((draftCategories) => {
+                        if (!draftCategories) return;
+                        return syncLinkCategoriesToComposeDraft(draftCategories);
+                    })
+                    .catch((error) => {
+                        console.warn("[AiCockpit] Could not sync managed categories to draft:", error);
+                    });
+            };
 
             if (effectiveAction === "forward") {
                 if (selectedForwardFiles.length > 0 && (!replyTargetEmail || isCurrentReplyTarget)) {
                     await displayForwardForm(output, true);
+                    queueDraftCategorySync();
                     const usedAllOriginals = selectedForwardFiles.length === availableAttachmentCount;
                     setMsg(
                         usedAllOriginals
@@ -1095,6 +1200,7 @@ export const AiCockpit: React.FC = () => {
                     body: output,
                     isHtml: true,
                 });
+                queueDraftCategorySync();
                 if (selectedForwardFiles.length) {
                     try {
                         await new Promise((resolve) => setTimeout(resolve, 900));
@@ -1118,6 +1224,7 @@ export const AiCockpit: React.FC = () => {
                         body: output,
                         isHtml: true,
                     });
+                    queueDraftCategorySync();
                     if (selectedForwardFiles.length) {
                         try {
                             await new Promise((resolve) => setTimeout(resolve, 900));
@@ -1135,6 +1242,7 @@ export const AiCockpit: React.FC = () => {
                 } else {
                     // Default to Reply (including for refine, rewrite, etc.)
                     await displayReplyForm(output);
+                    queueDraftCategorySync();
                 }
             }
             setDebugLog("Janela aberta.");

@@ -609,6 +609,49 @@ export async function syncManualGroupCategories(groupNames: string[]): Promise<v
   await syncManagedOutlookCategories({ groupNames });
 }
 
+export async function syncLinkCategoriesToComposeDraft(input: {
+  groupNames?: string[];
+  ticketCodes?: string[];
+  statuses?: string[];
+  hasOdooLinks?: boolean;
+}, options?: { attempts?: number; delayMs?: number }): Promise<void> {
+  const attempts = Math.max(1, Number(options?.attempts || 12));
+  const delayMs = Math.max(150, Number(options?.delayMs || 450));
+  const hasManagedCategories = Boolean(
+    normalizeUniqueCategoryValues(input?.groupNames).length
+    || normalizeUniqueCategoryValues(input?.ticketCodes).length
+    || normalizeUniqueCategoryValues(input?.statuses).length
+  );
+  const hasOdooLinks = input?.hasOdooLinks === true;
+
+  if (!hasManagedCategories && !hasOdooLinks) return;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    const composeReady = await isComposeMode().catch(() => false);
+    if (!composeReady) continue;
+
+    if (typeof input?.hasOdooLinks === "boolean") {
+      await syncOdooLinkedCategory(hasOdooLinks).catch(() => {
+        // best-effort
+      });
+    }
+    await syncManagedOutlookCategories({
+      groupNames: input?.groupNames,
+      ticketCodes: input?.ticketCodes,
+      statuses: input?.statuses,
+    }).catch(() => {
+      // best-effort
+    });
+    return;
+  }
+
+  clientLog.warn("[office] syncLinkCategoriesToComposeDraft: compose draft not ready in time");
+}
+
 export async function syncOdooLinkedNotification(hasLinks: boolean, count = 0): Promise<void> {
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
   const notifications = OfficeAny?.context?.mailbox?.item?.notificationMessages;
