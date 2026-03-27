@@ -527,9 +527,12 @@ export const AiCockpit: React.FC = () => {
         }
     }, [emailKey, settings]);
 
-    const effectiveLocale = (aiState.locale && aiState.locale !== "auto"
-        ? aiState.locale
-        : ((settings?.replyLanguage || settings?.readingLanguage || "auto") as AiLocale));
+    const selectedLocale = ((aiState.locale || settings?.replyLanguage || "auto") as AiLocale);
+    const effectiveLocale = (selectedLocale !== "auto"
+        ? selectedLocale
+        : ((settings?.readingLanguage && settings.readingLanguage !== "auto"
+            ? settings.readingLanguage
+            : (settings?.appLanguage || "pt-PT")) as AiLocale));
 
     const baseTone = aiState.tone || settings?.tone || "neutro";
     const currentCustomTone = (settings?.aiCustomTones || []).find((entry: any) => entry.id === selectedCustomToneId) || null;
@@ -1004,7 +1007,7 @@ export const AiCockpit: React.FC = () => {
         }
 
         const recognition = new SpeechRecognition();
-        recognition.lang = aiState.locale === "auto" ? "pt-PT" : aiState.locale as any;
+        recognition.lang = selectedLocale === "auto" ? (effectiveLocale || "pt-PT") as any : selectedLocale as any;
         recognition.continuous = true;
         recognition.interimResults = true;
 
@@ -1225,7 +1228,7 @@ export const AiCockpit: React.FC = () => {
                     prompt: finalPrompt,
                     action: resolvedAction,
                     tone: baseTone,
-                    locale: effectiveLocale,
+                    locale: selectedLocale,
                     draftTo,
                     draftCc,
                     draftSubject: buildTicketEmailSubject(draftSubject, draftTicketCode, settings?.groupTicketUi?.includeTicketCodeInSubject !== false),
@@ -2104,7 +2107,7 @@ export const AiCockpit: React.FC = () => {
                                 </div>
                                 <div style={{ display: "grid", gap: "2px" }}>
                                     <span style={{ fontSize: "11px", fontWeight: 700 }}>{opt.label}</span>
-                                    <span style={{ fontSize: "9px", color: "#64748b" }}>{opt.value === effectiveLocale ? "Ativo" : "Selecionar"}</span>
+                                    <span style={{ fontSize: "9px", color: "#64748b" }}>{opt.value === selectedLocale ? "Ativo" : "Selecionar"}</span>
                                 </div>
                             </button>
                         ))}
@@ -2805,11 +2808,11 @@ export const AiCockpit: React.FC = () => {
                             flexShrink: 0,
                             boxShadow: "0 1px 2px rgba(0,0,0,0.12)"
                         }}>
-                            <MiniFlag locale={effectiveLocale || "auto"} />
+                            <MiniFlag locale={selectedLocale || "auto"} />
                         </div>
                         {!isNarrow && (
                             <span style={{ fontSize: "9px", marginLeft: "4px", fontWeight: 400 }}>
-                                {(effectiveLocale || "auto").split("-")[0].toUpperCase()}
+                                {(selectedLocale || "auto") === "auto" ? "AUTO" : (selectedLocale || "auto").split("-")[0].toUpperCase()}
                             </span>
                         )}
                     </button>
