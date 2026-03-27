@@ -42,12 +42,14 @@ export const FileCockpit: React.FC = () => {
     const hiddenFileInput = useRef<HTMLInputElement>(null);
 
     const invoiceStudioEnabled = settings?.invoiceStudio?.enabled === true;
-    const invoiceStudioReady = Boolean(
-        invoiceStudioEnabled
-        && String(settings?.invoiceStudio?.baseUrl || "").trim()
-        && String(settings?.invoiceStudio?.email || "").trim()
-        && String(settings?.invoiceStudio?.password || "").trim()
-    );
+    const invoiceStudioMissingFields = useMemo(() => {
+        const missing: string[] = [];
+        if (!String(settings?.invoiceStudio?.baseUrl || "").trim()) missing.push("URL");
+        if (!String(settings?.invoiceStudio?.email || "").trim()) missing.push("email");
+        if (!String(settings?.invoiceStudio?.password || "").trim()) missing.push("password");
+        return missing;
+    }, [settings?.invoiceStudio?.baseUrl, settings?.invoiceStudio?.email, settings?.invoiceStudio?.password]);
+    const invoiceStudioReady = invoiceStudioEnabled && invoiceStudioMissingFields.length === 0;
 
     useEffect(() => {
         setSelectedForInvoiceStudio((prev) => {
@@ -254,6 +256,8 @@ export const FileCockpit: React.FC = () => {
                 title: "InvoiceStudio desligado",
                 description: "Ativa esta integracao em Settings > Ligacoes.",
             });
+            setMsg("Ativa o modulo InvoiceStudio em Settings > Ligacoes.");
+            openSettingsSection("conns");
             return;
         }
 
@@ -261,8 +265,10 @@ export const FileCockpit: React.FC = () => {
             setStatus({
                 tone: "warning",
                 title: "Configuracao incompleta",
-                description: "Preenche URL, email e password do InvoiceStudio em Settings > Ligacoes.",
+                description: `Falta configurar: ${invoiceStudioMissingFields.join(", ")}. Abre Settings > Ligacoes para completar.`,
             });
+            setMsg(`InvoiceStudio: falta configurar ${invoiceStudioMissingFields.join(", ")}.`);
+            openSettingsSection("conns");
             return;
         }
 
@@ -396,7 +402,7 @@ export const FileCockpit: React.FC = () => {
                     <PanelState
                         tone="warning"
                         title="Configuracao incompleta"
-                        description="Falta configurar URL, email ou password do InvoiceStudio."
+                        description={`Falta configurar: ${invoiceStudioMissingFields.join(", ")}.`}
                         compact
                     />
                 )}
@@ -418,10 +424,18 @@ export const FileCockpit: React.FC = () => {
                         style={S.invoiceBtn}
                         type="button"
                         onClick={handleSendToInvoiceStudio}
-                        disabled={!invoiceStudioReady || isSendingInvoiceStudio || selectedInvoicePdfFiles.length === 0}
+                        disabled={isSendingInvoiceStudio || selectedInvoicePdfFiles.length === 0}
                     >
                         <Icons.ExternalLink size={16} />
-                        <span>{isSendingInvoiceStudio ? "A enviar..." : "Enviar para InvoiceStudio"}</span>
+                        <span>
+                            {isSendingInvoiceStudio
+                                ? "A enviar..."
+                                : !invoiceStudioEnabled
+                                    ? "Ativar InvoiceStudio"
+                                    : !invoiceStudioReady
+                                        ? "Configurar InvoiceStudio"
+                                        : "Enviar para InvoiceStudio"}
+                        </span>
                     </button>
                 )}
 
