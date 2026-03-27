@@ -159,6 +159,22 @@ function normalizeReplySubject(subject: string): string {
     return `Re: ${normalizeForwardSubject(cleaned) || cleaned}`;
 }
 
+function buildTicketEmailSubject(baseSubject: string | undefined, ticketCode: string | undefined, includeTicketCode: boolean): string {
+    const code = String(ticketCode || "").trim();
+    const raw = String(baseSubject || "").trim();
+    if (!includeTicketCode || !code) return raw;
+    if (raw.toLowerCase().includes(code.toLowerCase())) return raw;
+
+    const prefixMatch = raw.match(/^((?:(?:re|fw|fwd)\s*:\s*)+)/i);
+    const prefixes = prefixMatch?.[1] || "";
+    const remainder = raw.slice(prefixes.length).trim();
+
+    if (prefixes) {
+        return `${prefixes}[${code}] ${remainder || "Ticket"}`.trim();
+    }
+    return `[${code}] ${raw || "Ticket"}`.trim();
+}
+
 function formatDateLabel(value: string): string {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -284,6 +300,7 @@ export const AiCockpit: React.FC = () => {
     const [draftTo, setDraftTo] = useState<string[]>([]);
     const [draftCc, setDraftCc] = useState<string[]>([]);
     const [draftSubject, setDraftSubject] = useState("");
+    const [draftTicketCode, setDraftTicketCode] = useState("");
     const [suggestedContacts, setSuggestedContacts] = useState<string[]>([]);
     const [showDraftPreview, setShowDraftPreview] = useState(false);
     const [extractedTasks, setExtractedTasks] = useState<Array<{ title: string; dueDate?: string; owner?: string; completed?: boolean }>>([]);
@@ -359,6 +376,7 @@ export const AiCockpit: React.FC = () => {
         setHistoryExpanded(false);
         setSelectedCustomToneId("");
         setReplyTargetEmail(null);
+        setDraftTicketCode("");
         setFileUsage({});
     }, [emailKey]);
 
@@ -747,15 +765,8 @@ export const AiCockpit: React.FC = () => {
         }
     }
 
-    async function loadDraftLinkCategories(): Promise<{
-        groupNames: string[];
-        ticketCodes: string[];
-        statuses: string[];
-        hasOdooLinks: boolean;
-    } | null> {
-        if (settings?.groupOutlookCategories?.enabled !== true) return null;
-
-        const buildPayloadFromCurrent = (): RelevantEmailPayload => ({
+    function buildPayloadFromCurrent(): RelevantEmailPayload {
+        return {
             itemId: String(ctx.itemId || "").trim() || undefined,
             internetMessageId: String(ctx.internetMessageId || "").trim() || undefined,
             conversationId: String(ctx.conversationId || "").trim() || undefined,
@@ -764,74 +775,151 @@ export const AiCockpit: React.FC = () => {
             fromName: String(ctx.fromName || "").trim() || undefined,
             receivedAtIso: String(ctx.receivedDateTimeIso || "").trim() || undefined,
             messageDateIso: String(ctx.receivedDateTimeIso || "").trim() || undefined,
-        });
-
-        const buildPayloadFromTarget = (): RelevantEmailPayload | null => {
-            if (!replyTargetEmail) return null;
-            return {
-                itemId: String(replyTargetEmail.itemId || "").trim() || undefined,
-                internetMessageId: String(replyTargetEmail.internetMessageId || "").trim() || undefined,
-                conversationId: String(replyTargetEmail.conversationId || "").trim() || undefined,
-                subject: String(replyTargetEmail.subject || "").trim() || undefined,
-                fromEmail: String(replyTargetEmail.fromEmail || "").trim() || undefined,
-                fromName: String(replyTargetEmail.fromName || "").trim() || undefined,
-                receivedAtIso: String(replyTargetEmail.receivedAtIso || replyTargetEmail.messageDateIso || "").trim() || undefined,
-                messageDateIso: String(replyTargetEmail.messageDateIso || replyTargetEmail.receivedAtIso || "").trim() || undefined,
-            };
         };
+    }
 
-        const collectSnapshot = async (payload: RelevantEmailPayload | null, fallbackHasOdooLinks = false) => {
-            if (!payload) {
-                return { groupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: fallbackHasOdooLinks };
-            }
-            const response = await getRelatedEmailContext(payload);
-            const customGroups = Array.isArray(response?.groups)
-                ? response.groups.filter((group: any) => String(group?.kind || "").trim().toLowerCase() === "custom")
-                : [];
-            const groupNames = customGroups.map((group: any) => String(group?.name || "").trim()).filter(Boolean);
-            const statuses = customGroups.map((group: any) => String(group?.status || "").trim()).filter(Boolean);
-            const ticketCodes = (Array.isArray(response?.tickets) ? response.tickets : [])
-                .map((ticket: any) => String(ticket?.code || "").trim())
-                .filter(Boolean);
-            const hasOdooLinks = fallbackHasOdooLinks || Boolean(response?.email?.relatedRecords?.length);
-            return { groupNames, ticketCodes, statuses, hasOdooLinks };
+    function buildPayloadFromTarget(): RelevantEmailPayload | null {
+        if (!replyTargetEmail) return null;
+        return {
+            itemId: String(replyTargetEmail.itemId || "").trim() || undefined,
+            internetMessageId: String(replyTargetEmail.internetMessageId || "").trim() || undefined,
+            conversationId: String(replyTargetEmail.conversationId || "").trim() || undefined,
+            subject: String(replyTargetEmail.subject || "").trim() || undefined,
+            fromEmail: String(replyTargetEmail.fromEmail || "").trim() || undefined,
+            fromName: String(replyTargetEmail.fromName || "").trim() || undefined,
+            receivedAtIso: String(replyTargetEmail.receivedAtIso || replyTargetEmail.messageDateIso || "").trim() || undefined,
+            messageDateIso: String(replyTargetEmail.messageDateIso || replyTargetEmail.receivedAtIso || "").trim() || undefined,
         };
+    }
 
-        const currentSnapshot = await collectSnapshot(buildPayloadFromCurrent(), links.length > 0);
+    async function collectDraftLinkSnapshot(payload: RelevantEmailPayload | null, fallbackHasOdooLinks = false) {
+        if (!payload) {
+            return { groupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: fallbackHasOdooLinks };
+        }
+        const response = await getRelatedEmailContext(payload);
+        const customGroups = Array.isArray(response?.groups)
+            ? response.groups.filter((group: any) => String(group?.kind || "").trim().toLowerCase() === "custom")
+            : [];
+        const groupNames = customGroups.map((group: any) => String(group?.name || "").trim()).filter(Boolean);
+        const statuses = customGroups.map((group: any) => String(group?.status || "").trim()).filter(Boolean);
+        const ticketCodes = (Array.isArray(response?.tickets) ? response.tickets : [])
+            .map((ticket: any) => String(ticket?.code || "").trim())
+            .filter(Boolean);
+        const hasOdooLinks = fallbackHasOdooLinks || Boolean(response?.email?.relatedRecords?.length);
+        return { groupNames, ticketCodes, statuses, hasOdooLinks };
+    }
+
+    function pickPreferredTicketCode(currentSnapshot: { ticketCodes: string[] }, targetSnapshot: { ticketCodes: string[] }, shouldIncludeTarget: boolean): string {
+        const currentCodes = mergeUniqueStrings(currentSnapshot.ticketCodes);
+        const targetCodes = shouldIncludeTarget ? mergeUniqueStrings(targetSnapshot.ticketCodes) : [];
+        const sharedCodes = currentCodes.filter((code) => targetCodes.some((targetCode) => targetCode.toLowerCase() === code.toLowerCase()));
+        if (sharedCodes.length === 1) return sharedCodes[0];
+        if (targetCodes.length === 1) return targetCodes[0];
+        if (currentCodes.length === 1) return currentCodes[0];
+        const mergedCodes = mergeUniqueStrings(currentCodes, targetCodes);
+        return mergedCodes.length === 1 ? mergedCodes[0] : "";
+    }
+
+    async function loadDraftLinkMetadata(): Promise<{
+        groupNames: string[];
+        ticketCodes: string[];
+        statuses: string[];
+        hasOdooLinks: boolean;
+        preferredTicketCode: string;
+    }> {
+        const currentSnapshot = await collectDraftLinkSnapshot(buildPayloadFromCurrent(), links.length > 0);
         const shouldIncludeTarget = Boolean(replyTargetEmail && !isSameStoredEmailTarget(ctx, replyTargetEmail));
         const targetSnapshot = shouldIncludeTarget
-            ? await collectSnapshot(buildPayloadFromTarget(), false)
+            ? await collectDraftLinkSnapshot(buildPayloadFromTarget(), false)
             : { groupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: false };
 
         return {
-            groupNames: settings?.groupOutlookCategories?.includeGroups !== false
-                ? mergeUniqueStrings(currentSnapshot.groupNames, targetSnapshot.groupNames)
-                : [],
-            ticketCodes: settings?.groupOutlookCategories?.includeTickets !== false
-                ? mergeUniqueStrings(currentSnapshot.ticketCodes, targetSnapshot.ticketCodes)
-                : [],
-            statuses: settings?.groupOutlookCategories?.includeStatuses !== false
-                ? mergeUniqueStrings(currentSnapshot.statuses, targetSnapshot.statuses)
-                : [],
+            groupNames: mergeUniqueStrings(currentSnapshot.groupNames, targetSnapshot.groupNames),
+            ticketCodes: mergeUniqueStrings(currentSnapshot.ticketCodes, targetSnapshot.ticketCodes),
+            statuses: mergeUniqueStrings(currentSnapshot.statuses, targetSnapshot.statuses),
             hasOdooLinks: currentSnapshot.hasOdooLinks || targetSnapshot.hasOdooLinks,
+            preferredTicketCode: pickPreferredTicketCode(currentSnapshot, targetSnapshot, shouldIncludeTarget),
         };
     }
+
+    async function loadDraftLinkCategories(): Promise<{
+        groupNames: string[];
+        ticketCodes: string[];
+        statuses: string[];
+        hasOdooLinks: boolean;
+    } | null> {
+        if (settings?.groupOutlookCategories?.enabled !== true) return null;
+        const metadata = await loadDraftLinkMetadata();
+        return {
+            groupNames: settings?.groupOutlookCategories?.includeGroups !== false
+                ? metadata.groupNames
+                : [],
+            ticketCodes: settings?.groupOutlookCategories?.includeTickets !== false
+                ? metadata.ticketCodes
+                : [],
+            statuses: settings?.groupOutlookCategories?.includeStatuses !== false
+                ? metadata.statuses
+                : [],
+            hasOdooLinks: metadata.hasOdooLinks,
+        };
+    }
+
+    useEffect(() => {
+        if (settings?.groupTicketUi?.includeTicketCodeInSubject === false) {
+            setDraftTicketCode("");
+            return;
+        }
+
+        let cancelled = false;
+        loadDraftLinkMetadata()
+            .then((metadata) => {
+                if (cancelled) return;
+                setDraftTicketCode(String(metadata.preferredTicketCode || "").trim());
+            })
+            .catch(() => {
+                if (!cancelled) setDraftTicketCode("");
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        ctx.conversationId,
+        ctx.fromEmail,
+        ctx.fromName,
+        ctx.internetMessageId,
+        ctx.itemId,
+        ctx.receivedDateTimeIso,
+        ctx.subject,
+        links.length,
+        replyTargetEmail?.conversationId,
+        replyTargetEmail?.internetMessageId,
+        replyTargetEmail?.itemId,
+        replyTargetEmail?.subject,
+        settings?.groupTicketUi?.includeTicketCodeInSubject,
+    ]);
 
     // Sync draft defaults from context OR persistent aiState
     useEffect(() => {
         const hasSuggestedRecipients = Array.isArray(aiState.suggestedTo) && aiState.suggestedTo.length > 0;
         const hasSuggestedCc = Array.isArray(aiState.suggestedCc) && aiState.suggestedCc.length > 0;
         const hasSuggestedSubject = Boolean(String(aiState.suggestedSubject || "").trim());
+        const includeTicketCodeInSubject = settings?.groupTicketUi?.includeTicketCodeInSubject !== false;
+        const applyDraftSubjectTicketCode = (subject: string) => buildTicketEmailSubject(subject, draftTicketCode, includeTicketCodeInSubject);
 
         if (selectedAction === "forward") {
             if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
                 setDraftTo(aiState.suggestedTo || (replyTargetEmail?.fromEmail ? [replyTargetEmail.fromEmail] : []));
                 setDraftCc(aiState.suggestedCc || []);
-                setDraftSubject(String(aiState.suggestedSubject || "").trim() || normalizeForwardSubject(replyTargetEmail?.subject || ctx.subject || ""));
+                setDraftSubject(
+                    applyDraftSubjectTicketCode(
+                        String(aiState.suggestedSubject || "").trim() || normalizeForwardSubject(replyTargetEmail?.subject || ctx.subject || "")
+                    )
+                );
             } else {
                 setDraftTo(replyTargetEmail?.fromEmail ? [replyTargetEmail.fromEmail] : []);
                 setDraftCc([]);
-                setDraftSubject(normalizeForwardSubject(replyTargetEmail?.subject || ctx.subject || ""));
+                setDraftSubject(applyDraftSubjectTicketCode(normalizeForwardSubject(replyTargetEmail?.subject || ctx.subject || "")));
             }
             return;
         }
@@ -840,11 +928,15 @@ export const AiCockpit: React.FC = () => {
             if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
                 setDraftTo(aiState.suggestedTo || [replyTargetEmail.fromEmail]);
                 setDraftCc(aiState.suggestedCc || []);
-                setDraftSubject(String(aiState.suggestedSubject || "").trim() || normalizeReplySubject(replyTargetEmail.subject || ctx.subject || ""));
+                setDraftSubject(
+                    applyDraftSubjectTicketCode(
+                        String(aiState.suggestedSubject || "").trim() || normalizeReplySubject(replyTargetEmail.subject || ctx.subject || "")
+                    )
+                );
             } else {
                 setDraftTo([replyTargetEmail.fromEmail]);
                 setDraftCc([]);
-                setDraftSubject(normalizeReplySubject(replyTargetEmail.subject || ctx.subject || ""));
+                setDraftSubject(applyDraftSubjectTicketCode(normalizeReplySubject(replyTargetEmail.subject || ctx.subject || "")));
             }
             return;
         }
@@ -852,13 +944,13 @@ export const AiCockpit: React.FC = () => {
         if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
             setDraftTo(aiState.suggestedTo || []);
             setDraftCc(aiState.suggestedCc || []);
-            setDraftSubject(aiState.suggestedSubject || "");
+            setDraftSubject(applyDraftSubjectTicketCode(aiState.suggestedSubject || ""));
         } else {
             setDraftTo((ctx.toRecipients || []).map((r: any) => r.email));
             setDraftCc((ctx.ccRecipients || []).map((r: any) => r.email));
-            setDraftSubject(ctx.subject || "");
+            setDraftSubject(applyDraftSubjectTicketCode(ctx.subject || ""));
         }
-    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo, aiState.suggestedCc, selectedAction, replyTargetEmail]);
+    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo, aiState.suggestedCc, selectedAction, replyTargetEmail, draftTicketCode, settings?.groupTicketUi?.includeTicketCodeInSubject]);
 
     const handlePromptChange = (val: string) => {
         setPrompt(val);
@@ -1103,7 +1195,7 @@ export const AiCockpit: React.FC = () => {
                     locale: effectiveLocale,
                     draftTo,
                     draftCc,
-                    draftSubject,
+                    draftSubject: buildTicketEmailSubject(draftSubject, draftTicketCode, settings?.groupTicketUi?.includeTicketCodeInSubject !== false),
                     customToneId: selectedCustomToneId || undefined,
                     replyTarget: replyTargetEmail,
                 };
@@ -1125,6 +1217,8 @@ export const AiCockpit: React.FC = () => {
         setDebugLog("Botão clicado. A verificar modo...");
         try {
             const isCompose = await isComposeMode();
+            const includeTicketCodeInSubject = settings?.groupTicketUi?.includeTicketCodeInSubject !== false;
+            const finalDraftSubject = buildTicketEmailSubject(draftSubject, draftTicketCode, includeTicketCodeInSubject);
             console.log("[AiCockpit] isComposeMode:", isCompose);
             setDebugLog(`Modo Edição: ${isCompose}`);
 
@@ -1134,7 +1228,7 @@ export const AiCockpit: React.FC = () => {
                 // Sync metadata first
                 await setRecipients("to", draftTo);
                 await setRecipients("cc", draftCc);
-                await setSubject(draftSubject);
+                await setSubject(finalDraftSubject);
 
                 // Insert body
                 await insertTextToBody(output);
@@ -1181,6 +1275,14 @@ export const AiCockpit: React.FC = () => {
             if (effectiveAction === "forward") {
                 if (selectedForwardFiles.length > 0 && (!replyTargetEmail || isCurrentReplyTarget)) {
                     await displayForwardForm(output, true);
+                    if (finalDraftSubject) {
+                        try {
+                            await new Promise((resolve) => setTimeout(resolve, 800));
+                            await setSubject(finalDraftSubject);
+                        } catch (subjectError) {
+                            console.warn("[AiCockpit] Could not update forward draft subject with ticket code:", subjectError);
+                        }
+                    }
                     queueDraftCategorySync();
                     const usedAllOriginals = selectedForwardFiles.length === availableAttachmentCount;
                     setMsg(
@@ -1196,7 +1298,7 @@ export const AiCockpit: React.FC = () => {
                 await displayNewMessageForm({
                     toRecipients: draftTo.length ? draftTo : (replyTargetEmail?.fromEmail ? [replyTargetEmail.fromEmail] : []),
                     ccRecipients: draftCc,
-                    subject: forwardSubject,
+                    subject: buildTicketEmailSubject(forwardSubject, draftTicketCode, includeTicketCodeInSubject),
                     body: output,
                     isHtml: true,
                 });
@@ -1220,7 +1322,11 @@ export const AiCockpit: React.FC = () => {
                     await displayNewMessageForm({
                         toRecipients: draftTo.length ? draftTo : (replyTargetEmail.fromEmail ? [replyTargetEmail.fromEmail] : []),
                         ccRecipients: draftCc,
-                        subject: normalizeReplySubject(draftSubject || replyTargetEmail.subject || ctx.subject || ""),
+                        subject: buildTicketEmailSubject(
+                            normalizeReplySubject(draftSubject || replyTargetEmail.subject || ctx.subject || ""),
+                            draftTicketCode,
+                            includeTicketCodeInSubject,
+                        ),
                         body: output,
                         isHtml: true,
                     });
@@ -1242,6 +1348,14 @@ export const AiCockpit: React.FC = () => {
                 } else {
                     // Default to Reply (including for refine, rewrite, etc.)
                     await displayReplyForm(output);
+                    if (finalDraftSubject) {
+                        try {
+                            await new Promise((resolve) => setTimeout(resolve, 800));
+                            await setSubject(finalDraftSubject);
+                        } catch (subjectError) {
+                            console.warn("[AiCockpit] Could not update reply draft subject with ticket code:", subjectError);
+                        }
+                    }
                     queueDraftCategorySync();
                 }
             }
