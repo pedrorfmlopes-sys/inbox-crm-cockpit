@@ -1255,6 +1255,64 @@ export async function aiListModels(): Promise<{ ok: boolean; openai: string[]; g
   return await requestJSON(`/api/ai/list-models`);
 }
 
+export type InvoiceStudioUploadFile = {
+  name: string;
+  type?: string;
+  content: string;
+};
+
+export type InvoiceStudioUploadPayload = {
+  baseUrl: string;
+  email: string;
+  password: string;
+  project?: string;
+  batchId?: string;
+  metadata?: Record<string, any>;
+  files: InvoiceStudioUploadFile[];
+};
+
+export type InvoiceStudioUploadResult = {
+  ok: boolean;
+  batchId: string;
+  count: number;
+  project?: string;
+  status?: string;
+  upload?: any;
+};
+
+export type InvoiceStudioBatchStatusResult = {
+  ok: boolean;
+  batchId: string;
+  project?: string;
+  progress?: {
+    total?: number;
+    done?: number;
+    errors?: number;
+    status?: string;
+  };
+  rows?: Array<Record<string, any>>;
+};
+
+export async function uploadToInvoiceStudio(payload: InvoiceStudioUploadPayload): Promise<InvoiceStudioUploadResult> {
+  return await requestJSON(`/api/invoice-studio/upload`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getInvoiceStudioBatchStatus(payload: {
+  baseUrl: string;
+  email: string;
+  password: string;
+  project?: string;
+  batchId: string;
+}): Promise<InvoiceStudioBatchStatusResult> {
+  return await requestJSON(`/api/invoice-studio/status`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 // -------- Learning --------
 export async function logLearningInteraction(log: any): Promise<{ ok: boolean }> {
   return await requestJSON(`/api/learning/log`, {

@@ -157,7 +157,7 @@ export function SettingsPanel(): JSX.Element {
 
   const title = useMemo(() => {
     if (section === "general") return "Geral";
-    if (section === "conns") return "Ligações (Odoo & IA)";
+    if (section === "conns") return "Ligações";
     if (section === "ai") return "IA Knowledge";
     if (section === "persona") return "Minha Persona";
     if (section === "signature") return "Assinatura";
@@ -166,12 +166,6 @@ export function SettingsPanel(): JSX.Element {
     if (section === "crm2layout") return "CRM2 / Odoo Layout";
     return "Proteção (O Moat)";
   }, [section]);
-
-  useEffect(() => {
-    if (section === "ai" || section === "persona" || section === "signature") {
-      setSection("general");
-    }
-  }, [section, setSection]);
 
   async function onSave() {
     if (!model) return;
@@ -2071,6 +2065,92 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
             placeholder="••••••••"
             value={model.odooPassword || ""}
             onChange={e => setModel({ ...model, odooPassword: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <hr style={{ border: "none", borderTop: "1px solid var(--iccc-card-border)", margin: "4px 0" }} />
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={S.fieldLabel}>InvoiceStudio</div>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: "var(--iccc-text-muted)" }}>
+          <input
+            type="checkbox"
+            checked={model.invoiceStudio.enabled === true}
+            onChange={e => setModel({
+              ...model,
+              invoiceStudio: {
+                ...model.invoiceStudio,
+                enabled: e.target.checked,
+              }
+            })}
+          />
+          Ativo
+        </label>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--iccc-text-muted)", marginTop: -6 }}>
+        Integração isolada para envio de anexos da aba FILES para processamento no InvoiceStudio.
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field label="URL do Backend">
+          <input
+            style={S.input}
+            placeholder="https://invoice-studio-backend.onrender.com"
+            value={model.invoiceStudio.baseUrl || ""}
+            onChange={e => setModel({
+              ...model,
+              invoiceStudio: {
+                ...model.invoiceStudio,
+                baseUrl: e.target.value,
+              }
+            })}
+          />
+        </Field>
+        <Field label="Projeto / Workspace">
+          <input
+            style={S.input}
+            placeholder="Dvtkb"
+            value={model.invoiceStudio.project || ""}
+            onChange={e => setModel({
+              ...model,
+              invoiceStudio: {
+                ...model.invoiceStudio,
+                project: e.target.value,
+              }
+            })}
+          />
+        </Field>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field label="Email técnico">
+          <input
+            style={S.input}
+            placeholder="integration@example.com"
+            value={model.invoiceStudio.email || ""}
+            onChange={e => setModel({
+              ...model,
+              invoiceStudio: {
+                ...model.invoiceStudio,
+                email: e.target.value,
+              }
+            })}
+          />
+        </Field>
+        <Field label="Password">
+          <input
+            type="password"
+            style={S.input}
+            placeholder="••••••••"
+            value={model.invoiceStudio.password || ""}
+            onChange={e => setModel({
+              ...model,
+              invoiceStudio: {
+                ...model.invoiceStudio,
+                password: e.target.value,
+              }
+            })}
           />
         </Field>
       </div>

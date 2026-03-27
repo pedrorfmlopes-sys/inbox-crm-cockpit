@@ -69,6 +69,128 @@ app.use("/api/learning", createLearningRouter());
 
 const port = process.env.PORT ? Number(process.env.PORT) : 7071;
 
+function normalizeExternalBaseUrl(url) {
+  return String(url || "").trim().replace(/\/+$/, "");
+}
+
+function buildInvoiceStudioBatchId(seed) {
+  const normalizedSeed = String(seed || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  const random = Math.random().toString(36).slice(2, 8);
+  return `icc-${normalizedSeed || "batch"}-${Date.now()}-${random}`;
+}
+
+async function parseRemoteResponse(response) {
+  const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+  if (contentType.includes("application/json")) {
+    return await response.json();
+  }
+  return await response.text();
+}
+
+async function invoiceStudioLogin({ baseUrl, email, password }) {
+  const normalizedBaseUrl = normalizeExternalBaseUrl(baseUrl);
+  if (!normalizedBaseUrl || !email || !password) {
+    throw new Error("Configuracao InvoiceStudio incompleta.");
+  }
+
+  const response = await fetch(`${normalizedBaseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+
+  const body = await parseRemoteResponse(response);
+  if (!response.ok || !body?.token) {
+    const message = typeof body === "string"
+      ? body
+      : body?.message || body?.error || JSON.stringify(body);
+    throw new Error(`InvoiceStudio login falhou: ${message}`);
+  }
+
+  return {
+    token: String(body.token || "").trim(),
+    baseUrl: normalizedBaseUrl,
+  };
+}
+
+async function invoiceStudioUploadBatch({ baseUrl, token, project, batchId, files }) {
+  const targetUrl = new URL(`${baseUrl}/api/extract`);
+  if (project) targetUrl.searchParams.set("project", String(project).trim());
+  if (batchId) targetUrl.searchParams.set("batchId", String(batchId).trim());
+
+  const form = new FormData();
+  for (const file of files || []) {
+    const name = String(file?.name || "").trim();
+    const content = String(file?.content || "").trim().replace(/^data:[^,]+,/, "");
+    const type = String(file?.type || "application/pdf").trim() || "application/pdf";
+    if (!name || !content) continue;
+    const blob = new Blob([Buffer.from(content, "base64")], { type });
+    form.append("files", blob, name);
+  }
+
+  const response = await fetch(targetUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: form,
+  });
+
+  const body = await parseRemoteResponse(response);
+  if (!response.ok) {
+    const message = typeof body === "string"
+      ? body
+      : body?.message || body?.error || JSON.stringify(body);
+    throw new Error(`InvoiceStudio upload falhou: ${message}`);
+  }
+
+  return body;
+}
+
+async function invoiceStudioGetBatchStatus({ baseUrl, token, project, batchId }) {
+  const progressUrl = new URL(`${baseUrl}/api/progress/${encodeURIComponent(batchId)}`);
+  if (project) progressUrl.searchParams.set("project", String(project).trim());
+
+  const progressResponse = await fetch(progressUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const progressBody = await parseRemoteResponse(progressResponse);
+  if (!progressResponse.ok) {
+    const message = typeof progressBody === "string"
+      ? progressBody
+      : progressBody?.message || progressBody?.error || JSON.stringify(progressBody);
+    throw new Error(`InvoiceStudio progress falhou: ${message}`);
+  }
+
+  let rows = [];
+  const statusLabel = String(progressBody?.status || "").trim().toLowerCase();
+  if (statusLabel === "finished" || Number(progressBody?.done || 0) >= Number(progressBody?.total || 0)) {
+    const batchUrl = new URL(`${baseUrl}/api/batch/${encodeURIComponent(batchId)}`);
+    if (project) batchUrl.searchParams.set("project", String(project).trim());
+    const batchResponse = await fetch(batchUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const batchBody = await parseRemoteResponse(batchResponse);
+    if (!batchResponse.ok) {
+      const message = typeof batchBody === "string"
+        ? batchBody
+        : batchBody?.message || batchBody?.error || JSON.stringify(batchBody);
+      throw new Error(`InvoiceStudio batch falhou: ${message}`);
+    }
+    rows = Array.isArray(batchBody?.rows) ? batchBody.rows : [];
+  }
+
+  return {
+    progress: progressBody,
+    rows,
+  };
+}
+
 // --- Odoo Client Cache (Singleton) ---
 let cachedOdoo = null;
 let odooInitPromise = null;
@@ -109,6 +231,95 @@ async function getOdooCached(req) {
 }
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+app.post("/api/invoice-studio/upload", async (req, res) => {
+  try {
+    const baseUrl = String(req.body?.baseUrl || "").trim();
+    const email = String(req.body?.email || "").trim();
+    const password = String(req.body?.password || "").trim();
+    const project = String(req.body?.project || "").trim();
+    const metadata = req.body?.metadata || {};
+    const files = Array.isArray(req.body?.files)
+      ? req.body.files
+        .map((file) => ({
+          name: String(file?.name || "").trim(),
+          type: String(file?.type || "").trim(),
+          content: String(file?.content || "").trim(),
+        }))
+        .filter((file) => file.name && file.content)
+      : [];
+
+    if (!baseUrl || !email || !password) {
+      return res.status(400).json({ ok: false, error: "InvoiceStudio configuracao incompleta." });
+    }
+    if (!files.length) {
+      return res.status(400).json({ ok: false, error: "Sem ficheiros para enviar ao InvoiceStudio." });
+    }
+
+    const auth = await invoiceStudioLogin({ baseUrl, email, password });
+    const batchId = String(req.body?.batchId || "").trim()
+      || buildInvoiceStudioBatchId(
+        metadata?.internetMessageId
+        || metadata?.itemId
+        || metadata?.conversationId
+        || metadata?.subject
+        || files[0]?.name
+      );
+
+    const upload = await invoiceStudioUploadBatch({
+      baseUrl: auth.baseUrl,
+      token: auth.token,
+      project,
+      batchId,
+      files,
+    });
+
+    return res.json({
+      ok: true,
+      batchId: String(upload?.batchId || batchId),
+      count: Number(upload?.count || files.length),
+      project: String(upload?.project || project || "").trim() || undefined,
+      status: String(upload?.status || "processing"),
+      upload,
+    });
+  } catch (error) {
+    console.error("[server] InvoiceStudio upload failed:", error);
+    return res.status(500).json({ ok: false, error: error?.message || "Falha ao enviar documentos para o InvoiceStudio." });
+  }
+});
+
+app.post("/api/invoice-studio/status", async (req, res) => {
+  try {
+    const baseUrl = String(req.body?.baseUrl || "").trim();
+    const email = String(req.body?.email || "").trim();
+    const password = String(req.body?.password || "").trim();
+    const project = String(req.body?.project || "").trim();
+    const batchId = String(req.body?.batchId || "").trim();
+
+    if (!baseUrl || !email || !password || !batchId) {
+      return res.status(400).json({ ok: false, error: "Pedido de estado InvoiceStudio incompleto." });
+    }
+
+    const auth = await invoiceStudioLogin({ baseUrl, email, password });
+    const status = await invoiceStudioGetBatchStatus({
+      baseUrl: auth.baseUrl,
+      token: auth.token,
+      project,
+      batchId,
+    });
+
+    return res.json({
+      ok: true,
+      batchId,
+      project: project || undefined,
+      progress: status.progress || {},
+      rows: Array.isArray(status.rows) ? status.rows : [],
+    });
+  } catch (error) {
+    console.error("[server] InvoiceStudio status failed:", error);
+    return res.status(500).json({ ok: false, error: error?.message || "Falha ao consultar o estado no InvoiceStudio." });
+  }
+});
 
 // --- AUTH ---
 app.post("/api/auth/login", async (req, res) => {

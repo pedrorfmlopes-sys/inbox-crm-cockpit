@@ -1,15 +1,75 @@
-import React, { useState, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Icons from "../../ui/icons";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { getAttachments } from "@/office"; // We'll assume this is exported now
+import { getAttachments } from "@/office";
+import { getInvoiceStudioBatchStatus, uploadToInvoiceStudio } from "@/api";
 import { PanelState, type PanelStateTone } from "../../ui/PanelState";
 
+type InvoiceJobState = {
+    batchId: string;
+    status: string;
+    total: number;
+    done: number;
+    errors: number;
+    rows: Array<Record<string, any>>;
+};
+
+function isPdfLike(file: { name?: string; type?: string }): boolean {
+    const mime = String(file?.type || "").toLowerCase();
+    const name = String(file?.name || "").toLowerCase();
+    return mime.includes("pdf") || name.endsWith(".pdf");
+}
+
 export const FileCockpit: React.FC = () => {
-    const { files, addFile, removeFile, setMsg, setTab, setAiState } = useCockpit();
+    const {
+        files,
+        addFile,
+        removeFile,
+        setMsg,
+        setTab,
+        setAiState,
+        settings,
+        openSettingsSection,
+        ctx,
+    } = useCockpit() as any;
+
     const [isDragging, setIsDragging] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
+    const [isSendingInvoiceStudio, setIsSendingInvoiceStudio] = useState(false);
+    const [selectedForInvoiceStudio, setSelectedForInvoiceStudio] = useState<Record<string, boolean>>({});
+    const [invoiceStudioJob, setInvoiceStudioJob] = useState<InvoiceJobState | null>(null);
     const [status, setStatus] = useState<{ tone: PanelStateTone; title: string; description?: string } | null>(null);
     const hiddenFileInput = useRef<HTMLInputElement>(null);
+
+    const invoiceStudioEnabled = settings?.invoiceStudio?.enabled === true;
+    const invoiceStudioReady = Boolean(
+        invoiceStudioEnabled
+        && String(settings?.invoiceStudio?.baseUrl || "").trim()
+        && String(settings?.invoiceStudio?.email || "").trim()
+        && String(settings?.invoiceStudio?.password || "").trim()
+    );
+
+    useEffect(() => {
+        setSelectedForInvoiceStudio((prev) => {
+            const next: Record<string, boolean> = {};
+            for (const file of files || []) {
+                const name = String(file?.name || "").trim();
+                if (!name) continue;
+                next[name] = typeof prev[name] === "boolean" ? prev[name] : true;
+            }
+            return next;
+        });
+    }, [files]);
+
+    const selectedInvoiceFiles = useMemo(
+        () => (files || []).filter((file: any) => selectedForInvoiceStudio[String(file?.name || "").trim()] !== false),
+        [files, selectedForInvoiceStudio]
+    );
+
+    const selectedInvoicePdfFiles = useMemo(
+        () => selectedInvoiceFiles.filter((file: any) => isPdfLike(file)),
+        [selectedInvoiceFiles]
+    );
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -24,11 +84,11 @@ export const FileCockpit: React.FC = () => {
         for (const file of fileList) {
             const reader = new FileReader();
             reader.onload = () => {
-                const base64 = (reader.result as string).split(",")[1]; // Remove data:application/pdf;base64, prefix
+                const base64 = (reader.result as string).split(",")[1];
                 addFile({
                     name: file.name,
                     type: file.type,
-                    content: base64
+                    content: base64,
                 });
             };
             reader.readAsDataURL(file);
@@ -45,7 +105,7 @@ export const FileCockpit: React.FC = () => {
             setStatus({
                 tone: "success",
                 title: "Ficheiros adicionados",
-                description: `${added} ficheiro(s) prontos para análise pela IA.`,
+                description: `${added} ficheiro(s) prontos para analise pela IA ou envio para o InvoiceStudio.`,
             });
         }
     };
@@ -64,7 +124,7 @@ export const FileCockpit: React.FC = () => {
     };
 
     const triggerFileSummary = (fileName: string) => {
-        setAiState({ prompt: `ANÁLISE DETALHADA DO ANEXO "${fileName}": Extrai datas, valores, nº faturas e descreve o conteúdo técnico.` });
+        setAiState({ prompt: `ANALISE DETALHADA DO ANEXO "${fileName}": extrai datas, valores, numero de faturas e descreve o conteudo tecnico.` });
         setTab("ai");
     };
 
@@ -74,7 +134,7 @@ export const FileCockpit: React.FC = () => {
             setStatus({
                 tone: "loading",
                 title: "A importar anexos",
-                description: "Estamos a ler os anexos disponíveis no email atual.",
+                description: "Estamos a ler os anexos disponiveis no email atual.",
             });
             const atts = await getAttachments();
             if (atts.length === 0) {
@@ -86,32 +146,19 @@ export const FileCockpit: React.FC = () => {
                 });
             } else {
                 let counts = 0;
-                // We need to fetch content. The getAttachments in office.ts assumes it fetches content.
-                // But wait, the standard getAttachments usually returns metadata. 
-                // We need to ensure getAttachments fetches the base64 content.
-                // My previous implementation of getAttachments DOES fetch content.
-
-                // However, getAttachments() implementation in office.ts I just reviewed seems to actually 
-                // iterate and call getAttachmentContentAsync, so it should return content.
-                // Let's verify the implementation I just wrote... Yes, it returns { content }.
-
-                // But wait, getAttachments implementation I wrote logic:
-                // It iterates attachments and calls getAttachmentContentAsync.
-                // So the result is full content.
-
                 for (const att of atts) {
                     addFile({
                         name: att.name,
                         type: att.contentType,
-                        content: att.content // it is already base64 from getAttachmentContentAsync usually (if format is base64)
+                        content: att.content,
                     });
                     counts++;
                 }
-                setMsg(`${counts} anexos importados com sucesso!`);
+                setMsg(`${counts} anexos importados com sucesso.`);
                 setStatus({
                     tone: "success",
                     title: "Anexos importados",
-                    description: `${counts} anexo(s) disponíveis para leitura e resumo.`,
+                    description: `${counts} anexo(s) disponiveis para leitura, resumo ou envio para o InvoiceStudio.`,
                 });
             }
         } catch (e: any) {
@@ -120,18 +167,179 @@ export const FileCockpit: React.FC = () => {
             setStatus({
                 tone: "error",
                 title: "Falha ao importar anexos",
-                description: e?.message || "Não foi possível ler os anexos deste email.",
+                description: e?.message || "Nao foi possivel ler os anexos deste email.",
             });
         } finally {
             setIsImporting(false);
         }
     };
 
+    const toggleInvoiceSelection = (fileName: string) => {
+        setSelectedForInvoiceStudio((prev) => ({
+            ...prev,
+            [fileName]: !prev[fileName],
+        }));
+    };
+
+    const selectAllInvoiceFiles = (checked: boolean) => {
+        const next: Record<string, boolean> = {};
+        for (const file of files || []) {
+            const name = String(file?.name || "").trim();
+            if (!name) continue;
+            next[name] = checked;
+        }
+        setSelectedForInvoiceStudio(next);
+    };
+
+    const buildInvoiceBatchId = () => {
+        const seed = String(ctx?.internetMessageId || ctx?.itemId || ctx?.subject || "email")
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 48) || "email";
+        return `icc-${seed}-${Date.now()}`;
+    };
+
+    const pollInvoiceStudioBatch = async (batchId: string) => {
+        const credentials = {
+            baseUrl: String(settings?.invoiceStudio?.baseUrl || "").trim(),
+            email: String(settings?.invoiceStudio?.email || "").trim(),
+            password: String(settings?.invoiceStudio?.password || "").trim(),
+            project: String(settings?.invoiceStudio?.project || "").trim(),
+            batchId,
+        };
+
+        for (let attempt = 0; attempt < 25; attempt += 1) {
+            if (attempt > 0) {
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+            }
+
+            const snapshot = await getInvoiceStudioBatchStatus(credentials);
+            const progress = snapshot.progress || {};
+            const statusLabel = String(progress.status || "").trim() || "processing";
+            setInvoiceStudioJob({
+                batchId,
+                status: statusLabel,
+                total: Number(progress.total || 0),
+                done: Number(progress.done || 0),
+                errors: Number(progress.errors || 0),
+                rows: Array.isArray(snapshot.rows) ? snapshot.rows : [],
+            });
+
+            if (statusLabel.toLowerCase() === "finished" || (Number(progress.total || 0) > 0 && Number(progress.done || 0) >= Number(progress.total || 0))) {
+                const rowCount = Array.isArray(snapshot.rows) ? snapshot.rows.length : 0;
+                setStatus({
+                    tone: Number(progress.errors || 0) > 0 ? "info" : "success",
+                    title: Number(progress.errors || 0) > 0 ? "Processamento concluido com avisos" : "InvoiceStudio concluido",
+                    description: rowCount
+                        ? `${rowCount} documento(s) disponiveis no batch ${batchId}.`
+                        : `Batch ${batchId} concluido no InvoiceStudio.`,
+                });
+                return;
+            }
+        }
+
+        setStatus({
+            tone: "info",
+            title: "Processamento em curso",
+            description: `O batch ${batchId} continua em processamento. Podes voltar a esta aba para consultar o estado.`,
+        });
+    };
+
+    const handleSendToInvoiceStudio = async () => {
+        if (!invoiceStudioEnabled) {
+            setStatus({
+                tone: "info",
+                title: "InvoiceStudio desligado",
+                description: "Ativa esta integracao em Settings > Ligacoes.",
+            });
+            return;
+        }
+
+        if (!invoiceStudioReady) {
+            setStatus({
+                tone: "warning",
+                title: "Configuracao incompleta",
+                description: "Preenche URL, email e password do InvoiceStudio em Settings > Ligacoes.",
+            });
+            return;
+        }
+
+        if (!selectedInvoicePdfFiles.length) {
+            setStatus({
+                tone: "warning",
+                title: "Sem PDFs selecionados",
+                description: "O InvoiceStudio atual processa sobretudo PDFs. Seleciona pelo menos um PDF.",
+            });
+            return;
+        }
+
+        const batchId = buildInvoiceBatchId();
+        setIsSendingInvoiceStudio(true);
+        setStatus({
+            tone: "loading",
+            title: "A enviar para o InvoiceStudio",
+            description: `A preparar ${selectedInvoicePdfFiles.length} PDF(s) para processamento.`,
+        });
+
+        try {
+            const response = await uploadToInvoiceStudio({
+                baseUrl: String(settings?.invoiceStudio?.baseUrl || "").trim(),
+                email: String(settings?.invoiceStudio?.email || "").trim(),
+                password: String(settings?.invoiceStudio?.password || "").trim(),
+                project: String(settings?.invoiceStudio?.project || "").trim(),
+                batchId,
+                metadata: {
+                    subject: String(ctx?.subject || "").trim(),
+                    fromEmail: String(ctx?.fromEmail || "").trim(),
+                    fromName: String(ctx?.fromName || "").trim(),
+                    conversationId: String(ctx?.conversationId || "").trim(),
+                    internetMessageId: String(ctx?.internetMessageId || "").trim(),
+                    itemId: String(ctx?.itemId || "").trim(),
+                    receivedAtIso: String(ctx?.receivedDateTimeIso || "").trim(),
+                },
+                files: selectedInvoicePdfFiles.map((file: any) => ({
+                    name: String(file?.name || "").trim(),
+                    type: String(file?.type || "").trim() || "application/pdf",
+                    content: String(file?.content || "").trim(),
+                })),
+            });
+
+            setInvoiceStudioJob({
+                batchId: response.batchId,
+                status: String(response.status || "processing"),
+                total: Number(response.count || selectedInvoicePdfFiles.length),
+                done: 0,
+                errors: 0,
+                rows: [],
+            });
+
+            setStatus({
+                tone: "loading",
+                title: "Batch criado",
+                description: `Batch ${response.batchId} enviado. A acompanhar o processamento no InvoiceStudio.`,
+            });
+
+            await pollInvoiceStudioBatch(response.batchId);
+        } catch (error: any) {
+            console.error("[Files] InvoiceStudio upload failed", error);
+            setStatus({
+                tone: "error",
+                title: "Falha no envio",
+                description: error?.message || "Nao foi possivel enviar os ficheiros para o InvoiceStudio.",
+            });
+            setMsg(`InvoiceStudio: ${error?.message || "falha no envio"}`);
+        } finally {
+            setIsSendingInvoiceStudio(false);
+        }
+    };
+
     return (
         <div style={S.container}>
             <div style={S.header}>
-                <h3 style={S.title}>Documentos & Anexos</h3>
-                <p style={S.subtitle}>Ficheiros carregados serão lidos pela AI</p>
+                <h3 style={S.title}>Documentos e Anexos</h3>
+                <p style={S.subtitle}>Importa anexos do email, analisa-os com a IA ou envia-os para o InvoiceStudio.</p>
             </div>
 
             {status && (
@@ -143,7 +351,6 @@ export const FileCockpit: React.FC = () => {
                 />
             )}
 
-            {/* ACTION BUTTONS */}
             <div style={{ display: "flex", gap: "10px" }}>
                 <button
                     style={S.importBtn}
@@ -165,7 +372,83 @@ export const FileCockpit: React.FC = () => {
                 </button>
             </div>
 
-            {/* DROP ZONE */}
+            <div style={S.invoiceCard}>
+                <div style={S.invoiceHeader}>
+                    <div>
+                        <div style={S.fieldLabel}>InvoiceStudio</div>
+                        <div style={S.fieldHint}>Modulo isolado e opcional para enviar PDFs desta aba para processamento.</div>
+                    </div>
+                    <button style={S.smallGhostBtn} type="button" onClick={() => openSettingsSection("conns")}>
+                        Ligacoes
+                    </button>
+                </div>
+
+                {!invoiceStudioEnabled && (
+                    <PanelState
+                        tone="info"
+                        title="Integracao desativada"
+                        description="Ativa o InvoiceStudio em Settings > Ligacoes para usar este envio."
+                        compact
+                    />
+                )}
+
+                {invoiceStudioEnabled && !invoiceStudioReady && (
+                    <PanelState
+                        tone="warning"
+                        title="Configuracao incompleta"
+                        description="Falta configurar URL, email ou password do InvoiceStudio."
+                        compact
+                    />
+                )}
+
+                {invoiceStudioEnabled && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <div style={{ fontSize: 11, color: "var(--iccc-text-muted)" }}>
+                            {selectedInvoicePdfFiles.length} PDF(s) selecionado(s) para envio
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                            <button style={S.smallGhostBtn} type="button" onClick={() => selectAllInvoiceFiles(true)}>Todos</button>
+                            <button style={S.smallGhostBtn} type="button" onClick={() => selectAllInvoiceFiles(false)}>Nenhum</button>
+                        </div>
+                    </div>
+                )}
+
+                {invoiceStudioEnabled && (
+                    <button
+                        style={S.invoiceBtn}
+                        type="button"
+                        onClick={handleSendToInvoiceStudio}
+                        disabled={!invoiceStudioReady || isSendingInvoiceStudio || selectedInvoicePdfFiles.length === 0}
+                    >
+                        <Icons.ExternalLink size={16} />
+                        <span>{isSendingInvoiceStudio ? "A enviar..." : "Enviar para InvoiceStudio"}</span>
+                    </button>
+                )}
+
+                {invoiceStudioJob && (
+                    <div style={S.invoiceJobCard}>
+                        <div style={S.statsRow}>
+                            <span>Batch</span>
+                            <span style={S.statsVal}>{invoiceStudioJob.batchId}</span>
+                        </div>
+                        <div style={S.statsRow}>
+                            <span>Estado</span>
+                            <span style={S.statsVal}>{invoiceStudioJob.status}</span>
+                        </div>
+                        <div style={S.statsRow}>
+                            <span>Progresso</span>
+                            <span style={S.statsVal}>{invoiceStudioJob.done}/{invoiceStudioJob.total || "?"}</span>
+                        </div>
+                        {invoiceStudioJob.errors > 0 && (
+                            <div style={S.statsRow}>
+                                <span>Erros</span>
+                                <span style={{ ...S.statsVal, color: "#ef4444" }}>{invoiceStudioJob.errors}</span>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
             <div
                 style={{
                     ...S.dropZone,
@@ -189,7 +472,6 @@ export const FileCockpit: React.FC = () => {
                 </div>
             </div>
 
-            {/* FILE LIST */}
             <div style={S.fileList}>
                 {files.length === 0 && (
                     <PanelState
@@ -199,33 +481,51 @@ export const FileCockpit: React.FC = () => {
                     />
                 )}
 
-                {files.map((f, idx) => (
-                    <div key={idx} style={S.fileItem}>
-                        <div style={S.fileIcon}>
-                            {f.type.includes("pdf") ? <Icons.Receipt size={16} color="#ef4444" /> : <Icons.Files size={16} color="#3b82f6" />}
+                {files.map((file: any, idx: number) => {
+                    const fileName = String(file?.name || "").trim();
+                    const checked = selectedForInvoiceStudio[fileName] !== false;
+                    return (
+                        <div key={idx} style={S.fileItem}>
+                            <label style={S.checkboxWrap} title="Selecionar para envio ao InvoiceStudio">
+                                <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleInvoiceSelection(fileName)}
+                                />
+                            </label>
+                            <div style={S.fileIcon}>
+                                {isPdfLike(file) ? <Icons.Receipt size={16} color="#ef4444" /> : <Icons.Files size={16} color="#3b82f6" />}
+                            </div>
+                            <div style={S.fileInfo}>
+                                <div style={S.fileName} title={fileName}>{fileName}</div>
+                                <div style={S.fileMeta}>
+                                    {String(file?.type || "unknown")}
+                                    {isPdfLike(file) ? " • PDF" : " • fora do perfil InvoiceStudio"}
+                                </div>
+                            </div>
+                            <button
+                                style={S.actionIconBtn}
+                                onClick={() => triggerFileSummary(fileName)}
+                                title="Resumir este ficheiro na IA"
+                            >
+                                <Icons.Sparkles size={14} color="var(--iccc-pill-active-bg)" />
+                            </button>
+                            <button style={S.deleteBtn} onClick={() => removeFile(fileName)} title="Remover">
+                                x
+                            </button>
                         </div>
-                        <div style={S.fileInfo}>
-                            <div style={S.fileName} title={f.name}>{f.name}</div>
-                            <div style={S.fileMeta}>{f.type || "unknown"}</div>
-                        </div>
-                        <button
-                            style={S.actionIconBtn}
-                            onClick={() => triggerFileSummary(f.name)}
-                            title="Resumir este ficheiro na AI"
-                        >
-                            <Icons.Sparkles size={14} color="var(--iccc-pill-active-bg)" />
-                        </button>
-                        <button style={S.deleteBtn} onClick={() => removeFile(f.name)} title="Remover">
-                            ✕
-                        </button>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
 
             <div style={S.statsCard}>
                 <div style={S.statsRow}>
-                    <span>Ficheiros em Memória</span>
+                    <span>Ficheiros em memoria</span>
                     <span style={S.statsVal}>{files.length}</span>
+                </div>
+                <div style={S.statsRow}>
+                    <span>Selecionados p/ InvoiceStudio</span>
+                    <span style={S.statsVal}>{selectedInvoicePdfFiles.length}</span>
                 </div>
             </div>
             <style>{`
@@ -257,6 +557,18 @@ const S: Record<string, React.CSSProperties> = {
     subtitle: {
         fontSize: "11px",
         color: "var(--iccc-text-muted)",
+    },
+    fieldLabel: {
+        fontSize: "11px",
+        fontWeight: 800,
+        color: "var(--iccc-text)",
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+    },
+    fieldHint: {
+        fontSize: "11px",
+        color: "var(--iccc-text-muted)",
+        marginTop: "2px",
     },
     importBtn: {
         flex: 1,
@@ -291,6 +603,56 @@ const S: Record<string, React.CSSProperties> = {
         cursor: "pointer",
         transition: "all 0.2s",
     },
+    invoiceCard: {
+        display: "grid",
+        gap: "10px",
+        padding: "12px",
+        borderRadius: "12px",
+        border: "1px solid var(--iccc-card-border)",
+        background: "var(--iccc-card-bg)",
+        boxShadow: "var(--iccc-shadow)",
+    },
+    invoiceHeader: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: "10px",
+    },
+    smallGhostBtn: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        border: "1px solid var(--iccc-card-border)",
+        borderRadius: "8px",
+        padding: "6px 10px",
+        background: "var(--iccc-bg)",
+        color: "var(--iccc-text)",
+        fontSize: "11px",
+        fontWeight: 700,
+        cursor: "pointer",
+    },
+    invoiceBtn: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "8px",
+        background: "#0f766e",
+        color: "#fff",
+        border: "none",
+        borderRadius: "8px",
+        padding: "10px 12px",
+        fontSize: "12px",
+        fontWeight: 700,
+        cursor: "pointer",
+    },
+    invoiceJobCard: {
+        background: "rgba(15,118,110,0.06)",
+        border: "1px solid rgba(15,118,110,0.18)",
+        borderRadius: "10px",
+        padding: "10px 12px",
+        display: "grid",
+        gap: "6px",
+    },
     dropZone: {
         border: "2px dashed var(--iccc-card-border)",
         borderRadius: "var(--iccc-radius-card)",
@@ -299,14 +661,14 @@ const S: Record<string, React.CSSProperties> = {
         alignItems: "center",
         justifyContent: "center",
         transition: "all 0.2s ease",
-        cursor: "default", // Drag area
+        cursor: "default",
         minHeight: "100px",
     },
     fileList: {
         display: "flex",
         flexDirection: "column",
         gap: "8px",
-        maxHeight: "200px",
+        maxHeight: "240px",
         overflowY: "auto",
     },
     fileItem: {
@@ -317,6 +679,12 @@ const S: Record<string, React.CSSProperties> = {
         border: "1px solid var(--iccc-card-border)",
         borderRadius: "8px",
         gap: "10px",
+    },
+    checkboxWrap: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        marginRight: "2px",
     },
     fileIcon: {
         display: "flex",
@@ -368,10 +736,13 @@ const S: Record<string, React.CSSProperties> = {
         padding: "12px 16px",
         marginTop: "auto",
         boxShadow: "var(--iccc-shadow)",
+        display: "grid",
+        gap: "6px",
     },
     statsRow: {
         display: "flex",
         justifyContent: "space-between",
+        gap: "10px",
         fontSize: "11px",
         fontWeight: 600,
         color: "var(--iccc-text-muted)",
@@ -379,5 +750,7 @@ const S: Record<string, React.CSSProperties> = {
     statsVal: {
         color: "var(--iccc-pill-active-bg)",
         fontWeight: 800,
+        textAlign: "right",
+        wordBreak: "break-word",
     },
 };

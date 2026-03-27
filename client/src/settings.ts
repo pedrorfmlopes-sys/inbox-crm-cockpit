@@ -90,6 +90,14 @@ export type GroupTicketUiSettings = {
   aiInstructions: string;
 };
 
+export type InvoiceStudioSettings = {
+  enabled: boolean;
+  baseUrl: string;
+  email: string;
+  password: string;
+  project: string;
+};
+
 export type GroupOutlookCategorySettings = {
   enabled: boolean;
   includeGroups: boolean;
@@ -195,6 +203,7 @@ export type CockpitSettingsV1 = {
   openaiModelFast?: string;
   openaiModelQuality?: string;
   geminiModel?: string;
+  invoiceStudio: InvoiceStudioSettings;
 
   // AI Context Scope
   bodyScope?: "main" | "full";
@@ -294,6 +303,13 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   openaiModelFast: "",
   openaiModelQuality: "",
   geminiModel: "",
+  invoiceStudio: {
+    enabled: false,
+    baseUrl: "https://invoice-studio-backend.onrender.com",
+    email: "",
+    password: "",
+    project: "",
+  },
   bodyScope: "main",
   responsePresets: [
     { id: "p1", name: "Pedido de Dados", prompt: "Agradece o contacto e solicita os dados de faturação (NIF, Morada) para podermos proceder." },
@@ -588,6 +604,17 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
       family: String((((incoming as any).aiFontPreference || {}).family ?? base.aiFontPreference.family) || "").trim() || base.aiFontPreference.family,
       size: Math.max(9, Math.min(20, Number((((incoming as any).aiFontPreference || {}).size ?? base.aiFontPreference.size) || base.aiFontPreference.size))),
       color: String((((incoming as any).aiFontPreference || {}).color ?? base.aiFontPreference.color) || "").trim() || base.aiFontPreference.color,
+    },
+    invoiceStudio: {
+      ...base.invoiceStudio,
+      ...((incoming as any).invoiceStudio || {}),
+      enabled: typeof ((incoming as any).invoiceStudio || {}).enabled === "boolean"
+        ? Boolean(((incoming as any).invoiceStudio || {}).enabled)
+        : base.invoiceStudio.enabled,
+      baseUrl: String((((incoming as any).invoiceStudio || {}).baseUrl ?? base.invoiceStudio.baseUrl) || "").trim(),
+      email: String((((incoming as any).invoiceStudio || {}).email ?? base.invoiceStudio.email) || "").trim(),
+      password: String((((incoming as any).invoiceStudio || {}).password ?? base.invoiceStudio.password) || "").trim(),
+      project: String((((incoming as any).invoiceStudio || {}).project ?? base.invoiceStudio.project) || "").trim(),
     },
     referenceCodes: {
       ...base.referenceCodes,
