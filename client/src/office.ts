@@ -652,6 +652,37 @@ export async function syncLinkCategoriesToComposeDraft(input: {
   clientLog.warn("[office] syncLinkCategoriesToComposeDraft: compose draft not ready in time");
 }
 
+export async function setSubjectInComposeDraft(subject: string, options?: { attempts?: number; delayMs?: number }): Promise<void> {
+  const desiredSubject = String(subject || "").trim();
+  if (!desiredSubject) return;
+
+  const attempts = Math.max(1, Number(options?.attempts || 12));
+  const delayMs = Math.max(150, Number(options?.delayMs || 450));
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    const composeReady = await isComposeMode().catch(() => false);
+    if (!composeReady) continue;
+
+    const OfficeAny = await ensureOfficeReady().catch(() => null);
+    const item = OfficeAny?.context?.mailbox?.item;
+    if (!item?.subject?.setAsync) continue;
+
+    await new Promise<void>((resolve, reject) => {
+      item.subject.setAsync(desiredSubject, (result: any) => {
+        if (result?.status === OfficeAny.AsyncResultStatus.Succeeded) resolve();
+        else reject(new Error(result?.error?.message || "Erro ao definir assunto"));
+      });
+    });
+    return;
+  }
+
+  clientLog.warn("[office] setSubjectInComposeDraft: compose draft subject not ready in time");
+}
+
 export async function syncOdooLinkedNotification(hasLinks: boolean, count = 0): Promise<void> {
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
   const notifications = OfficeAny?.context?.mailbox?.item?.notificationMessages;

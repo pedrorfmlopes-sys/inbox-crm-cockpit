@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
-import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubject, openAiSettings, addBase64AttachmentToCompose, openAiReplyTargetPicker, syncLinkCategoriesToComposeDraft, type AiReplyTargetSelection } from "@/office";
+import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubjectInComposeDraft, openAiSettings, addBase64AttachmentToCompose, openAiReplyTargetPicker, syncLinkCategoriesToComposeDraft, type AiReplyTargetSelection } from "@/office";
 import { getSettings } from "@/settings";
 import { getRelatedEmailContext, logLearningInteraction, type RelevantEmailPayload } from "@/api";
 import { buildAiContextBundle, type AiContextBundle } from "./contextBundle";
@@ -1228,7 +1228,7 @@ export const AiCockpit: React.FC = () => {
                 // Sync metadata first
                 await setRecipients("to", draftTo);
                 await setRecipients("cc", draftCc);
-                await setSubject(finalDraftSubject);
+                await setSubjectInComposeDraft(finalDraftSubject, { attempts: 2, delayMs: 150 });
 
                 // Insert body
                 await insertTextToBody(output);
@@ -1278,7 +1278,7 @@ export const AiCockpit: React.FC = () => {
                     if (finalDraftSubject) {
                         try {
                             await new Promise((resolve) => setTimeout(resolve, 800));
-                            await setSubject(finalDraftSubject);
+                            await setSubjectInComposeDraft(finalDraftSubject);
                         } catch (subjectError) {
                             console.warn("[AiCockpit] Could not update forward draft subject with ticket code:", subjectError);
                         }
@@ -1351,7 +1351,7 @@ export const AiCockpit: React.FC = () => {
                     if (finalDraftSubject) {
                         try {
                             await new Promise((resolve) => setTimeout(resolve, 800));
-                            await setSubject(finalDraftSubject);
+                            await setSubjectInComposeDraft(finalDraftSubject);
                         } catch (subjectError) {
                             console.warn("[AiCockpit] Could not update reply draft subject with ticket code:", subjectError);
                         }

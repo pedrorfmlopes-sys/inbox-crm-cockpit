@@ -28,7 +28,7 @@ import {
 } from "@/api";
 import { aiGenerate } from "@/ai/aiClient";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { displayNewMessageForm, displayReplyForm, openGroupExplorer, openGroupSettings, openLinkedOutlookEmail, setSubject, syncManagedOutlookCategories } from "@/office";
+import { displayNewMessageForm, displayReplyForm, openGroupExplorer, openGroupSettings, openLinkedOutlookEmail, setSubjectInComposeDraft, syncManagedOutlookCategories } from "@/office";
 import { saveSettings } from "@/settings";
 import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
@@ -1904,8 +1904,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     await displayReplyForm(body, true, { replyAll: true });
     if (ticketUi?.includeTicketCodeInSubject !== false && replySubject) {
       try {
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        await setSubject(replySubject);
+        await setSubjectInComposeDraft(replySubject);
       } catch (error) {
         console.warn("[GroupManager] Could not update reply draft subject with ticket code:", error);
       }
