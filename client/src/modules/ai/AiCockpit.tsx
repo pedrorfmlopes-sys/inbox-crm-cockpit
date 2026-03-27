@@ -189,6 +189,39 @@ function formatDateLabel(value: string): string {
     });
 }
 
+async function copyTextWithFallback(text: string): Promise<boolean> {
+    const value = String(text || "");
+    if (!value) return true;
+
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(value);
+            return true;
+        }
+    } catch {
+        // Fall back below for Outlook/WebView hosts that block Clipboard API.
+    }
+
+    try {
+        const ta = document.createElement("textarea");
+        ta.value = value;
+        ta.setAttribute("readonly", "true");
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        ta.style.left = "-1000px";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ta.setSelectionRange(0, ta.value.length);
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+    } catch {
+        return false;
+    }
+}
+
 function isSameStoredEmailTarget(
     ctx: any,
     target: AiReplyTargetSelection | null | undefined,
@@ -2555,13 +2588,13 @@ export const AiCockpit: React.FC = () => {
                                 </button>
                                 <button
                                     style={{ ...S.actionBtnPrimary, color: "#059669", display: "flex", alignItems: "center" }}
-                                    onClick={() => {
+                                    onClick={async () => {
                                         const checklist = extractedTasks
                                             .filter(t => !t.completed)
                                             .map(t => `- [ ] ${t.title}${t.dueDate ? ` (${t.dueDate})` : ""}`)
                                             .join("\n");
-                                        navigator.clipboard.writeText(`Lista de Tarefas:\n${checklist}`);
-                                        setMsg("Checklist copiada!");
+                                        const ok = await copyTextWithFallback(`Lista de Tarefas:\n${checklist}`);
+                                        setMsg(ok ? "Checklist copiada!" : "Nao foi possivel copiar automaticamente.");
                                     }}
                                 >
                                     <Icons.Clipboard size={12} style={{ marginRight: "4px" }} />
@@ -3199,7 +3232,15 @@ export const AiCockpit: React.FC = () => {
                                 <button style={S.actionBtn} onClick={handleExport} title="Download" aria-label="Download">
                                     <Icons.Download size={15} />
                                 </button>
-                                <button style={S.actionBtn} onClick={() => navigator.clipboard.writeText(output)} title="Copiar" aria-label="Copiar">
+                                <button
+                                    style={S.actionBtn}
+                                    onClick={async () => {
+                                        const ok = await copyTextWithFallback(output);
+                                        setMsg(ok ? "Texto copiado." : "Nao foi possivel copiar automaticamente.");
+                                    }}
+                                    title="Copiar"
+                                    aria-label="Copiar"
+                                >
                                     <Icons.Clipboard size={15} />
                                 </button>
                                 <button
