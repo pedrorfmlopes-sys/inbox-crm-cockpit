@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, getRelatedEmailContext, listLinkGroups, listGroupTicketSeries, saveGroupDocuments, searchKnownEmails, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
-import { requestCockpitHostAction } from "@/office";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, saveGroupDocuments, searchGroupTickets, searchKnownEmails, updateLinkGroup, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { requestCockpitHostAction, syncManagedOutlookCategories } from "@/office";
 import { getSettings } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
 import { applySkin } from "@/ui/skins";
@@ -131,13 +131,25 @@ function detectReferences(text: string): string[] {
   return Array.from(refs).slice(0, 6);
 }
 
-function splitSuggestions(allGroups: LinkGroupEntry[], text: string): LinkGroupEntry[] {
+  function splitSuggestions(allGroups: LinkGroupEntry[], text: string): LinkGroupEntry[] {
   const value = text.toLowerCase();
   return allGroups.filter((group) => {
     const name = String(group.name || "").trim().toLowerCase();
     if (!name || name.length < 4) return false;
     return value.includes(name);
   }).slice(0, 8);
+}
+
+function mergeLabels(base: string[], extra: string[]): string[] {
+  const seen = new Set<string>();
+  return [...base, ...extra].reduce<string[]>((acc, label) => {
+    const value = String(label || "").trim();
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) return acc;
+    seen.add(key);
+    acc.push(value);
+    return acc;
+  }, []);
 }
 
 function StudioInner() {
@@ -160,6 +172,9 @@ function StudioInner() {
   const [principalGroupId, setPrincipalGroupId] = useState("");
   const [referenceGroupIds, setReferenceGroupIds] = useState<string[]>([]);
   const [selectedSeriesId, setSelectedSeriesId] = useState("");
+  const [selectedTicketId, setSelectedTicketId] = useState("");
+  const [ticketSearch, setTicketSearch] = useState("");
+  const [ticketSearchResults, setTicketSearchResults] = useState<GroupTicketEntry[]>([]);
   const [labelInput, setLabelInput] = useState("");
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [labelDrafts, setLabelDrafts] = useState<Record<string, LabelDraft>>({});
@@ -275,6 +290,11 @@ function StudioInner() {
     });
   }, [selectedEmail, selectedEmailGroups]);
 
+  useEffect(() => {
+    if (!principalGroupId) return;
+    setReferenceGroupIds((current) => current.filter((groupId) => groupId !== principalGroupId));
+  }, [principalGroupId]);
+
   const previewHtml = useMemo(() => buildEmailPreviewHtml(selectedEmail), [selectedEmail]);
   const labelCatalog = useMemo(() => {
     const values = new Set<string>();
@@ -287,6 +307,14 @@ function StudioInner() {
     const q = String(labelInput || "").trim().toLowerCase();
     return q ? labelCatalog.filter((label) => label.toLowerCase().includes(q)) : labelCatalog;
   }, [labelCatalog, labelInput]);
+  const availableTicketChoices = useMemo(() => {
+    const rows = [...relatedTickets, ...ticketSearchResults].reduce<GroupTicketEntry[]>((acc, ticket) => {
+      if (!ticket?.id || acc.some((entry) => entry.id === ticket.id)) return acc;
+      acc.push(ticket);
+      return acc;
+    }, []);
+    return rows.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+  }, [relatedTickets, ticketSearchResults]);
   const selectedEmailIsCurrent = useMemo(() => {
     const selectedItemId = String(selectedEmail?.itemId || "").trim();
     const currentItemId = String(ctx.itemId || "").trim();
@@ -389,10 +417,39 @@ function StudioInner() {
       content: attachment.content,
     })),
   }), [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
+  const selectedTicket = useMemo(() => availableTicketChoices.find((ticket) => ticket.id === selectedTicketId) || relatedTickets.find((ticket) => ticket.id === selectedTicketId) || null, [availableTicketChoices, relatedTickets, selectedTicketId]);
+
+  useEffect(() => {
+    setSelectedTicketId((current) => {
+      if (current && availableTicketChoices.some((ticket) => ticket.id === current)) return current;
+      if (relatedTickets.length === 1) return relatedTickets[0].id;
+      return current || "";
+    });
+  }, [availableTicketChoices, relatedTickets]);
 
   async function handleClose() {
     const closed = await requestCockpitHostAction({ type: "close" });
     if (!closed) window.close();
+  }
+
+  async function refreshSelectedEmailContext() {
+    const related = await getRelatedEmailContext({
+      conversationId: currentEmailPayload.conversationId,
+      internetMessageId: currentEmailPayload.internetMessageId,
+      itemId: currentEmailPayload.itemId,
+      subject: currentEmailPayload.subject,
+      fromEmail: currentEmailPayload.fromEmail,
+      fromName: currentEmailPayload.fromName,
+      receivedAtIso: currentEmailPayload.receivedAtIso,
+    });
+    const nextGroups = [...allGroups, ...(related.groups || [])].reduce<LinkGroupEntry[]>((acc, group) => {
+      if (!group?.id || acc.some((entry) => entry.id === group.id)) return acc;
+      acc.push(group);
+      return acc;
+    }, []);
+    setAllGroups(nextGroups);
+    setRelatedTickets(Array.isArray(related.tickets) ? related.tickets : []);
+    setRelatedEmails(Array.isArray(related.emails) ? related.emails : []);
   }
 
   function toggleReferenceGroup(groupId: string) {
@@ -434,6 +491,7 @@ function StudioInner() {
       });
       setAllGroups((current) => current.some((entry) => entry.id === created.id) ? current : [created, ...current]);
       setPrincipalGroupId(created.id);
+      await refreshSelectedEmailContext();
       setStatus(`Grupo "${created.name}" criado e email ligado como principal.`);
     } catch (actionError: any) {
       setStatus(actionError?.message || "Nao foi possivel criar e ligar o grupo.");
@@ -506,9 +564,99 @@ function StudioInner() {
     setActionBusy(true);
     try {
       await saveGroupDocuments(principalGroupId, { documents: docs });
+      await refreshSelectedEmailContext();
       setStatus(`${docs.length} anexo(s) guardado(s) nos documentos do grupo principal.`);
     } catch (actionError: any) {
       setStatus(actionError?.message || "Nao foi possivel guardar os anexos no grupo.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleSearchTickets() {
+    setActionBusy(true);
+    try {
+      const rows = await searchGroupTickets({
+        q: String(ticketSearch || "").trim() || undefined,
+        groupId: principalGroupId || undefined,
+        email: currentEmailPayload,
+        limit: 20,
+      });
+      setTicketSearchResults(rows);
+      setStatus(rows.length ? `${rows.length} ticket(s) encontrados.` : "Nenhum ticket encontrado para estes filtros.");
+    } catch (actionError: any) {
+      setStatus(actionError?.message || "Nao foi possivel pesquisar tickets.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleApplyClassification() {
+    setActionBusy(true);
+    try {
+      const principalGroup = principalGroupId ? groupMap.get(principalGroupId) || null : null;
+      const referenceGroups = referenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[];
+      const allGroupIds = [principalGroupId, ...referenceGroupIds].filter(Boolean);
+
+      if (principalGroupId) {
+        await addEmailToLinkGroup(principalGroupId, {
+          ...currentEmailPayload,
+          membershipKind: "principal",
+        });
+      }
+      for (const groupId of referenceGroupIds) {
+        await addEmailToLinkGroup(groupId, {
+          ...currentEmailPayload,
+          membershipKind: "referencia",
+        });
+      }
+
+      if (principalGroup && selectedLabels.length) {
+        await updateLinkGroup(principalGroup.id, {
+          name: principalGroup.name,
+          description: principalGroup.description,
+          documentsEnabled: principalGroup.documentsEnabled,
+          status: principalGroup.status,
+          isArchived: principalGroup.isArchived,
+          labels: mergeLabels(principalGroup.labels || [], selectedLabels),
+        });
+      }
+
+      let finalTicket: GroupTicketEntry | null = null;
+      if (selectedTicketId) {
+        const linked = await linkEmailToGroupTicket(selectedTicketId, {
+          email: currentEmailPayload,
+          applyGroups: allGroupIds.length > 0,
+          groupIds: allGroupIds,
+          membershipKind: principalGroupId ? "principal" : "referencia",
+        });
+        finalTicket = linked.ticket;
+      } else if (selectedSeriesId) {
+        finalTicket = await createGroupTicket({
+          seriesId: selectedSeriesId,
+          title: String(createTicketTitle || selectedEmail?.subject || "Ticket").trim(),
+          description: String(selectedEmail?.bodyText || "").trim().slice(0, 4000),
+          labels: selectedLabels,
+          groupIds: allGroupIds,
+          email: currentEmailPayload,
+          membershipKind: principalGroupId ? "principal" : "referencia",
+        });
+        setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
+        setSelectedTicketId(finalTicket.id);
+      }
+
+      if (selectedEmailIsCurrent) {
+        await syncManagedOutlookCategories({
+          groupNames: principalGroup ? [principalGroup.name] : [],
+          ticketCodes: finalTicket?.code ? [finalTicket.code] : [],
+          statuses: finalTicket?.status ? [finalTicket.status] : [],
+        }).catch(() => undefined);
+      }
+
+      await refreshSelectedEmailContext();
+      setStatus("Classificacao aplicada ao email selecionado.");
+    } catch (actionError: any) {
+      setStatus(actionError?.message || "Nao foi possivel aplicar a classificacao.");
     } finally {
       setActionBusy(false);
     }
@@ -658,15 +806,47 @@ function StudioInner() {
         <div style={S.stack}>
           <div style={S.card}>
             <div style={S.cardTitle}>Classificacao base</div>
-            <div style={S.cardMeta}>Estrutura funcional local, sem gravacao nesta fase.</div>
+            <div style={S.cardMeta}>Agora ja aplica ao sistema real: grupo principal, referencias e ticket do email selecionado.</div>
             <div style={S.grid2}>
               <label style={S.field}><span style={S.label}>Grupo principal</span><select style={S.select} value={principalGroupId} onChange={(event) => setPrincipalGroupId(event.target.value)}><option value="">Sem grupo principal</option>{allGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-              <label style={S.field}><span style={S.label}>Serie de ticket</span><select style={S.select} value={selectedSeriesId} onChange={(event) => setSelectedSeriesId(event.target.value)}><option value="">Sem ticket/caso</option>{ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Ticket existente</span><select style={S.select} value={selectedTicketId} onChange={(event) => setSelectedTicketId(event.target.value)}><option value="">Sem ticket existente</option>{availableTicketChoices.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} · {ticket.title}</option>)}</select></label>
             </div>
           </div>
+
+          <div style={S.card}>
+            <div style={S.cardTitle}>Pesquisa de tickets</div>
+            <div style={S.inline}>
+              <input style={S.input} value={ticketSearch} onChange={(event) => setTicketSearch(event.target.value)} placeholder="Pesquisar por codigo, titulo ou etiqueta" />
+              <button type="button" style={S.secondaryBtn} onClick={() => void handleSearchTickets()} disabled={actionBusy}>
+                <Icons.Search size={12} />
+                Pesquisar
+              </button>
+            </div>
+            <div style={S.grid2}>
+              <label style={S.field}><span style={S.label}>Serie para novo ticket</span><select style={S.select} value={selectedSeriesId} onChange={(event) => setSelectedSeriesId(event.target.value)}><option value="">Sem novo ticket</option>{ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Titulo do ticket</span><input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do ticket" /></label>
+            </div>
+            {selectedTicket ? <div style={S.summaryRow}><span>Ticket selecionado</span><strong>{selectedTicket.code} · {selectedTicket.title}</strong></div> : null}
+          </div>
+
           <div style={S.card}>
             <div style={S.cardTitle}>Grupos referencia</div>
             <div style={S.chips}>{allGroups.filter((group) => group.id !== principalGroupId).map((group) => <button key={group.id} type="button" style={referenceGroupIds.includes(group.id) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleReferenceGroup(group.id)}>{group.name}</button>)}</div>
+          </div>
+
+          <div style={S.card}>
+            <div style={S.cardTitle}>Aplicar ao email selecionado</div>
+            <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroupId ? groupMap.get(principalGroupId)?.name || principalGroupId : "--"}</strong></div>
+            <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupIds.length}</strong></div>
+            <div style={S.summaryRow}><span>Ticket</span><strong>{selectedTicket ? selectedTicket.code : (selectedSeriesId ? "Novo ticket a criar" : "--")}</strong></div>
+            <div style={S.summaryRow}><span>Etiquetas selecionadas</span><strong>{selectedLabels.length}</strong></div>
+            <div style={S.inline}>
+              <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId)}>
+                <Icons.Save size={12} />
+                Aplicar classificacao
+              </button>
+              <span style={S.cardMeta}>No email atual, tambem tenta atualizar as categorias Outlook geridas.</span>
+            </div>
           </div>
         </div>
       );
@@ -801,6 +981,7 @@ const S: Record<string, React.CSSProperties> = {
   kicker: { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--iccc-muted)" },
   mainTitle: { fontSize: 24, fontWeight: 800, color: "var(--iccc-text)" },
   mainMeta: { fontSize: 13, lineHeight: 1.45, color: "var(--iccc-muted)", maxWidth: 820 },
+  primaryBtn: { height: 36, padding: "0 14px", borderRadius: 12, border: "1px solid rgba(37,99,235,0.2)", background: "linear-gradient(180deg,#3b82f6 0%, #2563eb 100%)", color: "#fff", fontSize: 12, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", boxShadow: "0 8px 18px rgba(37,99,235,0.25)" },
   secondaryBtn: { height: 34, padding: "0 12px", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)", fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" },
   context: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 14px", borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.8)" },
   contextTitle: { fontSize: 15, fontWeight: 700, color: "var(--iccc-text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 780 },
