@@ -785,7 +785,7 @@ function buildCockpitViewUrl(view: string, params: Record<string, string>) {
  * Opens a separate window using Office Dialog API.
  * Guard: only one dialog at a time (evita "já existe uma dialog ativa").
  */
-async function openCockpitView<T = void>(view: string, params: Record<string, string>, options?: { height?: number; width?: number; displayInIframe?: boolean }) {
+async function openCockpitView<T = void>(view: string, params: Record<string, string>, options?: { height?: number; width?: number; displayInIframe?: boolean; timeoutMs?: number }) {
   const OfficeAny = await ensureOfficeReady();
   const url = buildCockpitViewUrl(view, params);
 
@@ -812,7 +812,7 @@ async function openCockpitView<T = void>(view: string, params: Record<string, st
     const timer = setTimeout(() => {
       clientLog.warn(`[office] displayDialogAsync timeout for ${view}`);
       rejectOnce(new Error("A abertura da janela demorou demasiado tempo."));
-    }, 4000);
+    }, Math.max(2000, Number(options?.timeoutMs || 4000)));
 
     OfficeAny.context.ui.displayDialogAsync(
       url.toString(),
@@ -917,7 +917,7 @@ export async function openGroupSettings(params: Record<string, string> = {}) {
 
 export async function openGroupClassificationStudio(params: Record<string, string> = {}) {
   try {
-    return await openCockpitView("group-classification-studio", params, { height: 88, width: 86, displayInIframe: true });
+    return await openCockpitView("group-classification-studio", params, { height: 84, width: 74, displayInIframe: false, timeoutMs: 9000 });
   } catch (error) {
     const url = buildCockpitViewUrl("group-classification-studio", params);
     clientLog.warn("[office] group classification studio fallback to same-window navigation", error);
