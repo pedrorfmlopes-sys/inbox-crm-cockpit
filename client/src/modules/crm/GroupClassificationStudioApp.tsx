@@ -11,6 +11,7 @@ import "../../global.css";
 type SectionId = "emails" | "classification" | "labels" | "filters" | "summary";
 type ScopeMode = "related" | "all";
 type LabelDraft = { categorize: boolean; hasStatus: boolean };
+type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
 type StudioParams = {
   conversationId?: string;
   internetMessageId?: string;
@@ -215,6 +216,7 @@ function StudioInner() {
   const [onlyExternal, setOnlyExternal] = useState(false);
   const [onlyWithAttachments, setOnlyWithAttachments] = useState(false);
   const [allGroups, setAllGroups] = useState<LinkGroupEntry[]>([]);
+  const [currentCaseGroups, setCurrentCaseGroups] = useState<CaseGroupEntry[]>([]);
   const [ticketSeries, setTicketSeries] = useState<GroupTicketSeriesEntry[]>([]);
   const [relatedTickets, setRelatedTickets] = useState<GroupTicketEntry[]>([]);
   const [relatedEmails, setRelatedEmails] = useState<RelatedEmailEntry[]>([]);
@@ -290,6 +292,7 @@ function StudioInner() {
         ]);
         const mergedEmails = dedupeEmails([...contextualEmails, ...(emails || [])]);
         setAllGroups(mergedGroups);
+        setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
         setTicketSeries(Array.isArray(series) ? series : []);
         setRelatedTickets(Array.isArray(related.tickets) ? related.tickets : []);
         setRelatedEmails(contextualEmails);
@@ -323,6 +326,10 @@ function StudioInner() {
     () => allGroups.filter((group) => String(group?.kind || "").trim().toLowerCase() !== "conversation"),
     [allGroups]
   );
+  const currentCaseBusinessGroups = useMemo(
+    () => currentCaseGroups.filter((group) => String(group?.kind || "").trim().toLowerCase() !== "conversation"),
+    [currentCaseGroups]
+  );
   const emailPool = useMemo(() => (scopeMode === "related" ? dedupeEmails(relatedEmails) : dedupeEmails([...relatedEmails, ...knownEmails])), [knownEmails, relatedEmails, scopeMode]);
 
   const visibleEmails = useMemo(() => {
@@ -349,7 +356,17 @@ function StudioInner() {
 
   const selectedEmailGroups = useMemo(() => {
     if (!selectedEmail) return [];
-    const list = [...(selectedEmail.relatedGroups || []), ...(selectedEmail.groupId ? [{ id: selectedEmail.groupId, name: selectedEmail.groupName, relationKind: selectedEmail.membershipKind }] : [])];
+    const fallbackCurrentGroups = selectedEmailIsCurrent ? currentCaseBusinessGroups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      relationKind: group.relationKind,
+      kind: group.kind,
+    })) : [];
+    const list = [
+      ...(selectedEmail.relatedGroups || []),
+      ...(selectedEmail.groupId ? [{ id: selectedEmail.groupId, name: selectedEmail.groupName, relationKind: selectedEmail.membershipKind }] : []),
+      ...fallbackCurrentGroups,
+    ];
     return list.reduce<Array<{ id: string; name?: string; relationKind?: string }>>((acc, row) => {
       if (!row?.id || acc.some((entry) => entry.id === row.id)) return acc;
       const groupKind = String((row as any)?.kind || groupMap.get(row.id)?.kind || "").trim().toLowerCase();
@@ -357,7 +374,7 @@ function StudioInner() {
       acc.push(row);
       return acc;
     }, []);
-  }, [groupMap, selectedEmail]);
+  }, [currentCaseBusinessGroups, groupMap, selectedEmail, selectedEmailIsCurrent]);
 
   useEffect(() => {
     if (!selectedEmail) return;
@@ -535,6 +552,7 @@ function StudioInner() {
       ...(currentSeed ? [currentSeed] : []),
     ]);
     setAllGroups(nextGroups);
+    setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
     setRelatedTickets(Array.isArray(related.tickets) ? related.tickets : []);
     setRelatedEmails(contextualEmails);
   }

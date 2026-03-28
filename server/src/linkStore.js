@@ -1792,7 +1792,10 @@ async function getDbCustomGroupContext(input) {
   const primaryEmailKey = emailKey || Array.from(currentEmailKeys)[0] || "";
   const primaryMembershipRows = membershipRows.filter((row) => normalizeString(row.email_key) === primaryEmailKey);
   const groups = Array.from(
-    new Map(membershipRows.map((row) => [normalizeString(row.id), mapDbGroupRow(row)])).values()
+    new Map(membershipRows.map((row) => [normalizeString(row.id), {
+      ...mapDbGroupRow(row),
+      relationKind: normalizeGroupMembershipKind(row.relation_kind),
+    }])).values()
   ).filter(Boolean);
   const currentRelatedGroups = primaryMembershipRows.reduce((acc, row) => {
     const groupId = normalizeString(row.id || row.group_id);
@@ -3221,9 +3224,19 @@ export async function getRelatedEmails(input) {
     groups: Array.from(
       new Map(
         currentEmailIds
-          .flatMap((emailId) => listEmailGroupMemberships(store, emailId).map((entry) => entry.groupId))
-          .map((groupId) => [groupId, store.groups[groupId]])
-          .filter(([, group]) => Boolean(group))
+          .flatMap((emailId) => listEmailGroupMemberships(store, emailId).map((entry) => ({
+            groupId: entry.groupId,
+            relationKind: normalizeGroupMembershipKind(entry.kind),
+          })))
+          .map((entry) => {
+            const group = store.groups[entry.groupId];
+            if (!group) return null;
+            return [entry.groupId, {
+              ...group,
+              relationKind: entry.relationKind,
+            }];
+          })
+          .filter(Boolean)
       ).values()
     ).map((group) => ({
       ...group,
