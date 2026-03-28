@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
-import { getRelatedEmailContext, listLinkGroups, listGroupTicketSeries, searchKnownEmails, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry } from "@/api";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, getRelatedEmailContext, listLinkGroups, listGroupTicketSeries, saveGroupDocuments, searchKnownEmails, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { requestCockpitHostAction } from "@/office";
 import { getSettings } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
@@ -92,6 +92,54 @@ function isExternalEmail(email: RelatedEmailEntry): boolean {
   return from ? !from.endsWith("@divitek.pt") : true;
 }
 
+function makeAttachmentKey(attachment: { id?: string; name?: string; contentId?: string }): string {
+  return String(attachment.id || attachment.contentId || attachment.name || "").trim();
+}
+
+function derivePartnerName(email: RelatedEmailEntry | null): string {
+  const fromName = String(email?.fromName || "").trim();
+  if (fromName) return fromName;
+  const fromEmail = String(email?.fromEmail || "").trim().toLowerCase();
+  const domain = fromEmail.includes("@") ? fromEmail.split("@")[1] : "";
+  const base = domain.split(".")[0] || "";
+  return base ? base.charAt(0).toUpperCase() + base.slice(1) : "";
+}
+
+function detectCaseType(text: string): string {
+  const value = text.toLowerCase();
+  if (/(reclam|inciden|nao conforme|defeito)/.test(value)) return "reclamacao";
+  if (/(pedido|encomenda|order|po\b|purchase order|material listo)/.test(value)) return "pedido/encomenda";
+  if (/(proposta|orcamento|quote|quotation)/.test(value)) return "proposta";
+  if (/(projeto|project|obra|worksite)/.test(value)) return "projeto";
+  return "geral";
+}
+
+function detectReferences(text: string): string[] {
+  const refs = new Set<string>();
+  const patterns = [
+    /\b(?:pedido|encomenda|order|po|proposta|orcamento|obra|projeto|project)\s*(?:n[.oº°]*)?\s*([A-Z]{0,6}[-/]?\d{2,}[A-Z0-9/-]*)/gi,
+    /\b([A-Z]{2,6}[-/]\d{2,})\b/g,
+    /\b(\d{3,}[A-Z0-9/-]{0,10})\b/g,
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text))) {
+      const value = String(match[1] || "").trim();
+      if (value && value.length >= 4) refs.add(value);
+    }
+  }
+  return Array.from(refs).slice(0, 6);
+}
+
+function splitSuggestions(allGroups: LinkGroupEntry[], text: string): LinkGroupEntry[] {
+  const value = text.toLowerCase();
+  return allGroups.filter((group) => {
+    const name = String(group.name || "").trim().toLowerCase();
+    if (!name || name.length < 4) return false;
+    return value.includes(name);
+  }).slice(0, 8);
+}
+
 function StudioInner() {
   const { ctx, attachments } = useCockpit();
   const [section, setSection] = useState<SectionId>("emails");
@@ -115,6 +163,10 @@ function StudioInner() {
   const [labelInput, setLabelInput] = useState("");
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [labelDrafts, setLabelDrafts] = useState<Record<string, LabelDraft>>({});
+  const [createGroupName, setCreateGroupName] = useState("");
+  const [createTicketTitle, setCreateTicketTitle] = useState("");
+  const [attachmentPlan, setAttachmentPlan] = useState<Record<string, { analyze: boolean; save: boolean; forward: boolean }>>({});
+  const [actionBusy, setActionBusy] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -235,6 +287,108 @@ function StudioInner() {
     const q = String(labelInput || "").trim().toLowerCase();
     return q ? labelCatalog.filter((label) => label.toLowerCase().includes(q)) : labelCatalog;
   }, [labelCatalog, labelInput]);
+  const selectedEmailIsCurrent = useMemo(() => {
+    const selectedItemId = String(selectedEmail?.itemId || "").trim();
+    const currentItemId = String(ctx.itemId || "").trim();
+    if (selectedItemId && currentItemId && selectedItemId === currentItemId) return true;
+    const selectedMessageId = String(selectedEmail?.internetMessageId || "").trim().toLowerCase();
+    const currentMessageId = String(ctx.internetMessageId || "").trim().toLowerCase();
+    return Boolean(selectedMessageId && currentMessageId && selectedMessageId === currentMessageId);
+  }, [ctx.internetMessageId, ctx.itemId, selectedEmail?.internetMessageId, selectedEmail?.itemId]);
+
+  const selectedEmailAttachments = useMemo(() => {
+    const source = selectedEmailIsCurrent
+      ? attachments.map((attachment) => ({ ...attachment }))
+      : (selectedEmail?.attachments || []).map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          contentType: String(attachment.contentType || "application/octet-stream"),
+          content: String(attachment.content || ""),
+          size: attachment.size,
+          isInline: attachment.isInline,
+          contentId: attachment.contentId,
+        }));
+    return source.filter((attachment) => String(attachment.name || "").trim());
+  }, [attachments, selectedEmail?.attachments, selectedEmailIsCurrent]);
+
+  useEffect(() => {
+    setAttachmentPlan((current) => {
+      const next = { ...current };
+      for (const attachment of selectedEmailAttachments) {
+        const key = makeAttachmentKey(attachment);
+        if (!key || next[key]) continue;
+        const contentType = String(attachment.contentType || "").toLowerCase();
+        const isDocument = /pdf|image|excel|spreadsheet|word|officedocument|text|csv/.test(contentType) || /\.(pdf|png|jpe?g|xlsx?|docx?|csv|txt)$/i.test(String(attachment.name || ""));
+        next[key] = { analyze: isDocument, save: false, forward: false };
+      }
+      return next;
+    });
+  }, [selectedEmailAttachments]);
+
+  const detectionText = useMemo(() => {
+    const attachmentNames = selectedEmailAttachments.map((attachment) => attachment.name).join(" ");
+    return [
+      selectedEmail?.subject,
+      selectedEmail?.fromName,
+      selectedEmail?.fromEmail,
+      selectedEmail?.bodyText,
+      htmlToPlainText(String(selectedEmail?.bodyHtml || "")),
+      attachmentNames,
+    ].filter(Boolean).join(" ");
+  }, [selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.subject, selectedEmailAttachments]);
+
+  const detectedCaseType = useMemo(() => detectCaseType(detectionText), [detectionText]);
+  const detectedReferences = useMemo(() => detectReferences(detectionText), [detectionText]);
+  const suggestedExistingGroups = useMemo(() => splitSuggestions(allGroups, detectionText), [allGroups, detectionText]);
+  const suggestedLabelSeeds = useMemo(() => {
+    const values = new Set<string>();
+    if (detectedCaseType !== "geral") values.add(`tipo:${detectedCaseType}`);
+    for (const ref of detectedReferences) values.add(ref);
+    const partner = derivePartnerName(selectedEmail);
+    if (partner) values.add(partner);
+    return Array.from(values).slice(0, 8);
+  }, [detectedCaseType, detectedReferences, selectedEmail]);
+
+  const suggestedGroupName = useMemo(() => {
+    const partner = derivePartnerName(selectedEmail);
+    if (detectedReferences.length && partner) return `${partner} / ${detectedReferences[0]}`;
+    if (detectedReferences.length) return detectedReferences[0];
+    if (partner && detectedCaseType !== "geral") return `${partner} / ${detectedCaseType}`;
+    return partner || String(selectedEmail?.subject || "").trim().slice(0, 72);
+  }, [detectedCaseType, detectedReferences, selectedEmail]);
+
+  useEffect(() => {
+    if (!createGroupName && suggestedGroupName) setCreateGroupName(suggestedGroupName);
+  }, [createGroupName, suggestedGroupName]);
+
+  useEffect(() => {
+    if (!createTicketTitle) {
+      const next = String(selectedEmail?.subject || "").trim() || (suggestedGroupName ? `Caso ${suggestedGroupName}` : "Ticket");
+      setCreateTicketTitle(next);
+    }
+  }, [createTicketTitle, selectedEmail?.subject, suggestedGroupName]);
+
+  const currentEmailPayload = useMemo<RelevantEmailPayload>(() => ({
+    itemId: String(selectedEmail?.itemId || ctx.itemId || "").trim() || undefined,
+    internetMessageId: String(selectedEmail?.internetMessageId || ctx.internetMessageId || "").trim() || undefined,
+    conversationId: String(selectedEmail?.conversationId || ctx.conversationId || "").trim() || undefined,
+    subject: String(selectedEmail?.subject || ctx.subject || "").trim() || undefined,
+    fromEmail: String(selectedEmail?.fromEmail || ctx.fromEmail || "").trim() || undefined,
+    fromName: String(selectedEmail?.fromName || ctx.fromName || "").trim() || undefined,
+    receivedAtIso: String(selectedEmail?.receivedAtIso || selectedEmail?.messageDateIso || ctx.receivedDateTimeIso || "").trim() || undefined,
+    messageDateIso: String(selectedEmail?.messageDateIso || selectedEmail?.receivedAtIso || ctx.receivedDateTimeIso || "").trim() || undefined,
+    bodyText: String(selectedEmail?.bodyText || "").trim() || undefined,
+    bodyHtml: String(selectedEmail?.bodyHtml || "").trim() || undefined,
+    attachments: selectedEmailAttachments.map((attachment) => ({
+      id: attachment.id,
+      name: attachment.name,
+      contentType: attachment.contentType,
+      size: attachment.size,
+      isInline: attachment.isInline,
+      contentId: attachment.contentId,
+      content: attachment.content,
+    })),
+  }), [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
 
   async function handleClose() {
     const closed = await requestCockpitHostAction({ type: "close" });
@@ -259,6 +413,105 @@ function StudioInner() {
 
   function removeLabel(label: string) {
     setSelectedLabels((current) => current.filter((entry) => entry !== label));
+  }
+
+  async function handleCreateGroupAndLink() {
+    const name = String(createGroupName || "").trim();
+    if (!name) {
+      setStatus("Define primeiro o nome do grupo.");
+      return;
+    }
+    setActionBusy(true);
+    try {
+      const created = await createLinkGroup({
+        name,
+        labels: selectedLabels,
+        documentsEnabled: true,
+      });
+      await addEmailToLinkGroup(created.id, {
+        ...currentEmailPayload,
+        membershipKind: "principal",
+      });
+      setAllGroups((current) => current.some((entry) => entry.id === created.id) ? current : [created, ...current]);
+      setPrincipalGroupId(created.id);
+      setStatus(`Grupo "${created.name}" criado e email ligado como principal.`);
+    } catch (actionError: any) {
+      setStatus(actionError?.message || "Nao foi possivel criar e ligar o grupo.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleCreateTicketAndLink() {
+    if (!selectedSeriesId) {
+      setStatus("Escolhe primeiro uma serie de ticket.");
+      return;
+    }
+    setActionBusy(true);
+    try {
+      const groupIds = [principalGroupId, ...referenceGroupIds].filter(Boolean);
+      const ticket = await createGroupTicket({
+        seriesId: selectedSeriesId,
+        title: String(createTicketTitle || selectedEmail?.subject || "Ticket").trim(),
+        description: String(selectedEmail?.bodyText || "").trim().slice(0, 4000),
+        labels: selectedLabels,
+        groupIds,
+        email: currentEmailPayload,
+        membershipKind: principalGroupId ? "principal" : "referencia",
+      });
+      setRelatedTickets((current) => [ticket, ...current.filter((entry) => entry.id !== ticket.id)]);
+      setStatus(`Ticket ${ticket.code} criado e ligado ao email atual.`);
+    } catch (actionError: any) {
+      setStatus(actionError?.message || "Nao foi possivel criar o ticket.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  function toggleAttachmentPlan(attachmentKey: string, field: "analyze" | "save" | "forward", checked: boolean) {
+    setAttachmentPlan((current) => ({
+      ...current,
+      [attachmentKey]: {
+        analyze: current[attachmentKey]?.analyze ?? false,
+        save: current[attachmentKey]?.save ?? false,
+        forward: current[attachmentKey]?.forward ?? false,
+        [field]: checked,
+      },
+    }));
+  }
+
+  async function handleSaveSelectedAttachments() {
+    if (!principalGroupId) {
+      setStatus("Escolhe primeiro um grupo principal para guardar documentos.");
+      return;
+    }
+    const docs = selectedEmailAttachments
+      .filter((attachment) => attachmentPlan[makeAttachmentKey(attachment)]?.save)
+      .filter((attachment) => String(attachment.content || "").trim())
+      .map((attachment) => ({
+        name: attachment.name,
+        contentType: attachment.contentType,
+        contentBase64: attachment.content,
+        size: attachment.size,
+        sourceEmailKey: makeEmailKey(selectedEmail || {}),
+        sourceItemId: currentEmailPayload.itemId,
+        sourceInternetMessageId: currentEmailPayload.internetMessageId,
+        sourceConversationId: currentEmailPayload.conversationId,
+        sourceEmailSubject: currentEmailPayload.subject,
+      }));
+    if (!docs.length) {
+      setStatus("Nao ha anexos com conteudo selecionados para guardar.");
+      return;
+    }
+    setActionBusy(true);
+    try {
+      await saveGroupDocuments(principalGroupId, { documents: docs });
+      setStatus(`${docs.length} anexo(s) guardado(s) nos documentos do grupo principal.`);
+    } catch (actionError: any) {
+      setStatus(actionError?.message || "Nao foi possivel guardar os anexos no grupo.");
+    } finally {
+      setActionBusy(false);
+    }
   }
 
   function renderWorkspace() {
@@ -286,9 +539,115 @@ function StudioInner() {
               <span>{selectedEmail.fromName || selectedEmail.fromEmail || "--"}</span>
               <span>{formatDate(selectedEmail.messageDateIso || selectedEmail.receivedAtIso) || "--"}</span>
               <span>{Array.isArray(selectedEmail.attachments) ? `${selectedEmail.attachments.length} anexo(s)` : "Sem anexos"}</span>
+              <span>{detectedCaseType}</span>
             </div>
             {selectedEmailGroups.length ? <div style={S.chips}>{selectedEmailGroups.map((group) => <span key={group.id} style={S.groupChip}>{group.name || groupMap.get(group.id)?.name || group.id}</span>)}</div> : null}
             {previewHtml ? <iframe title={selectedEmail.subject || "Preview"} srcDoc={previewHtml} style={S.preview} sandbox="" /> : <PanelState compact tone="info" title="Preview indisponivel" description="Este email ainda nao tem corpo guardado suficiente para preview." />}
+          </div>
+
+          <div style={S.grid2Wide}>
+            <div style={S.card}>
+              <div style={S.cardTitle}>Deteccoes e sugestoes</div>
+              <div style={S.cardMeta}>Leitura inicial com base em assunto, corpo, nomes de anexos e contexto ja guardado.</div>
+              <div style={S.summaryRow}><span>Tipo detetado</span><strong>{detectedCaseType}</strong></div>
+              <div style={S.summaryRow}><span>Parceiro detetado</span><strong>{derivePartnerName(selectedEmail) || "--"}</strong></div>
+              <div style={S.summaryRow}><span>Referencias detetadas</span><strong>{detectedReferences.length ? detectedReferences.join(", ") : "--"}</strong></div>
+              <div style={S.summaryRow}><span>Sugestao de grupo</span><strong>{suggestedGroupName || "--"}</strong></div>
+              {suggestedExistingGroups.length ? (
+                <>
+                  <div style={S.subTitle}>Grupos sugeridos</div>
+                  <div style={S.chips}>
+                    {suggestedExistingGroups.map((group) => (
+                      <button key={group.id} type="button" style={group.id === principalGroupId ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => setPrincipalGroupId(group.id)}>
+                        {group.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+              {suggestedLabelSeeds.length ? (
+                <>
+                  <div style={S.subTitle}>Etiquetas sugeridas</div>
+                  <div style={S.chips}>
+                    {suggestedLabelSeeds.map((label) => (
+                      <button key={label} type="button" style={selectedLabels.includes(label) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => addLabel(label)}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            <div style={S.card}>
+              <div style={S.cardTitle}>Criacao rapida</div>
+              <div style={S.cardMeta}>Ja comecamos aqui a criar e ligar grupos ou tickets sem sair da janela.</div>
+              <label style={S.field}>
+                <span style={S.label}>Novo grupo</span>
+                <div style={S.inline}>
+                  <input style={S.input} value={createGroupName} onChange={(event) => setCreateGroupName(event.target.value)} placeholder="Nome do grupo" />
+                  <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateGroupAndLink()} disabled={actionBusy || !String(createGroupName || "").trim()}>
+                    <Icons.Plus size={12} />
+                    Criar grupo
+                  </button>
+                </div>
+              </label>
+              <label style={S.field}>
+                <span style={S.label}>Novo ticket</span>
+                <input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do ticket" />
+              </label>
+              <label style={S.field}>
+                <span style={S.label}>Serie de ticket</span>
+                <div style={S.inline}>
+                  <select style={S.select} value={selectedSeriesId} onChange={(event) => setSelectedSeriesId(event.target.value)}>
+                    <option value="">Sem ticket/caso</option>
+                    {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
+                  </select>
+                  <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateTicketAndLink()} disabled={actionBusy || !selectedSeriesId}>
+                    <Icons.Plus size={12} />
+                    Criar ticket
+                  </button>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div style={S.card}>
+            <div style={S.cardTitle}>Anexos deste email</div>
+            <div style={S.cardMeta}>Cada anexo pode ser marcado para analisar, guardar no grupo principal ou reenviar mais tarde.</div>
+            {selectedEmailAttachments.length ? (
+              <>
+                <div style={S.attachList}>
+                  {selectedEmailAttachments.map((attachment) => {
+                    const key = makeAttachmentKey(attachment);
+                    const plan = attachmentPlan[key] || { analyze: false, save: false, forward: false };
+                    const hasContent = Boolean(String(attachment.content || "").trim());
+                    return (
+                      <div key={key} style={S.attachRow}>
+                        <div style={S.attachMeta}>
+                          <strong>{attachment.name}</strong>
+                          <small>{attachment.contentType || "ficheiro"}{attachment.size ? ` · ${Math.round(Number(attachment.size || 0) / 1024)} KB` : ""}{hasContent ? "" : " · sem conteudo guardado"}</small>
+                        </div>
+                        <div style={S.attachChecks}>
+                          <label style={S.check}><input type="checkbox" checked={plan.analyze} onChange={(event) => toggleAttachmentPlan(key, "analyze", event.target.checked)} /><span>Analisar</span></label>
+                          <label style={S.check}><input type="checkbox" checked={plan.save} onChange={(event) => toggleAttachmentPlan(key, "save", event.target.checked)} disabled={!hasContent} /><span>Guardar</span></label>
+                          <label style={S.check}><input type="checkbox" checked={plan.forward} onChange={(event) => toggleAttachmentPlan(key, "forward", event.target.checked)} /><span>Reenviar</span></label>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={S.inline}>
+                  <button type="button" style={S.secondaryBtn} onClick={() => void handleSaveSelectedAttachments()} disabled={actionBusy || !principalGroupId}>
+                    <Icons.Save size={12} />
+                    Guardar no grupo principal
+                  </button>
+                  <span style={S.cardMeta}>Necessita de grupo principal selecionado e de anexos com conteudo disponivel.</span>
+                </div>
+              </>
+            ) : (
+              <PanelState compact tone="info" title="Sem anexos disponiveis" description="Este email nao traz anexos guardados ou ainda nao temos o conteudo disponivel nesta janela." />
+            )}
           </div>
         </div>
       );
@@ -476,14 +835,20 @@ const S: Record<string, React.CSSProperties> = {
   groupChipBtnOn: { borderRadius: 999, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 700, padding: "8px 12px", cursor: "pointer" },
   preview: { width: "100%", minHeight: 520, borderRadius: 14, overflow: "hidden", border: "1px solid rgba(148,163,184,0.24)", background: "#fff" },
   grid2: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 },
+  grid2Wide: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 },
   field: { display: "grid", gap: 6 },
   label: { fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--iccc-muted)" },
+  subTitle: { fontSize: 12, fontWeight: 800, color: "var(--iccc-text)" },
   inline: { display: "flex", alignItems: "center", gap: 8 },
   labelRow: { borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)", padding: 12, display: "grid", gap: 8 },
   labelHead: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   linkBtn: { border: "none", background: "transparent", color: "#2563eb", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 },
   check: { display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--iccc-text)" },
   inlineChecks: { display: "flex", gap: 16, flexWrap: "wrap" },
+  attachList: { display: "grid", gap: 10 },
+  attachRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 12, alignItems: "center", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)" },
+  attachMeta: { display: "grid", gap: 3, minWidth: 0, color: "var(--iccc-text)" },
+  attachChecks: { display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "flex-end" },
   summaryRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)", fontSize: 13, color: "var(--iccc-text)" },
   note: { padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(191,219,254,0.8)", background: "#eff6ff", color: "#1d4ed8", fontSize: 13, lineHeight: 1.5 },
 };
