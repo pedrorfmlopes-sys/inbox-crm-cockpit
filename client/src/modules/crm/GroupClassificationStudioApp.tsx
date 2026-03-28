@@ -354,6 +354,15 @@ function StudioInner() {
     [emailPool, selectedEmailKey, visibleEmails]
   );
 
+  const selectedEmailIsCurrent = useMemo(() => {
+    const selectedItemId = String(selectedEmail?.itemId || "").trim();
+    const currentItemId = String(ctx.itemId || "").trim();
+    if (selectedItemId && currentItemId && selectedItemId === currentItemId) return true;
+    const selectedMessageId = String(selectedEmail?.internetMessageId || "").trim().toLowerCase();
+    const currentMessageId = String(ctx.internetMessageId || "").trim().toLowerCase();
+    return Boolean(selectedMessageId && currentMessageId && selectedMessageId === currentMessageId);
+  }, [ctx.internetMessageId, ctx.itemId, selectedEmail?.internetMessageId, selectedEmail?.itemId]);
+
   const selectedEmailGroups = useMemo(() => {
     if (!selectedEmail) return [];
     const fallbackCurrentGroups = selectedEmailIsCurrent ? currentCaseBusinessGroups.map((group) => ({
@@ -414,14 +423,6 @@ function StudioInner() {
     }, []);
     return rows.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
   }, [relatedTickets, ticketSearchResults]);
-  const selectedEmailIsCurrent = useMemo(() => {
-    const selectedItemId = String(selectedEmail?.itemId || "").trim();
-    const currentItemId = String(ctx.itemId || "").trim();
-    if (selectedItemId && currentItemId && selectedItemId === currentItemId) return true;
-    const selectedMessageId = String(selectedEmail?.internetMessageId || "").trim().toLowerCase();
-    const currentMessageId = String(ctx.internetMessageId || "").trim().toLowerCase();
-    return Boolean(selectedMessageId && currentMessageId && selectedMessageId === currentMessageId);
-  }, [ctx.internetMessageId, ctx.itemId, selectedEmail?.internetMessageId, selectedEmail?.itemId]);
 
   const selectedEmailAttachments = useMemo(() => {
     const source = selectedEmailIsCurrent
