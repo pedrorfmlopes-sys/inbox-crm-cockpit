@@ -7,6 +7,7 @@ import GroupManagerApp from "@/modules/crm/GroupManagerApp";
 import AiSettingsApp from "@/modules/ai/AiSettingsApp";
 import AiReplyTargetPickerApp from "@/modules/ai/AiReplyTargetPickerApp";
 import GroupSettingsApp from "@/modules/crm/GroupSettingsApp";
+import GroupClassificationStudioApp from "@/modules/crm/GroupClassificationStudioApp";
 import SettingsApp from "@/ui/SettingsApp";
 
 const WARM_BOOT_STORAGE_KEY = "iccc_warm_boot_v1";
@@ -87,6 +88,7 @@ function Boot() {
   if (view === "ai-settings") return <AiSettingsApp />;
   if (view === "ai-reply-target-picker") return <AiReplyTargetPickerApp />;
   if (view === "group-settings") return <GroupSettingsApp />;
+  if (view === "group-classification-studio") return <GroupClassificationStudioApp />;
   if (view === "app-settings") return <SettingsApp />;
   return <UniversalApp />;
 }

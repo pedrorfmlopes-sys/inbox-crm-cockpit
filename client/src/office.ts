@@ -915,6 +915,16 @@ export async function openGroupSettings(params: Record<string, string> = {}) {
   }
 }
 
+export async function openGroupClassificationStudio(params: Record<string, string> = {}) {
+  try {
+    return await openCockpitView("group-classification-studio", params, { height: 88, width: 86, displayInIframe: true });
+  } catch (error) {
+    const url = buildCockpitViewUrl("group-classification-studio", params);
+    clientLog.warn("[office] group classification studio fallback to same-window navigation", error);
+    window.location.assign(url.toString());
+  }
+}
+
 export async function openAppSettings(params: Record<string, string> = {}) {
   try {
     return await openCockpitView("app-settings", params, { height: 86, width: 64, displayInIframe: true });

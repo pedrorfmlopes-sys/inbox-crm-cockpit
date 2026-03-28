@@ -28,7 +28,7 @@ import {
 } from "@/api";
 import { aiGenerate } from "@/ai/aiClient";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { displayNewMessageForm, displayReplyForm, openGroupExplorer, openGroupSettings, openLinkedOutlookEmail, setSubjectInComposeDraft, syncManagedOutlookCategories } from "@/office";
+import { displayNewMessageForm, displayReplyForm, openGroupClassificationStudio, openGroupExplorer, openGroupSettings, openLinkedOutlookEmail, setSubjectInComposeDraft, syncManagedOutlookCategories } from "@/office";
 import { saveSettings } from "@/settings";
 import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
@@ -2939,6 +2939,10 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                 <button type="button" style={S.primaryBtn} onClick={() => openQuickLinkView()} disabled={busy}>
                   <Icons.Link size={12} />
                   Ligar email
+                </button>
+                <button type="button" style={S.secondaryBtn} onClick={() => void openGroupClassificationStudio()} disabled={busy}>
+                  <Icons.Target size={12} />
+                  Classificar
                 </button>
               </div>
             </div>
