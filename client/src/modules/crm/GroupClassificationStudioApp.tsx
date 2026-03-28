@@ -518,6 +518,45 @@ function StudioInner() {
     })),
   }), [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
   const selectedTicket = useMemo(() => availableTicketChoices.find((ticket) => ticket.id === selectedTicketId) || relatedTickets.find((ticket) => ticket.id === selectedTicketId) || null, [availableTicketChoices, relatedTickets, selectedTicketId]);
+  const principalGroup = useMemo(() => (principalGroupId ? groupMap.get(principalGroupId) || null : null), [groupMap, principalGroupId]);
+  const referenceGroups = useMemo(
+    () => referenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[],
+    [groupMap, referenceGroupIds]
+  );
+  const inheritedLabels = useMemo(
+    () =>
+      mergeLabels(
+        mergeLabels(
+          principalGroup?.labels || [],
+          referenceGroups.flatMap((group) => group.labels || [])
+        ),
+        mergeLabels(
+          selectedTicket?.labels || [],
+          relatedTickets.flatMap((ticket) => ticket.labels || [])
+        )
+      ),
+    [principalGroup?.labels, referenceGroups, relatedTickets, selectedTicket?.labels]
+  );
+  const summaryLabels = useMemo(
+    () => mergeLabels(inheritedLabels, selectedLabels),
+    [inheritedLabels, selectedLabels]
+  );
+  const referenceGroupSummary = useMemo(
+    () => (referenceGroups.length ? referenceGroups.map((group) => group.name || group.id).join(", ") : "--"),
+    [referenceGroups]
+  );
+  const ticketSummary = useMemo(() => {
+    if (selectedTicket?.code) return selectedTicket.code;
+    if (relatedTickets.length) {
+      const codes = relatedTickets.map((ticket) => String(ticket.code || "").trim()).filter(Boolean);
+      if (codes.length) return codes.join(", ");
+    }
+    if (selectedSeriesId) {
+      const series = ticketSeries.find((entry) => entry.id === selectedSeriesId);
+      return series?.prefix ? `${series.prefix} (novo)` : "Novo ticket";
+    }
+    return "--";
+  }, [relatedTickets, selectedSeriesId, selectedTicket?.code, ticketSeries]);
 
   useEffect(() => {
     setSelectedTicketId((current) => {
@@ -526,6 +565,18 @@ function StudioInner() {
       return current || "";
     });
   }, [availableTicketChoices, relatedTickets]);
+
+  useEffect(() => {
+    if (selectedLabels.length || !inheritedLabels.length) return;
+    setSelectedLabels(inheritedLabels);
+    setLabelDrafts((current) => {
+      const next = { ...current };
+      for (const label of inheritedLabels) {
+        if (!next[label]) next[label] = { categorize: false, hasStatus: false };
+      }
+      return next;
+    });
+  }, [inheritedLabels, selectedLabels.length]);
 
   async function handleClose() {
     const closed = await requestCockpitHostAction({ type: "close" });
@@ -942,10 +993,10 @@ function StudioInner() {
 
           <div style={S.card}>
             <div style={S.cardTitle}>Aplicar ao email selecionado</div>
-            <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroupId ? groupMap.get(principalGroupId)?.name || principalGroupId : "--"}</strong></div>
-            <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupIds.length}</strong></div>
-            <div style={S.summaryRow}><span>Ticket</span><strong>{selectedTicket ? selectedTicket.code : (selectedSeriesId ? "Novo ticket a criar" : "--")}</strong></div>
-            <div style={S.summaryRow}><span>Etiquetas selecionadas</span><strong>{selectedLabels.length}</strong></div>
+            <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
+            <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupSummary}</strong></div>
+            <div style={S.summaryRow}><span>Ticket</span><strong>{ticketSummary}</strong></div>
+            <div style={S.summaryRow}><span>Etiquetas selecionadas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
             <div style={S.inline}>
               <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId)}>
                 <Icons.Save size={12} />
@@ -1016,10 +1067,10 @@ function StudioInner() {
         <div style={S.card}>
           <div style={S.cardTitle}>Resumo da estrutura</div>
           <div style={S.summaryRow}><span>Email selecionado</span><strong>{selectedEmail?.subject || "--"}</strong></div>
-          <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroupId ? groupMap.get(principalGroupId)?.name || principalGroupId : "--"}</strong></div>
-          <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupIds.length}</strong></div>
-          <div style={S.summaryRow}><span>Serie de ticket</span><strong>{selectedSeriesId ? ticketSeries.find((entry) => entry.id === selectedSeriesId)?.prefix || selectedSeriesId : "--"}</strong></div>
-          <div style={S.summaryRow}><span>Etiquetas</span><strong>{selectedLabels.length}</strong></div>
+          <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
+          <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupSummary}</strong></div>
+          <div style={S.summaryRow}><span>Serie de ticket</span><strong>{ticketSummary}</strong></div>
+          <div style={S.summaryRow}><span>Etiquetas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
           <div style={S.summaryRow}><span>Anexos do email atual</span><strong>{selectedEmailAttachments.length}</strong></div>
         </div>
         <div style={S.note}>Janela nova criada sem alterar o fluxo atual dos grupos. O proximo passo sera ligar estas escolhas ao sistema real de classificacao e categorias.</div>
