@@ -140,9 +140,10 @@ function detectReferences(text: string): string[] {
   return Array.from(refs).slice(0, 6);
 }
 
-  function splitSuggestions(allGroups: LinkGroupEntry[], text: string): LinkGroupEntry[] {
+function splitSuggestions(allGroups: LinkGroupEntry[], text: string): LinkGroupEntry[] {
   const value = text.toLowerCase();
   return allGroups.filter((group) => {
+    if (String(group?.kind || "").trim().toLowerCase() === "conversation") return false;
     const name = String(group.name || "").trim().toLowerCase();
     if (!name || name.length < 4) return false;
     return value.includes(name);
@@ -318,6 +319,10 @@ function StudioInner() {
   }, [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, currentSeed]);
 
   const groupMap = useMemo(() => new Map(allGroups.map((group) => [group.id, group])), [allGroups]);
+  const businessGroups = useMemo(
+    () => allGroups.filter((group) => String(group?.kind || "").trim().toLowerCase() !== "conversation"),
+    [allGroups]
+  );
   const emailPool = useMemo(() => (scopeMode === "related" ? dedupeEmails(relatedEmails) : dedupeEmails([...relatedEmails, ...knownEmails])), [knownEmails, relatedEmails, scopeMode]);
 
   const visibleEmails = useMemo(() => {
@@ -347,10 +352,12 @@ function StudioInner() {
     const list = [...(selectedEmail.relatedGroups || []), ...(selectedEmail.groupId ? [{ id: selectedEmail.groupId, name: selectedEmail.groupName, relationKind: selectedEmail.membershipKind }] : [])];
     return list.reduce<Array<{ id: string; name?: string; relationKind?: string }>>((acc, row) => {
       if (!row?.id || acc.some((entry) => entry.id === row.id)) return acc;
+      const groupKind = String((row as any)?.kind || groupMap.get(row.id)?.kind || "").trim().toLowerCase();
+      if (groupKind === "conversation") return acc;
       acc.push(row);
       return acc;
     }, []);
-  }, [selectedEmail]);
+  }, [groupMap, selectedEmail]);
 
   useEffect(() => {
     if (!selectedEmail) return;
@@ -888,7 +895,7 @@ function StudioInner() {
             <div style={S.cardTitle}>Classificacao base</div>
             <div style={S.cardMeta}>Agora ja aplica ao sistema real: grupo principal, referencias e ticket do email selecionado.</div>
             <div style={S.grid2}>
-              <label style={S.field}><span style={S.label}>Grupo principal</span><select style={S.select} value={principalGroupId} onChange={(event) => setPrincipalGroupId(event.target.value)}><option value="">Sem grupo principal</option>{allGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Grupo principal</span><select style={S.select} value={principalGroupId} onChange={(event) => setPrincipalGroupId(event.target.value)}><option value="">Sem grupo principal</option>{businessGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
               <label style={S.field}><span style={S.label}>Ticket existente</span><select style={S.select} value={selectedTicketId} onChange={(event) => setSelectedTicketId(event.target.value)}><option value="">Sem ticket existente</option>{availableTicketChoices.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} · {ticket.title}</option>)}</select></label>
             </div>
           </div>
@@ -911,7 +918,7 @@ function StudioInner() {
 
           <div style={S.card}>
             <div style={S.cardTitle}>Grupos referencia</div>
-            <div style={S.chips}>{allGroups.filter((group) => group.id !== principalGroupId).map((group) => <button key={group.id} type="button" style={referenceGroupIds.includes(group.id) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleReferenceGroup(group.id)}>{group.name}</button>)}</div>
+            <div style={S.chips}>{businessGroups.filter((group) => group.id !== principalGroupId).map((group) => <button key={group.id} type="button" style={referenceGroupIds.includes(group.id) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleReferenceGroup(group.id)}>{group.name}</button>)}</div>
           </div>
 
           <div style={S.card}>
@@ -967,7 +974,7 @@ function StudioInner() {
             <div style={S.cardTitle}>Filtros da janela</div>
             <div style={S.grid2}>
               <label style={S.field}><span style={S.label}>Fonte da lista</span><select style={S.select} value={scopeMode} onChange={(event) => setScopeMode(event.target.value as ScopeMode)}><option value="related">So emails relacionados</option><option value="all">Todos os emails conhecidos</option></select></label>
-              <label style={S.field}><span style={S.label}>Filtrar por grupo</span><select style={S.select} value={groupFilterId} onChange={(event) => setGroupFilterId(event.target.value)}><option value="">Sem filtro</option>{allGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Filtrar por grupo</span><select style={S.select} value={groupFilterId} onChange={(event) => setGroupFilterId(event.target.value)}><option value="">Sem filtro</option>{businessGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
             </div>
             <div style={S.inlineChecks}>
               <label style={S.check}><input type="checkbox" checked={onlyExternal} onChange={(event) => setOnlyExternal(event.target.checked)} /><span>So emails externos</span></label>

@@ -908,7 +908,8 @@ function buildCurrentEmailContextEntry(store, emailId) {
     })
     .filter(Boolean);
 
-  const principalGroup = relatedGroups.find((entry) => normalizeGroupMembershipKind(entry?.relationKind) === "principal") || relatedGroups[0] || null;
+  const businessGroups = relatedGroups.filter((entry) => entry?.kind !== "conversation");
+  const principalGroup = businessGroups.find((entry) => normalizeGroupMembershipKind(entry?.relationKind) === "principal") || businessGroups[0] || null;
   const relatedRecords = Array.isArray(store?.emailEntityLinks?.[eid])
     ? dedupeRecordLinks(store.emailEntityLinks[eid]).map((entry) => ({
       model: entry.model,
@@ -950,7 +951,8 @@ function mergeEmailContextEntries(baseEmail, overlayEmail) {
     return acc;
   }, []);
 
-  const principalGroup = mergedRelatedGroups.find((entry) => normalizeGroupMembershipKind(entry?.relationKind) === "principal") || mergedRelatedGroups[0] || null;
+  const businessGroups = mergedRelatedGroups.filter((entry) => entry?.kind !== "conversation");
+  const principalGroup = businessGroups.find((entry) => normalizeGroupMembershipKind(entry?.relationKind) === "principal") || businessGroups[0] || null;
 
   return {
     ...baseEmail,
