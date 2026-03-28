@@ -356,12 +356,12 @@ function StudioInner() {
 
   const selectedEmailIsCurrent = useMemo(() => {
     const selectedItemId = String(selectedEmail?.itemId || "").trim();
-    const currentItemId = String(ctx.itemId || "").trim();
+    const currentItemId = String(currentContext.itemId || "").trim();
     if (selectedItemId && currentItemId && selectedItemId === currentItemId) return true;
     const selectedMessageId = String(selectedEmail?.internetMessageId || "").trim().toLowerCase();
-    const currentMessageId = String(ctx.internetMessageId || "").trim().toLowerCase();
+    const currentMessageId = String(currentContext.internetMessageId || "").trim().toLowerCase();
     return Boolean(selectedMessageId && currentMessageId && selectedMessageId === currentMessageId);
-  }, [ctx.internetMessageId, ctx.itemId, selectedEmail?.internetMessageId, selectedEmail?.itemId]);
+  }, [currentContext.internetMessageId, currentContext.itemId, selectedEmail?.internetMessageId, selectedEmail?.itemId]);
 
   const selectedEmailGroups = useMemo(() => {
     if (!selectedEmail) return [];
