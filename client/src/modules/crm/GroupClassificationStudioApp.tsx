@@ -11,6 +11,15 @@ import "../../global.css";
 type SectionId = "emails" | "classification" | "labels" | "filters" | "summary";
 type ScopeMode = "related" | "all";
 type LabelDraft = { categorize: boolean; hasStatus: boolean };
+type StudioParams = {
+  conversationId?: string;
+  internetMessageId?: string;
+  itemId?: string;
+  subject?: string;
+  fromEmail?: string;
+  fromName?: string;
+  receivedAtIso?: string;
+};
 
 const MENU: Array<{ id: SectionId; label: string; icon: React.ReactNode; help: string }> = [
   { id: "emails", label: "Emails", icon: <Icons.MessageSquare size={15} />, help: "Lista e preview base do caso." },
@@ -152,8 +161,49 @@ function mergeLabels(base: string[], extra: string[]): string[] {
   }, []);
 }
 
+function readParams(): StudioParams {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    conversationId: String(params.get("conversationId") || "").trim() || undefined,
+    internetMessageId: String(params.get("internetMessageId") || "").trim() || undefined,
+    itemId: String(params.get("itemId") || "").trim() || undefined,
+    subject: String(params.get("subject") || "").trim() || undefined,
+    fromEmail: String(params.get("fromEmail") || "").trim() || undefined,
+    fromName: String(params.get("fromName") || "").trim() || undefined,
+    receivedAtIso: String(params.get("receivedAtIso") || "").trim() || undefined,
+  };
+}
+
+function buildFallbackEmail(params: StudioParams): RelatedEmailEntry | null {
+  const itemId = String(params.itemId || "").trim();
+  const internetMessageId = String(params.internetMessageId || "").trim();
+  const conversationId = String(params.conversationId || "").trim();
+  const subject = String(params.subject || "").trim();
+  const fromEmail = String(params.fromEmail || "").trim();
+  const fromName = String(params.fromName || "").trim();
+  const receivedAtIso = String(params.receivedAtIso || "").trim();
+  if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
+  return {
+    emailKey: itemId || internetMessageId || `${conversationId}|${subject || fromEmail}`,
+    itemId: itemId || undefined,
+    internetMessageId: internetMessageId || undefined,
+    conversationId: conversationId || undefined,
+    subject: subject || "(sem assunto)",
+    fromEmail: fromEmail || undefined,
+    fromName: fromName || undefined,
+    receivedAtIso: receivedAtIso || undefined,
+    messageDateIso: receivedAtIso || undefined,
+    bodyText: "",
+    bodyHtml: "",
+    attachments: [],
+    relatedGroups: [],
+    relatedReasons: [],
+  };
+}
+
 function StudioInner() {
   const { ctx, attachments } = useCockpit();
+  const params = useMemo(() => readParams(), []);
   const [section, setSection] = useState<SectionId>("emails");
   const [scopeMode, setScopeMode] = useState<ScopeMode>("related");
   const [loading, setLoading] = useState(true);
@@ -183,6 +233,17 @@ function StudioInner() {
   const [attachmentPlan, setAttachmentPlan] = useState<Record<string, { analyze: boolean; save: boolean; forward: boolean }>>({});
   const [actionBusy, setActionBusy] = useState(false);
 
+  const currentSeed = useMemo(() => buildFallbackEmail(params), [params]);
+  const currentContext = useMemo(() => ({
+    conversationId: String(ctx.conversationId || params.conversationId || "").trim(),
+    internetMessageId: String(ctx.internetMessageId || params.internetMessageId || "").trim(),
+    itemId: String(ctx.itemId || params.itemId || "").trim(),
+    subject: String(ctx.subject || params.subject || "").trim(),
+    fromEmail: String(ctx.fromEmail || params.fromEmail || "").trim(),
+    fromName: String(ctx.fromName || params.fromName || "").trim(),
+    receivedAtIso: String(ctx.receivedDateTimeIso || params.receivedAtIso || "").trim(),
+  }), [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, params]);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -201,13 +262,13 @@ function StudioInner() {
       setError("");
       try {
         const payload = {
-          conversationId: ctx.conversationId,
-          internetMessageId: ctx.internetMessageId,
-          itemId: ctx.itemId,
-          subject: ctx.subject,
-          fromEmail: ctx.fromEmail,
-          fromName: ctx.fromName,
-          receivedAtIso: ctx.receivedDateTimeIso,
+          conversationId: currentContext.conversationId,
+          internetMessageId: currentContext.internetMessageId,
+          itemId: currentContext.itemId,
+          subject: currentContext.subject,
+          fromEmail: currentContext.fromEmail,
+          fromName: currentContext.fromName,
+          receivedAtIso: currentContext.receivedAtIso,
         };
         const [related, groups, emails, series] = await Promise.all([
           getRelatedEmailContext(payload),
@@ -221,18 +282,32 @@ function StudioInner() {
           acc.push(group);
           return acc;
         }, []);
-        const mergedEmails = dedupeEmails([...(related.emails || []), ...(emails || [])]);
+        const contextualEmails = dedupeEmails([
+          ...(related.email ? [related.email] : []),
+          ...(related.emails || []),
+          ...(currentSeed ? [currentSeed] : []),
+        ]);
+        const mergedEmails = dedupeEmails([...contextualEmails, ...(emails || [])]);
         setAllGroups(mergedGroups);
         setTicketSeries(Array.isArray(series) ? series : []);
         setRelatedTickets(Array.isArray(related.tickets) ? related.tickets : []);
-        setRelatedEmails(Array.isArray(related.emails) ? related.emails : []);
+        setRelatedEmails(contextualEmails);
         setKnownEmails(Array.isArray(emails) ? emails : []);
         setSelectedEmailKey((current) => {
           if (current && mergedEmails.some((email) => makeEmailKey(email) === current)) return current;
-          const currentItem = mergedEmails.find((email) => String(email.itemId || "").trim() === String(ctx.itemId || "").trim());
+          const currentItem = mergedEmails.find((email) => {
+            const itemId = String(email.itemId || "").trim();
+            const internetMessageId = String(email.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+            const currentItemId = String(currentContext.itemId || "").trim();
+            const currentMessageId = String(currentContext.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+            return (itemId && currentItemId && itemId === currentItemId)
+              || (internetMessageId && currentMessageId && internetMessageId === currentMessageId);
+          });
           return makeEmailKey(currentItem || mergedEmails[0] || {});
         });
-        setStatus("Janela base pronta. Nesta fase ainda nao altera o sistema atual; prepara apenas a futura UX completa.");
+        setStatus(mergedEmails.length
+          ? "Janela base pronta. O email atual e os relacionados ja podem ser analisados aqui."
+          : "Ainda nao encontrámos emails relacionados. Esta janela vai usar o email atual como ponto de partida.");
       } catch (fetchError: any) {
         if (!cancelled) setError(String(fetchError?.message || fetchError || "Falha a preparar o studio de classificacao."));
       } finally {
@@ -240,7 +315,7 @@ function StudioInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject]);
+  }, [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, currentSeed]);
 
   const groupMap = useMemo(() => new Map(allGroups.map((group) => [group.id, group])), [allGroups]);
   const emailPool = useMemo(() => (scopeMode === "related" ? dedupeEmails(relatedEmails) : dedupeEmails([...relatedEmails, ...knownEmails])), [knownEmails, relatedEmails, scopeMode]);
@@ -397,14 +472,14 @@ function StudioInner() {
   }, [createTicketTitle, selectedEmail?.subject, suggestedGroupName]);
 
   const currentEmailPayload = useMemo<RelevantEmailPayload>(() => ({
-    itemId: String(selectedEmail?.itemId || ctx.itemId || "").trim() || undefined,
-    internetMessageId: String(selectedEmail?.internetMessageId || ctx.internetMessageId || "").trim() || undefined,
-    conversationId: String(selectedEmail?.conversationId || ctx.conversationId || "").trim() || undefined,
-    subject: String(selectedEmail?.subject || ctx.subject || "").trim() || undefined,
-    fromEmail: String(selectedEmail?.fromEmail || ctx.fromEmail || "").trim() || undefined,
-    fromName: String(selectedEmail?.fromName || ctx.fromName || "").trim() || undefined,
-    receivedAtIso: String(selectedEmail?.receivedAtIso || selectedEmail?.messageDateIso || ctx.receivedDateTimeIso || "").trim() || undefined,
-    messageDateIso: String(selectedEmail?.messageDateIso || selectedEmail?.receivedAtIso || ctx.receivedDateTimeIso || "").trim() || undefined,
+    itemId: String(selectedEmail?.itemId || currentContext.itemId || "").trim() || undefined,
+    internetMessageId: String(selectedEmail?.internetMessageId || currentContext.internetMessageId || "").trim() || undefined,
+    conversationId: String(selectedEmail?.conversationId || currentContext.conversationId || "").trim() || undefined,
+    subject: String(selectedEmail?.subject || currentContext.subject || "").trim() || undefined,
+    fromEmail: String(selectedEmail?.fromEmail || currentContext.fromEmail || "").trim() || undefined,
+    fromName: String(selectedEmail?.fromName || currentContext.fromName || "").trim() || undefined,
+    receivedAtIso: String(selectedEmail?.receivedAtIso || selectedEmail?.messageDateIso || currentContext.receivedAtIso || "").trim() || undefined,
+    messageDateIso: String(selectedEmail?.messageDateIso || selectedEmail?.receivedAtIso || currentContext.receivedAtIso || "").trim() || undefined,
     bodyText: String(selectedEmail?.bodyText || "").trim() || undefined,
     bodyHtml: String(selectedEmail?.bodyHtml || "").trim() || undefined,
     attachments: selectedEmailAttachments.map((attachment) => ({
@@ -416,7 +491,7 @@ function StudioInner() {
       contentId: attachment.contentId,
       content: attachment.content,
     })),
-  }), [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
+  }), [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
   const selectedTicket = useMemo(() => availableTicketChoices.find((ticket) => ticket.id === selectedTicketId) || relatedTickets.find((ticket) => ticket.id === selectedTicketId) || null, [availableTicketChoices, relatedTickets, selectedTicketId]);
 
   useEffect(() => {
@@ -447,9 +522,14 @@ function StudioInner() {
       acc.push(group);
       return acc;
     }, []);
+    const contextualEmails = dedupeEmails([
+      ...(related.email ? [related.email] : []),
+      ...(related.emails || []),
+      ...(currentSeed ? [currentSeed] : []),
+    ]);
     setAllGroups(nextGroups);
     setRelatedTickets(Array.isArray(related.tickets) ? related.tickets : []);
-    setRelatedEmails(Array.isArray(related.emails) ? related.emails : []);
+    setRelatedEmails(contextualEmails);
   }
 
   function toggleReferenceGroup(groupId: string) {
@@ -914,7 +994,7 @@ function StudioInner() {
           <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupIds.length}</strong></div>
           <div style={S.summaryRow}><span>Serie de ticket</span><strong>{selectedSeriesId ? ticketSeries.find((entry) => entry.id === selectedSeriesId)?.prefix || selectedSeriesId : "--"}</strong></div>
           <div style={S.summaryRow}><span>Etiquetas</span><strong>{selectedLabels.length}</strong></div>
-          <div style={S.summaryRow}><span>Anexos do email atual</span><strong>{attachments.length}</strong></div>
+          <div style={S.summaryRow}><span>Anexos do email atual</span><strong>{selectedEmailAttachments.length}</strong></div>
         </div>
         <div style={S.note}>Janela nova criada sem alterar o fluxo atual dos grupos. O proximo passo sera ligar estas escolhas ao sistema real de classificacao e categorias.</div>
       </div>
@@ -933,8 +1013,8 @@ function StudioInner() {
       </div>
 
       <div style={S.context}>
-        <div><div style={S.kicker}>Email atual</div><div style={S.contextTitle}>{ctx.subject || "(sem assunto)"}</div></div>
-        <div style={S.badges}><span style={S.badge}>{attachments.length} anexo(s)</span><span style={S.badge}>{relatedTickets.length} ticket(s)</span><span style={S.badge}>{relatedEmails.length} relacionados</span></div>
+        <div><div style={S.kicker}>Email atual</div><div style={S.contextTitle}>{selectedEmail?.subject || currentContext.subject || "(sem assunto)"}</div></div>
+        <div style={S.badges}><span style={S.badge}>{selectedEmailAttachments.length} anexo(s)</span><span style={S.badge}>{relatedTickets.length} ticket(s)</span><span style={S.badge}>{relatedEmails.length} relacionados</span></div>
       </div>
 
       {status ? <div style={S.notice}>{status}</div> : null}

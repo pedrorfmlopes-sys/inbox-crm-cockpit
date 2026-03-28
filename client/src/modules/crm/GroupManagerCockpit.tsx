@@ -12,6 +12,7 @@ import {
   listLinkGroups,
   listGroupTicketSeries,
   removeEmailFromLinkGroup,
+  registerRelevantEmail,
   saveGroupDocuments,
   searchKnownEmails,
   searchGroupTickets,
@@ -659,6 +660,30 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   useEffect(() => {
     setSelectedCurrentAttachmentKeys(currentSavableAttachments.map((attachment) => makeAttachmentSelectionKey(attachment)));
   }, [currentEmailKey, currentSavableAttachments]);
+
+  async function handleOpenClassificationStudio() {
+    const params: Record<string, string> = {};
+    if (currentEmailLinkPayload.itemId) params.itemId = currentEmailLinkPayload.itemId;
+    if (currentEmailLinkPayload.internetMessageId) params.internetMessageId = currentEmailLinkPayload.internetMessageId;
+    if (currentEmailLinkPayload.conversationId) params.conversationId = currentEmailLinkPayload.conversationId;
+    if (currentEmailLinkPayload.subject) params.subject = currentEmailLinkPayload.subject;
+    if (currentEmailLinkPayload.fromEmail) params.fromEmail = currentEmailLinkPayload.fromEmail;
+    if (currentEmailLinkPayload.fromName) params.fromName = currentEmailLinkPayload.fromName;
+    if (currentEmailLinkPayload.receivedAtIso) params.receivedAtIso = currentEmailLinkPayload.receivedAtIso;
+    try {
+      if (
+        currentEmailLinkPayload.itemId
+        || currentEmailLinkPayload.internetMessageId
+        || currentEmailLinkPayload.conversationId
+        || currentEmailLinkPayload.subject
+      ) {
+        await registerRelevantEmail(currentEmailLinkPayload);
+      }
+    } catch {
+      // keep opening the studio even if the pre-registration fails
+    }
+    await openGroupClassificationStudio(params);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -2940,7 +2965,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                   <Icons.Link size={12} />
                   Ligar email
                 </button>
-                <button type="button" style={S.secondaryBtn} onClick={() => void openGroupClassificationStudio()} disabled={busy}>
+                <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenClassificationStudio()} disabled={busy}>
                   <Icons.Target size={12} />
                   Classificar
                 </button>
