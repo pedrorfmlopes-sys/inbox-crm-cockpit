@@ -890,6 +890,79 @@ function buildEmailListEntry(email, extra = {}) {
   };
 }
 
+function buildCurrentEmailContextEntry(store, emailId) {
+  const eid = normalizeString(emailId);
+  const email = store?.emails?.[eid];
+  if (!eid || !email) return null;
+
+  const relatedGroups = listEmailGroupMemberships(store, eid)
+    .map((entry) => {
+      const group = buildGroupListEntry(store, store?.groups?.[entry.groupId]);
+      if (!group) return null;
+      return {
+        id: group.id,
+        name: group.name,
+        kind: group.kind === "conversation" ? "conversation" : "group",
+        relationKind: normalizeGroupMembershipKind(entry.kind),
+      };
+    })
+    .filter(Boolean);
+
+  const principalGroup = relatedGroups.find((entry) => normalizeGroupMembershipKind(entry?.relationKind) === "principal") || relatedGroups[0] || null;
+  const relatedRecords = Array.isArray(store?.emailEntityLinks?.[eid])
+    ? dedupeRecordLinks(store.emailEntityLinks[eid]).map((entry) => ({
+      model: entry.model,
+      recordId: entry.recordId,
+      recordName: entry.recordName,
+    }))
+    : [];
+
+  return buildEmailListEntry(email, {
+    groupId: principalGroup?.id || "",
+    groupName: principalGroup?.name || "",
+    membershipKind: principalGroup?.relationKind || email?.membershipKind,
+    relatedGroups,
+    relatedRecords,
+    relatedReasons: [],
+  });
+}
+
+function mergeEmailContextEntries(baseEmail, overlayEmail) {
+  if (!baseEmail) return overlayEmail || null;
+  if (!overlayEmail) return baseEmail;
+
+  const mergedRelatedGroups = [
+    ...(Array.isArray(baseEmail.relatedGroups) ? baseEmail.relatedGroups : []),
+    ...(Array.isArray(overlayEmail.relatedGroups) ? overlayEmail.relatedGroups : []),
+  ].reduce((acc, entry) => {
+    if (!entry?.id || acc.some((current) => current.id === entry.id)) return acc;
+    acc.push(entry);
+    return acc;
+  }, []);
+
+  const mergedRelatedRecords = [
+    ...(Array.isArray(baseEmail.relatedRecords) ? baseEmail.relatedRecords : []),
+    ...(Array.isArray(overlayEmail.relatedRecords) ? overlayEmail.relatedRecords : []),
+  ].reduce((acc, entry) => {
+    const key = makeEntityKey(entry?.model, entry?.recordId);
+    if (!key || acc.some((current) => makeEntityKey(current?.model, current?.recordId) === key)) return acc;
+    acc.push(entry);
+    return acc;
+  }, []);
+
+  const principalGroup = mergedRelatedGroups.find((entry) => normalizeGroupMembershipKind(entry?.relationKind) === "principal") || mergedRelatedGroups[0] || null;
+
+  return {
+    ...baseEmail,
+    ...overlayEmail,
+    groupId: overlayEmail.groupId || principalGroup?.id || baseEmail.groupId || "",
+    groupName: overlayEmail.groupName || principalGroup?.name || baseEmail.groupName || "",
+    membershipKind: overlayEmail.membershipKind || principalGroup?.relationKind || baseEmail.membershipKind,
+    relatedGroups: mergedRelatedGroups,
+    relatedRecords: mergedRelatedRecords,
+  };
+}
+
 function buildEmailSearchEntry(email, extra = {}) {
   return {
     emailKey: makePersistentEmailKey(email),
@@ -1671,7 +1744,32 @@ async function getDbCustomGroupContext(input) {
   if (!where.length) return { groups: [], emails: [], tickets: [] };
 
   const currentMemberships = await db.query(
-    `SELECT DISTINCT g.id, g.name, g.description, g.status, g.is_archived, g.archived_at, g.labels_json, g.documents_enabled, g.created_at, g.updated_at, m.email_key
+    `SELECT DISTINCT
+        g.id,
+        g.name,
+        g.description,
+        g.status,
+        g.is_archived,
+        g.archived_at,
+        g.labels_json,
+        g.documents_enabled,
+        g.created_at,
+        g.updated_at,
+        m.email_key,
+        m.relation_kind,
+        m.item_id,
+        m.internet_message_id,
+        m.conversation_id,
+        m.subject,
+        m.from_email,
+        m.from_name,
+        m.email_web_link,
+        m.message_date_iso,
+        m.received_at_iso,
+        m.sent_at_iso,
+        m.body_text,
+        m.body_html,
+        m.attachments_json
      FROM crm_custom_group_members m
      JOIN crm_custom_groups g ON g.id = m.group_id
      WHERE ${where.join(" OR ")}`,
@@ -1690,9 +1788,32 @@ async function getDbCustomGroupContext(input) {
 
   const currentEmailKeys = new Set(membershipRows.map((row) => normalizeString(row.email_key)).filter(Boolean));
   const primaryEmailKey = emailKey || Array.from(currentEmailKeys)[0] || "";
+  const primaryMembershipRows = membershipRows.filter((row) => normalizeString(row.email_key) === primaryEmailKey);
   const groups = Array.from(
     new Map(membershipRows.map((row) => [normalizeString(row.id), mapDbGroupRow(row)])).values()
   ).filter(Boolean);
+  const currentRelatedGroups = primaryMembershipRows.reduce((acc, row) => {
+    const groupId = normalizeString(row.id || row.group_id);
+    if (!groupId || acc.some((entry) => entry.id === groupId)) return acc;
+    acc.push({
+      id: groupId,
+      name: normalizeString(row.name || row.group_name),
+      kind: "group",
+      relationKind: normalizeGroupMembershipKind(row.relation_kind),
+    });
+    return acc;
+  }, []);
+  const currentPrincipalGroup = currentRelatedGroups.find((entry) => normalizeGroupMembershipKind(entry?.relationKind) === "principal") || currentRelatedGroups[0] || null;
+  const currentEmail = primaryMembershipRows[0]
+    ? buildEmailListEntry(mapDbGroupMemberRow(primaryMembershipRows[0]), {
+      groupId: currentPrincipalGroup?.id || "",
+      groupName: currentPrincipalGroup?.name || "",
+      membershipKind: currentPrincipalGroup?.relationKind || normalizeGroupMembershipKind(primaryMembershipRows[0]?.relation_kind),
+      relatedGroups: currentRelatedGroups,
+      relatedRecords: [],
+      relatedReasons: [],
+    })
+    : null;
 
   const groupIds = groups.map((group) => group.id).filter(Boolean);
   const tickets = primaryEmailKey
@@ -1746,6 +1867,7 @@ async function getDbCustomGroupContext(input) {
   }
 
   return {
+    email: currentEmail,
     groups: groups.map((group) => ({ ...group, memberCount: 0 })),
     tickets,
     emails: Array.from(aggregated.values()).sort((a, b) =>
@@ -3093,7 +3215,7 @@ export async function getRelatedEmails(input) {
   }
 
   const fileResult = {
-    email: currentEmailIds[0] ? buildEmailListEntry(store.emails[currentEmailIds[0]]) : null,
+    email: currentEmailIds[0] ? buildCurrentEmailContextEntry(store, currentEmailIds[0]) : null,
     groups: Array.from(
       new Map(
         currentEmailIds
@@ -3130,7 +3252,7 @@ export async function getRelatedEmails(input) {
       }
 
       return {
-        email: fileResult.email,
+        email: mergeEmailContextEntries(fileResult.email, dbResult.email),
         groups: Array.from(mergedGroups.values()),
         tickets: Array.from(
           new Map([...fileResult.tickets, ...(dbResult.tickets || [])].filter(Boolean).map((ticket) => [normalizeString(ticket.id), ticket]))
