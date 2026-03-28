@@ -212,6 +212,8 @@ function StudioInner() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [groupFilterId, setGroupFilterId] = useState("");
+  const [ticketFilterId, setTicketFilterId] = useState("");
+  const [labelFilterValue, setLabelFilterValue] = useState("");
   const [emailSearch, setEmailSearch] = useState("");
   const [onlyExternal, setOnlyExternal] = useState(false);
   const [onlyWithAttachments, setOnlyWithAttachments] = useState(false);
@@ -331,23 +333,115 @@ function StudioInner() {
     [currentCaseGroups]
   );
   const emailPool = useMemo(() => (scopeMode === "related" ? dedupeEmails(relatedEmails) : dedupeEmails([...relatedEmails, ...knownEmails])), [knownEmails, relatedEmails, scopeMode]);
+  const contextualGroups = useMemo(() => {
+    const rows = new Map<string, LinkGroupEntry>();
+    for (const email of emailPool) {
+      const isCurrentEmail =
+        (String(email.itemId || "").trim() && String(email.itemId || "").trim() === String(currentContext.itemId || "").trim())
+        || (
+          String(email.internetMessageId || "").trim().toLowerCase() &&
+          String(email.internetMessageId || "").trim().toLowerCase() === String(currentContext.internetMessageId || "").trim().toLowerCase()
+        );
+      const groupIds = new Set<string>([
+        String(email.groupId || "").trim(),
+        ...(email.relatedGroups || []).map((entry) => String(entry.id || "").trim()),
+        ...(isCurrentEmail ? currentCaseBusinessGroups.map((group) => String(group.id || "").trim()) : []),
+      ].filter(Boolean));
+      for (const groupId of groupIds) {
+        const group = groupMap.get(groupId);
+        if (!group || String(group.kind || "").trim().toLowerCase() === "conversation") continue;
+        rows.set(group.id, group);
+      }
+    }
+    return Array.from(rows.values()).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt"));
+  }, [currentCaseBusinessGroups, currentContext.internetMessageId, currentContext.itemId, emailPool, groupMap]);
+  const contextualTickets = useMemo(
+    () => [...relatedTickets].sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""))),
+    [relatedTickets]
+  );
+  const contextualLabels = useMemo(() => {
+    const values = mergeLabels(
+      contextualGroups.flatMap((group) => group.labels || []),
+      contextualTickets.flatMap((ticket) => ticket.labels || [])
+    );
+    return values.sort((a, b) => a.localeCompare(b, "pt"));
+  }, [contextualGroups, contextualTickets]);
+  const emailContextMeta = useMemo(() => {
+    const map = new Map<string, { groupIds: string[]; labels: string[]; ticketIds: string[] }>();
+    for (const email of emailPool) {
+      const key = makeEmailKey(email);
+      if (!key) continue;
+      const isCurrentEmail =
+        (String(email.itemId || "").trim() && String(email.itemId || "").trim() === String(currentContext.itemId || "").trim())
+        || (
+          String(email.internetMessageId || "").trim().toLowerCase() &&
+          String(email.internetMessageId || "").trim().toLowerCase() === String(currentContext.internetMessageId || "").trim().toLowerCase()
+        );
+      const groupIds = Array.from(new Set([
+        String(email.groupId || "").trim(),
+        ...(email.relatedGroups || []).map((entry) => String(entry.id || "").trim()),
+        ...(isCurrentEmail ? currentCaseBusinessGroups.map((group) => String(group.id || "").trim()) : []),
+      ].filter(Boolean)));
+      const labels = mergeLabels(
+        groupIds.flatMap((groupId) => groupMap.get(groupId)?.labels || []),
+        contextualTickets
+          .filter((ticket) => {
+            const ticketGroupIds = new Set<string>([
+              ...(ticket.groupIds || []).map((groupId) => String(groupId || "").trim()),
+              ...(ticket.groups || []).map((group) => String(group.id || "").trim()),
+            ].filter(Boolean));
+            const emailKey = String(email.emailKey || "").trim();
+            const matchesOrigin = Boolean(emailKey && String(ticket.createdFromEmailKey || "").trim() === emailKey);
+            const matchesGroup = ticketGroupIds.size ? groupIds.some((groupId) => ticketGroupIds.has(groupId)) : false;
+            return matchesOrigin || matchesGroup;
+          })
+          .flatMap((ticket) => ticket.labels || [])
+      );
+      const ticketIds = contextualTickets
+        .filter((ticket) => {
+          const ticketGroupIds = new Set<string>([
+            ...(ticket.groupIds || []).map((groupId) => String(groupId || "").trim()),
+            ...(ticket.groups || []).map((group) => String(group.id || "").trim()),
+          ].filter(Boolean));
+          const emailKey = String(email.emailKey || "").trim();
+          const matchesOrigin = Boolean(emailKey && String(ticket.createdFromEmailKey || "").trim() === emailKey);
+          const matchesGroup = ticketGroupIds.size ? groupIds.some((groupId) => ticketGroupIds.has(groupId)) : false;
+          return matchesOrigin || matchesGroup;
+        })
+        .map((ticket) => ticket.id);
+      map.set(key, { groupIds, labels, ticketIds });
+    }
+    return map;
+  }, [contextualTickets, currentCaseBusinessGroups, currentContext.internetMessageId, currentContext.itemId, emailPool, groupMap]);
 
   const visibleEmails = useMemo(() => {
     const q = String(emailSearch || "").trim().toLowerCase();
     return [...emailPool]
       .sort((a, b) => String(b.messageDateIso || b.receivedAtIso || "").localeCompare(String(a.messageDateIso || a.receivedAtIso || "")))
       .filter((email) => {
+        const meta = emailContextMeta.get(makeEmailKey(email)) || { groupIds: [], labels: [], ticketIds: [] };
         if (onlyExternal && !isExternalEmail(email)) return false;
         if (onlyWithAttachments && !(Array.isArray(email.attachments) && email.attachments.length)) return false;
-        if (groupFilterId) {
-          const relatedGroupIds = new Set([email.groupId, ...(email.relatedGroups || []).map((entry) => entry.id)].filter(Boolean));
-          if (!relatedGroupIds.has(groupFilterId)) return false;
-        }
+        if (groupFilterId && !meta.groupIds.includes(groupFilterId)) return false;
+        if (ticketFilterId && !meta.ticketIds.includes(ticketFilterId)) return false;
+        if (labelFilterValue && !meta.labels.some((label) => String(label || "").trim().toLowerCase() === String(labelFilterValue || "").trim().toLowerCase())) return false;
         if (!q) return true;
         const haystack = [email.subject, email.fromName, email.fromEmail, buildSnippet(email)].join(" ").toLowerCase();
         return haystack.includes(q);
       });
-  }, [emailPool, emailSearch, groupFilterId, onlyExternal, onlyWithAttachments]);
+  }, [emailContextMeta, emailPool, emailSearch, groupFilterId, labelFilterValue, onlyExternal, onlyWithAttachments, ticketFilterId]);
+
+  useEffect(() => {
+    if (groupFilterId && !contextualGroups.some((group) => group.id === groupFilterId)) setGroupFilterId("");
+  }, [contextualGroups, groupFilterId]);
+
+  useEffect(() => {
+    if (ticketFilterId && !contextualTickets.some((ticket) => ticket.id === ticketFilterId)) setTicketFilterId("");
+  }, [contextualTickets, ticketFilterId]);
+
+  useEffect(() => {
+    if (labelFilterValue && !contextualLabels.some((label) => label === labelFilterValue)) setLabelFilterValue("");
+  }, [contextualLabels, labelFilterValue]);
 
   const selectedEmail = useMemo(
     () => visibleEmails.find((email) => makeEmailKey(email) === selectedEmailKey) || emailPool.find((email) => makeEmailKey(email) === selectedEmailKey) || visibleEmails[0] || emailPool[0] || null,
@@ -1044,7 +1138,9 @@ function StudioInner() {
             <div style={S.cardTitle}>Filtros da janela</div>
             <div style={S.grid2}>
               <label style={S.field}><span style={S.label}>Fonte da lista</span><select style={S.select} value={scopeMode} onChange={(event) => setScopeMode(event.target.value as ScopeMode)}><option value="related">So emails relacionados</option><option value="all">Todos os emails conhecidos</option></select></label>
-              <label style={S.field}><span style={S.label}>Filtrar por grupo</span><select style={S.select} value={groupFilterId} onChange={(event) => setGroupFilterId(event.target.value)}><option value="">Sem filtro</option>{businessGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Filtrar por grupo</span><select style={S.select} value={groupFilterId} onChange={(event) => setGroupFilterId(event.target.value)}><option value="">Sem filtro</option>{contextualGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Filtrar por ticket</span><select style={S.select} value={ticketFilterId} onChange={(event) => setTicketFilterId(event.target.value)}><option value="">Sem filtro</option>{contextualTickets.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} · {ticket.title}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Filtrar por etiqueta</span><select style={S.select} value={labelFilterValue} onChange={(event) => setLabelFilterValue(event.target.value)}><option value="">Sem filtro</option>{contextualLabels.map((label) => <option key={label} value={label}>{label}</option>)}</select></label>
             </div>
             <div style={S.inlineChecks}>
               <label style={S.check}><input type="checkbox" checked={onlyExternal} onChange={(event) => setOnlyExternal(event.target.checked)} /><span>So emails externos</span></label>
@@ -1056,7 +1152,9 @@ function StudioInner() {
             <div style={S.summaryRow}><span>Emails visiveis</span><strong>{visibleEmails.length}</strong></div>
             <div style={S.summaryRow}><span>Emails relacionados</span><strong>{relatedEmails.length}</strong></div>
             <div style={S.summaryRow}><span>Total conhecido</span><strong>{dedupeEmails([...relatedEmails, ...knownEmails]).length}</strong></div>
-            <div style={S.summaryRow}><span>Tickets do caso</span><strong>{relatedTickets.length}</strong></div>
+            <div style={S.summaryRow}><span>Grupos neste conjunto</span><strong>{contextualGroups.length}</strong></div>
+            <div style={S.summaryRow}><span>Tickets neste conjunto</span><strong>{contextualTickets.length}</strong></div>
+            <div style={S.summaryRow}><span>Etiquetas neste conjunto</span><strong>{contextualLabels.length}</strong></div>
           </div>
         </div>
       );
