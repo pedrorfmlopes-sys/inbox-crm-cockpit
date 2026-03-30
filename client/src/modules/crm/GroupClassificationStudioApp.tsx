@@ -151,6 +151,128 @@ function splitSuggestions(allGroups: LinkGroupEntry[], text: string): LinkGroupE
   }).slice(0, 8);
 }
 
+function normalizeSearchValue(value: string): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function normalizeReferenceCandidate(value: string): string {
+  return String(value || "")
+    .replace(/[‐‑–—]/g, "-")
+    .replace(/\s*([/-])\s*/g, "$1")
+    .replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/gi, "")
+    .replace(/[.,;:)\]]+$/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function compactReferenceValue(value: string): string {
+  return normalizeReferenceCandidate(value).replace(/[\s/-]+/g, "");
+}
+
+function detectReferencesFocused(text: string): string[] {
+  const prepared = String(text || "")
+    .replace(/[‐‑–—]/g, "-")
+    .replace(/([A-Z0-9])\s*([/-])\s*(?=[A-Z0-9])/gi, "$1$2");
+  const rawMatches: string[] = [];
+  const patterns = [
+    /\b(?:pedido|encomenda|order|po|purchase order|proposta|orcamento|obra|projeto|project|ref(?:erencia)?|doc(?:umento)?|fatura|invoice)\s*(?:n(?:o|º|°)?\.?\s*)?([A-Z0-9]+(?:[/-][A-Z0-9]+){1,4})\b/gi,
+    /\b([A-Z]{0,6}\d{0,6}[A-Z0-9]*(?:[/-][A-Z0-9]+){1,4})\b/g,
+    /\b(\d+(?:[/-][A-Z0-9]+){1,4})\b/g,
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(prepared))) {
+      const normalized = normalizeReferenceCandidate(String(match[1] || ""));
+      const compact = compactReferenceValue(normalized);
+      if (!normalized || normalized.length < 4 || compact.length < 4 || !/\d/.test(compact)) continue;
+      rawMatches.push(normalized);
+    }
+  }
+  const ranked = rawMatches
+    .reduce<Array<{ display: string; compact: string }>>((acc, value) => {
+      const compact = compactReferenceValue(value);
+      if (!compact) return acc;
+      const existingIndex = acc.findIndex((entry) => entry.compact === compact);
+      if (existingIndex >= 0) {
+        if (value.length > acc[existingIndex].display.length) acc[existingIndex] = { display: value, compact };
+        return acc;
+      }
+      acc.push({ display: value, compact });
+      return acc;
+    }, [])
+    .sort((a, b) => b.compact.length - a.compact.length || b.display.length - a.display.length || a.display.localeCompare(b.display, "pt"));
+  const filtered: Array<{ display: string; compact: string }> = [];
+  for (const candidate of ranked) {
+    if (filtered.some((entry) => entry.compact.includes(candidate.compact) && entry.compact !== candidate.compact)) continue;
+    filtered.push(candidate);
+  }
+  return filtered.map((entry) => entry.display).slice(0, 8);
+}
+
+function scoreReferenceAwareMatch(candidate: string, normalizedText: string, references: string[]): number {
+  const normalizedCandidate = normalizeSearchValue(candidate);
+  const compactCandidate = compactReferenceValue(candidate);
+  let score = 0;
+  if (normalizedCandidate && normalizedCandidate.length >= 4 && normalizedText.includes(normalizedCandidate)) {
+    score = Math.max(score, 40 + Math.min(normalizedCandidate.length, 24));
+  }
+  if (compactCandidate && compactCandidate.length >= 4) {
+    for (const reference of references) {
+      const compactReference = compactReferenceValue(reference);
+      if (!compactReference) continue;
+      if (compactCandidate === compactReference) score = Math.max(score, 120);
+      else if (compactCandidate.includes(compactReference) || compactReference.includes(compactCandidate)) score = Math.max(score, 95);
+    }
+  }
+  return score;
+}
+
+function splitSuggestionsFocused(allGroups: LinkGroupEntry[], text: string, references: string[]): LinkGroupEntry[] {
+  const normalizedText = normalizeSearchValue(text);
+  return allGroups
+    .map((group) => {
+      if (String(group?.kind || "").trim().toLowerCase() === "conversation") return { group, score: 0 };
+      const nameScore = scoreReferenceAwareMatch(String(group.name || ""), normalizedText, references) + 20;
+      const labelScore = Math.max(0, ...(group.labels || []).map((label) => scoreReferenceAwareMatch(String(label || ""), normalizedText, references) + 10));
+      return { group, score: Math.max(nameScore, labelScore) };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || String(a.group.name || "").localeCompare(String(b.group.name || ""), "pt"))
+    .map((entry) => entry.group)
+    .slice(0, 8);
+}
+
+function suggestTicketsFocused(tickets: GroupTicketEntry[], text: string, references: string[]): GroupTicketEntry[] {
+  const normalizedText = normalizeSearchValue(text);
+  return tickets
+    .map((ticket) => {
+      const codeScore = scoreReferenceAwareMatch(String(ticket.code || ""), normalizedText, references) + 30;
+      const titleScore = scoreReferenceAwareMatch(String(ticket.title || ""), normalizedText, references) + 10;
+      const labelScore = Math.max(0, ...(ticket.labels || []).map((label) => scoreReferenceAwareMatch(String(label || ""), normalizedText, references) + 5));
+      return { ticket, score: Math.max(codeScore, titleScore, labelScore) };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || String(b.ticket.updatedAt || b.ticket.createdAt || "").localeCompare(String(a.ticket.updatedAt || a.ticket.createdAt || "")))
+    .map((entry) => entry.ticket)
+    .slice(0, 6);
+}
+
+function suggestLabelsFocused(labels: string[], text: string, references: string[]): string[] {
+  const normalizedText = normalizeSearchValue(text);
+  return labels
+    .map((label) => ({ label, score: scoreReferenceAwareMatch(label, normalizedText, references) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label, "pt"))
+    .map((entry) => entry.label)
+    .slice(0, 8);
+}
+
 function mergeLabels(base: string[], extra: string[]): string[] {
   const seen = new Set<string>();
   return [...base, ...extra].reduce<string[]>((acc, label) => {
@@ -561,16 +683,23 @@ function StudioInner() {
   }, [selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.subject, selectedEmailAttachments]);
 
   const detectedCaseType = useMemo(() => detectCaseType(detectionText), [detectionText]);
-  const detectedReferences = useMemo(() => detectReferences(detectionText), [detectionText]);
-  const suggestedExistingGroups = useMemo(() => splitSuggestions(allGroups, detectionText), [allGroups, detectionText]);
+  const detectedReferences = useMemo(() => detectReferencesFocused(detectionText), [detectionText]);
+  const suggestedExistingGroups = useMemo(() => splitSuggestionsFocused(allGroups, detectionText, detectedReferences), [allGroups, detectedReferences, detectionText]);
+  const suggestedExistingTickets = useMemo(
+    () => suggestTicketsFocused(availableTicketChoices, detectionText, detectedReferences),
+    [availableTicketChoices, detectedReferences, detectionText]
+  );
   const suggestedLabelSeeds = useMemo(() => {
     const values = new Set<string>();
     if (detectedCaseType !== "geral") values.add(`tipo:${detectedCaseType}`);
     for (const ref of detectedReferences) values.add(ref);
     const partner = derivePartnerName(selectedEmail);
     if (partner) values.add(partner);
-    return Array.from(values).slice(0, 8);
-  }, [detectedCaseType, detectedReferences, selectedEmail]);
+    suggestedExistingGroups.forEach((group) => (group.labels || []).forEach((label) => values.add(String(label || "").trim())));
+    suggestedExistingTickets.forEach((ticket) => (ticket.labels || []).forEach((label) => values.add(String(label || "").trim())));
+    suggestLabelsFocused(contextualLabels, detectionText, detectedReferences).forEach((label) => values.add(label));
+    return Array.from(values).filter(Boolean).slice(0, 10);
+  }, [contextualLabels, detectedCaseType, detectedReferences, detectionText, selectedEmail, suggestedExistingGroups, suggestedExistingTickets]);
 
   const suggestedGroupName = useMemo(() => {
     const partner = derivePartnerName(selectedEmail);
@@ -989,7 +1118,7 @@ function StudioInner() {
           <div style={S.grid2Wide}>
             <div style={S.card}>
               <div style={S.cardTitle}>Deteccoes e sugestoes</div>
-              <div style={S.cardMeta}>Leitura inicial com base em assunto, corpo, nomes de anexos e contexto ja guardado.</div>
+              <div style={S.cardMeta}>Leitura inicial focada em assunto, corpo, nomes de anexos e referencias ja usadas no caso.</div>
               <div style={S.summaryRow}><span>Tipo detetado</span><strong>{detectedCaseType}</strong></div>
               <div style={S.summaryRow}><span>Parceiro detetado</span><strong>{derivePartnerName(selectedEmail) || "--"}</strong></div>
               <div style={S.summaryRow}><span>Referencias detetadas</span><strong>{detectedReferences.length ? detectedReferences.join(", ") : "--"}</strong></div>
@@ -1001,6 +1130,18 @@ function StudioInner() {
                     {suggestedExistingGroups.map((group) => (
                       <button key={group.id} type="button" style={group.id === principalGroupId ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => setPrincipalGroupId(group.id)}>
                         {group.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+              {suggestedExistingTickets.length ? (
+                <>
+                  <div style={S.subTitle}>Tickets sugeridos</div>
+                  <div style={S.chips}>
+                    {suggestedExistingTickets.map((ticket) => (
+                      <button key={ticket.id} type="button" style={ticket.id === selectedTicketId ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => setSelectedTicketId(ticket.id)}>
+                        {ticket.code}
                       </button>
                     ))}
                   </div>
