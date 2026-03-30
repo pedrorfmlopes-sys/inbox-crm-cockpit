@@ -161,6 +161,13 @@ export type RelevantEmailPayload = {
   }>;
 };
 
+export type AttachmentTextExtractionEntry = {
+  key: string;
+  name: string;
+  contentType?: string;
+  text: string;
+};
+
 export type LinkGroupEntry = {
   id: string;
   kind: "custom" | "conversation" | string;
@@ -861,6 +868,23 @@ export async function linkEmailToGroupTicket(
     appliedGroups: Array.isArray(response?.appliedGroups) ? response.appliedGroups : [],
     email: response?.email ? normalizeRelatedEmailEntry(response.email) : null,
   };
+}
+
+export async function extractAttachmentTexts(
+  files: Array<{ key: string; name: string; contentType?: string; content?: string }>
+): Promise<AttachmentTextExtractionEntry[]> {
+  const response: any = await requestJSON("/api/links/attachments/extract-text", {
+    method: "POST",
+    body: JSON.stringify({ files }),
+  });
+  return Array.isArray(response?.results)
+    ? response.results.map((entry: any) => ({
+        key: String(entry?.key || "").trim(),
+        name: String(entry?.name || "").trim(),
+        contentType: String(entry?.contentType || "").trim() || undefined,
+        text: String(entry?.text || ""),
+      })).filter((entry: AttachmentTextExtractionEntry) => entry.key)
+    : [];
 }
 
 export async function detectGroupTicketsForEmail(payload: {

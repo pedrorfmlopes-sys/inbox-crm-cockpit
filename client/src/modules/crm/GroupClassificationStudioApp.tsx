@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, saveGroupDocuments, searchGroupTickets, searchKnownEmails, updateLinkGroup, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, extractAttachmentTexts, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, saveGroupDocuments, searchGroupTickets, searchKnownEmails, updateLinkGroup, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction, syncManagedOutlookCategories } from "@/office";
 import { getSettings } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
@@ -359,6 +359,7 @@ function StudioInner() {
   const [createTicketTitle, setCreateTicketTitle] = useState("");
   const [attachmentPlan, setAttachmentPlan] = useState<Record<string, { analyze: boolean; save: boolean; forward: boolean }>>({});
   const [outlookLabelCategories, setOutlookLabelCategories] = useState<string[]>([]);
+  const [attachmentTextMap, setAttachmentTextMap] = useState<Record<string, string>>({});
   const [actionBusy, setActionBusy] = useState(false);
 
   const currentSeed = useMemo(() => buildFallbackEmail(params), [params]);
@@ -670,8 +671,53 @@ function StudioInner() {
     });
   }, [selectedEmailAttachments]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const extractableFiles = selectedEmailAttachments
+      .map((attachment) => ({
+        key: makeAttachmentKey(attachment),
+        name: String(attachment.name || "").trim(),
+        contentType: String(attachment.contentType || "").trim(),
+        content: String(attachment.content || "").trim(),
+      }))
+      .filter((attachment) => {
+        if (!attachment.key || !attachment.name || !attachment.content) return false;
+        const lowerName = attachment.name.toLowerCase();
+        const lowerType = attachment.contentType.toLowerCase();
+        return lowerType === "application/pdf"
+          || lowerType.startsWith("text/")
+          || /json|xml|csv|html|message\/rfc822/.test(lowerType)
+          || /\.(pdf|txt|csv|json|xml|html?|eml)$/i.test(lowerName);
+      })
+      .slice(0, 6);
+    if (!extractableFiles.length) {
+      setAttachmentTextMap({});
+      return () => { cancelled = true; };
+    }
+    void (async () => {
+      try {
+        const results = await extractAttachmentTexts(extractableFiles);
+        if (cancelled) return;
+        const next = results.reduce<Record<string, string>>((acc, entry) => {
+          const key = String(entry?.key || "").trim();
+          const text = String(entry?.text || "").trim();
+          if (key && text) acc[key] = text;
+          return acc;
+        }, {});
+        setAttachmentTextMap(next);
+      } catch {
+        if (!cancelled) setAttachmentTextMap({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedEmailAttachments]);
+
   const detectionText = useMemo(() => {
     const attachmentNames = selectedEmailAttachments.map((attachment) => attachment.name).join(" ");
+    const attachmentTexts = selectedEmailAttachments
+      .map((attachment) => attachmentTextMap[makeAttachmentKey(attachment)] || "")
+      .filter(Boolean)
+      .join("\n\n");
     return [
       selectedEmail?.subject,
       selectedEmail?.fromName,
@@ -679,11 +725,16 @@ function StudioInner() {
       selectedEmail?.bodyText,
       htmlToPlainText(String(selectedEmail?.bodyHtml || "")),
       attachmentNames,
+      attachmentTexts,
     ].filter(Boolean).join(" ");
-  }, [selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.subject, selectedEmailAttachments]);
+  }, [attachmentTextMap, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.subject, selectedEmailAttachments]);
 
   const detectedCaseType = useMemo(() => detectCaseType(detectionText), [detectionText]);
   const detectedReferences = useMemo(() => detectReferencesFocused(detectionText), [detectionText]);
+  const analyzedAttachmentNames = useMemo(
+    () => selectedEmailAttachments.filter((attachment) => Boolean(attachmentTextMap[makeAttachmentKey(attachment)])).map((attachment) => String(attachment.name || "").trim()).filter(Boolean),
+    [attachmentTextMap, selectedEmailAttachments]
+  );
   const suggestedExistingGroups = useMemo(() => splitSuggestionsFocused(allGroups, detectionText, detectedReferences), [allGroups, detectedReferences, detectionText]);
   const suggestedExistingTickets = useMemo(
     () => suggestTicketsFocused(availableTicketChoices, detectionText, detectedReferences),
@@ -1121,6 +1172,7 @@ function StudioInner() {
               <div style={S.cardMeta}>Leitura inicial focada em assunto, corpo, nomes de anexos e referencias ja usadas no caso.</div>
               <div style={S.summaryRow}><span>Tipo detetado</span><strong>{detectedCaseType}</strong></div>
               <div style={S.summaryRow}><span>Parceiro detetado</span><strong>{derivePartnerName(selectedEmail) || "--"}</strong></div>
+              <div style={S.summaryRow}><span>Anexos lidos</span><strong>{analyzedAttachmentNames.length ? analyzedAttachmentNames.join(", ") : "--"}</strong></div>
               <div style={S.summaryRow}><span>Referencias detetadas</span><strong>{detectedReferences.length ? detectedReferences.join(", ") : "--"}</strong></div>
               <div style={S.summaryRow}><span>Sugestao de grupo</span><strong>{suggestedGroupName || "--"}</strong></div>
               {suggestedExistingGroups.length ? (

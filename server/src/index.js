@@ -39,6 +39,7 @@ import {
   updateGroupTicketSeries,
   updateCustomGroup,
 } from "./linkStore.js";
+import { extractTextFromPdfBuffer } from "./ai/pdfHelper.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
 import { createLearningRouter } from "./routes/learningRoutes.js";
 import fs from "fs";
@@ -71,6 +72,63 @@ const port = process.env.PORT ? Number(process.env.PORT) : 7071;
 
 function normalizeExternalBaseUrl(url) {
   return String(url || "").trim().replace(/\/+$/, "");
+}
+
+function stripInlineBase64Prefix(content) {
+  return String(content || "").trim().replace(/^data:[^,]+,/, "");
+}
+
+function stripHtmlLight(html) {
+  return String(html || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "- ")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#39;|&#039;/gi, "'")
+    .replace(/&quot;/gi, "\"")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function truncateExtractedAttachmentText(text, maxChars = 6000) {
+  const value = String(text || "").trim();
+  if (!value) return "";
+  return value.length > maxChars ? `${value.slice(0, maxChars)}\n\n[texto truncado para deteccao]` : value;
+}
+
+async function extractTextFromAttachmentPayload(file) {
+  const name = String(file?.name || "").trim();
+  const contentType = String(file?.contentType || file?.type || "").trim().toLowerCase();
+  const content = stripInlineBase64Prefix(file?.content);
+  if (!content) return "";
+  try {
+    const buffer = Buffer.from(content, "base64");
+    const lowerName = name.toLowerCase();
+    if (contentType === "application/pdf" || lowerName.endsWith(".pdf")) {
+      return truncateExtractedAttachmentText(await extractTextFromPdfBuffer(buffer));
+    }
+    if (
+      contentType.startsWith("text/")
+      || /json|xml|csv|html|message\/rfc822/.test(contentType)
+      || /\.(txt|csv|json|xml|html?|eml)$/i.test(name)
+    ) {
+      const decoded = buffer.toString("utf8");
+      const normalized = /html/.test(contentType) || /\.html?$/i.test(name) ? stripHtmlLight(decoded) : decoded;
+      return truncateExtractedAttachmentText(normalized);
+    }
+  } catch (error) {
+    console.warn("[attachments] Failed to extract attachment text", { name, error: error?.message || error });
+  }
+  return "";
 }
 
 function buildInvoiceStudioBatchId(seed) {
@@ -1877,6 +1935,28 @@ app.post("/api/links/groups/:groupId/documents", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_documents_save_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/attachments/extract-text", async (req, res) => {
+  try {
+    const files = Array.isArray(req.body?.files) ? req.body.files.slice(0, 8) : [];
+    const results = [];
+    for (const file of files) {
+      const key = String(file?.key || file?.id || file?.name || "").trim();
+      if (!key) continue;
+      const text = await extractTextFromAttachmentPayload(file);
+      results.push({
+        key,
+        name: String(file?.name || "").trim() || key,
+        contentType: String(file?.contentType || file?.type || "").trim() || undefined,
+        text,
+      });
+    }
+    return res.json({ ok: true, results });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "attachment_text_extract_failed", details: String(e?.message || e) });
   }
 });
 
