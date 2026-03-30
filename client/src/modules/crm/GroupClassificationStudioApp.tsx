@@ -215,6 +215,40 @@ function detectReferencesFocused(text: string): string[] {
   return filtered.map((entry) => entry.display).slice(0, 8);
 }
 
+function classifyDetectedReferences(references: string[], text: string): {
+  documents: string[];
+  articles: string[];
+  others: string[];
+} {
+  const upperText = String(text || "").toUpperCase();
+  const documents: string[] = [];
+  const articles: string[] = [];
+  const others: string[] = [];
+  const pushUnique = (bucket: string[], value: string) => {
+    if (!bucket.includes(value)) bucket.push(value);
+  };
+  for (const reference of references) {
+    const normalized = normalizeReferenceCandidate(reference);
+    if (!normalized) continue;
+    let classification: "documents" | "articles" | "others" = "others";
+    const index = upperText.indexOf(normalized);
+    const context = index >= 0 ? upperText.slice(Math.max(0, index - 48), Math.min(upperText.length, index + normalized.length + 48)) : "";
+    if (/(PEDIDO|ENCOMENDA|ORDER|PROPOSTA|ORCAMENTO|ORÇAMENTO|FATURA|INVOICE|GUIA|OBRA|PROJETO|PROJECT|DOC|DOCUMENTO|REF)/.test(context)) {
+      classification = "documents";
+    } else if (/(ARTIGO|ITEM|CODIGO|CÓDIGO|COD |MODELO|SERIE|SÉRIE|PRODUTO|ACABAMENTO|COR |COLOR|TAMANHO|MEDIDA|DIMENSAO|DIMENSÃO)/.test(context)) {
+      classification = "articles";
+    } else if (/[/-]/.test(normalized)) {
+      classification = "documents";
+    } else if (/^(?=.*[A-Z])(?=.*\d)[A-Z0-9-]{6,}$/.test(normalized)) {
+      classification = "articles";
+    }
+    if (classification === "documents") pushUnique(documents, normalized);
+    else if (classification === "articles") pushUnique(articles, normalized);
+    else pushUnique(others, normalized);
+  }
+  return { documents, articles, others };
+}
+
 function scoreReferenceAwareMatch(candidate: string, normalizedText: string, references: string[]): number {
   const normalizedCandidate = normalizeSearchValue(candidate);
   const compactCandidate = compactReferenceValue(candidate);
@@ -731,34 +765,43 @@ function StudioInner() {
 
   const detectedCaseType = useMemo(() => detectCaseType(detectionText), [detectionText]);
   const detectedReferences = useMemo(() => detectReferencesFocused(detectionText), [detectionText]);
+  const detectedReferenceBuckets = useMemo(
+    () => classifyDetectedReferences(detectedReferences, detectionText),
+    [detectedReferences, detectionText]
+  );
+  const documentReferences = detectedReferenceBuckets.documents.length
+    ? detectedReferenceBuckets.documents
+    : detectedReferences;
+  const articleReferences = detectedReferenceBuckets.articles;
   const analyzedAttachmentNames = useMemo(
     () => selectedEmailAttachments.filter((attachment) => Boolean(attachmentTextMap[makeAttachmentKey(attachment)])).map((attachment) => String(attachment.name || "").trim()).filter(Boolean),
     [attachmentTextMap, selectedEmailAttachments]
   );
-  const suggestedExistingGroups = useMemo(() => splitSuggestionsFocused(allGroups, detectionText, detectedReferences), [allGroups, detectedReferences, detectionText]);
+  const suggestedExistingGroups = useMemo(() => splitSuggestionsFocused(allGroups, detectionText, documentReferences), [allGroups, detectionText, documentReferences]);
   const suggestedExistingTickets = useMemo(
-    () => suggestTicketsFocused(availableTicketChoices, detectionText, detectedReferences),
-    [availableTicketChoices, detectedReferences, detectionText]
+    () => suggestTicketsFocused(availableTicketChoices, detectionText, documentReferences),
+    [availableTicketChoices, detectionText, documentReferences]
   );
   const suggestedLabelSeeds = useMemo(() => {
     const values = new Set<string>();
     if (detectedCaseType !== "geral") values.add(`tipo:${detectedCaseType}`);
-    for (const ref of detectedReferences) values.add(ref);
+    for (const ref of documentReferences) values.add(ref);
+    for (const ref of articleReferences) values.add(`art:${ref}`);
     const partner = derivePartnerName(selectedEmail);
     if (partner) values.add(partner);
     suggestedExistingGroups.forEach((group) => (group.labels || []).forEach((label) => values.add(String(label || "").trim())));
     suggestedExistingTickets.forEach((ticket) => (ticket.labels || []).forEach((label) => values.add(String(label || "").trim())));
-    suggestLabelsFocused(contextualLabels, detectionText, detectedReferences).forEach((label) => values.add(label));
+    suggestLabelsFocused(contextualLabels, detectionText, documentReferences).forEach((label) => values.add(label));
     return Array.from(values).filter(Boolean).slice(0, 10);
-  }, [contextualLabels, detectedCaseType, detectedReferences, detectionText, selectedEmail, suggestedExistingGroups, suggestedExistingTickets]);
+  }, [articleReferences, contextualLabels, detectedCaseType, detectionText, documentReferences, selectedEmail, suggestedExistingGroups, suggestedExistingTickets]);
 
   const suggestedGroupName = useMemo(() => {
     const partner = derivePartnerName(selectedEmail);
-    if (detectedReferences.length && partner) return `${partner} / ${detectedReferences[0]}`;
-    if (detectedReferences.length) return detectedReferences[0];
+    if (documentReferences.length && partner) return `${partner} / ${documentReferences[0]}`;
+    if (documentReferences.length) return documentReferences[0];
     if (partner && detectedCaseType !== "geral") return `${partner} / ${detectedCaseType}`;
     return partner || String(selectedEmail?.subject || "").trim().slice(0, 72);
-  }, [detectedCaseType, detectedReferences, selectedEmail]);
+  }, [detectedCaseType, documentReferences, selectedEmail]);
 
   useEffect(() => {
     if (!createGroupName && suggestedGroupName) setCreateGroupName(suggestedGroupName);
@@ -1173,7 +1216,8 @@ function StudioInner() {
               <div style={S.summaryRow}><span>Tipo detetado</span><strong>{detectedCaseType}</strong></div>
               <div style={S.summaryRow}><span>Parceiro detetado</span><strong>{derivePartnerName(selectedEmail) || "--"}</strong></div>
               <div style={S.summaryRow}><span>Anexos lidos</span><strong>{analyzedAttachmentNames.length ? analyzedAttachmentNames.join(", ") : "--"}</strong></div>
-              <div style={S.summaryRow}><span>Referencias detetadas</span><strong>{detectedReferences.length ? detectedReferences.join(", ") : "--"}</strong></div>
+              <div style={S.summaryRow}><span>Refs. documento</span><strong>{documentReferences.length ? documentReferences.join(", ") : "--"}</strong></div>
+              <div style={S.summaryRow}><span>Codigos/artigos</span><strong>{articleReferences.length ? articleReferences.join(", ") : "--"}</strong></div>
               <div style={S.summaryRow}><span>Sugestao de grupo</span><strong>{suggestedGroupName || "--"}</strong></div>
               {suggestedExistingGroups.length ? (
                 <>
