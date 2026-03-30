@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, extractAttachmentTexts, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, extractAttachmentTexts, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction, syncManagedOutlookCategories } from "@/office";
 import { getSettings } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
@@ -905,6 +905,10 @@ function StudioInner() {
     () => Array.isArray(selectedEmail?.labels) ? selectedEmail.labels.map((label) => String(label || "").trim()).filter(Boolean) : [],
     [selectedEmail?.labels]
   );
+  const selectedEmailRemovedInheritedLabels = useMemo(
+    () => Array.isArray(selectedEmail?.removedInheritedLabels) ? selectedEmail.removedInheritedLabels.map((label) => String(label || "").trim()).filter(Boolean) : [],
+    [selectedEmail?.removedInheritedLabels]
+  );
   const selectedEmailLabelStates = useMemo(
     () => selectedEmail?.labelStates && typeof selectedEmail.labelStates === "object"
       ? Object.fromEntries(
@@ -916,8 +920,8 @@ function StudioInner() {
     [selectedEmail?.labelStates]
   );
   const summaryLabels = useMemo(
-    () => mergeLabels(inheritedLabels, selectedLabels),
-    [inheritedLabels, selectedLabels]
+    () => selectedLabels,
+    [selectedLabels]
   );
   const categorizableLabels = useMemo(
     () => summaryLabels.filter((label) => labelDrafts[label]?.categorize === true),
@@ -989,8 +993,9 @@ function StudioInner() {
   }, [selectedEmailKey]);
 
   useEffect(() => {
-    if (selectedLabels.length || (!inheritedLabels.length && !emailOwnedLabels.length)) return;
-    const seedLabels = mergeLabels(inheritedLabels, emailOwnedLabels);
+    if (selectedLabels.length || (!inheritedLabels.length && !emailOwnedLabels.length && !selectedEmailRemovedInheritedLabels.length)) return;
+    const visibleInherited = inheritedLabels.filter((label) => !selectedEmailRemovedInheritedLabels.includes(label));
+    const seedLabels = mergeLabels(visibleInherited, emailOwnedLabels);
     setSelectedLabels(seedLabels);
     setLabelDrafts((current) => {
       const next = { ...current };
@@ -1004,7 +1009,7 @@ function StudioInner() {
       }
       return next;
     });
-  }, [emailOwnedLabels, inheritedLabels, selectedEmailLabelStates, selectedLabels.length]);
+  }, [emailOwnedLabels, inheritedLabels, selectedEmailLabelStates, selectedEmailRemovedInheritedLabels, selectedLabels.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1014,7 +1019,12 @@ function StudioInner() {
         return;
       }
       try {
-        const snapshot = await getManagedOutlookCategorySnapshot(mergeLabels(labelCatalog, selectedEmail?.labels || []));
+        const snapshot = await getManagedOutlookCategorySnapshot(
+          mergeLabels(
+            mergeLabels(labelCatalog, selectedEmail?.labels || []),
+            selectedEmail?.removedInheritedLabels || []
+          )
+        );
         if (cancelled) return;
         const labels = (snapshot?.labelNames || []).map((label) => String(label || "").trim()).filter(Boolean);
         setOutlookLabelCategories(labels);
@@ -1286,6 +1296,15 @@ function StudioInner() {
       const groupsToRemove = currentGroupIds.filter((groupId) => !allGroupIds.includes(groupId));
       const ticketIdsToRemove = selectedEmailTicketIds.filter((ticketId) => ticketId !== selectedTicketId);
       const emailLabelStatus = selectedLabelStatuses[0] || "";
+      const removedInheritedLabels = inheritedLabels.filter((label) => !selectedLabels.includes(label));
+      const emailOwnedSelectedLabels = selectedLabels.filter((label) => !inheritedLabels.includes(label));
+      const classifiedEmailPayload = {
+        ...currentEmailPayload,
+        status: emailLabelStatus,
+        labels: emailOwnedSelectedLabels,
+        removedInheritedLabels,
+        labelStates: selectedLabelStates,
+      };
 
       for (const groupId of groupsToRemove) {
         await removeEmailFromLinkGroup(groupId, {
@@ -1296,13 +1315,13 @@ function StudioInner() {
 
       if (principalGroupId) {
         await addEmailToLinkGroup(principalGroupId, {
-          ...currentEmailPayload,
+          ...classifiedEmailPayload,
           membershipKind: "principal",
         });
       }
       for (const groupId of referenceGroupIds) {
         await addEmailToLinkGroup(groupId, {
-          ...currentEmailPayload,
+          ...classifiedEmailPayload,
           membershipKind: "referencia",
         });
       }
@@ -1314,28 +1333,14 @@ function StudioInner() {
         });
       }
 
-      if (principalGroup && selectedLabels.length) {
-        await updateLinkGroup(principalGroup.id, {
-          name: principalGroup.name,
-          description: principalGroup.description,
-          documentsEnabled: principalGroup.documentsEnabled,
-          status: principalGroup.status,
-          isArchived: principalGroup.isArchived,
-          labels: mergeLabels(principalGroup.labels || [], selectedLabels),
-        });
-      }
-
       await registerRelevantEmail({
-        ...currentEmailPayload,
-        status: emailLabelStatus,
-        labels: selectedLabels,
-        labelStates: selectedLabelStates,
+        ...classifiedEmailPayload,
       });
 
       let finalTicket: GroupTicketEntry | null = null;
       if (selectedTicketId) {
         const linked = await linkEmailToGroupTicket(selectedTicketId, {
-          email: currentEmailPayload,
+          email: classifiedEmailPayload,
           applyGroups: allGroupIds.length > 0,
           groupIds: allGroupIds,
           membershipKind: principalGroupId ? "principal" : "referencia",
@@ -1348,7 +1353,7 @@ function StudioInner() {
           description: String(selectedEmail?.bodyText || "").trim().slice(0, 4000),
           labels: selectedLabels,
           groupIds: allGroupIds,
-          email: currentEmailPayload,
+          email: classifiedEmailPayload,
           membershipKind: principalGroupId ? "principal" : "referencia",
         });
         setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
@@ -1369,7 +1374,10 @@ function StudioInner() {
             : [],
           labelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true ? categorizableLabels : [],
           managedLabelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true
-            ? mergeLabels(summaryLabels, selectedEmail?.labels || [])
+            ? mergeLabels(
+                mergeLabels(summaryLabels, selectedEmail?.labels || []),
+                mergeLabels(selectedEmail?.removedInheritedLabels || [], removedInheritedLabels)
+              )
             : [],
         }).catch(() => undefined);
       }
@@ -1820,17 +1828,135 @@ function StudioInner() {
 
     return (
       <div style={S.stack}>
-          <div style={S.card}>
-            <div style={S.cardTitle}>Resumo da estrutura</div>
+        <div style={S.card}>
+          <div style={S.cardTitle}>Resumo vivo</div>
+          <div style={S.cardMeta}>O que ves aqui reflete o estado atual da classificacao. Os chips servem para desligar rapidamente ligacoes antes de gravar.</div>
+          <div style={S.summaryGrid}>
             <div style={S.summaryRow}><span>Email selecionado</span><strong>{selectedEmail?.subject || "--"}</strong></div>
-            <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
-            <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupSummary}</strong></div>
-            <div style={S.summaryRow}><span>Serie de ticket</span><strong>{ticketSummary}</strong></div>
-            <div style={S.summaryRow}><span>Etiquetas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
-            <div style={S.summaryRow}><span>Etiquetas com estado</span><strong>{labelStateSummary.length ? labelStateSummary.join(", ") : "--"}</strong></div>
-            <div style={S.summaryRow}><span>Anexos do email atual</span><strong>{selectedEmailAttachments.length}</strong></div>
+            <div style={S.summaryRow}><span>Anexos</span><strong>{selectedEmailAttachments.length}</strong></div>
           </div>
-        <div style={S.note}>Janela nova criada sem alterar o fluxo atual dos grupos. O proximo passo sera ligar estas escolhas ao sistema real de classificacao e categorias.</div>
+        </div>
+
+        <div style={S.sectionCard}>
+          <div style={S.sectionHeadStatic}>
+            <span style={S.sectionName}>Grupo principal</span>
+            <span style={S.sectionMeta}>Casa principal atual do email</span>
+          </div>
+          <div style={S.sectionBody}>
+            <div style={S.inlineWrap}>
+              {principalGroup ? (
+                <button type="button" style={S.selectedChipOn} onClick={clearPrincipalSelection}>
+                  {principalGroup.name}
+                </button>
+              ) : (
+                <span style={S.mutedMini}>Sem grupo principal</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={S.sectionCard}>
+          <div style={S.sectionHeadStatic}>
+            <span style={S.sectionName}>Referencias</span>
+            <span style={S.sectionMeta}>Grupos adicionais ligados ao email</span>
+          </div>
+          <div style={S.sectionBody}>
+            <div style={S.inlineWrap}>
+              {referenceGroups.length ? referenceGroups.map((group) => (
+                <button key={group.id} type="button" style={S.selectedChipOn} onClick={() => toggleReferenceGroup(group.id)}>
+                  {group.name}
+                </button>
+              )) : <span style={S.mutedMini}>Sem referencias</span>}
+            </div>
+          </div>
+        </div>
+
+        <div style={S.sectionCard}>
+          <div style={S.sectionHeadStatic}>
+            <span style={S.sectionName}>Ticket</span>
+            <span style={S.sectionMeta}>Ticket ou novo ticket preparado</span>
+          </div>
+          <div style={S.sectionBody}>
+            <div style={S.inlineWrap}>
+              {selectedTicket ? (
+                <button type="button" style={S.selectedChipOn} onClick={clearTicketSelection}>
+                  {selectedTicket.code}
+                </button>
+              ) : selectedSeriesId ? (
+                <button type="button" style={S.selectedChipPending} onClick={clearTicketSelection}>
+                  {ticketSummary}
+                </button>
+              ) : (
+                <span style={S.mutedMini}>Sem ticket</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={S.sectionCard}>
+          <div style={S.sectionHeadStatic}>
+            <span style={S.sectionName}>Etiquetas</span>
+            <span style={S.sectionMeta}>Etiquetas finais do email, com estado opcional</span>
+          </div>
+          <div style={S.sectionBody}>
+            <div style={S.inlineWrap}>
+              {summaryLabels.length ? summaryLabels.map((label) => (
+                <button key={label} type="button" style={S.selectedChipOn} onClick={() => removeLabel(label)}>
+                  {label}
+                </button>
+              )) : <span style={S.mutedMini}>Sem etiquetas</span>}
+            </div>
+            {labelStateSummary.length ? (
+              <div style={S.stackMini}>
+                <div style={S.cardMeta}>Etiquetas com estado</div>
+                <div style={S.inlineWrap}>
+                  {summaryLabels
+                    .filter((label) => labelDrafts[label]?.hasStatus && labelDrafts[label]?.status)
+                    .map((label) => (
+                      <button
+                        key={`${label}-status`}
+                        type="button"
+                        style={S.selectedChipPending}
+                        onClick={() => updateLabelDraft(label, { hasStatus: false, status: undefined })}
+                      >
+                        {label}: {formatEmailLabelStatus(labelDrafts[label]?.status)}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div style={S.card}>
+          <div style={S.cardTitle}>Gravar / atualizar</div>
+          <div style={S.cardMeta}>Quando estiver tudo certo, gravamos o estado atual do email selecionado.</div>
+          <div style={S.inline}>
+            <button
+              type="button"
+              style={S.primaryBtn}
+              onClick={() => void handleApplyClassification()}
+              disabled={
+                actionBusy ||
+                (!principalGroupId &&
+                  !referenceGroupIds.length &&
+                  !selectedTicketId &&
+                  !selectedSeriesId &&
+                  !selectedEmailGroups.length &&
+                  !selectedEmailTicketIds.length &&
+                  !selectedLabels.length &&
+                  !(selectedEmail?.labels || []).length &&
+                  !String(selectedEmail?.status || "").trim())
+              }
+            >
+              <Icons.Save size={12} />
+              Gravar / atualizar
+            </button>
+            <button type="button" style={S.secondaryBtn} onClick={() => setActiveSection("classification")}>
+              Voltar a Classificacao
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1977,9 +2103,11 @@ const S: Record<string, React.CSSProperties> = {
   sectionCard: { borderRadius: 16, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", overflow: "hidden", display: "grid" },
   sectionHead: { width: "100%", border: "none", borderBottom: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.58)", color: "var(--iccc-text)", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, cursor: "pointer" },
   sectionHeadOn: { width: "100%", border: "none", borderBottom: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.9)", color: "#1d4ed8", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, cursor: "pointer" },
+  sectionHeadStatic: { borderBottom: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.58)", color: "var(--iccc-text)", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 },
   sectionName: { fontSize: 14, fontWeight: 700 },
   sectionMeta: { fontSize: 11, color: "var(--iccc-muted)" },
   sectionBody: { padding: 14, display: "grid", gap: 12 },
+  stackMini: { display: "grid", gap: 6 },
   sectionControls: { display: "grid", gridTemplateColumns: "minmax(0,1fr) 260px", gap: 10 },
   compactCreateRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center" },
   inlineWrap: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },

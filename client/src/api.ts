@@ -151,6 +151,7 @@ export type RelevantEmailPayload = {
   bodyHtml?: string;
   status?: "em_analise" | "em_progresso" | "concluido" | string;
   labels?: string[];
+  removedInheritedLabels?: string[];
   labelStates?: Record<string, "em_analise" | "em_progresso" | "concluido" | string>;
   membershipKind?: "principal" | "referencia" | string;
   attachments?: Array<{
@@ -280,6 +281,7 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
   emailKey?: string;
   status?: string;
   labels?: string[];
+  removedInheritedLabels?: string[];
   labelStates?: Record<string, string>;
   membershipKind?: "principal" | "referencia" | string;
   relatedRecords?: Array<{ model: string; recordId: number; recordName: string }>;
@@ -531,6 +533,7 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
     emailKey: String(entry?.emailKey || "").trim(),
     status: String(entry?.status || "").trim() || undefined,
     labels: Array.isArray(entry?.labels) ? entry.labels.map((label: any) => String(label || "").trim()).filter(Boolean) : [],
+    removedInheritedLabels: Array.isArray(entry?.removedInheritedLabels) ? entry.removedInheritedLabels.map((label: any) => String(label || "").trim()).filter(Boolean) : [],
     labelStates: normalizedLabelStates,
     membershipKind: String(entry?.membershipKind || "").trim() || undefined,
     bodyText: String(entry?.bodyText || "").trim(),
