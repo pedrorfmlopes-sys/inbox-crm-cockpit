@@ -192,6 +192,7 @@ const ODOO_LINKED_CATEGORY = "Odoo Linked";
 const GROUP_CATEGORY_PREFIX = "Grupo: ";
 const TICKET_CATEGORY_PREFIX = "Ticket: ";
 const STATUS_CATEGORY_PREFIX = "Estado: ";
+const LABEL_CATEGORY_PREFIX = "Etiqueta: ";
 const ODOO_LINKED_NOTICE = "iccc-odoo-linked";
 
 function firstCategoryColor(colors: any, candidates: string[]): any {
@@ -247,6 +248,12 @@ function resolveManagedCategoryColor(displayName: string, colors: any): any {
     }
     const palette = ["Preset22", "Preset5", "Preset8", "Preset4", "Preset1", "Preset6", "Preset9", "Preset14"];
     return firstCategoryColor(colors, [palette[hashCategorySeed(seriesKey) % palette.length], "Preset0"]);
+  }
+
+  if (label.startsWith(LABEL_CATEGORY_PREFIX)) {
+    const seed = label.slice(LABEL_CATEGORY_PREFIX.length).trim();
+    const palette = ["Preset12", "Preset10", "Preset11", "Preset13", "Preset15", "Preset16", "Preset17", "Preset18"];
+    return firstCategoryColor(colors, [palette[hashCategorySeed(seed) % palette.length], "Preset0"]);
   }
 
   return colors?.Preset0;
@@ -580,6 +587,7 @@ export async function syncManagedOutlookCategories(input: {
   groupNames?: string[];
   ticketCodes?: string[];
   statuses?: string[];
+  labelNames?: string[];
 }): Promise<void> {
   const desiredCategories = [
     ...normalizeUniqueCategoryValues(input?.groupNames).map((name) => `${GROUP_CATEGORY_PREFIX}${name}`),
@@ -588,12 +596,14 @@ export async function syncManagedOutlookCategories(input: {
       .map((status) => normalizeStatusCategoryLabel(status))
       .filter(Boolean)
       .map((label) => `${STATUS_CATEGORY_PREFIX}${label}`),
+    ...normalizeUniqueCategoryValues(input?.labelNames).map((label) => `${LABEL_CATEGORY_PREFIX}${label}`),
   ];
   const currentCategories = await getCurrentItemCategoryNames();
   const currentManagedCategories = currentCategories.filter((name) =>
     name.startsWith(GROUP_CATEGORY_PREFIX)
     || name.startsWith(TICKET_CATEGORY_PREFIX)
     || name.startsWith(STATUS_CATEGORY_PREFIX)
+    || name.startsWith(LABEL_CATEGORY_PREFIX)
   );
   const toRemove = currentManagedCategories.filter((name) => !desiredCategories.includes(name));
   const toAdd = desiredCategories.filter((name) => !currentCategories.includes(name));
@@ -613,6 +623,7 @@ export async function syncLinkCategoriesToComposeDraft(input: {
   groupNames?: string[];
   ticketCodes?: string[];
   statuses?: string[];
+  labelNames?: string[];
   hasOdooLinks?: boolean;
 }, options?: { attempts?: number; delayMs?: number }): Promise<void> {
   const attempts = Math.max(1, Number(options?.attempts || 12));
@@ -621,6 +632,7 @@ export async function syncLinkCategoriesToComposeDraft(input: {
     normalizeUniqueCategoryValues(input?.groupNames).length
     || normalizeUniqueCategoryValues(input?.ticketCodes).length
     || normalizeUniqueCategoryValues(input?.statuses).length
+    || normalizeUniqueCategoryValues(input?.labelNames).length
   );
   const hasOdooLinks = input?.hasOdooLinks === true;
 
@@ -643,6 +655,7 @@ export async function syncLinkCategoriesToComposeDraft(input: {
       groupNames: input?.groupNames,
       ticketCodes: input?.ticketCodes,
       statuses: input?.statuses,
+      labelNames: input?.labelNames,
     }).catch(() => {
       // best-effort
     });

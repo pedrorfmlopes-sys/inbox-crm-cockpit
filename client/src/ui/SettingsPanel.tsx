@@ -1005,6 +1005,7 @@ export function SettingsPanel(): JSX.Element {
                         includeGroups: model.groupOutlookCategories?.includeGroups !== false,
                         includeTickets: model.groupOutlookCategories?.includeTickets !== false,
                         includeStatuses: model.groupOutlookCategories?.includeStatuses !== false,
+                        includeLabels: model.groupOutlookCategories?.includeLabels === true,
                       },
                     })
                   }
@@ -1078,6 +1079,27 @@ export function SettingsPanel(): JSX.Element {
                     <div>
                       <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Estado</div>
                       <div style={S.hint}>Exemplo: <b>Estado: Em analise</b></div>
+                    </div>
+                  </label>
+
+                  <label style={S.toggleRow}>
+                    <input
+                      type="checkbox"
+                      checked={model.groupOutlookCategories?.includeLabels === true}
+                      onChange={(e) =>
+                        setModel({
+                          ...model,
+                          groupOutlookCategories: {
+                            ...model.groupOutlookCategories,
+                            enabled: true,
+                            includeLabels: e.target.checked,
+                          },
+                        })
+                      }
+                    />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Etiquetas</div>
+                      <div style={S.hint}>Exemplo: <b>Etiqueta: PED-1128</b></div>
                     </div>
                   </label>
                 </div>

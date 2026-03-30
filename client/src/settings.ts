@@ -103,6 +103,7 @@ export type GroupOutlookCategorySettings = {
   includeGroups: boolean;
   includeTickets: boolean;
   includeStatuses: boolean;
+  includeLabels: boolean;
 };
 
 export type Crm2StructuredLayoutSettings<TModel extends string> = {
@@ -385,6 +386,7 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     includeGroups: true,
     includeTickets: true,
     includeStatuses: true,
+    includeLabels: false,
   },
   crm2OdooLayout: {
     mode: "description_only",
@@ -679,6 +681,9 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
       includeStatuses: typeof ((incoming as any).groupOutlookCategories || {}).includeStatuses === "boolean"
         ? Boolean(((incoming as any).groupOutlookCategories || {}).includeStatuses)
         : base.groupOutlookCategories.includeStatuses,
+      includeLabels: typeof ((incoming as any).groupOutlookCategories || {}).includeLabels === "boolean"
+        ? Boolean(((incoming as any).groupOutlookCategories || {}).includeLabels)
+        : base.groupOutlookCategories.includeLabels,
     },
     crm2OdooLayout: {
       ...base.crm2OdooLayout,

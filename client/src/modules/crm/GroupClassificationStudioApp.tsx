@@ -635,6 +635,10 @@ function StudioInner() {
     () => mergeLabels(inheritedLabels, selectedLabels),
     [inheritedLabels, selectedLabels]
   );
+  const categorizableLabels = useMemo(
+    () => summaryLabels.filter((label) => labelDrafts[label]?.categorize === true),
+    [labelDrafts, summaryLabels]
+  );
   const referenceGroupSummary = useMemo(
     () => (referenceGroups.length ? referenceGroups.map((group) => group.name || group.id).join(", ") : "--"),
     [referenceGroups]
@@ -897,10 +901,13 @@ function StudioInner() {
       }
 
       if (selectedEmailIsCurrent) {
+        const settings = await getSettings().catch(() => null);
+        const categorySettings = settings?.groupOutlookCategories;
         await syncManagedOutlookCategories({
-          groupNames: principalGroup ? [principalGroup.name] : [],
-          ticketCodes: finalTicket?.code ? [finalTicket.code] : [],
-          statuses: finalTicket?.status ? [finalTicket.status] : [],
+          groupNames: categorySettings?.enabled === true && categorySettings?.includeGroups !== false && principalGroup ? [principalGroup.name] : [],
+          ticketCodes: categorySettings?.enabled === true && categorySettings?.includeTickets !== false && finalTicket?.code ? [finalTicket.code] : [],
+          statuses: categorySettings?.enabled === true && categorySettings?.includeStatuses !== false && finalTicket?.status ? [finalTicket.status] : [],
+          labelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true ? categorizableLabels : [],
         }).catch(() => undefined);
       }
 
