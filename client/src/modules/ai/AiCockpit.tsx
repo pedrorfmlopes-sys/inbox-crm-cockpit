@@ -830,19 +830,47 @@ export const AiCockpit: React.FC = () => {
 
     async function collectDraftLinkSnapshot(payload: RelevantEmailPayload | null, fallbackHasOdooLinks = false) {
         if (!payload) {
-            return { groupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: fallbackHasOdooLinks };
+            return { principalGroupNames: [], referenceGroupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: fallbackHasOdooLinks };
         }
         const response = await getRelatedEmailContext(payload);
         const customGroups = Array.isArray(response?.groups)
             ? response.groups.filter((group: any) => String(group?.kind || "").trim().toLowerCase() === "custom")
             : [];
-        const groupNames = customGroups.map((group: any) => String(group?.name || "").trim()).filter(Boolean);
+        const customGroupsById = new Map(
+            customGroups
+                .map((group: any) => [String(group?.id || "").trim(), group] as const)
+                .filter(([id]) => Boolean(id))
+        );
+        const relatedCustomGroups = Array.isArray(response?.email?.relatedGroups)
+            ? response.email.relatedGroups
+                .filter((group: any) => String(group?.kind || customGroupsById.get(String(group?.id || "").trim())?.kind || "").trim().toLowerCase() === "custom")
+            : [];
+        const principalGroupNames = Array.from(new Set(
+            relatedCustomGroups
+                .filter((group: any) => String(group?.relationKind || "").trim().toLowerCase() === "principal")
+                .map((group: any) => String(group?.name || customGroupsById.get(String(group?.id || "").trim())?.name || "").trim())
+                .filter(Boolean)
+        ));
+        const referenceGroupNames = Array.from(new Set(
+            relatedCustomGroups
+                .filter((group: any) => String(group?.relationKind || "").trim().toLowerCase() === "referencia")
+                .map((group: any) => String(group?.name || customGroupsById.get(String(group?.id || "").trim())?.name || "").trim())
+                .filter(Boolean)
+        ));
         const statuses = customGroups.map((group: any) => String(group?.status || "").trim()).filter(Boolean);
         const ticketCodes = (Array.isArray(response?.tickets) ? response.tickets : [])
             .map((ticket: any) => String(ticket?.code || "").trim())
             .filter(Boolean);
         const hasOdooLinks = fallbackHasOdooLinks || Boolean(response?.email?.relatedRecords?.length);
-        return { groupNames, ticketCodes, statuses, hasOdooLinks };
+        return {
+            principalGroupNames: principalGroupNames.length || referenceGroupNames.length
+                ? principalGroupNames
+                : customGroups.map((group: any) => String(group?.name || "").trim()).filter(Boolean),
+            referenceGroupNames,
+            ticketCodes,
+            statuses,
+            hasOdooLinks,
+        };
     }
 
     function pickPreferredTicketCode(currentSnapshot: { ticketCodes: string[] }, targetSnapshot: { ticketCodes: string[] }, shouldIncludeTarget: boolean): string {
@@ -857,7 +885,8 @@ export const AiCockpit: React.FC = () => {
     }
 
     async function loadDraftLinkMetadata(): Promise<{
-        groupNames: string[];
+        principalGroupNames: string[];
+        referenceGroupNames: string[];
         ticketCodes: string[];
         statuses: string[];
         hasOdooLinks: boolean;
@@ -867,10 +896,11 @@ export const AiCockpit: React.FC = () => {
         const shouldIncludeTarget = Boolean(replyTargetEmail && !isSameStoredEmailTarget(ctx, replyTargetEmail));
         const targetSnapshot = shouldIncludeTarget
             ? await collectDraftLinkSnapshot(buildPayloadFromTarget(), false)
-            : { groupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: false };
+            : { principalGroupNames: [], referenceGroupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: false };
 
         return {
-            groupNames: mergeUniqueStrings(currentSnapshot.groupNames, targetSnapshot.groupNames),
+            principalGroupNames: mergeUniqueStrings(currentSnapshot.principalGroupNames, targetSnapshot.principalGroupNames),
+            referenceGroupNames: mergeUniqueStrings(currentSnapshot.referenceGroupNames, targetSnapshot.referenceGroupNames),
             ticketCodes: mergeUniqueStrings(currentSnapshot.ticketCodes, targetSnapshot.ticketCodes),
             statuses: mergeUniqueStrings(currentSnapshot.statuses, targetSnapshot.statuses),
             hasOdooLinks: currentSnapshot.hasOdooLinks || targetSnapshot.hasOdooLinks,
@@ -879,7 +909,8 @@ export const AiCockpit: React.FC = () => {
     }
 
     async function loadDraftLinkCategories(): Promise<{
-        groupNames: string[];
+        principalGroupNames: string[];
+        referenceGroupNames: string[];
         ticketCodes: string[];
         statuses: string[];
         hasOdooLinks: boolean;
@@ -887,8 +918,11 @@ export const AiCockpit: React.FC = () => {
         if (settings?.groupOutlookCategories?.enabled !== true) return null;
         const metadata = await loadDraftLinkMetadata();
         return {
-            groupNames: settings?.groupOutlookCategories?.includeGroups !== false
-                ? metadata.groupNames
+            principalGroupNames: settings?.groupOutlookCategories?.includeGroups !== false
+                ? metadata.principalGroupNames
+                : [],
+            referenceGroupNames: settings?.groupOutlookCategories?.includeGroups !== false
+                ? metadata.referenceGroupNames
                 : [],
             ticketCodes: settings?.groupOutlookCategories?.includeTickets !== false
                 ? metadata.ticketCodes

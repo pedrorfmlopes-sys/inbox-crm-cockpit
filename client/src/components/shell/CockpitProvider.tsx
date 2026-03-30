@@ -249,11 +249,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         groupId: null,
     });
     const [currentCustomGroupContext, setCurrentCustomGroupContext] = useState<{
-        names: string[];
+        principalNames: string[];
+        referenceNames: string[];
         statuses: string[];
         ticketCodes: string[];
     }>({
-        names: [],
+        principalNames: [],
+        referenceNames: [],
         statuses: [],
         ticketCodes: [],
     });
@@ -1043,7 +1045,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     useEffect(() => {
         const hasContextIdentity = Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
         if (!hasContextIdentity) {
-            setCurrentCustomGroupContext({ names: [], statuses: [], ticketCodes: [] });
+            setCurrentCustomGroupContext({ principalNames: [], referenceNames: [], statuses: [], ticketCodes: [] });
             return;
         }
         let cancelled = false;
@@ -1064,7 +1066,31 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     ? response.groups
                         .filter((group) => group.kind === "custom")
                     : [];
-                const names = Array.from(new Set(customGroups.map((group) => String(group.name || "").trim()).filter(Boolean)));
+                const customGroupsById = new Map(
+                    customGroups
+                        .map((group) => [String(group.id || "").trim(), group] as const)
+                        .filter(([id]) => Boolean(id))
+                );
+                const emailCustomGroups = Array.isArray(response?.email?.relatedGroups)
+                    ? response.email.relatedGroups
+                        .filter((group) => String(group?.kind || customGroupsById.get(String(group?.id || "").trim())?.kind || "").trim().toLowerCase() === "custom")
+                    : [];
+                const principalNames = Array.from(
+                    new Set(
+                        emailCustomGroups
+                            .filter((group) => String(group?.relationKind || "").trim().toLowerCase() === "principal")
+                            .map((group) => String(group?.name || customGroupsById.get(String(group?.id || "").trim())?.name || "").trim())
+                            .filter(Boolean)
+                    )
+                );
+                const referenceNames = Array.from(
+                    new Set(
+                        emailCustomGroups
+                            .filter((group) => String(group?.relationKind || "").trim().toLowerCase() === "referencia")
+                            .map((group) => String(group?.name || customGroupsById.get(String(group?.id || "").trim())?.name || "").trim())
+                            .filter(Boolean)
+                    )
+                );
                 const statuses = Array.from(new Set(customGroups.map((group) => String(group.status || "").trim()).filter(Boolean)));
                 const ticketCodes = Array.from(
                     new Set(
@@ -1073,10 +1099,17 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                             .filter(Boolean)
                     )
                 );
-                setCurrentCustomGroupContext({ names, statuses, ticketCodes });
+                setCurrentCustomGroupContext({
+                    principalNames: principalNames.length || referenceNames.length
+                        ? principalNames
+                        : Array.from(new Set(customGroups.map((group) => String(group.name || "").trim()).filter(Boolean))),
+                    referenceNames,
+                    statuses,
+                    ticketCodes,
+                });
             })
             .catch(() => {
-                if (!cancelled) setCurrentCustomGroupContext({ names: [], statuses: [], ticketCodes: [] });
+                if (!cancelled) setCurrentCustomGroupContext({ principalNames: [], referenceNames: [], statuses: [], ticketCodes: [] });
             });
 
         return () => {
@@ -1092,8 +1125,11 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             // best-effort host hint only
         });
         syncManagedOutlookCategories({
-            groupNames: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeGroups !== false
-                ? currentCustomGroupContext.names
+            principalGroupNames: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeGroups !== false
+                ? currentCustomGroupContext.principalNames
+                : [],
+            referenceGroupNames: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeGroups !== false
+                ? currentCustomGroupContext.referenceNames
                 : [],
             ticketCodes: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeTickets !== false
                 ? currentCustomGroupContext.ticketCodes

@@ -986,7 +986,7 @@ function StudioInner() {
         return;
       }
       try {
-        const snapshot = await getManagedOutlookCategorySnapshot();
+        const snapshot = await getManagedOutlookCategorySnapshot(mergeLabels(labelCatalog, selectedEmail?.labels || []));
         if (cancelled) return;
         const labels = (snapshot?.labelNames || []).map((label) => String(label || "").trim()).filter(Boolean);
         setOutlookLabelCategories(labels);
@@ -1288,12 +1288,18 @@ function StudioInner() {
         const settings = await getSettings().catch(() => null);
         const categorySettings = settings?.groupOutlookCategories;
         await syncManagedOutlookCategories({
-          groupNames: categorySettings?.enabled === true && categorySettings?.includeGroups !== false && principalGroup ? [principalGroup.name] : [],
+          principalGroupNames: categorySettings?.enabled === true && categorySettings?.includeGroups !== false && principalGroup ? [principalGroup.name] : [],
+          referenceGroupNames: categorySettings?.enabled === true && categorySettings?.includeGroups !== false
+            ? referenceGroups.map((group) => String(group.name || "").trim()).filter(Boolean)
+            : [],
           ticketCodes: categorySettings?.enabled === true && categorySettings?.includeTickets !== false && finalTicket?.code ? [finalTicket.code] : [],
           statuses: categorySettings?.enabled === true && categorySettings?.includeStatuses !== false
             ? (finalTicket?.status ? [finalTicket.status] : selectedLabelStatuses)
             : [],
           labelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true ? categorizableLabels : [],
+          managedLabelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true
+            ? mergeLabels(summaryLabels, selectedEmail?.labels || [])
+            : [],
         }).catch(() => undefined);
       }
 

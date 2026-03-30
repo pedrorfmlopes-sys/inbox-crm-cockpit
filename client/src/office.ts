@@ -190,9 +190,11 @@ export const getSelectedMessageContext = getOutlookContext;
 
 const ODOO_LINKED_CATEGORY = "Odoo Linked";
 const GROUP_CATEGORY_PREFIX = "Grupo: ";
-const TICKET_CATEGORY_PREFIX = "Ticket: ";
+const REFERENCE_CATEGORY_PREFIX = "Ref: ";
+const TICKET_CATEGORY_PREFIX = "TK: ";
 const STATUS_CATEGORY_PREFIX = "Estado: ";
-const LABEL_CATEGORY_PREFIX = "Etiqueta: ";
+const LEGACY_TICKET_CATEGORY_PREFIX = "Ticket: ";
+const LEGACY_LABEL_CATEGORY_PREFIX = "Etiqueta: ";
 const ODOO_LINKED_NOTICE = "iccc-odoo-linked";
 
 function firstCategoryColor(colors: any, candidates: string[]): any {
@@ -211,8 +213,21 @@ function hashCategorySeed(value: string): number {
 }
 
 function extractTicketSeriesKey(ticketCode: string): string {
-  const raw = String(ticketCode || "").trim().replace(/^Ticket:\s*/i, "");
+  const raw = String(ticketCode || "").trim().replace(/^Ticket:\s*/i, "").replace(/^TK:\s*/i, "");
   return String(raw.split(/[-/_\s]/)[0] || "").trim().toUpperCase();
+}
+
+function isReservedManagedCategoryName(name: string): boolean {
+  const label = String(name || "").trim();
+  return Boolean(
+    label === ODOO_LINKED_CATEGORY
+    || label.startsWith(GROUP_CATEGORY_PREFIX)
+    || label.startsWith(REFERENCE_CATEGORY_PREFIX)
+    || label.startsWith(TICKET_CATEGORY_PREFIX)
+    || label.startsWith(LEGACY_TICKET_CATEGORY_PREFIX)
+    || label.startsWith(STATUS_CATEGORY_PREFIX)
+    || label.startsWith(LEGACY_LABEL_CATEGORY_PREFIX)
+  );
 }
 
 function resolveManagedCategoryColor(displayName: string, colors: any): any {
@@ -224,6 +239,10 @@ function resolveManagedCategoryColor(displayName: string, colors: any): any {
   }
 
   if (label.startsWith(GROUP_CATEGORY_PREFIX)) {
+    return firstCategoryColor(colors, ["Preset22", "Preset7", "Preset0"]);
+  }
+
+  if (label.startsWith(REFERENCE_CATEGORY_PREFIX)) {
     return firstCategoryColor(colors, ["Preset22", "Preset7", "Preset0"]);
   }
 
@@ -250,10 +269,30 @@ function resolveManagedCategoryColor(displayName: string, colors: any): any {
     return firstCategoryColor(colors, [palette[hashCategorySeed(seriesKey) % palette.length], "Preset0"]);
   }
 
-  if (label.startsWith(LABEL_CATEGORY_PREFIX)) {
-    const seed = label.slice(LABEL_CATEGORY_PREFIX.length).trim();
+  if (label.startsWith(LEGACY_TICKET_CATEGORY_PREFIX)) {
+    const seriesKey = extractTicketSeriesKey(label.slice(LEGACY_TICKET_CATEGORY_PREFIX.length));
+    if (/^(RCL|REC|CLA|RET|RMA)$/i.test(seriesKey)) {
+      return firstCategoryColor(colors, ["Preset6", "Preset9", "Preset0"]);
+    }
+    if (/^(EDD|ENC|ORD|PED|PO)$/i.test(seriesKey)) {
+      return firstCategoryColor(colors, ["Preset22", "Preset7", "Preset0"]);
+    }
+    if (/^(SUP|TCK|INC|SRV|TEC)$/i.test(seriesKey)) {
+      return firstCategoryColor(colors, ["Preset5", "Preset8", "Preset0"]);
+    }
+    const palette = ["Preset22", "Preset5", "Preset8", "Preset4", "Preset1", "Preset6", "Preset9", "Preset14"];
+    return firstCategoryColor(colors, [palette[hashCategorySeed(seriesKey) % palette.length], "Preset0"]);
+  }
+
+  if (label.startsWith(LEGACY_LABEL_CATEGORY_PREFIX)) {
+    const seed = label.slice(LEGACY_LABEL_CATEGORY_PREFIX.length).trim();
     const palette = ["Preset12", "Preset10", "Preset11", "Preset13", "Preset15", "Preset16", "Preset17", "Preset18"];
     return firstCategoryColor(colors, [palette[hashCategorySeed(seed) % palette.length], "Preset0"]);
+  }
+
+  if (!isReservedManagedCategoryName(label)) {
+    const palette = ["Preset12", "Preset10", "Preset11", "Preset13", "Preset15", "Preset16", "Preset17", "Preset18"];
+    return firstCategoryColor(colors, [palette[hashCategorySeed(label) % palette.length], "Preset0"]);
   }
 
   return colors?.Preset0;
@@ -584,28 +623,47 @@ function normalizeStatusCategoryLabel(value: string | undefined): string {
 }
 
 export async function syncManagedOutlookCategories(input: {
+  principalGroupNames?: string[];
+  referenceGroupNames?: string[];
   groupNames?: string[];
   ticketCodes?: string[];
   statuses?: string[];
   labelNames?: string[];
+  managedLabelNames?: string[];
 }): Promise<void> {
+  const principalGroupNames = normalizeUniqueCategoryValues(input?.principalGroupNames ?? input?.groupNames);
+  const referenceGroupNames = normalizeUniqueCategoryValues(input?.referenceGroupNames);
+  const labelNames = normalizeUniqueCategoryValues(input?.labelNames);
+  const managedLabelNames = normalizeUniqueCategoryValues(input?.managedLabelNames ?? input?.labelNames);
+  const managedLabelSet = new Set(managedLabelNames.map((label) => label.toLowerCase()));
   const desiredCategories = [
-    ...normalizeUniqueCategoryValues(input?.groupNames).map((name) => `${GROUP_CATEGORY_PREFIX}${name}`),
+    ...principalGroupNames.map((name) => `${GROUP_CATEGORY_PREFIX}${name}`),
+    ...referenceGroupNames.map((name) => `${REFERENCE_CATEGORY_PREFIX}${name}`),
     ...normalizeUniqueCategoryValues(input?.ticketCodes).map((code) => `${TICKET_CATEGORY_PREFIX}${code}`),
     ...normalizeUniqueCategoryValues(input?.statuses)
       .map((status) => normalizeStatusCategoryLabel(status))
       .filter(Boolean)
       .map((label) => `${STATUS_CATEGORY_PREFIX}${label}`),
-    ...normalizeUniqueCategoryValues(input?.labelNames).map((label) => `${LABEL_CATEGORY_PREFIX}${label}`),
+    ...labelNames,
   ];
   const currentCategories = await getCurrentItemCategoryNames();
   const currentManagedCategories = currentCategories.filter((name) =>
     name.startsWith(GROUP_CATEGORY_PREFIX)
+    || name.startsWith(REFERENCE_CATEGORY_PREFIX)
     || name.startsWith(TICKET_CATEGORY_PREFIX)
+    || name.startsWith(LEGACY_TICKET_CATEGORY_PREFIX)
     || name.startsWith(STATUS_CATEGORY_PREFIX)
-    || name.startsWith(LABEL_CATEGORY_PREFIX)
+    || name.startsWith(LEGACY_LABEL_CATEGORY_PREFIX)
+    || managedLabelSet.has(String(name || "").trim().toLowerCase())
   );
-  const toRemove = currentManagedCategories.filter((name) => !desiredCategories.includes(name));
+  const legacyLabelCategoriesToRemove = currentCategories.filter((name) =>
+    name.startsWith(LEGACY_LABEL_CATEGORY_PREFIX)
+    || labelNames.some((label) => name === `${LEGACY_LABEL_CATEGORY_PREFIX}${label}`)
+  );
+  const toRemove = Array.from(new Set([
+    ...currentManagedCategories.filter((name) => !desiredCategories.includes(name)),
+    ...legacyLabelCategoriesToRemove.filter((name) => !desiredCategories.includes(name)),
+  ]));
   const toAdd = desiredCategories.filter((name) => !currentCategories.includes(name));
 
   for (const categoryName of desiredCategories) {
@@ -616,50 +674,86 @@ export async function syncManagedOutlookCategories(input: {
 }
 
 export async function getManagedOutlookCategorySnapshot(): Promise<{
+  principalGroupNames: string[];
+  referenceGroupNames: string[];
+  groupNames: string[];
+  ticketCodes: string[];
+  statuses: string[];
+  labelNames: string[];
+}>;
+export async function getManagedOutlookCategorySnapshot(knownLabelNames: string[]): Promise<{
+  principalGroupNames: string[];
+  referenceGroupNames: string[];
+  groupNames: string[];
+  ticketCodes: string[];
+  statuses: string[];
+  labelNames: string[];
+}>;
+export async function getManagedOutlookCategorySnapshot(knownLabelNames?: string[]): Promise<{
+  principalGroupNames: string[];
+  referenceGroupNames: string[];
   groupNames: string[];
   ticketCodes: string[];
   statuses: string[];
   labelNames: string[];
 }> {
   const currentCategories = await getCurrentItemCategoryNames();
+  const knownLabelSet = new Set(
+    normalizeUniqueCategoryValues(knownLabelNames).map((label) => String(label || "").trim().toLowerCase())
+  );
+  const principalGroupNames = currentCategories
+    .filter((name) => name.startsWith(GROUP_CATEGORY_PREFIX))
+    .map((name) => name.slice(GROUP_CATEGORY_PREFIX.length).trim())
+    .filter(Boolean);
+  const referenceGroupNames = currentCategories
+    .filter((name) => name.startsWith(REFERENCE_CATEGORY_PREFIX))
+    .map((name) => name.slice(REFERENCE_CATEGORY_PREFIX.length).trim())
+    .filter(Boolean);
   return {
-    groupNames: currentCategories
-      .filter((name) => name.startsWith(GROUP_CATEGORY_PREFIX))
-      .map((name) => name.slice(GROUP_CATEGORY_PREFIX.length).trim())
-      .filter(Boolean),
+    principalGroupNames,
+    referenceGroupNames,
+    groupNames: [...principalGroupNames, ...referenceGroupNames],
     ticketCodes: currentCategories
-      .filter((name) => name.startsWith(TICKET_CATEGORY_PREFIX))
-      .map((name) => name.slice(TICKET_CATEGORY_PREFIX.length).trim())
+      .filter((name) => name.startsWith(TICKET_CATEGORY_PREFIX) || name.startsWith(LEGACY_TICKET_CATEGORY_PREFIX))
+      .map((name) => name.startsWith(TICKET_CATEGORY_PREFIX) ? name.slice(TICKET_CATEGORY_PREFIX.length).trim() : name.slice(LEGACY_TICKET_CATEGORY_PREFIX.length).trim())
       .filter(Boolean),
     statuses: currentCategories
       .filter((name) => name.startsWith(STATUS_CATEGORY_PREFIX))
       .map((name) => name.slice(STATUS_CATEGORY_PREFIX.length).trim())
       .filter(Boolean),
     labelNames: currentCategories
-      .filter((name) => name.startsWith(LABEL_CATEGORY_PREFIX))
-      .map((name) => name.slice(LABEL_CATEGORY_PREFIX.length).trim())
+      .filter((name) =>
+        name.startsWith(LEGACY_LABEL_CATEGORY_PREFIX)
+        || (!isReservedManagedCategoryName(name) && knownLabelSet.has(String(name || "").trim().toLowerCase()))
+      )
+      .map((name) => name.startsWith(LEGACY_LABEL_CATEGORY_PREFIX) ? name.slice(LEGACY_LABEL_CATEGORY_PREFIX.length).trim() : String(name || "").trim())
       .filter(Boolean),
   };
 }
 
 export async function syncManualGroupCategories(groupNames: string[]): Promise<void> {
-  await syncManagedOutlookCategories({ groupNames });
+  await syncManagedOutlookCategories({ principalGroupNames: groupNames });
 }
 
 export async function syncLinkCategoriesToComposeDraft(input: {
+  principalGroupNames?: string[];
+  referenceGroupNames?: string[];
   groupNames?: string[];
   ticketCodes?: string[];
   statuses?: string[];
   labelNames?: string[];
+  managedLabelNames?: string[];
   hasOdooLinks?: boolean;
 }, options?: { attempts?: number; delayMs?: number }): Promise<void> {
   const attempts = Math.max(1, Number(options?.attempts || 12));
   const delayMs = Math.max(150, Number(options?.delayMs || 450));
   const hasManagedCategories = Boolean(
-    normalizeUniqueCategoryValues(input?.groupNames).length
+    normalizeUniqueCategoryValues(input?.principalGroupNames ?? input?.groupNames).length
+    || normalizeUniqueCategoryValues(input?.referenceGroupNames).length
     || normalizeUniqueCategoryValues(input?.ticketCodes).length
     || normalizeUniqueCategoryValues(input?.statuses).length
     || normalizeUniqueCategoryValues(input?.labelNames).length
+    || normalizeUniqueCategoryValues(input?.managedLabelNames).length
   );
   const hasOdooLinks = input?.hasOdooLinks === true;
 
@@ -679,10 +773,12 @@ export async function syncLinkCategoriesToComposeDraft(input: {
       });
     }
     await syncManagedOutlookCategories({
-      groupNames: input?.groupNames,
+      principalGroupNames: input?.principalGroupNames ?? input?.groupNames,
+      referenceGroupNames: input?.referenceGroupNames,
       ticketCodes: input?.ticketCodes,
       statuses: input?.statuses,
       labelNames: input?.labelNames,
+      managedLabelNames: input?.managedLabelNames,
     }).catch(() => {
       // best-effort
     });

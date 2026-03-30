@@ -1080,17 +1080,48 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     return Array.from(collected.values());
   }
 
-  async function syncCurrentEmailTicketCategories(ticket: GroupTicketEntry | null, explicitGroupIds?: string[]) {
+  async function syncCurrentEmailTicketCategories(
+    ticket: GroupTicketEntry | null,
+    options?: {
+      principalGroupIds?: string[];
+      referenceGroupIds?: string[];
+      groupIds?: string[];
+      membershipKind?: MembershipKind;
+    }
+  ) {
     if (settings?.groupOutlookCategories?.enabled !== true) return;
-    const groupIds = Array.from(
-      new Set((explicitGroupIds || ticket?.groupIds || []).map((entry) => String(entry || "").trim()).filter(Boolean))
+    const principalGroupIds = Array.from(
+      new Set((options?.principalGroupIds || []).map((entry) => String(entry || "").trim()).filter(Boolean))
     );
-    const linkedGroups = groupIds
+    const explicitReferenceGroupIds = Array.from(
+      new Set((options?.referenceGroupIds || []).map((entry) => String(entry || "").trim()).filter(Boolean))
+    );
+    const fallbackGroupIds = Array.from(
+      new Set((options?.groupIds || ticket?.groupIds || []).map((entry) => String(entry || "").trim()).filter(Boolean))
+    );
+    const resolvedPrincipalGroupIds = principalGroupIds.length
+      ? principalGroupIds
+      : options?.membershipKind === "principal"
+        ? fallbackGroupIds
+        : [];
+    const resolvedReferenceGroupIds = explicitReferenceGroupIds.length
+      ? explicitReferenceGroupIds
+      : options?.membershipKind === "referencia"
+        ? fallbackGroupIds
+        : fallbackGroupIds.filter((groupId) => !resolvedPrincipalGroupIds.includes(groupId));
+    const linkedPrincipalGroups = resolvedPrincipalGroupIds
       .map((groupId) => groups.find((group) => group.id === groupId) || null)
       .filter((group): group is LinkGroupEntry => Boolean(group));
+    const linkedReferenceGroups = resolvedReferenceGroupIds
+      .map((groupId) => groups.find((group) => group.id === groupId) || null)
+      .filter((group): group is LinkGroupEntry => Boolean(group));
+    const linkedGroups = [...linkedPrincipalGroups, ...linkedReferenceGroups];
     await syncManagedOutlookCategories({
-      groupNames: settings?.groupOutlookCategories?.includeGroups !== false
-        ? Array.from(new Set(linkedGroups.map((group) => String(group.name || "").trim()).filter(Boolean)))
+      principalGroupNames: settings?.groupOutlookCategories?.includeGroups !== false
+        ? Array.from(new Set(linkedPrincipalGroups.map((group) => String(group.name || "").trim()).filter(Boolean)))
+        : [],
+      referenceGroupNames: settings?.groupOutlookCategories?.includeGroups !== false
+        ? Array.from(new Set(linkedReferenceGroups.map((group) => String(group.name || "").trim()).filter(Boolean)))
         : [],
       ticketCodes: settings?.groupOutlookCategories?.includeTickets !== false && ticket?.code
         ? [String(ticket.code || "").trim()]
@@ -1419,9 +1450,17 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       }
       await refreshAll();
       if (finalTicket) {
-        await syncCurrentEmailTicketCategories(finalTicket, groupIds);
+        await syncCurrentEmailTicketCategories(finalTicket, {
+          principalGroupIds: principalGroupId ? [principalGroupId] : [],
+          referenceGroupIds: secondaryGroupIds,
+          groupIds,
+        });
       } else if (groupIds.length) {
-        await syncCurrentEmailTicketCategories(null, groupIds);
+        await syncCurrentEmailTicketCategories(null, {
+          principalGroupIds: principalGroupId ? [principalGroupId] : [],
+          referenceGroupIds: secondaryGroupIds,
+          groupIds,
+        });
       }
       if (finalTicket && quickLinkDraft.ticketMode === "new" && ticketUi?.suggestDraftOnCreate) {
         await handleOpenTicketReplyDraft(finalTicket);
@@ -1521,7 +1560,10 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       }
       setActiveGroupForCurrentEmail(selectedGroup.id);
       await refreshAll();
-      await syncCurrentEmailTicketCategories(null, [selectedGroup.id]);
+      await syncCurrentEmailTicketCategories(null, {
+        groupIds: [selectedGroup.id],
+        membershipKind: linkKind,
+      });
       setMsg(
         threadEmails.length > 1
           ? `${threadEmails.length} email(s) da thread associados ao grupo como ${membershipKindLabel(linkKind).toLowerCase()}.`
@@ -1746,7 +1788,10 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
           membershipKind: selectedGroup ? linkKind : "referencia",
         });
       }
-      await syncCurrentEmailTicketCategories(ticket, selectedGroup ? [selectedGroup.id] : []);
+      await syncCurrentEmailTicketCategories(ticket, selectedGroup ? {
+        groupIds: [selectedGroup.id],
+        membershipKind: linkKind,
+      } : undefined);
       setReloadToken((value) => value + 1);
       setMsg(
         threadEmails.length > 1
@@ -1787,7 +1832,12 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
           membershipKind: selectedGroup ? linkKind : "referencia",
         });
       }
-      await syncCurrentEmailTicketCategories(result.ticket, ensuredGroupIds);
+      await syncCurrentEmailTicketCategories(result.ticket, {
+        principalGroupIds: selectedGroup && linkKind === "principal" ? [selectedGroup.id] : [],
+        referenceGroupIds: ensuredGroupIds.filter((groupId) => !(selectedGroup && linkKind === "principal" && groupId === selectedGroup.id)),
+        groupIds: ensuredGroupIds,
+        membershipKind: selectedGroup ? linkKind : "referencia",
+      });
       setReloadToken((value) => value + 1);
       const groupSummary = result.appliedGroups.length ? ` ${result.appliedGroups.length} grupo(s) atualizados.` : "";
       setMsg(
