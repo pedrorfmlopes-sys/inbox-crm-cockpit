@@ -31,6 +31,7 @@ import {
   listLinksByConversation,
   listLinksByRecord,
   linkEmailToGroupTicket,
+  unlinkEmailFromGroupTicket,
   removeEmailFromGroup,
   registerRelevantEmail,
   saveAttachmentFlagsToGroup,
@@ -2051,6 +2052,16 @@ app.post("/api/links/group-tickets/:ticketId/email", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_ticket_email_link_failed", details: String(e?.message || e) });
+  }
+});
+
+app.delete("/api/links/group-tickets/:ticketId/email", async (req, res) => {
+  try {
+    const result = await unlinkEmailFromGroupTicket(req.params.ticketId, req.body || {});
+    return res.json(result);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_ticket_email_unlink_failed", details: String(e?.message || e) });
   }
 });
 

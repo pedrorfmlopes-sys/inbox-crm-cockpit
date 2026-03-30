@@ -870,6 +870,25 @@ export async function linkEmailToGroupTicket(
   };
 }
 
+export async function unlinkEmailFromGroupTicket(
+  ticketId: string,
+  payload: {
+    email?: RelevantEmailPayload;
+    emailKey?: string;
+  }
+): Promise<{ ok: boolean; removed: boolean; ticket?: GroupTicketEntry | null; emailKey?: string }> {
+  const response: any = await requestJSON(`/api/links/group-tickets/${encodeURIComponent(String(ticketId || "").trim())}/email`, {
+    method: "DELETE",
+    body: JSON.stringify(payload),
+  });
+  return {
+    ok: Boolean(response?.ok),
+    removed: Boolean(response?.removed),
+    ticket: response?.ticket ?? null,
+    emailKey: String(response?.emailKey || "").trim() || undefined,
+  };
+}
+
 export async function extractAttachmentTexts(
   files: Array<{ key: string; name: string; contentType?: string; content?: string }>
 ): Promise<AttachmentTextExtractionEntry[]> {

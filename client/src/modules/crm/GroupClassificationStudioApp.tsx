@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, extractAttachmentTexts, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, saveGroupDocuments, searchGroupTickets, searchKnownEmails, updateLinkGroup, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, extractAttachmentTexts, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction, syncManagedOutlookCategories } from "@/office";
 import { getSettings } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
@@ -394,6 +394,7 @@ function StudioInner() {
   const [attachmentPlan, setAttachmentPlan] = useState<Record<string, { analyze: boolean; save: boolean; forward: boolean }>>({});
   const [outlookLabelCategories, setOutlookLabelCategories] = useState<string[]>([]);
   const [attachmentTextMap, setAttachmentTextMap] = useState<Record<string, string>>({});
+  const [selectionTouched, setSelectionTouched] = useState({ principal: false, references: false, ticket: false });
   const [actionBusy, setActionBusy] = useState(false);
 
   const currentSeed = useMemo(() => buildFallbackEmail(params), [params]);
@@ -637,18 +638,22 @@ function StudioInner() {
     }, []);
   }, [currentCaseBusinessGroups, groupMap, selectedEmail, selectedEmailIsCurrent]);
 
+  const selectedEmailTicketIds = useMemo(() => {
+    if (!selectedEmail) return [];
+    const meta = emailContextMeta.get(makeEmailKey(selectedEmail));
+    return Array.isArray(meta?.ticketIds) ? meta.ticketIds.filter(Boolean) : [];
+  }, [emailContextMeta, selectedEmail]);
+
   useEffect(() => {
     if (!selectedEmail) return;
-    setPrincipalGroupId((current) => {
-      if (current) return current;
+    if (!selectionTouched.principal) {
       const principal = selectedEmailGroups.find((group) => String(group.relationKind || "").toLowerCase() === "principal");
-      return principal?.id || "";
-    });
-    setReferenceGroupIds((current) => {
-      if (current.length) return current;
-      return selectedEmailGroups.filter((group) => String(group.relationKind || "").toLowerCase() !== "principal").map((group) => group.id);
-    });
-  }, [selectedEmail, selectedEmailGroups]);
+      setPrincipalGroupId(principal?.id || "");
+    }
+    if (!selectionTouched.references) {
+      setReferenceGroupIds(selectedEmailGroups.filter((group) => String(group.relationKind || "").toLowerCase() !== "principal").map((group) => group.id));
+    }
+  }, [selectedEmail, selectedEmailGroups, selectionTouched.principal, selectionTouched.references]);
 
   useEffect(() => {
     if (!principalGroupId) return;
@@ -881,12 +886,29 @@ function StudioInner() {
   }, [relatedTickets, selectedSeriesId, selectedTicket?.code, ticketSeries]);
 
   useEffect(() => {
-    setSelectedTicketId((current) => {
-      if (current && availableTicketChoices.some((ticket) => ticket.id === current)) return current;
-      if (relatedTickets.length === 1) return relatedTickets[0].id;
-      return current || "";
-    });
-  }, [availableTicketChoices, relatedTickets]);
+    if (selectionTouched.ticket) return;
+    if (selectedEmailTicketIds.length === 1) {
+      setSelectedTicketId(selectedEmailTicketIds[0]);
+      return;
+    }
+    if (!selectedEmailTicketIds.length) {
+      setSelectedTicketId("");
+    }
+  }, [selectedEmailTicketIds, selectionTouched.ticket]);
+
+  useEffect(() => {
+    if (!selectedSeriesId || !selectedTicketId) return;
+    setSelectedTicketId("");
+  }, [selectedSeriesId, selectedTicketId]);
+
+  useEffect(() => {
+    if (!selectedTicketId || !selectedSeriesId) return;
+    setSelectedSeriesId("");
+  }, [selectedTicketId, selectedSeriesId]);
+
+  useEffect(() => {
+    setSelectionTouched({ principal: false, references: false, ticket: false });
+  }, [selectedEmailKey]);
 
   useEffect(() => {
     if (selectedLabels.length || !inheritedLabels.length) return;
@@ -966,7 +988,19 @@ function StudioInner() {
   }
 
   function toggleReferenceGroup(groupId: string) {
+    setSelectionTouched((current) => ({ ...current, references: true }));
     setReferenceGroupIds((current) => current.includes(groupId) ? current.filter((entry) => entry !== groupId) : [...current, groupId]);
+  }
+
+  function clearPrincipalSelection() {
+    setSelectionTouched((current) => ({ ...current, principal: true }));
+    setPrincipalGroupId("");
+  }
+
+  function clearTicketSelection() {
+    setSelectionTouched((current) => ({ ...current, ticket: true }));
+    setSelectedTicketId("");
+    setSelectedSeriesId("");
   }
 
   function addLabel(label: string) {
@@ -1110,6 +1144,16 @@ function StudioInner() {
       const principalGroup = principalGroupId ? groupMap.get(principalGroupId) || null : null;
       const referenceGroups = referenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[];
       const allGroupIds = [principalGroupId, ...referenceGroupIds].filter(Boolean);
+      const currentGroupIds = selectedEmailGroups.map((group) => String(group.id || "").trim()).filter(Boolean);
+      const groupsToRemove = currentGroupIds.filter((groupId) => !allGroupIds.includes(groupId));
+      const ticketIdsToRemove = selectedEmailTicketIds.filter((ticketId) => ticketId !== selectedTicketId);
+
+      for (const groupId of groupsToRemove) {
+        await removeEmailFromLinkGroup(groupId, {
+          ...currentEmailPayload,
+          emailKey: String(selectedEmail?.emailKey || "").trim() || undefined,
+        });
+      }
 
       if (principalGroupId) {
         await addEmailToLinkGroup(principalGroupId, {
@@ -1121,6 +1165,13 @@ function StudioInner() {
         await addEmailToLinkGroup(groupId, {
           ...currentEmailPayload,
           membershipKind: "referencia",
+        });
+      }
+
+      for (const ticketId of ticketIdsToRemove) {
+        await unlinkEmailFromGroupTicket(ticketId, {
+          email: currentEmailPayload,
+          emailKey: String(selectedEmail?.emailKey || "").trim() || undefined,
         });
       }
 
@@ -1169,6 +1220,7 @@ function StudioInner() {
         }).catch(() => undefined);
       }
 
+      setSelectionTouched({ principal: false, references: false, ticket: false });
       await refreshSelectedEmailContext();
       setStatus("Classificacao aplicada ao email selecionado.");
     } catch (actionError: any) {
@@ -1224,7 +1276,10 @@ function StudioInner() {
                   <div style={S.subTitle}>Grupos sugeridos</div>
                   <div style={S.chips}>
                     {suggestedExistingGroups.map((group) => (
-                      <button key={group.id} type="button" style={group.id === principalGroupId ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => setPrincipalGroupId(group.id)}>
+                      <button key={group.id} type="button" style={group.id === principalGroupId ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => {
+                        setSelectionTouched((current) => ({ ...current, principal: true }));
+                        setPrincipalGroupId(group.id);
+                      }}>
                         {group.name}
                       </button>
                     ))}
@@ -1236,7 +1291,10 @@ function StudioInner() {
                   <div style={S.subTitle}>Tickets sugeridos</div>
                   <div style={S.chips}>
                     {suggestedExistingTickets.map((ticket) => (
-                      <button key={ticket.id} type="button" style={ticket.id === selectedTicketId ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => setSelectedTicketId(ticket.id)}>
+                      <button key={ticket.id} type="button" style={ticket.id === selectedTicketId ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => {
+                        setSelectionTouched((current) => ({ ...current, ticket: true }));
+                        setSelectedTicketId(ticket.id);
+                      }}>
                         {ticket.code}
                       </button>
                     ))}
@@ -1338,8 +1396,18 @@ function StudioInner() {
             <div style={S.cardTitle}>Classificacao base</div>
             <div style={S.cardMeta}>Agora ja aplica ao sistema real: grupo principal, referencias e ticket do email selecionado.</div>
             <div style={S.grid2}>
-              <label style={S.field}><span style={S.label}>Grupo principal</span><select style={S.select} value={principalGroupId} onChange={(event) => setPrincipalGroupId(event.target.value)}><option value="">Sem grupo principal</option>{businessGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Grupo principal</span><select style={S.select} value={principalGroupId} onChange={(event) => { setSelectionTouched((current) => ({ ...current, principal: true })); setPrincipalGroupId(event.target.value); }}><option value="">Sem grupo principal</option>{businessGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
               <label style={S.field}><span style={S.label}>Ticket existente</span><select style={S.select} value={selectedTicketId} onChange={(event) => setSelectedTicketId(event.target.value)}><option value="">Sem ticket existente</option>{availableTicketChoices.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} · {ticket.title}</option>)}</select></label>
+            </div>
+            <div style={S.inline}>
+              <button type="button" style={S.secondaryBtn} onClick={clearPrincipalSelection} disabled={actionBusy || !principalGroupId}>
+                <Icons.RotateCcw size={12} />
+                Limpar grupo principal
+              </button>
+              <button type="button" style={S.secondaryBtn} onClick={clearTicketSelection} disabled={actionBusy || (!selectedTicketId && !selectedSeriesId && !selectedEmailTicketIds.length)}>
+                <Icons.RotateCcw size={12} />
+                Desligar ticket do email
+              </button>
             </div>
           </div>
 
@@ -1371,7 +1439,7 @@ function StudioInner() {
             <div style={S.summaryRow}><span>Ticket</span><strong>{ticketSummary}</strong></div>
             <div style={S.summaryRow}><span>Etiquetas selecionadas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
             <div style={S.inline}>
-              <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId)}>
+              <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length)}>
                 <Icons.Save size={12} />
                 Aplicar classificacao
               </button>

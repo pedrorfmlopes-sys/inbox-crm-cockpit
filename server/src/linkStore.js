@@ -1354,6 +1354,14 @@ async function upsertDbGroupTicketEmail(ticketId, emailKey) {
   );
 }
 
+async function deleteDbGroupTicketEmail(ticketId, emailKey) {
+  if (!db.isEnabled()) return;
+  const tid = normalizeString(ticketId);
+  const key = normalizeString(emailKey);
+  if (!tid || !key) return;
+  await db.query(`DELETE FROM crm_group_ticket_emails WHERE ticket_id = $1 AND email_key = $2`, [tid, key]);
+}
+
 async function deleteDbGroupTicketSeries(seriesId) {
   if (!db.isEnabled()) return;
   const sid = normalizeString(seriesId);
@@ -3103,6 +3111,49 @@ export async function linkEmailToGroupTicket(ticketId, input) {
     ticket: buildGroupTicketEntry(store, store.groupTickets[tid], { emailLinked: true }),
     appliedGroups: appliedGroups.filter(Boolean),
     email: buildEmailListEntry(email),
+  };
+}
+
+export async function unlinkEmailFromGroupTicket(ticketId, input) {
+  const store = readState();
+  const useDurableDb = await requireDurablePersistence("remover o email do ticket", {
+    syncStore: async () => {
+      await syncGroupTicketsFromDb(store);
+    },
+  });
+
+  const tid = normalizeString(ticketId);
+  const current = store.groupTickets?.[tid];
+  if (!tid || !current) throw new Error("Ticket invalido.");
+
+  const emailKey = resolveEmailKeyFromInput(store, input?.email || input || {});
+  if (!emailKey) {
+    return {
+      ok: true,
+      removed: false,
+      ticket: buildGroupTicketEntry(store, current, { emailLinked: false }),
+      emailKey: "",
+    };
+  }
+
+  const wasLinked = listTicketIdsByEmailKey(store, emailKey).includes(tid);
+  removeTicketEmailLink(store, tid, emailKey);
+
+  if (useDurableDb) {
+    try {
+      await deleteDbGroupTicketEmail(tid, emailKey);
+    } catch (error) {
+      throw durablePersistenceError("remover o email do ticket", error);
+    }
+  }
+
+  writeCacheStore(store);
+
+  return {
+    ok: true,
+    removed: wasLinked,
+    ticket: buildGroupTicketEntry(store, store.groupTickets?.[tid] || current, { emailLinked: false }),
+    emailKey,
   };
 }
 
