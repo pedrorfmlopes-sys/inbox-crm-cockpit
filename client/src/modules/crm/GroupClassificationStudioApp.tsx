@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, extractAttachmentTexts, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction, syncManagedOutlookCategories } from "@/office";
 import { getSettings } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
@@ -427,6 +427,11 @@ function StudioInner() {
   const [selectionTouched, setSelectionTouched] = useState({ principal: false, references: false, ticket: false });
   const [actionBusy, setActionBusy] = useState(false);
   const [classificationFocus, setClassificationFocus] = useState<ClassificationFocus>("principal");
+  const [managedGroupId, setManagedGroupId] = useState("");
+  const [managedGroupDescription, setManagedGroupDescription] = useState("");
+  const [managedGroupEmails, setManagedGroupEmails] = useState<RelatedEmailEntry[]>([]);
+  const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
+  const [managedGroupLoading, setManagedGroupLoading] = useState(false);
 
   const currentSeed = useMemo(() => buildFallbackEmail(params), [params]);
   const currentContext = useMemo(() => ({
@@ -556,6 +561,19 @@ function StudioInner() {
     );
     return values.sort((a, b) => a.localeCompare(b, "pt"));
   }, [contextualGroups, contextualTickets]);
+  const manageableGroups = useMemo(() => {
+    const rows = new Map<string, LinkGroupEntry>();
+    for (const group of contextualGroups) {
+      if (!group?.id) continue;
+      rows.set(group.id, group);
+    }
+    if (principalGroup?.id) rows.set(principalGroup.id, principalGroup);
+    for (const group of referenceGroups) {
+      if (!group?.id) continue;
+      rows.set(group.id, group);
+    }
+    return Array.from(rows.values()).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt"));
+  }, [contextualGroups, principalGroup, referenceGroups]);
   const emailContextMeta = useMemo(() => {
     const map = new Map<string, { groupIds: string[]; labels: string[]; ticketIds: string[] }>();
     for (const email of emailPool) {
@@ -712,6 +730,13 @@ function StudioInner() {
     if (!principalGroupId) return;
     setReferenceGroupIds((current) => current.filter((groupId) => groupId !== principalGroupId));
   }, [principalGroupId]);
+
+  useEffect(() => {
+    setManagedGroupId((current) => {
+      if (current && manageableGroups.some((group) => group.id === current)) return current;
+      return principalGroupId || manageableGroups[0]?.id || "";
+    });
+  }, [manageableGroups, principalGroupId]);
 
   useEffect(() => {
     if (!selectedEmailKey) return;
@@ -929,6 +954,10 @@ function StudioInner() {
     () => referenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[],
     [groupMap, referenceGroupIds]
   );
+  const selectedManagedGroup = useMemo(
+    () => (managedGroupId ? manageableGroups.find((group) => group.id === managedGroupId) || null : null),
+    [manageableGroups, managedGroupId]
+  );
   const inheritedLabels = useMemo(
     () =>
       mergeLabels(
@@ -1006,6 +1035,37 @@ function StudioInner() {
     }
     return "--";
   }, [relatedTickets, selectedSeriesId, selectedTicket?.code, ticketSeries]);
+
+  useEffect(() => {
+    setManagedGroupDescription(String(selectedManagedGroup?.description || "").trim());
+  }, [selectedManagedGroup?.description, selectedManagedGroup?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const groupId = String(managedGroupId || "").trim();
+    if (!groupId) {
+      setManagedGroupEmails([]);
+      setManagedGroupDocuments([]);
+      return () => { cancelled = true; };
+    }
+    void (async () => {
+      setManagedGroupLoading(true);
+      try {
+        const [emails, documents] = await Promise.all([
+          getGroupEmails(groupId),
+          getGroupDocuments(groupId),
+        ]);
+        if (cancelled) return;
+        setManagedGroupEmails(Array.isArray(emails) ? emails : []);
+        setManagedGroupDocuments(Array.isArray(documents) ? documents : []);
+      } catch (loadError: any) {
+        if (!cancelled) setStatus(loadError?.message || "Nao foi possivel carregar o dossier do grupo.");
+      } finally {
+        if (!cancelled) setManagedGroupLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [managedGroupId]);
 
   useEffect(() => {
     if (selectionTouched.ticket) return;
@@ -1323,6 +1383,67 @@ function StudioInner() {
       setStatus(`${docs.length} anexo(s) guardado(s) nos documentos do grupo principal.`);
     } catch (actionError: any) {
       setStatus(actionError?.message || "Nao foi possivel guardar os anexos no grupo.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleSaveManagedGroupDescription() {
+    const groupId = String(managedGroupId || "").trim();
+    if (!groupId || !selectedManagedGroup) {
+      setStatus("Escolhe primeiro um grupo para atualizar.");
+      return;
+    }
+    setActionBusy(true);
+    try {
+      const updated = await updateLinkGroup(groupId, {
+        name: selectedManagedGroup.name,
+        description: managedGroupDescription,
+        documentsEnabled: selectedManagedGroup.documentsEnabled,
+        status: selectedManagedGroup.status,
+        labels: selectedManagedGroup.labels,
+        isArchived: selectedManagedGroup.isArchived,
+      });
+      setAllGroups((current) => current.map((group) => (group.id === updated.id ? { ...group, ...updated } : group)));
+      setCurrentCaseGroups((current) => current.map((group) => (group.id === updated.id ? { ...group, ...updated } : group)));
+      setStatus(`Descricao do grupo ${updated.name} atualizada.`);
+    } catch (actionError: any) {
+      setStatus(actionError?.message || "Nao foi possivel atualizar a descricao do grupo.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleRemoveManagedGroupEmail(email: RelatedEmailEntry) {
+    const groupId = String(managedGroupId || "").trim();
+    if (!groupId) return;
+    setActionBusy(true);
+    try {
+      await removeEmailFromLinkGroup(groupId, {
+        ...email,
+        emailKey: String(email?.emailKey || "").trim() || undefined,
+      });
+      setManagedGroupEmails((current) => current.filter((entry) => makeEmailKey(entry) !== makeEmailKey(email)));
+      await refreshSelectedEmailContext();
+      setStatus("Email removido do grupo.");
+    } catch (actionError: any) {
+      setStatus(actionError?.message || "Nao foi possivel remover o email do grupo.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleDeleteManagedGroupDocument(document: GroupDocumentEntry) {
+    const groupId = String(managedGroupId || "").trim();
+    const documentId = String(document?.id || "").trim();
+    if (!groupId || !documentId) return;
+    setActionBusy(true);
+    try {
+      await deleteGroupDocument(groupId, documentId);
+      setManagedGroupDocuments((current) => current.filter((entry) => String(entry.id || "").trim() !== documentId));
+      setStatus("Documento removido do grupo.");
+    } catch (actionError: any) {
+      setStatus(actionError?.message || "Nao foi possivel remover o documento.");
     } finally {
       setActionBusy(false);
     }
@@ -1958,28 +2079,121 @@ function StudioInner() {
         <div style={S.stack}>
           <div style={S.card}>
             <div style={S.cardTitle}>Dossier do grupo</div>
-            <div style={S.cardMeta}>Esta aba vai concentrar a gestao do grupo em si, separada da classificacao do email.</div>
-            <div style={S.summaryRow}><span>Grupo principal atual</span><strong>{principalGroup?.name || "--"}</strong></div>
-            <div style={S.summaryRow}><span>Referencias atuais</span><strong>{referenceGroupSummary}</strong></div>
-            <div style={S.summaryRow}><span>Email selecionado</span><strong>{selectedEmail?.subject || "--"}</strong></div>
+            <div style={S.cardMeta}>Aqui tratamos o grupo como dossier: descricao, emails ligados e documentos guardados.</div>
+            <div style={S.grid2}>
+              <label style={S.field}>
+                <span style={S.label}>Grupo a gerir</span>
+                <select style={S.select} value={managedGroupId} onChange={(event) => setManagedGroupId(event.target.value)}>
+                  <option value="">Escolher grupo...</option>
+                  {manageableGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                </select>
+              </label>
+              <div style={S.summaryGrid}>
+                <div style={S.summaryRow}><span>Grupo principal atual</span><strong>{principalGroup?.name || "--"}</strong></div>
+                <div style={S.summaryRow}><span>Referencias atuais</span><strong>{referenceGroupSummary}</strong></div>
+              </div>
+            </div>
           </div>
 
           <div style={S.grid2Wide}>
             <div style={S.card}>
-              <div style={S.cardTitle}>Gestao do grupo</div>
-              <div style={S.cardMeta}>Aqui vao viver a descricao, notas importantes, emails associados e documentos do grupo.</div>
-              <div style={S.summaryRow}><span>Descricao</span><strong>Em preparacao</strong></div>
-              <div style={S.summaryRow}><span>Notas</span><strong>Em preparacao</strong></div>
-              <div style={S.summaryRow}><span>Emails do grupo</span><strong>Em preparacao</strong></div>
-              <div style={S.summaryRow}><span>Documentos do grupo</span><strong>Em preparacao</strong></div>
+              <div style={S.cardTitle}>Descricao e notas</div>
+              <div style={S.cardMeta}>A descricao ja pode ser atualizada. As notas dedicadas entram no passo seguinte.</div>
+              <label style={S.field}>
+                <span style={S.label}>Descricao do grupo</span>
+                <textarea
+                  style={S.textarea}
+                  value={managedGroupDescription}
+                  onChange={(event) => setManagedGroupDescription(event.target.value)}
+                  placeholder={selectedManagedGroup ? "Descreve o objetivo deste grupo..." : "Escolhe primeiro um grupo"}
+                  disabled={!selectedManagedGroup}
+                />
+              </label>
+              <div style={S.inline}>
+                <button type="button" style={S.primaryBtn} onClick={() => void handleSaveManagedGroupDescription()} disabled={actionBusy || !selectedManagedGroup}>
+                  <Icons.Save size={12} />
+                  Guardar descricao
+                </button>
+              </div>
+              <div style={S.summaryRow}><span>Notas importantes</span><strong>Preparadas para a fase seguinte</strong></div>
             </div>
 
             <div style={S.card}>
               <div style={S.cardTitle}>Pessoas e entidades</div>
-              <div style={S.cardMeta}>As associacoes vao ser normalizadas a partir de fontes reais, como contactos Outlook, contactos dos emails e mais tarde Odoo.</div>
+              <div style={S.cardMeta}>Mantemos aqui a estrutura preparada para normalizacao futura por Outlook, emails e depois Odoo.</div>
               <div style={S.summaryRow}><span>Contactos normalizados</span><strong>Em preparacao</strong></div>
               <div style={S.summaryRow}><span>Entidades associadas</span><strong>Em preparacao</strong></div>
               <div style={S.summaryRow}><span>Fonte da ligacao</span><strong>Outlook / Email / Odoo</strong></div>
+            </div>
+          </div>
+
+          <div style={S.grid2Wide}>
+            <div style={S.card}>
+              <div style={S.cardTitle}>Emails do grupo</div>
+              <div style={S.cardMeta}>Lista real dos emails ligados ao grupo selecionado.</div>
+              {managedGroupLoading ? (
+                <PanelState compact tone="loading" title="A carregar emails do grupo" description="A preparar o dossier selecionado." />
+              ) : !selectedManagedGroup ? (
+                <PanelState compact tone="info" title="Escolhe um grupo" description="Seleciona primeiro o grupo que queres gerir." />
+              ) : !managedGroupEmails.length ? (
+                <PanelState compact tone="info" title="Sem emails ligados" description="Este grupo ainda nao tem emails ligados." />
+              ) : (
+                <div style={S.itemList}>
+                  {managedGroupEmails.map((email) => (
+                    <div key={makeEmailKey(email)} style={S.itemRow}>
+                      <div style={S.itemMeta}>
+                        <strong>{email.subject || "(sem assunto)"}</strong>
+                        <small>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</small>
+                      </div>
+                      <div style={S.inline}>
+                        {(email.itemId || email.emailWebLink) ? (
+                          <button type="button" style={S.secondaryBtn} onClick={() => void requestCockpitHostAction({ type: "open-email", itemId: email.itemId, emailWebLink: email.emailWebLink })}>
+                            <Icons.ExternalLink size={12} />
+                            Abrir
+                          </button>
+                        ) : null}
+                        <button type="button" style={S.secondaryBtn} onClick={() => void handleRemoveManagedGroupEmail(email)} disabled={actionBusy}>
+                          <Icons.Trash size={12} />
+                          Remover
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={S.card}>
+              <div style={S.cardTitle}>Documentos do grupo</div>
+              <div style={S.cardMeta}>Documentos guardados neste grupo, com abertura e remocao.</div>
+              {managedGroupLoading ? (
+                <PanelState compact tone="loading" title="A carregar documentos" description="A abrir o dossier documental do grupo." />
+              ) : !selectedManagedGroup ? (
+                <PanelState compact tone="info" title="Escolhe um grupo" description="Seleciona primeiro o grupo que queres gerir." />
+              ) : !managedGroupDocuments.length ? (
+                <PanelState compact tone="info" title="Sem documentos guardados" description="Este grupo ainda nao tem documentos guardados." />
+              ) : (
+                <div style={S.itemList}>
+                  {managedGroupDocuments.map((document) => (
+                    <div key={document.id} style={S.itemRow}>
+                      <div style={S.itemMeta}>
+                        <strong>{document.name || "Documento"}</strong>
+                        <small>{document.contentType || "ficheiro"}{document.size ? ` · ${Math.round(Number(document.size || 0) / 1024)} KB` : ""}</small>
+                      </div>
+                      <div style={S.inline}>
+                        <a style={S.secondaryBtn} href={getGroupDocumentContentUrl(selectedManagedGroup.id, document.id)} target="_blank" rel="noreferrer">
+                          <Icons.ExternalLink size={12} />
+                          Abrir
+                        </a>
+                        <button type="button" style={S.secondaryBtn} onClick={() => void handleDeleteManagedGroupDocument(document)} disabled={actionBusy}>
+                          <Icons.Trash size={12} />
+                          Remover
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2279,6 +2493,7 @@ const S: Record<string, React.CSSProperties> = {
   colTitle: { fontSize: 17, fontWeight: 800, color: "var(--iccc-text)" },
   emailTools: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
   input: { width: "100%", height: 38, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none" },
+  textarea: { width: "100%", minHeight: 120, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "10px 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none", resize: "vertical" },
   select: { width: "100%", height: 38, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none" },
   listBody: { minHeight: 0, display: "grid", gap: 8, overflowY: "auto", paddingRight: 2 },
   email: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(255,255,255,0.78)", padding: "10px 12px", display: "grid", gap: 6, cursor: "pointer" },
@@ -2333,6 +2548,9 @@ const S: Record<string, React.CSSProperties> = {
   attachRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 12, alignItems: "center", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)" },
   attachMeta: { display: "grid", gap: 3, minWidth: 0, color: "var(--iccc-text)" },
   attachChecks: { display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "flex-end" },
+  itemList: { display: "grid", gap: 10 },
+  itemRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 12, alignItems: "center", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)" },
+  itemMeta: { display: "grid", gap: 4, minWidth: 0, color: "var(--iccc-text)" },
   summaryRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)", fontSize: 13, color: "var(--iccc-text)" },
   summaryGrid: { display: "grid", gap: 8 },
   note: { padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(191,219,254,0.8)", background: "#eff6ff", color: "#1d4ed8", fontSize: 13, lineHeight: 1.5 },
