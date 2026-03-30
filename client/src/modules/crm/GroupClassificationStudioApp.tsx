@@ -11,6 +11,7 @@ import "../../global.css";
 type SectionId = "emails" | "classification" | "labels" | "filters" | "summary" | "groups";
 type ScopeMode = "related" | "all";
 type EmailLabelStatus = "em_analise" | "em_progresso" | "concluido";
+type ClassificationFocus = "principal" | "references" | "labels" | "ticket";
 type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
 type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
 type StudioParams = {
@@ -385,6 +386,9 @@ function StudioInner() {
   const [ticketFilterId, setTicketFilterId] = useState("");
   const [labelFilterValue, setLabelFilterValue] = useState("");
   const [emailSearch, setEmailSearch] = useState("");
+  const [principalSearch, setPrincipalSearch] = useState("");
+  const [referenceSearch, setReferenceSearch] = useState("");
+  const [classificationLabelInput, setClassificationLabelInput] = useState("");
   const [onlyExternal, setOnlyExternal] = useState(false);
   const [onlyWithAttachments, setOnlyWithAttachments] = useState(false);
   const [allGroups, setAllGroups] = useState<LinkGroupEntry[]>([]);
@@ -410,6 +414,7 @@ function StudioInner() {
   const [attachmentTextMap, setAttachmentTextMap] = useState<Record<string, string>>({});
   const [selectionTouched, setSelectionTouched] = useState({ principal: false, references: false, ticket: false });
   const [actionBusy, setActionBusy] = useState(false);
+  const [classificationFocus, setClassificationFocus] = useState<ClassificationFocus>("principal");
 
   const currentSeed = useMemo(() => buildFallbackEmail(params), [params]);
   const currentContext = useMemo(() => ({
@@ -686,6 +691,28 @@ function StudioInner() {
     const q = String(labelInput || "").trim().toLowerCase();
     return q ? labelCatalog.filter((label) => label.toLowerCase().includes(q)) : labelCatalog;
   }, [labelCatalog, labelInput]);
+  const filteredPrincipalGroups = useMemo(() => {
+    const q = normalizeSearchValue(principalSearch);
+    const rows = businessGroups.filter((group) => {
+      if (!q) return true;
+      return normalizeSearchValue(String(group.name || "")).includes(q);
+    });
+    return rows.slice(0, 18);
+  }, [businessGroups, principalSearch]);
+  const filteredReferenceGroups = useMemo(() => {
+    const q = normalizeSearchValue(referenceSearch);
+    const rows = businessGroups.filter((group) => {
+      if (group.id === principalGroupId) return false;
+      if (!q) return true;
+      return normalizeSearchValue(String(group.name || "")).includes(q);
+    });
+    return rows.slice(0, 24);
+  }, [businessGroups, principalGroupId, referenceSearch]);
+  const filteredClassificationLabels = useMemo(() => {
+    const q = String(classificationLabelInput || "").trim().toLowerCase();
+    const rows = q ? labelCatalog.filter((label) => label.toLowerCase().includes(q)) : labelCatalog;
+    return rows.slice(0, 24);
+  }, [classificationLabelInput, labelCatalog]);
   const availableTicketChoices = useMemo(() => {
     const rows = [...relatedTickets, ...ticketSearchResults].reduce<GroupTicketEntry[]>((acc, ticket) => {
       if (!ticket?.id || acc.some((entry) => entry.id === ticket.id)) return acc;
@@ -1064,7 +1091,13 @@ function StudioInner() {
   function applySuggestedGroup(groupId: string) {
     if (!groupId) return;
     setSection("classification");
-    if (!principalGroupId) {
+    if (classificationFocus === "references") {
+      setSelectionTouched((current) => ({ ...current, references: true }));
+      setReferenceGroupIds((current) => current.includes(groupId) ? current : [...current, groupId]);
+      setStatus("Sugestao copiada para Referencias.");
+      return;
+    }
+    if (!principalGroupId || classificationFocus === "principal") {
       setSelectionTouched((current) => ({ ...current, principal: true }));
       setPrincipalGroupId(groupId);
       setStatus("Sugestao copiada para Grupo principal.");
@@ -1082,6 +1115,7 @@ function StudioInner() {
   function applySuggestedTicket(ticketId: string) {
     if (!ticketId) return;
     setSection("classification");
+    setClassificationFocus("ticket");
     setSelectionTouched((current) => ({ ...current, ticket: true }));
     setSelectedSeriesId("");
     setSelectedTicketId(ticketId);
@@ -1092,6 +1126,7 @@ function StudioInner() {
     const value = String(label || "").trim();
     if (!value) return;
     setSection("classification");
+    setClassificationFocus("labels");
     addLabel(value);
     setStatus("Sugestao copiada para Etiquetas.");
   }
@@ -1470,58 +1505,213 @@ function StudioInner() {
       return (
         <div style={S.stack}>
           <div style={S.card}>
-            <div style={S.cardTitle}>Classificacao base</div>
-            <div style={S.cardMeta}>Agora ja aplica ao sistema real: grupo principal, referencias e ticket do email selecionado.</div>
-            <div style={S.grid2}>
-              <label style={S.field}><span style={S.label}>Grupo principal</span><select style={S.select} value={principalGroupId} onChange={(event) => { setSelectionTouched((current) => ({ ...current, principal: true })); setPrincipalGroupId(event.target.value); }}><option value="">Sem grupo principal</option>{businessGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-              <label style={S.field}><span style={S.label}>Ticket existente</span><select style={S.select} value={selectedTicketId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedTicketId(nextValue); if (nextValue) setSelectedSeriesId(""); }}><option value="">Sem ticket existente</option>{availableTicketChoices.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} · {ticket.title}</option>)}</select></label>
+            <div style={S.classificationHeader}>
+              <div>
+                <div style={S.cardTitle}>Classificacao</div>
+                <div style={S.cardMeta}>Os chips azuis mostram o que fica ligado ao email. Clicar neles desliga a ligacao.</div>
+              </div>
+              <div style={S.focusBadge}>Destino das sugestoes: {classificationFocus === "principal" ? "Grupo principal" : classificationFocus === "references" ? "Referencias" : classificationFocus === "labels" ? "Etiquetas" : "Ticket"}</div>
             </div>
-            <div style={S.inline}>
-              <button type="button" style={S.secondaryBtn} onClick={clearPrincipalSelection} disabled={actionBusy || !principalGroupId}>
-                <Icons.RotateCcw size={12} />
-                Limpar grupo principal
-              </button>
-              <button type="button" style={S.secondaryBtn} onClick={clearTicketSelection} disabled={actionBusy || (!selectedTicketId && !selectedSeriesId && !selectedEmailTicketIds.length)}>
-                <Icons.RotateCcw size={12} />
-                Desligar ticket do email
-              </button>
+          </div>
+
+          <div style={S.sectionCard}>
+            <button type="button" style={classificationFocus === "principal" ? S.sectionHeadOn : S.sectionHead} onClick={() => setClassificationFocus("principal")}>
+              <span style={S.sectionName}>Grupo principal</span>
+              <span style={S.sectionMeta}>Casa principal do email</span>
+            </button>
+            <div style={S.sectionBody}>
+              <div style={S.inlineWrap}>
+                {principalGroup ? (
+                  <button type="button" style={S.selectedChipOn} onClick={clearPrincipalSelection}>
+                    {principalGroup.name}
+                  </button>
+                ) : (
+                  <span style={S.mutedMini}>Sem grupo principal</span>
+                )}
+              </div>
+              <div style={S.sectionControls}>
+                <input style={S.input} value={principalSearch} onChange={(event) => setPrincipalSearch(event.target.value)} placeholder="Pesquisar grupo principal..." />
+                <select style={S.select} value={principalGroupId} onChange={(event) => { setSelectionTouched((current) => ({ ...current, principal: true })); setPrincipalGroupId(event.target.value); }}>
+                  <option value="">Sem grupo principal</option>
+                  {filteredPrincipalGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                </select>
+              </div>
+              <div style={S.chips}>
+                {filteredPrincipalGroups.map((group) => (
+                  <button
+                    key={group.id}
+                    type="button"
+                    style={group.id === principalGroupId ? S.groupChipBtnOn : S.groupChipBtn}
+                    onClick={() => {
+                      setSelectionTouched((current) => ({ ...current, principal: true }));
+                      setPrincipalGroupId(group.id === principalGroupId ? "" : group.id);
+                    }}
+                  >
+                    {group.name}
+                  </button>
+                ))}
+              </div>
+              <div style={S.compactCreateRow}>
+                <input style={S.input} value={createGroupName} onChange={(event) => setCreateGroupName(event.target.value)} placeholder="Criar grupo na hora..." />
+                <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateGroupAndLink()} disabled={actionBusy || !String(createGroupName || "").trim()}>
+                  <Icons.Plus size={12} />
+                  Criar
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div style={S.sectionCard}>
+            <button type="button" style={classificationFocus === "references" ? S.sectionHeadOn : S.sectionHead} onClick={() => setClassificationFocus("references")}>
+              <span style={S.sectionName}>Referencias</span>
+              <span style={S.sectionMeta}>Outros grupos ligados a este email</span>
+            </button>
+            <div style={S.sectionBody}>
+              <div style={S.inlineWrap}>
+                {referenceGroups.length ? referenceGroups.map((group) => (
+                  <button key={group.id} type="button" style={S.selectedChipOn} onClick={() => toggleReferenceGroup(group.id)}>
+                    {group.name}
+                  </button>
+                )) : <span style={S.mutedMini}>Sem referencias</span>}
+              </div>
+              <input style={S.input} value={referenceSearch} onChange={(event) => setReferenceSearch(event.target.value)} placeholder="Pesquisar referencias..." />
+              <div style={S.chips}>
+                {filteredReferenceGroups.map((group) => (
+                  <button key={group.id} type="button" style={referenceGroupIds.includes(group.id) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleReferenceGroup(group.id)}>
+                    {group.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div style={S.sectionCard}>
+            <button type="button" style={classificationFocus === "labels" ? S.sectionHeadOn : S.sectionHead} onClick={() => setClassificationFocus("labels")}>
+              <span style={S.sectionName}>Etiquetas</span>
+              <span style={S.sectionMeta}>Etiquetas do email, com categoria e estado opcionais</span>
+            </button>
+            <div style={S.sectionBody}>
+              <div style={S.inlineWrap}>
+                {summaryLabels.length ? summaryLabels.map((label) => (
+                  <button key={label} type="button" style={S.selectedChipOn} onClick={() => removeLabel(label)}>
+                    {label}
+                  </button>
+                )) : <span style={S.mutedMini}>Sem etiquetas</span>}
+              </div>
+              <div style={S.compactCreateRow}>
+                <input style={S.input} value={classificationLabelInput} onChange={(event) => setClassificationLabelInput(event.target.value)} placeholder="Pesquisar ou criar etiqueta..." />
+                <button type="button" style={S.secondaryBtn} onClick={() => addLabel(classificationLabelInput)} disabled={!String(classificationLabelInput || "").trim()}>
+                  <Icons.Plus size={12} />
+                  Adicionar
+                </button>
+              </div>
+              <div style={S.chips}>
+                {filteredClassificationLabels.map((label) => (
+                  <button key={label} type="button" style={selectedLabels.includes(label) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => addLabel(label)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {selectedLabels.length ? (
+                <div style={S.labelGrid}>
+                  {selectedLabels.map((label) => {
+                    const draft = labelDrafts[label] || { categorize: false, hasStatus: false };
+                    return (
+                      <div key={label} style={S.labelRowCompact}>
+                        <div style={S.labelHead}>
+                          <strong>{label}</strong>
+                          <button type="button" style={S.linkBtn} onClick={() => removeLabel(label)}>Off</button>
+                        </div>
+                        <div style={S.inlineChecks}>
+                          <label style={S.check}><input type="checkbox" checked={draft.categorize} onChange={(event) => updateLabelDraft(label, { categorize: event.target.checked })} /><span>Categoria</span></label>
+                          <label style={S.check}><input type="checkbox" checked={draft.hasStatus} onChange={(event) => updateLabelDraft(label, { hasStatus: event.target.checked, status: event.target.checked ? (draft.status || "em_analise") : undefined })} /><span>Estado</span></label>
+                        </div>
+                        {draft.hasStatus ? (
+                          <select style={S.select} value={draft.status || "em_analise"} onChange={(event) => updateLabelDraft(label, { status: event.target.value as EmailLabelStatus, hasStatus: true })}>
+                            {LABEL_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                          </select>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div style={S.sectionCard}>
+            <button type="button" style={classificationFocus === "ticket" ? S.sectionHeadOn : S.sectionHead} onClick={() => setClassificationFocus("ticket")}>
+              <span style={S.sectionName}>Ticket</span>
+              <span style={S.sectionMeta}>Escolher ticket existente ou criar novo</span>
+            </button>
+            <div style={S.sectionBody}>
+              <div style={S.inlineWrap}>
+                {selectedTicket ? (
+                  <button type="button" style={S.selectedChipOn} onClick={clearTicketSelection}>
+                    {selectedTicket.code}
+                  </button>
+                ) : selectedSeriesId ? (
+                  <button type="button" style={S.selectedChipPending} onClick={clearTicketSelection}>
+                    {ticketSummary}
+                  </button>
+                ) : (
+                  <span style={S.mutedMini}>Sem ticket</span>
+                )}
+              </div>
+              <div style={S.sectionControls}>
+                <input style={S.input} value={ticketSearch} onChange={(event) => setTicketSearch(event.target.value)} placeholder="Pesquisar por codigo, titulo ou etiqueta..." />
+                <button type="button" style={S.secondaryBtn} onClick={() => void handleSearchTickets()} disabled={actionBusy}>
+                  <Icons.Search size={12} />
+                  Pesquisar
+                </button>
+              </div>
+              <div style={S.chips}>
+                {(ticketSearchResults.length ? ticketSearchResults : availableTicketChoices.slice(0, 12)).map((ticket) => (
+                  <button
+                    key={ticket.id}
+                    type="button"
+                    style={ticket.id === selectedTicketId ? S.groupChipBtnOn : S.groupChipBtn}
+                    onClick={() => {
+                      setSelectionTouched((current) => ({ ...current, ticket: true }));
+                      setSelectedTicketId(ticket.id === selectedTicketId ? "" : ticket.id);
+                      if (ticket.id !== selectedTicketId) setSelectedSeriesId("");
+                    }}
+                  >
+                    {ticket.code}
+                  </button>
+                ))}
+              </div>
+              <div style={S.grid2}>
+                <select style={S.select} value={selectedSeriesId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedSeriesId(nextValue); if (nextValue) setSelectedTicketId(""); }}>
+                  <option value="">Sem novo ticket</option>
+                  {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
+                </select>
+                <input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do ticket" />
+              </div>
+              <div style={S.inline}>
+                <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateTicketAndLink()} disabled={actionBusy || !selectedSeriesId}>
+                  <Icons.Plus size={12} />
+                  Criar ticket
+                </button>
+              </div>
             </div>
           </div>
 
           <div style={S.card}>
-            <div style={S.cardTitle}>Pesquisa de tickets</div>
-            <div style={S.inline}>
-              <input style={S.input} value={ticketSearch} onChange={(event) => setTicketSearch(event.target.value)} placeholder="Pesquisar por codigo, titulo ou etiqueta" />
-              <button type="button" style={S.secondaryBtn} onClick={() => void handleSearchTickets()} disabled={actionBusy}>
-                <Icons.Search size={12} />
-                Pesquisar
-              </button>
+            <div style={S.cardTitle}>Atualizar email</div>
+            <div style={S.summaryGrid}>
+              <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
+              <div style={S.summaryRow}><span>Referencias</span><strong>{referenceGroupSummary}</strong></div>
+              <div style={S.summaryRow}><span>Ticket</span><strong>{ticketSummary}</strong></div>
+              <div style={S.summaryRow}><span>Etiquetas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
+              <div style={S.summaryRow}><span>Estado por etiquetas</span><strong>{emailStatusSummary}</strong></div>
             </div>
-            <div style={S.grid2}>
-              <label style={S.field}><span style={S.label}>Serie para novo ticket</span><select style={S.select} value={selectedSeriesId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedSeriesId(nextValue); if (nextValue) setSelectedTicketId(""); }}><option value="">Sem novo ticket</option>{ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}</select></label>
-              <label style={S.field}><span style={S.label}>Titulo do ticket</span><input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do ticket" /></label>
-            </div>
-            {selectedTicket ? <div style={S.summaryRow}><span>Ticket selecionado</span><strong>{selectedTicket.code} · {selectedTicket.title}</strong></div> : null}
-          </div>
-
-          <div style={S.card}>
-            <div style={S.cardTitle}>Grupos referencia</div>
-            <div style={S.chips}>{businessGroups.filter((group) => group.id !== principalGroupId).map((group) => <button key={group.id} type="button" style={referenceGroupIds.includes(group.id) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleReferenceGroup(group.id)}>{group.name}</button>)}</div>
-          </div>
-
-          <div style={S.card}>
-            <div style={S.cardTitle}>Aplicar ao email selecionado</div>
-            <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
-            <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupSummary}</strong></div>
-            <div style={S.summaryRow}><span>Ticket</span><strong>{ticketSummary}</strong></div>
-            <div style={S.summaryRow}><span>Etiquetas selecionadas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
-            <div style={S.summaryRow}><span>Estado por etiquetas</span><strong>{emailStatusSummary}</strong></div>
             <div style={S.inline}>
               <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length && !selectedLabels.length && !(selectedEmail?.labels || []).length && !String(selectedEmail?.status || "").trim())}>
                 <Icons.Save size={12} />
-                Aplicar classificacao
+                Gravar / atualizar
               </button>
-              <span style={S.cardMeta}>No email atual, tambem tenta atualizar as categorias Outlook geridas.</span>
+              <span style={S.cardMeta}>Mantemos a logica atual de gravacao enquanto fechamos a nova estrutura.</span>
             </div>
           </div>
         </div>
@@ -1784,6 +1974,20 @@ const S: Record<string, React.CSSProperties> = {
   workCol: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, overflow: "hidden" },
   stack: { height: "100%", minHeight: 0, display: "grid", gap: 12, alignContent: "start", overflowY: "auto", paddingRight: 2 },
   card: { borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.74)", padding: 14, display: "grid", gap: 12 },
+  sectionCard: { borderRadius: 16, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", overflow: "hidden", display: "grid" },
+  sectionHead: { width: "100%", border: "none", borderBottom: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.58)", color: "var(--iccc-text)", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, cursor: "pointer" },
+  sectionHeadOn: { width: "100%", border: "none", borderBottom: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.9)", color: "#1d4ed8", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, cursor: "pointer" },
+  sectionName: { fontSize: 14, fontWeight: 700 },
+  sectionMeta: { fontSize: 11, color: "var(--iccc-muted)" },
+  sectionBody: { padding: 14, display: "grid", gap: 12 },
+  sectionControls: { display: "grid", gridTemplateColumns: "minmax(0,1fr) 260px", gap: 10 },
+  compactCreateRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center" },
+  inlineWrap: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  selectedChipOn: { borderRadius: 999, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 700, padding: "7px 11px", cursor: "pointer" },
+  selectedChipPending: { borderRadius: 999, border: "1px solid rgba(245,158,11,0.24)", background: "rgba(254,243,199,0.92)", color: "#b45309", fontSize: 12, fontWeight: 700, padding: "7px 11px", cursor: "pointer" },
+  mutedMini: { fontSize: 12, color: "var(--iccc-muted)" },
+  focusBadge: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(37,99,235,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
+  classificationHeader: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
   titleRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   cardTitle: { fontSize: 16, fontWeight: 800, color: "var(--iccc-text)" },
   cardMeta: { fontSize: 12, lineHeight: 1.45, color: "var(--iccc-muted)" },
@@ -1800,6 +2004,8 @@ const S: Record<string, React.CSSProperties> = {
   subTitle: { fontSize: 12, fontWeight: 800, color: "var(--iccc-text)" },
   inline: { display: "flex", alignItems: "center", gap: 8 },
   labelRow: { borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)", padding: 12, display: "grid", gap: 8 },
+  labelRowCompact: { borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.7)", padding: 10, display: "grid", gap: 8 },
+  labelGrid: { display: "grid", gap: 8 },
   labelHead: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   linkBtn: { border: "none", background: "transparent", color: "#2563eb", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 },
   check: { display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--iccc-text)" },
@@ -1809,5 +2015,6 @@ const S: Record<string, React.CSSProperties> = {
   attachMeta: { display: "grid", gap: 3, minWidth: 0, color: "var(--iccc-text)" },
   attachChecks: { display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "flex-end" },
   summaryRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)", fontSize: 13, color: "var(--iccc-text)" },
+  summaryGrid: { display: "grid", gap: 8 },
   note: { padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(191,219,254,0.8)", background: "#eff6ff", color: "#1d4ed8", fontSize: 13, lineHeight: 1.5 },
 };
