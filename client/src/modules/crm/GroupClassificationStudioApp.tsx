@@ -10,6 +10,7 @@ import "../../global.css";
 
 type SectionId = "emails" | "classification" | "labels" | "filters" | "summary" | "groups";
 type ScopeMode = "related" | "all";
+type ApplyScopeMode = "current" | "selected" | "principal_group";
 type EmailLabelStatus = "em_analise" | "em_progresso" | "concluido";
 type ClassificationFocus = "principal" | "references" | "labels" | "ticket";
 type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
@@ -115,6 +116,15 @@ function formatDate(value: string | undefined): string {
 function isExternalEmail(email: RelatedEmailEntry): boolean {
   const from = String(email.fromEmail || "").toLowerCase();
   return from ? !from.endsWith("@divitek.pt") : true;
+}
+
+function isCurrentContextEmail(email: Partial<RelatedEmailEntry>, currentContext: Partial<StudioParams>) {
+  const emailItemId = String(email?.itemId || "").trim();
+  const contextItemId = String(currentContext?.itemId || "").trim();
+  if (emailItemId && contextItemId && emailItemId === contextItemId) return true;
+  const emailMessageId = String(email?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+  const contextMessageId = String(currentContext?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+  return Boolean(emailMessageId && contextMessageId && emailMessageId === contextMessageId);
 }
 
 function makeAttachmentKey(attachment: { id?: string; name?: string; contentId?: string }): string {
@@ -379,6 +389,7 @@ function StudioInner() {
   const params = useMemo(() => readParams(), []);
   const [section, setSection] = useState<SectionId>("emails");
   const [scopeMode, setScopeMode] = useState<ScopeMode>("related");
+  const [applyScopeMode, setApplyScopeMode] = useState<ApplyScopeMode>("current");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
@@ -398,6 +409,7 @@ function StudioInner() {
   const [relatedEmails, setRelatedEmails] = useState<RelatedEmailEntry[]>([]);
   const [knownEmails, setKnownEmails] = useState<RelatedEmailEntry[]>([]);
   const [selectedEmailKey, setSelectedEmailKey] = useState("");
+  const [selectedTargetEmailKeys, setSelectedTargetEmailKeys] = useState<string[]>([]);
   const [principalGroupId, setPrincipalGroupId] = useState("");
   const [referenceGroupIds, setReferenceGroupIds] = useState<string[]>([]);
   const [selectedSeriesId, setSelectedSeriesId] = useState("");
@@ -627,25 +639,22 @@ function StudioInner() {
   );
 
   const selectedEmailIsCurrent = useMemo(() => {
-    const selectedItemId = String(selectedEmail?.itemId || "").trim();
-    const currentItemId = String(currentContext.itemId || "").trim();
-    if (selectedItemId && currentItemId && selectedItemId === currentItemId) return true;
-    const selectedMessageId = String(selectedEmail?.internetMessageId || "").trim().toLowerCase();
-    const currentMessageId = String(currentContext.internetMessageId || "").trim().toLowerCase();
-    return Boolean(selectedMessageId && currentMessageId && selectedMessageId === currentMessageId);
-  }, [currentContext.internetMessageId, currentContext.itemId, selectedEmail?.internetMessageId, selectedEmail?.itemId]);
+    return isCurrentContextEmail(selectedEmail || {}, currentContext);
+  }, [currentContext, selectedEmail]);
 
-  const selectedEmailGroups = useMemo(() => {
-    if (!selectedEmail) return [];
-    const fallbackCurrentGroups = selectedEmailIsCurrent ? currentCaseBusinessGroups.map((group) => ({
-      id: group.id,
-      name: group.name,
-      relationKind: group.relationKind,
-      kind: group.kind,
-    })) : [];
+  function getEmailGroupRelations(email: RelatedEmailEntry | null) {
+    if (!email) return [];
+    const fallbackCurrentGroups = isCurrentContextEmail(email, currentContext)
+      ? currentCaseBusinessGroups.map((group) => ({
+          id: group.id,
+          name: group.name,
+          relationKind: group.relationKind,
+          kind: group.kind,
+        }))
+      : [];
     const list = [
-      ...(selectedEmail.relatedGroups || []),
-      ...(selectedEmail.groupId ? [{ id: selectedEmail.groupId, name: selectedEmail.groupName, relationKind: selectedEmail.membershipKind }] : []),
+      ...(email.relatedGroups || []),
+      ...(email.groupId ? [{ id: email.groupId, name: email.groupName, relationKind: email.membershipKind }] : []),
       ...fallbackCurrentGroups,
     ];
     return list.reduce<Array<{ id: string; name?: string; relationKind?: string }>>((acc, row) => {
@@ -655,7 +664,32 @@ function StudioInner() {
       acc.push(row);
       return acc;
     }, []);
-  }, [currentCaseBusinessGroups, groupMap, selectedEmail, selectedEmailIsCurrent]);
+  }
+
+  const selectedEmailGroups = useMemo(() => {
+    return getEmailGroupRelations(selectedEmail);
+  }, [selectedEmail, currentCaseBusinessGroups, currentContext, groupMap]);
+
+  const principalAnchorGroupId = useMemo(
+    () => principalGroupId || selectedEmailGroups.find((group) => String(group.relationKind || "").toLowerCase() === "principal")?.id || "",
+    [principalGroupId, selectedEmailGroups]
+  );
+
+  const selectedTargetEmails = useMemo(
+    () => emailPool.filter((email) => selectedTargetEmailKeys.includes(makeEmailKey(email))),
+    [emailPool, selectedTargetEmailKeys]
+  );
+
+  const principalScopeEmails = useMemo(() => {
+    if (!principalAnchorGroupId) return [];
+    return emailPool.filter((email) =>
+      getEmailGroupRelations(email).some(
+        (group) => String(group.relationKind || "").toLowerCase() === "principal" && group.id === principalAnchorGroupId
+      )
+    );
+  }, [emailPool, principalAnchorGroupId, currentCaseBusinessGroups, currentContext, groupMap]);
+  const selectedTargetCount = selectedTargetEmails.length;
+  const principalScopeCount = principalScopeEmails.length;
 
   const selectedEmailTicketIds = useMemo(() => {
     if (!selectedEmail) return [];
@@ -678,6 +712,14 @@ function StudioInner() {
     if (!principalGroupId) return;
     setReferenceGroupIds((current) => current.filter((groupId) => groupId !== principalGroupId));
   }, [principalGroupId]);
+
+  useEffect(() => {
+    if (!selectedEmailKey) return;
+    setSelectedTargetEmailKeys((current) => {
+      const existing = current.filter((key) => emailPool.some((email) => makeEmailKey(email) === key));
+      return existing.length ? existing : [selectedEmailKey];
+    });
+  }, [emailPool, selectedEmailKey]);
 
   const previewHtml = useMemo(() => buildEmailPreviewHtml(selectedEmail), [selectedEmail]);
   const labelCatalog = useMemo(() => {
@@ -1082,6 +1124,24 @@ function StudioInner() {
     setRelatedEmails(contextualEmails);
   }
 
+  function toggleTargetEmailKey(emailKey: string) {
+    const key = String(emailKey || "").trim();
+    if (!key) return;
+    setSelectedTargetEmailKeys((current) =>
+      current.includes(key)
+        ? current.filter((entry) => entry !== key)
+        : [...current, key]
+    );
+  }
+
+  function selectAllVisibleEmails() {
+    setSelectedTargetEmailKeys(visibleEmails.map((email) => makeEmailKey(email)).filter(Boolean));
+  }
+
+  function clearSelectedTargets() {
+    setSelectedTargetEmailKeys(selectedEmailKey ? [selectedEmailKey] : []);
+  }
+
   function toggleReferenceGroup(groupId: string) {
     setSelectionTouched((current) => ({ ...current, references: true }));
     setReferenceGroupIds((current) => current.includes(groupId) ? current.filter((entry) => entry !== groupId) : [...current, groupId]);
@@ -1289,78 +1349,152 @@ function StudioInner() {
   async function handleApplyClassification() {
     setActionBusy(true);
     try {
+      const targetEmails = dedupeEmails(
+        (
+          applyScopeMode === "selected"
+            ? selectedTargetEmails
+            : applyScopeMode === "principal_group"
+              ? principalScopeEmails
+              : [selectedEmail].filter(Boolean)
+        ) as RelatedEmailEntry[]
+      );
+      const effectiveTargetEmails = targetEmails.length
+        ? targetEmails
+        : ((selectedEmail ? [selectedEmail] : []) as RelatedEmailEntry[]);
+      if (!effectiveTargetEmails.length) {
+        setStatus("Nao existe nenhum email alvo para atualizar.");
+        return;
+      }
+
       const principalGroup = principalGroupId ? groupMap.get(principalGroupId) || null : null;
       const referenceGroups = referenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[];
       const allGroupIds = [principalGroupId, ...referenceGroupIds].filter(Boolean);
-      const currentGroupIds = selectedEmailGroups.map((group) => String(group.id || "").trim()).filter(Boolean);
-      const groupsToRemove = currentGroupIds.filter((groupId) => !allGroupIds.includes(groupId));
-      const ticketIdsToRemove = selectedEmailTicketIds.filter((ticketId) => ticketId !== selectedTicketId);
       const emailLabelStatus = selectedLabelStatuses[0] || "";
       const removedInheritedLabels = inheritedLabels.filter((label) => !selectedLabels.includes(label));
       const emailOwnedSelectedLabels = selectedLabels.filter((label) => !inheritedLabels.includes(label));
-      const classifiedEmailPayload = {
-        ...currentEmailPayload,
+
+      let finalTicket: GroupTicketEntry | null = null;
+      const buildTargetPayload = (targetEmail: RelatedEmailEntry): RelevantEmailPayload => {
+        const targetIsCurrent = isCurrentContextEmail(targetEmail, currentContext);
+        const targetAttachments = targetIsCurrent
+          ? attachments.map((attachment) => ({ ...attachment }))
+          : (targetEmail.attachments || []).map((attachment) => ({
+              id: attachment.id,
+              name: attachment.name,
+              contentType: String(attachment.contentType || "application/octet-stream"),
+              content: String(attachment.content || ""),
+              size: attachment.size,
+              isInline: attachment.isInline,
+              contentId: attachment.contentId,
+            }));
+        return {
+          itemId: String(targetEmail?.itemId || (targetIsCurrent ? currentContext.itemId : "") || "").trim() || undefined,
+          internetMessageId: String(targetEmail?.internetMessageId || (targetIsCurrent ? currentContext.internetMessageId : "") || "").trim() || undefined,
+          conversationId: String(targetEmail?.conversationId || (targetIsCurrent ? currentContext.conversationId : "") || "").trim() || undefined,
+          subject: String(targetEmail?.subject || (targetIsCurrent ? currentContext.subject : "") || "").trim() || undefined,
+          fromEmail: String(targetEmail?.fromEmail || (targetIsCurrent ? currentContext.fromEmail : "") || "").trim() || undefined,
+          fromName: String(targetEmail?.fromName || (targetIsCurrent ? currentContext.fromName : "") || "").trim() || undefined,
+          receivedAtIso: String(targetEmail?.receivedAtIso || targetEmail?.messageDateIso || (targetIsCurrent ? currentContext.receivedAtIso : "") || "").trim() || undefined,
+          messageDateIso: String(targetEmail?.messageDateIso || targetEmail?.receivedAtIso || (targetIsCurrent ? currentContext.receivedAtIso : "") || "").trim() || undefined,
+          bodyText: String(targetEmail?.bodyText || "").trim() || undefined,
+          bodyHtml: String(targetEmail?.bodyHtml || "").trim() || undefined,
+          attachments: targetAttachments.map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name,
+            contentType: attachment.contentType,
+            size: attachment.size,
+            isInline: attachment.isInline,
+            contentId: attachment.contentId,
+            content: attachment.content,
+          })),
+        };
+      };
+
+      const buildClassifiedEmailPayload = (targetEmail: RelatedEmailEntry): RelevantEmailPayload => ({
+        ...buildTargetPayload(targetEmail),
         status: emailLabelStatus,
         labels: emailOwnedSelectedLabels,
         removedInheritedLabels,
         labelStates: selectedLabelStates,
-      };
-
-      for (const groupId of groupsToRemove) {
-        await removeEmailFromLinkGroup(groupId, {
-          ...currentEmailPayload,
-          emailKey: String(selectedEmail?.emailKey || "").trim() || undefined,
-        });
-      }
-
-      if (principalGroupId) {
-        await addEmailToLinkGroup(principalGroupId, {
-          ...classifiedEmailPayload,
-          membershipKind: "principal",
-        });
-      }
-      for (const groupId of referenceGroupIds) {
-        await addEmailToLinkGroup(groupId, {
-          ...classifiedEmailPayload,
-          membershipKind: "referencia",
-        });
-      }
-
-      for (const ticketId of ticketIdsToRemove) {
-        await unlinkEmailFromGroupTicket(ticketId, {
-          email: currentEmailPayload,
-          emailKey: String(selectedEmail?.emailKey || "").trim() || undefined,
-        });
-      }
-
-      await registerRelevantEmail({
-        ...classifiedEmailPayload,
       });
 
-      let finalTicket: GroupTicketEntry | null = null;
-      if (selectedTicketId) {
-        const linked = await linkEmailToGroupTicket(selectedTicketId, {
-          email: classifiedEmailPayload,
-          applyGroups: allGroupIds.length > 0,
-          groupIds: allGroupIds,
-          membershipKind: principalGroupId ? "principal" : "referencia",
-        });
-        finalTicket = linked.ticket;
-      } else if (selectedSeriesId) {
+      const baseTargetEmail = effectiveTargetEmails[0];
+      const baseTargetKey = makeEmailKey(baseTargetEmail);
+      if (!selectedTicketId && selectedSeriesId) {
+        const baseClassifiedEmailPayload = buildClassifiedEmailPayload(baseTargetEmail);
         finalTicket = await createGroupTicket({
           seriesId: selectedSeriesId,
-          title: String(createTicketTitle || selectedEmail?.subject || "Ticket").trim(),
-          description: String(selectedEmail?.bodyText || "").trim().slice(0, 4000),
+          title: String(createTicketTitle || baseTargetEmail?.subject || "Ticket").trim(),
+          description: String(baseTargetEmail?.bodyText || "").trim().slice(0, 4000),
           labels: selectedLabels,
           groupIds: allGroupIds,
-          email: classifiedEmailPayload,
+          email: baseClassifiedEmailPayload,
           membershipKind: principalGroupId ? "principal" : "referencia",
         });
         setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
         setSelectedTicketId(finalTicket.id);
       }
 
-      if (selectedEmailIsCurrent) {
+      for (const targetEmail of effectiveTargetEmails) {
+        const targetEmailKey = makeEmailKey(targetEmail);
+        const targetEmailPayload = buildTargetPayload(targetEmail);
+        const classifiedEmailPayload = {
+          ...targetEmailPayload,
+          status: emailLabelStatus,
+          labels: emailOwnedSelectedLabels,
+          removedInheritedLabels,
+          labelStates: selectedLabelStates,
+        };
+        const targetGroups = getEmailGroupRelations(targetEmail);
+        const currentGroupIds = targetGroups.map((group) => String(group.id || "").trim()).filter(Boolean);
+        const groupsToRemove = currentGroupIds.filter((groupId) => !allGroupIds.includes(groupId));
+        const ticketIdsToRemove = ((emailContextMeta.get(targetEmailKey)?.ticketIds || []) as string[]).filter((ticketId) => ticketId !== selectedTicketId && ticketId !== finalTicket?.id);
+
+        for (const groupId of groupsToRemove) {
+          await removeEmailFromLinkGroup(groupId, {
+            ...targetEmailPayload,
+            emailKey: String(targetEmail?.emailKey || "").trim() || undefined,
+          });
+        }
+
+        if (principalGroupId) {
+          await addEmailToLinkGroup(principalGroupId, {
+            ...classifiedEmailPayload,
+            membershipKind: "principal",
+          });
+        }
+        for (const groupId of referenceGroupIds) {
+          await addEmailToLinkGroup(groupId, {
+            ...classifiedEmailPayload,
+            membershipKind: "referencia",
+          });
+        }
+
+        for (const ticketId of ticketIdsToRemove) {
+          await unlinkEmailFromGroupTicket(ticketId, {
+            email: targetEmailPayload,
+            emailKey: String(targetEmail?.emailKey || "").trim() || undefined,
+          });
+        }
+
+        await registerRelevantEmail({
+          ...classifiedEmailPayload,
+        });
+
+        const targetTicketId = finalTicket?.id || selectedTicketId;
+        if (targetTicketId && !(finalTicket && targetEmailKey === baseTargetKey)) {
+          const linked = await linkEmailToGroupTicket(targetTicketId, {
+            email: classifiedEmailPayload,
+            applyGroups: allGroupIds.length > 0,
+            groupIds: allGroupIds,
+            membershipKind: principalGroupId ? "principal" : "referencia",
+          });
+          finalTicket = linked.ticket;
+        }
+      }
+
+      const includesCurrentTarget = effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
+      if (includesCurrentTarget) {
         const settings = await getSettings().catch(() => null);
         const categorySettings = settings?.groupOutlookCategories;
         await syncManagedOutlookCategories({
@@ -1384,7 +1518,11 @@ function StudioInner() {
 
       setSelectionTouched({ principal: false, references: false, ticket: false });
       await refreshSelectedEmailContext();
-      setStatus("Classificacao aplicada ao email selecionado.");
+      setStatus(
+        effectiveTargetEmails.length > 1
+          ? `Classificacao aplicada a ${effectiveTargetEmails.length} emails.`
+          : "Classificacao aplicada ao email selecionado."
+      );
     } catch (actionError: any) {
       setStatus(actionError?.message || "Nao foi possivel aplicar a classificacao.");
     } finally {
@@ -1705,6 +1843,28 @@ function StudioInner() {
             </div>
           </div>
 
+          <div style={S.sectionCard}>
+            <div style={S.sectionHeadStatic}>
+              <span style={S.sectionName}>Ambito de aplicacao</span>
+              <span style={S.sectionMeta}>Escolhe a que emails esta classificacao se aplica</span>
+            </div>
+            <div style={S.sectionBody}>
+              <select style={S.select} value={applyScopeMode} onChange={(event) => setApplyScopeMode(event.target.value as ApplyScopeMode)}>
+                <option value="current">So email atual</option>
+                <option value="selected">Emails selecionados ({selectedTargetCount})</option>
+                <option value="principal_group">Mesmo grupo principal ({principalScopeCount})</option>
+              </select>
+              <div style={S.summaryGrid}>
+                <div style={S.summaryRow}><span>Email atual</span><strong>{selectedEmail?.subject || "--"}</strong></div>
+                <div style={S.summaryRow}><span>Selecionados manualmente</span><strong>{selectedTargetCount}</strong></div>
+                <div style={S.summaryRow}><span>No mesmo grupo principal</span><strong>{principalScopeCount}</strong></div>
+              </div>
+              <div style={S.cardMeta}>
+                Em modo multiplo, aplicamos a classificacao atual exatamente aos emails escolhidos.
+              </div>
+            </div>
+          </div>
+
           <div style={S.card}>
             <div style={S.cardTitle}>Atualizar email</div>
             <div style={S.summaryGrid}>
@@ -1931,6 +2091,18 @@ function StudioInner() {
         <div style={S.card}>
           <div style={S.cardTitle}>Gravar / atualizar</div>
           <div style={S.cardMeta}>Quando estiver tudo certo, gravamos o estado atual do email selecionado.</div>
+          <div style={S.summaryGrid}>
+            <div style={S.summaryRow}>
+              <span>Ambito</span>
+              <strong>
+                {applyScopeMode === "current"
+                  ? "So email atual"
+                  : applyScopeMode === "selected"
+                    ? `Emails selecionados (${selectedTargetCount})`
+                    : `Mesmo grupo principal (${principalScopeCount})`}
+              </strong>
+            </div>
+          </div>
           <div style={S.inline}>
             <button
               type="button"
@@ -2039,13 +2211,30 @@ function StudioInner() {
 
         <section style={S.listCol}>
           <div style={S.colTitle}>Emails</div>
+          <div style={S.emailTools}>
+            <span style={S.cardMeta}>Selecionados: {selectedTargetCount}</span>
+            <div style={S.inline}>
+              <button type="button" style={S.linkBtn} onClick={selectAllVisibleEmails}>Todos visiveis</button>
+              <button type="button" style={S.linkBtn} onClick={clearSelectedTargets}>Limpar</button>
+            </div>
+          </div>
           <input style={S.input} value={emailSearch} onChange={(event) => setEmailSearch(event.target.value)} placeholder="Pesquisar por assunto, remetente ou texto..." />
           <div style={S.listBody}>
             {loading ? <PanelState compact tone="loading" title="A carregar emails" description="A preparar a lista desta nova janela." /> : null}
             {!loading && !visibleEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Ajusta os filtros ou muda a fonte da lista." /> : null}
             {!loading && visibleEmails.map((email) => (
               <button key={makeEmailKey(email)} type="button" style={makeEmailKey(email) === makeEmailKey(selectedEmail || {}) ? S.emailOn : S.email} onClick={() => setSelectedEmailKey(makeEmailKey(email))}>
-                <div style={S.emailTop}><strong>{email.subject || "(sem assunto)"}</strong>{Array.isArray(email.attachments) && email.attachments.length ? <span style={S.counter}>{email.attachments.length}</span> : null}</div>
+                <div style={S.emailTop}>
+                  <label style={S.emailPick} onClick={(event) => event.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedTargetEmailKeys.includes(makeEmailKey(email))}
+                      onChange={() => toggleTargetEmailKey(makeEmailKey(email))}
+                    />
+                    <strong>{email.subject || "(sem assunto)"}</strong>
+                  </label>
+                  {Array.isArray(email.attachments) && email.attachments.length ? <span style={S.counter}>{email.attachments.length}</span> : null}
+                </div>
                 <div style={S.emailMeta}>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</div>
                 <div style={S.emailSnippet}>{buildSnippet(email) || "Sem preview curto disponivel."}</div>
               </button>
@@ -2088,12 +2277,14 @@ const S: Record<string, React.CSSProperties> = {
   menuOn: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.9)", padding: "10px 12px", display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", gap: 10, cursor: "pointer" },
   listCol: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
   colTitle: { fontSize: 17, fontWeight: 800, color: "var(--iccc-text)" },
+  emailTools: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
   input: { width: "100%", height: 38, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none" },
   select: { width: "100%", height: 38, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none" },
   listBody: { minHeight: 0, display: "grid", gap: 8, overflowY: "auto", paddingRight: 2 },
   email: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(255,255,255,0.78)", padding: "10px 12px", display: "grid", gap: 6, cursor: "pointer" },
   emailOn: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", padding: "10px 12px", display: "grid", gap: 6, cursor: "pointer" },
   emailTop: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
+  emailPick: { display: "flex", alignItems: "flex-start", gap: 8, minWidth: 0, cursor: "pointer" },
   emailMeta: { fontSize: 11, color: "var(--iccc-muted)" },
   emailSnippet: { fontSize: 12, lineHeight: 1.45, color: "var(--iccc-text-soft, #334155)" },
   counter: { minWidth: 22, height: 22, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 700 },
