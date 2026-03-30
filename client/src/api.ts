@@ -149,6 +149,9 @@ export type RelevantEmailPayload = {
   receivedAtIso?: string;
   bodyText?: string;
   bodyHtml?: string;
+  status?: "em_analise" | "em_progresso" | "concluido" | string;
+  labels?: string[];
+  labelStates?: Record<string, "em_analise" | "em_progresso" | "concluido" | string>;
   membershipKind?: "principal" | "referencia" | string;
   attachments?: Array<{
     id?: string;
@@ -275,6 +278,9 @@ export type RelatedReason =
 
 export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordName" | "resId" | "name" | "title"> & {
   emailKey?: string;
+  status?: string;
+  labels?: string[];
+  labelStates?: Record<string, string>;
   membershipKind?: "principal" | "referencia" | string;
   relatedRecords?: Array<{ model: string; recordId: number; recordName: string }>;
   relatedGroups?: Array<{ id: string; name?: string; kind?: string; relationKind?: "principal" | "referencia" | string }>;
@@ -513,9 +519,19 @@ function normalizeLinkEntry(link: any): LinkEntry {
 }
 
 function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
+  const normalizedLabelStates = entry?.labelStates && typeof entry.labelStates === "object"
+    ? Object.fromEntries(
+        Object.entries(entry.labelStates)
+          .map(([label, value]) => [String(label || "").trim(), String(value || "").trim()])
+          .filter(([label, value]) => label && value)
+      )
+    : {};
   return {
     ...normalizeLinkEntry(entry),
     emailKey: String(entry?.emailKey || "").trim(),
+    status: String(entry?.status || "").trim() || undefined,
+    labels: Array.isArray(entry?.labels) ? entry.labels.map((label: any) => String(label || "").trim()).filter(Boolean) : [],
+    labelStates: normalizedLabelStates,
     membershipKind: String(entry?.membershipKind || "").trim() || undefined,
     bodyText: String(entry?.bodyText || "").trim(),
     bodyHtml: String(entry?.bodyHtml || "").trim(),

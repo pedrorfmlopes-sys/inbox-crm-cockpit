@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, extractAttachmentTexts, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, extractAttachmentTexts, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction, syncManagedOutlookCategories } from "@/office";
 import { getSettings } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
@@ -10,7 +10,8 @@ import "../../global.css";
 
 type SectionId = "emails" | "classification" | "labels" | "filters" | "summary";
 type ScopeMode = "related" | "all";
-type LabelDraft = { categorize: boolean; hasStatus: boolean };
+type EmailLabelStatus = "em_analise" | "em_progresso" | "concluido";
+type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
 type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
 type StudioParams = {
   conversationId?: string;
@@ -29,6 +30,18 @@ const MENU: Array<{ id: SectionId; label: string; icon: React.ReactNode; help: s
   { id: "filters", label: "Filtros", icon: <Icons.Search size={15} />, help: "Reducao da lista e testes de vista." },
   { id: "summary", label: "Resumo", icon: <Icons.Clipboard size={15} />, help: "Fotografia do que esta preparado." },
 ];
+
+const LABEL_STATUS_OPTIONS: Array<{ value: EmailLabelStatus; label: string }> = [
+  { value: "em_analise", label: "Em analise" },
+  { value: "em_progresso", label: "Em progresso" },
+  { value: "concluido", label: "Concluido" },
+];
+
+function formatEmailLabelStatus(value: string | undefined): string {
+  if (value === "concluido") return "Concluido";
+  if (value === "em_progresso") return "Em progresso";
+  return "Em analise";
+}
 
 function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
   return String(email?.emailKey || email?.id || email?.itemId || email?.internetMessageId || `${email?.conversationId || ""}|${email?.subject || ""}`);
@@ -860,6 +873,20 @@ function StudioInner() {
       ),
     [principalGroup?.labels, referenceGroups, relatedTickets, selectedTicket?.labels]
   );
+  const emailOwnedLabels = useMemo(
+    () => Array.isArray(selectedEmail?.labels) ? selectedEmail.labels.map((label) => String(label || "").trim()).filter(Boolean) : [],
+    [selectedEmail?.labels]
+  );
+  const selectedEmailLabelStates = useMemo(
+    () => selectedEmail?.labelStates && typeof selectedEmail.labelStates === "object"
+      ? Object.fromEntries(
+          Object.entries(selectedEmail.labelStates)
+            .map(([label, status]) => [String(label || "").trim(), String(status || "").trim()])
+            .filter(([label, status]) => label && status)
+        ) as Record<string, string>
+      : {},
+    [selectedEmail?.labelStates]
+  );
   const summaryLabels = useMemo(
     () => mergeLabels(inheritedLabels, selectedLabels),
     [inheritedLabels, selectedLabels]
@@ -867,6 +894,27 @@ function StudioInner() {
   const categorizableLabels = useMemo(
     () => summaryLabels.filter((label) => labelDrafts[label]?.categorize === true),
     [labelDrafts, summaryLabels]
+  );
+  const selectedLabelStates = useMemo(() => {
+    const entries: Record<string, EmailLabelStatus> = {};
+    for (const label of selectedLabels) {
+      const draft = labelDrafts[label];
+      if (!draft?.hasStatus || !draft.status) continue;
+      entries[label] = draft.status;
+    }
+    return entries;
+  }, [labelDrafts, selectedLabels]);
+  const selectedLabelStatuses = useMemo(
+    () => Array.from(new Set(Object.values(selectedLabelStates).filter(Boolean))),
+    [selectedLabelStates]
+  );
+  const emailStatusSummary = useMemo(
+    () => selectedLabelStatuses.length ? selectedLabelStatuses.map((entry) => formatEmailLabelStatus(entry)).join(", ") : "--",
+    [selectedLabelStatuses]
+  );
+  const labelStateSummary = useMemo(
+    () => Object.entries(selectedLabelStates).map(([label, status]) => `${label} (${formatEmailLabelStatus(status)})`),
+    [selectedLabelStates]
   );
   const referenceGroupSummary = useMemo(
     () => (referenceGroups.length ? referenceGroups.map((group) => group.name || group.id).join(", ") : "--"),
@@ -908,19 +956,27 @@ function StudioInner() {
 
   useEffect(() => {
     setSelectionTouched({ principal: false, references: false, ticket: false });
+    setSelectedLabels([]);
+    setLabelDrafts({});
   }, [selectedEmailKey]);
 
   useEffect(() => {
-    if (selectedLabels.length || !inheritedLabels.length) return;
-    setSelectedLabels(inheritedLabels);
+    if (selectedLabels.length || (!inheritedLabels.length && !emailOwnedLabels.length)) return;
+    const seedLabels = mergeLabels(inheritedLabels, emailOwnedLabels);
+    setSelectedLabels(seedLabels);
     setLabelDrafts((current) => {
       const next = { ...current };
-      for (const label of inheritedLabels) {
-        if (!next[label]) next[label] = { categorize: false, hasStatus: false };
+      for (const label of seedLabels) {
+        const initialStatus = String(selectedEmailLabelStates[label] || "").trim();
+        next[label] = {
+          categorize: current[label]?.categorize ?? false,
+          hasStatus: current[label]?.hasStatus ?? Boolean(initialStatus),
+          status: (current[label]?.status || initialStatus || undefined) as EmailLabelStatus | undefined,
+        };
       }
       return next;
     });
-  }, [inheritedLabels, selectedLabels.length]);
+  }, [emailOwnedLabels, inheritedLabels, selectedEmailLabelStates, selectedLabels.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -949,6 +1005,7 @@ function StudioInner() {
         next[label] = {
           categorize: true,
           hasStatus: current[label]?.hasStatus ?? false,
+          status: current[label]?.status,
         };
       }
       return next;
@@ -1007,12 +1064,22 @@ function StudioInner() {
     const value = String(label || "").trim();
     if (!value) return;
     setSelectedLabels((current) => current.includes(value) ? current : [...current, value]);
-    setLabelDrafts((current) => current[value] ? current : { ...current, [value]: { categorize: false, hasStatus: false } });
+    setLabelDrafts((current) => current[value] ? current : { ...current, [value]: { categorize: false, hasStatus: false, status: undefined } });
     setLabelInput("");
   }
 
   function updateLabelDraft(label: string, patch: Partial<LabelDraft>) {
-    setLabelDrafts((current) => ({ ...current, [label]: { categorize: current[label]?.categorize ?? false, hasStatus: current[label]?.hasStatus ?? false, ...patch } }));
+    setLabelDrafts((current) => {
+      const next: LabelDraft = {
+        categorize: current[label]?.categorize ?? false,
+        hasStatus: current[label]?.hasStatus ?? false,
+        status: current[label]?.status,
+        ...patch,
+      };
+      if (next.hasStatus && !next.status) next.status = "em_analise";
+      if (!next.hasStatus) next.status = undefined;
+      return { ...current, [label]: next };
+    });
   }
 
   function removeLabel(label: string) {
@@ -1147,6 +1214,7 @@ function StudioInner() {
       const currentGroupIds = selectedEmailGroups.map((group) => String(group.id || "").trim()).filter(Boolean);
       const groupsToRemove = currentGroupIds.filter((groupId) => !allGroupIds.includes(groupId));
       const ticketIdsToRemove = selectedEmailTicketIds.filter((ticketId) => ticketId !== selectedTicketId);
+      const emailLabelStatus = selectedLabelStatuses[0] || "";
 
       for (const groupId of groupsToRemove) {
         await removeEmailFromLinkGroup(groupId, {
@@ -1186,6 +1254,13 @@ function StudioInner() {
         });
       }
 
+      await registerRelevantEmail({
+        ...currentEmailPayload,
+        status: emailLabelStatus,
+        labels: selectedLabels,
+        labelStates: selectedLabelStates,
+      });
+
       let finalTicket: GroupTicketEntry | null = null;
       if (selectedTicketId) {
         const linked = await linkEmailToGroupTicket(selectedTicketId, {
@@ -1215,7 +1290,9 @@ function StudioInner() {
         await syncManagedOutlookCategories({
           groupNames: categorySettings?.enabled === true && categorySettings?.includeGroups !== false && principalGroup ? [principalGroup.name] : [],
           ticketCodes: categorySettings?.enabled === true && categorySettings?.includeTickets !== false && finalTicket?.code ? [finalTicket.code] : [],
-          statuses: categorySettings?.enabled === true && categorySettings?.includeStatuses !== false && finalTicket?.status ? [finalTicket.status] : [],
+          statuses: categorySettings?.enabled === true && categorySettings?.includeStatuses !== false
+            ? (finalTicket?.status ? [finalTicket.status] : selectedLabelStatuses)
+            : [],
           labelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true ? categorizableLabels : [],
         }).catch(() => undefined);
       }
@@ -1335,7 +1412,7 @@ function StudioInner() {
               <label style={S.field}>
                 <span style={S.label}>Serie de ticket</span>
                 <div style={S.inline}>
-                  <select style={S.select} value={selectedSeriesId} onChange={(event) => setSelectedSeriesId(event.target.value)}>
+                  <select style={S.select} value={selectedSeriesId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedSeriesId(nextValue); if (nextValue) setSelectedTicketId(""); }}>
                     <option value="">Sem ticket/caso</option>
                     {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
                   </select>
@@ -1397,7 +1474,7 @@ function StudioInner() {
             <div style={S.cardMeta}>Agora ja aplica ao sistema real: grupo principal, referencias e ticket do email selecionado.</div>
             <div style={S.grid2}>
               <label style={S.field}><span style={S.label}>Grupo principal</span><select style={S.select} value={principalGroupId} onChange={(event) => { setSelectionTouched((current) => ({ ...current, principal: true })); setPrincipalGroupId(event.target.value); }}><option value="">Sem grupo principal</option>{businessGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-              <label style={S.field}><span style={S.label}>Ticket existente</span><select style={S.select} value={selectedTicketId} onChange={(event) => setSelectedTicketId(event.target.value)}><option value="">Sem ticket existente</option>{availableTicketChoices.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} · {ticket.title}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Ticket existente</span><select style={S.select} value={selectedTicketId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedTicketId(nextValue); if (nextValue) setSelectedSeriesId(""); }}><option value="">Sem ticket existente</option>{availableTicketChoices.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} · {ticket.title}</option>)}</select></label>
             </div>
             <div style={S.inline}>
               <button type="button" style={S.secondaryBtn} onClick={clearPrincipalSelection} disabled={actionBusy || !principalGroupId}>
@@ -1421,7 +1498,7 @@ function StudioInner() {
               </button>
             </div>
             <div style={S.grid2}>
-              <label style={S.field}><span style={S.label}>Serie para novo ticket</span><select style={S.select} value={selectedSeriesId} onChange={(event) => setSelectedSeriesId(event.target.value)}><option value="">Sem novo ticket</option>{ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Serie para novo ticket</span><select style={S.select} value={selectedSeriesId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedSeriesId(nextValue); if (nextValue) setSelectedTicketId(""); }}><option value="">Sem novo ticket</option>{ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}</select></label>
               <label style={S.field}><span style={S.label}>Titulo do ticket</span><input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do ticket" /></label>
             </div>
             {selectedTicket ? <div style={S.summaryRow}><span>Ticket selecionado</span><strong>{selectedTicket.code} · {selectedTicket.title}</strong></div> : null}
@@ -1438,8 +1515,9 @@ function StudioInner() {
             <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupSummary}</strong></div>
             <div style={S.summaryRow}><span>Ticket</span><strong>{ticketSummary}</strong></div>
             <div style={S.summaryRow}><span>Etiquetas selecionadas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
+            <div style={S.summaryRow}><span>Estado por etiquetas</span><strong>{emailStatusSummary}</strong></div>
             <div style={S.inline}>
-              <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length)}>
+              <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length && !selectedLabels.length && !(selectedEmail?.labels || []).length && !String(selectedEmail?.status || "").trim())}>
                 <Icons.Save size={12} />
                 Aplicar classificacao
               </button>
@@ -1455,6 +1533,7 @@ function StudioInner() {
         <div style={S.stack}>
           <div style={S.card}>
             <div style={S.cardTitle}>Etiquetas estruturadas</div>
+            <div style={S.cardMeta}>Aqui podes manter o email so com etiquetas, com ou sem estado, mesmo sem grupo principal nem ticket.</div>
             <div style={S.inline}>
               <input style={S.input} value={labelInput} onChange={(event) => setLabelInput(event.target.value)} placeholder="Pesquisar ou criar etiqueta" />
               <button type="button" style={S.secondaryBtn} onClick={() => addLabel(labelInput)} disabled={!String(labelInput || "").trim()}><Icons.Plus size={12} />Adicionar</button>
@@ -1470,7 +1549,15 @@ function StudioInner() {
                 <div key={label} style={S.labelRow}>
                   <div style={S.labelHead}><strong>{label}</strong><button type="button" style={S.linkBtn} onClick={() => removeLabel(label)}>Remover</button></div>
                   <label style={S.check}><input type="checkbox" checked={draft.categorize} onChange={(event) => updateLabelDraft(label, { categorize: event.target.checked })} /><span>Virar categoria Outlook</span></label>
-                  <label style={S.check}><input type="checkbox" checked={draft.hasStatus} onChange={(event) => updateLabelDraft(label, { hasStatus: event.target.checked })} /><span>Tem estado associado</span></label>
+                  <label style={S.check}><input type="checkbox" checked={draft.hasStatus} onChange={(event) => updateLabelDraft(label, { hasStatus: event.target.checked, status: event.target.checked ? (draft.status || "em_analise") : undefined })} /><span>Tem estado associado</span></label>
+                  {draft.hasStatus ? (
+                    <label style={S.field}>
+                      <span style={S.label}>Estado desta etiqueta</span>
+                      <select style={S.select} value={draft.status || "em_analise"} onChange={(event) => updateLabelDraft(label, { status: event.target.value as EmailLabelStatus, hasStatus: true })}>
+                        {LABEL_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+                  ) : null}
                 </div>
               );
             }) : <PanelState compact tone="info" title="Sem etiquetas ainda" description="Vai adicionando etiquetas para testar esta estrutura nova." />}
@@ -1510,15 +1597,16 @@ function StudioInner() {
 
     return (
       <div style={S.stack}>
-        <div style={S.card}>
-          <div style={S.cardTitle}>Resumo da estrutura</div>
-          <div style={S.summaryRow}><span>Email selecionado</span><strong>{selectedEmail?.subject || "--"}</strong></div>
-          <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
-          <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupSummary}</strong></div>
-          <div style={S.summaryRow}><span>Serie de ticket</span><strong>{ticketSummary}</strong></div>
-          <div style={S.summaryRow}><span>Etiquetas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
-          <div style={S.summaryRow}><span>Anexos do email atual</span><strong>{selectedEmailAttachments.length}</strong></div>
-        </div>
+          <div style={S.card}>
+            <div style={S.cardTitle}>Resumo da estrutura</div>
+            <div style={S.summaryRow}><span>Email selecionado</span><strong>{selectedEmail?.subject || "--"}</strong></div>
+            <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
+            <div style={S.summaryRow}><span>Grupos referencia</span><strong>{referenceGroupSummary}</strong></div>
+            <div style={S.summaryRow}><span>Serie de ticket</span><strong>{ticketSummary}</strong></div>
+            <div style={S.summaryRow}><span>Etiquetas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
+            <div style={S.summaryRow}><span>Etiquetas com estado</span><strong>{labelStateSummary.length ? labelStateSummary.join(", ") : "--"}</strong></div>
+            <div style={S.summaryRow}><span>Anexos do email atual</span><strong>{selectedEmailAttachments.length}</strong></div>
+          </div>
         <div style={S.note}>Janela nova criada sem alterar o fluxo atual dos grupos. O proximo passo sera ligar estas escolhas ao sistema real de classificacao e categorias.</div>
       </div>
     );

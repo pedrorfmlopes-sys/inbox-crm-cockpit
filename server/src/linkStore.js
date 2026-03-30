@@ -395,8 +395,29 @@ function normalizeEmailInput(input) {
     linkedAt: normalizeString(input?.linkedAt),
     bodyText: normalizeString(input?.bodyText),
     bodyHtml: normalizeString(input?.bodyHtml),
+    status: Object.prototype.hasOwnProperty.call(input || {}, "status")
+      ? (normalizeString(input?.status) ? normalizeGroupStatus(input?.status) : "")
+      : undefined,
+    labels: Object.prototype.hasOwnProperty.call(input || {}, "labels")
+      ? normalizeGroupLabels(input?.labels)
+      : undefined,
+    labelStates: Object.prototype.hasOwnProperty.call(input || {}, "labelStates")
+      ? normalizeEmailLabelStates(input?.labelStates)
+      : undefined,
     ...(attachments.length ? { attachments } : {}),
   };
+}
+
+function normalizeEmailLabelStates(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const next = {};
+  for (const [label, status] of Object.entries(value || {})) {
+    const normalizedLabel = normalizeString(label);
+    const rawStatus = normalizeString(status);
+    if (!normalizedLabel || !rawStatus) continue;
+    next[normalizedLabel] = normalizeGroupStatus(rawStatus);
+  }
+  return next;
 }
 
 function normalizeAttachments(value) {
@@ -670,10 +691,25 @@ function upsertEmail(store, input) {
   };
   const next = {
     ...current,
-    ...Object.fromEntries(Object.entries(normalized).filter(([, value]) => value)),
+    ...Object.fromEntries(Object.entries(normalized).filter(([key, value]) => {
+      if (key === "status" || key === "labels" || key === "labelStates") {
+        return Object.prototype.hasOwnProperty.call(input || {}, key);
+      }
+      return Boolean(value);
+    })),
     updatedAt: now,
     lastSeenAt: now,
   };
+
+  if (Object.prototype.hasOwnProperty.call(input || {}, "status") && !normalized.status) {
+    delete next.status;
+  }
+  if (Object.prototype.hasOwnProperty.call(input || {}, "labels")) {
+    next.labels = Array.isArray(normalized.labels) ? normalized.labels : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(input || {}, "labelStates")) {
+    next.labelStates = normalized.labelStates && typeof normalized.labelStates === "object" ? normalized.labelStates : {};
+  }
 
   if (!next.messageDateIso) {
     next.messageDateIso = next.receivedAtIso || next.sentAtIso || next.linkedAt || now;
@@ -882,6 +918,9 @@ function buildEmailListEntry(email, extra = {}) {
     sentAtIso: normalizeString(email?.sentAtIso),
     bodyText: normalizeString(email?.bodyText),
     bodyHtml: normalizeString(email?.bodyHtml),
+    status: normalizeString(email?.status),
+    labels: normalizeGroupLabels(email?.labels),
+    labelStates: normalizeEmailLabelStates(email?.labelStates),
     createdAt: normalizeString(email?.createdAt),
     updatedAt: normalizeString(email?.updatedAt),
     attachments: normalizeAttachments(email?.attachments),
