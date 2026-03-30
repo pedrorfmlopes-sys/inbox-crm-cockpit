@@ -8,7 +8,7 @@ import { applySkin } from "@/ui/skins";
 import * as Icons from "@/ui/icons";
 import "../../global.css";
 
-type SectionId = "emails" | "classification" | "labels" | "filters" | "summary";
+type SectionId = "emails" | "classification" | "labels" | "filters" | "summary" | "groups";
 type ScopeMode = "related" | "all";
 type EmailLabelStatus = "em_analise" | "em_progresso" | "concluido";
 type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
@@ -29,6 +29,7 @@ const MENU: Array<{ id: SectionId; label: string; icon: React.ReactNode; help: s
   { id: "labels", label: "Etiquetas", icon: <Icons.Star size={15} />, help: "Etiquetas e futuras categorias Outlook." },
   { id: "filters", label: "Filtros", icon: <Icons.Search size={15} />, help: "Reducao da lista e testes de vista." },
   { id: "summary", label: "Resumo", icon: <Icons.Clipboard size={15} />, help: "Fotografia do que esta preparado." },
+  { id: "groups", label: "Grupos", icon: <Icons.Building size={15} />, help: "Gestao do grupo como dossier." },
 ];
 
 const LABEL_STATUS_OPTIONS: Array<{ value: EmailLabelStatus; label: string }> = [
@@ -1060,6 +1061,41 @@ function StudioInner() {
     setSelectedSeriesId("");
   }
 
+  function applySuggestedGroup(groupId: string) {
+    if (!groupId) return;
+    setSection("classification");
+    if (!principalGroupId) {
+      setSelectionTouched((current) => ({ ...current, principal: true }));
+      setPrincipalGroupId(groupId);
+      setStatus("Sugestao copiada para Grupo principal.");
+      return;
+    }
+    if (principalGroupId === groupId) {
+      setStatus("Esse grupo ja esta definido como principal.");
+      return;
+    }
+    setSelectionTouched((current) => ({ ...current, references: true }));
+    setReferenceGroupIds((current) => current.includes(groupId) ? current : [...current, groupId]);
+    setStatus("Sugestao copiada para Referencias.");
+  }
+
+  function applySuggestedTicket(ticketId: string) {
+    if (!ticketId) return;
+    setSection("classification");
+    setSelectionTouched((current) => ({ ...current, ticket: true }));
+    setSelectedSeriesId("");
+    setSelectedTicketId(ticketId);
+    setStatus("Sugestao copiada para Ticket.");
+  }
+
+  function applySuggestedLabel(label: string) {
+    const value = String(label || "").trim();
+    if (!value) return;
+    setSection("classification");
+    addLabel(value);
+    setStatus("Sugestao copiada para Etiquetas.");
+  }
+
   function addLabel(label: string) {
     const value = String(label || "").trim();
     if (!value) return;
@@ -1346,56 +1382,14 @@ function StudioInner() {
 
           <div style={S.grid2Wide}>
             <div style={S.card}>
-              <div style={S.cardTitle}>Deteccoes e sugestoes</div>
-              <div style={S.cardMeta}>Leitura inicial focada em assunto, corpo, nomes de anexos e referencias ja usadas no caso.</div>
+              <div style={S.cardTitle}>Leitura do email</div>
+              <div style={S.cardMeta}>Leitura tecnica do assunto, corpo e anexos para preparar a classificacao. As sugestoes clicaveis ficam na faixa fixa do topo.</div>
               <div style={S.summaryRow}><span>Tipo detetado</span><strong>{detectedCaseType}</strong></div>
               <div style={S.summaryRow}><span>Parceiro detetado</span><strong>{derivePartnerName(selectedEmail) || "--"}</strong></div>
               <div style={S.summaryRow}><span>Anexos lidos</span><strong>{analyzedAttachmentNames.length ? analyzedAttachmentNames.join(", ") : "--"}</strong></div>
               <div style={S.summaryRow}><span>Refs. documento</span><strong>{documentReferences.length ? documentReferences.join(", ") : "--"}</strong></div>
               <div style={S.summaryRow}><span>Codigos/artigos</span><strong>{articleReferences.length ? articleReferences.join(", ") : "--"}</strong></div>
               <div style={S.summaryRow}><span>Sugestao de grupo</span><strong>{suggestedGroupName || "--"}</strong></div>
-              {suggestedExistingGroups.length ? (
-                <>
-                  <div style={S.subTitle}>Grupos sugeridos</div>
-                  <div style={S.chips}>
-                    {suggestedExistingGroups.map((group) => (
-                      <button key={group.id} type="button" style={group.id === principalGroupId ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => {
-                        setSelectionTouched((current) => ({ ...current, principal: true }));
-                        setPrincipalGroupId(group.id);
-                      }}>
-                        {group.name}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : null}
-              {suggestedExistingTickets.length ? (
-                <>
-                  <div style={S.subTitle}>Tickets sugeridos</div>
-                  <div style={S.chips}>
-                    {suggestedExistingTickets.map((ticket) => (
-                      <button key={ticket.id} type="button" style={ticket.id === selectedTicketId ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => {
-                        setSelectionTouched((current) => ({ ...current, ticket: true }));
-                        setSelectedTicketId(ticket.id);
-                      }}>
-                        {ticket.code}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : null}
-              {suggestedLabelSeeds.length ? (
-                <>
-                  <div style={S.subTitle}>Etiquetas sugeridas</div>
-                  <div style={S.chips}>
-                    {suggestedLabelSeeds.map((label) => (
-                      <button key={label} type="button" style={selectedLabels.includes(label) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => addLabel(label)}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : null}
             </div>
 
             <div style={S.card}>
@@ -1601,6 +1595,39 @@ function StudioInner() {
       );
     }
 
+    if (section === "groups") {
+      return (
+        <div style={S.stack}>
+          <div style={S.card}>
+            <div style={S.cardTitle}>Dossier do grupo</div>
+            <div style={S.cardMeta}>Esta aba vai concentrar a gestao do grupo em si, separada da classificacao do email.</div>
+            <div style={S.summaryRow}><span>Grupo principal atual</span><strong>{principalGroup?.name || "--"}</strong></div>
+            <div style={S.summaryRow}><span>Referencias atuais</span><strong>{referenceGroupSummary}</strong></div>
+            <div style={S.summaryRow}><span>Email selecionado</span><strong>{selectedEmail?.subject || "--"}</strong></div>
+          </div>
+
+          <div style={S.grid2Wide}>
+            <div style={S.card}>
+              <div style={S.cardTitle}>Gestao do grupo</div>
+              <div style={S.cardMeta}>Aqui vao viver a descricao, notas importantes, emails associados e documentos do grupo.</div>
+              <div style={S.summaryRow}><span>Descricao</span><strong>Em preparacao</strong></div>
+              <div style={S.summaryRow}><span>Notas</span><strong>Em preparacao</strong></div>
+              <div style={S.summaryRow}><span>Emails do grupo</span><strong>Em preparacao</strong></div>
+              <div style={S.summaryRow}><span>Documentos do grupo</span><strong>Em preparacao</strong></div>
+            </div>
+
+            <div style={S.card}>
+              <div style={S.cardTitle}>Pessoas e entidades</div>
+              <div style={S.cardMeta}>As associacoes vao ser normalizadas a partir de fontes reais, como contactos Outlook, contactos dos emails e mais tarde Odoo.</div>
+              <div style={S.summaryRow}><span>Contactos normalizados</span><strong>Em preparacao</strong></div>
+              <div style={S.summaryRow}><span>Entidades associadas</span><strong>Em preparacao</strong></div>
+              <div style={S.summaryRow}><span>Fonte da ligacao</span><strong>Outlook / Email / Odoo</strong></div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div style={S.stack}>
           <div style={S.card}>
@@ -1635,6 +1662,54 @@ function StudioInner() {
       </div>
 
       {status ? <div style={S.notice}>{status}</div> : null}
+
+      <div style={S.suggestionBar}>
+        <div style={S.suggestionIntro}>
+          <strong>Sugestoes da leitura</strong>
+          <small>Clica numa sugestao para a copiar para a Classificacao.</small>
+        </div>
+        <div style={S.suggestionGroups}>
+          {suggestedExistingGroups.length ? (
+            <div style={S.suggestionGroup}>
+              <span style={S.suggestionLabel}>Grupos</span>
+              <div style={S.chips}>
+                {suggestedExistingGroups.map((group) => (
+                  <button key={group.id} type="button" style={S.suggestionChip} onClick={() => applySuggestedGroup(group.id)}>
+                    {group.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {suggestedExistingTickets.length ? (
+            <div style={S.suggestionGroup}>
+              <span style={S.suggestionLabel}>Tickets</span>
+              <div style={S.chips}>
+                {suggestedExistingTickets.map((ticket) => (
+                  <button key={ticket.id} type="button" style={S.suggestionChip} onClick={() => applySuggestedTicket(ticket.id)}>
+                    {ticket.code}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {suggestedLabelSeeds.length ? (
+            <div style={S.suggestionGroup}>
+              <span style={S.suggestionLabel}>Etiquetas e refs.</span>
+              <div style={S.chips}>
+                {suggestedLabelSeeds.map((label) => (
+                  <button key={label} type="button" style={S.suggestionChip} onClick={() => applySuggestedLabel(label)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {!suggestedExistingGroups.length && !suggestedExistingTickets.length && !suggestedLabelSeeds.length ? (
+            <div style={S.cardMeta}>Ainda nao ha sugestoes fortes para este email.</div>
+          ) : null}
+        </div>
+      </div>
 
       <div style={S.shell}>
         <aside style={S.sidebar}>
@@ -1673,7 +1748,7 @@ export default function GroupClassificationStudioApp(): JSX.Element {
 }
 
 const S: Record<string, React.CSSProperties> = {
-  root: { height: "100vh", boxSizing: "border-box", padding: 18, display: "grid", gridTemplateRows: "auto auto auto minmax(0,1fr)", gap: 12, background: "var(--iccc-bg)", color: "var(--iccc-text)", fontFamily: "var(--iccc-font)", overflow: "hidden" },
+  root: { height: "100vh", boxSizing: "border-box", padding: 18, display: "grid", gridTemplateRows: "auto auto auto auto minmax(0,1fr)", gap: 12, background: "var(--iccc-bg)", color: "var(--iccc-text)", fontFamily: "var(--iccc-font)", overflow: "hidden" },
   header: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "14px 16px", borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)" },
   kicker: { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--iccc-muted)" },
   mainTitle: { fontSize: 24, fontWeight: 800, color: "var(--iccc-text)" },
@@ -1685,6 +1760,12 @@ const S: Record<string, React.CSSProperties> = {
   badges: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" },
   badge: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(30,64,175,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
   notice: { padding: "10px 12px", borderRadius: 12, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 12, lineHeight: 1.45 },
+  suggestionBar: { display: "grid", gap: 8, padding: "10px 12px", borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.82)" },
+  suggestionIntro: { display: "grid", gap: 2, fontSize: 12, color: "var(--iccc-muted)" },
+  suggestionGroups: { display: "grid", gap: 8 },
+  suggestionGroup: { display: "grid", gap: 6 },
+  suggestionLabel: { fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--iccc-muted)" },
+  suggestionChip: { borderRadius: 999, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.96)", color: "#1d4ed8", fontSize: 11, fontWeight: 700, padding: "6px 10px", cursor: "pointer" },
   shell: { minHeight: 0, display: "grid", gridTemplateColumns: "220px 320px minmax(0,1fr)", gap: 12 },
   sidebar: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gap: 8, alignContent: "start", overflowY: "auto" },
   menu: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(255,255,255,0.78)", padding: "10px 12px", display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", gap: 10, cursor: "pointer" },
