@@ -615,6 +615,33 @@ export async function syncManagedOutlookCategories(input: {
   await removeCategoriesFromCurrentItem(toRemove);
 }
 
+export async function getManagedOutlookCategorySnapshot(): Promise<{
+  groupNames: string[];
+  ticketCodes: string[];
+  statuses: string[];
+  labelNames: string[];
+}> {
+  const currentCategories = await getCurrentItemCategoryNames();
+  return {
+    groupNames: currentCategories
+      .filter((name) => name.startsWith(GROUP_CATEGORY_PREFIX))
+      .map((name) => name.slice(GROUP_CATEGORY_PREFIX.length).trim())
+      .filter(Boolean),
+    ticketCodes: currentCategories
+      .filter((name) => name.startsWith(TICKET_CATEGORY_PREFIX))
+      .map((name) => name.slice(TICKET_CATEGORY_PREFIX.length).trim())
+      .filter(Boolean),
+    statuses: currentCategories
+      .filter((name) => name.startsWith(STATUS_CATEGORY_PREFIX))
+      .map((name) => name.slice(STATUS_CATEGORY_PREFIX.length).trim())
+      .filter(Boolean),
+    labelNames: currentCategories
+      .filter((name) => name.startsWith(LABEL_CATEGORY_PREFIX))
+      .map((name) => name.slice(LABEL_CATEGORY_PREFIX.length).trim())
+      .filter(Boolean),
+  };
+}
+
 export async function syncManualGroupCategories(groupNames: string[]): Promise<void> {
   await syncManagedOutlookCategories({ groupNames });
 }

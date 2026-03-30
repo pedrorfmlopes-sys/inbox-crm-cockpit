@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
 import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, saveGroupDocuments, searchGroupTickets, searchKnownEmails, updateLinkGroup, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
-import { requestCockpitHostAction, syncManagedOutlookCategories } from "@/office";
+import { getManagedOutlookCategorySnapshot, requestCockpitHostAction, syncManagedOutlookCategories } from "@/office";
 import { getSettings } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
 import { applySkin } from "@/ui/skins";
@@ -236,6 +236,7 @@ function StudioInner() {
   const [createGroupName, setCreateGroupName] = useState("");
   const [createTicketTitle, setCreateTicketTitle] = useState("");
   const [attachmentPlan, setAttachmentPlan] = useState<Record<string, { analyze: boolean; save: boolean; forward: boolean }>>({});
+  const [outlookLabelCategories, setOutlookLabelCategories] = useState<string[]>([]);
   const [actionBusy, setActionBusy] = useState(false);
 
   const currentSeed = useMemo(() => buildFallbackEmail(params), [params]);
@@ -675,6 +676,40 @@ function StudioInner() {
       return next;
     });
   }, [inheritedLabels, selectedLabels.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (!selectedEmailIsCurrent) {
+        if (!cancelled) setOutlookLabelCategories([]);
+        return;
+      }
+      try {
+        const snapshot = await getManagedOutlookCategorySnapshot();
+        if (cancelled) return;
+        const labels = (snapshot?.labelNames || []).map((label) => String(label || "").trim()).filter(Boolean);
+        setOutlookLabelCategories(labels);
+      } catch {
+        if (!cancelled) setOutlookLabelCategories([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedEmailIsCurrent, selectedEmailKey]);
+
+  useEffect(() => {
+    if (!outlookLabelCategories.length) return;
+    setLabelDrafts((current) => {
+      const next = { ...current };
+      for (const label of outlookLabelCategories) {
+        next[label] = {
+          categorize: true,
+          hasStatus: current[label]?.hasStatus ?? false,
+        };
+      }
+      return next;
+    });
+    setSelectedLabels((current) => mergeLabels(current, outlookLabelCategories));
+  }, [outlookLabelCategories]);
 
   async function handleClose() {
     const closed = await requestCockpitHostAction({ type: "close" });
@@ -1120,6 +1155,7 @@ function StudioInner() {
               <button type="button" style={S.secondaryBtn} onClick={() => addLabel(labelInput)} disabled={!String(labelInput || "").trim()}><Icons.Plus size={12} />Adicionar</button>
             </div>
             {filteredLabelCatalog.length ? <div style={S.chips}>{filteredLabelCatalog.slice(0, 24).map((label) => <button key={label} type="button" style={selectedLabels.includes(label) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => addLabel(label)}>{label}</button>)}</div> : null}
+            {outlookLabelCategories.length ? <div style={S.cardMeta}>Ja categorizadas no Outlook: {outlookLabelCategories.join(", ")}</div> : null}
           </div>
           <div style={S.card}>
             <div style={S.cardTitle}>Etiquetas selecionadas</div>
