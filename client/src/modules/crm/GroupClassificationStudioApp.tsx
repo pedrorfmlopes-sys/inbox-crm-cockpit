@@ -8,7 +8,7 @@ import { applySkin } from "@/ui/skins";
 import * as Icons from "@/ui/icons";
 import "../../global.css";
 
-type SectionId = "emails" | "classification" | "labels" | "filters" | "summary" | "groups";
+type SectionId = "emails" | "classification" | "labels" | "filters" | "groups";
 type ScopeMode = "related" | "all";
 type ApplyScopeMode = "current" | "selected" | "principal_group";
 type EmailLabelStatus = "em_analise" | "em_progresso" | "concluido";
@@ -44,7 +44,6 @@ const MENU: Array<{ id: SectionId; label: string; icon: React.ReactNode; help: s
   { id: "classification", label: "Classificacao", icon: <Icons.Target size={15} />, help: "Grupo principal, referencias e ticket." },
   { id: "labels", label: "Etiquetas", icon: <Icons.Star size={15} />, help: "Etiquetas e futuras categorias Outlook." },
   { id: "filters", label: "Filtros", icon: <Icons.Search size={15} />, help: "Reducao da lista e testes de vista." },
-  { id: "summary", label: "Resumo", icon: <Icons.Clipboard size={15} />, help: "Fotografia do que esta preparado." },
   { id: "groups", label: "Grupos", icon: <Icons.Building size={15} />, help: "Gestao do grupo como dossier." },
 ];
 
