@@ -14,6 +14,7 @@ type ApplyScopeMode = "current" | "selected" | "principal_group";
 type EmailLabelStatus = "em_analise" | "em_progresso" | "concluido";
 type ClassificationFocus = "principal" | "references" | "labels" | "ticket";
 type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
+type ReadingSuggestionChip = { key: string; label: string; kind: "group" | "ticket" | "label"; value: string };
 type GroupContactDraft = { key: string; name: string; email?: string; company?: string; source?: string };
 type GroupEntityDraft = { key: string; name: string; kind?: string; source?: string };
 type ClassificationMetaDraft = {
@@ -1192,6 +1193,38 @@ function StudioInner() {
     return partner || String(selectedEmail?.subject || "").trim().slice(0, 72);
   }, [detectedCaseType, documentReferences, selectedEmail]);
 
+  const classificationSuggestions = useMemo<ReadingSuggestionChip[]>(() => {
+    const entries: ReadingSuggestionChip[] = [];
+    const seen = new Set<string>();
+    for (const group of suggestedExistingGroups) {
+      const id = String(group.id || "").trim();
+      const name = String(group.name || "").trim();
+      if (!id || !name) continue;
+      const key = `group:${id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      entries.push({ key, label: name, kind: "group", value: id });
+    }
+    for (const ticket of suggestedExistingTickets) {
+      const id = String(ticket.id || "").trim();
+      const code = String(ticket.code || "").trim();
+      if (!id || !code) continue;
+      const key = `ticket:${id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      entries.push({ key, label: code, kind: "ticket", value: id });
+    }
+    for (const label of suggestedLabelSeeds) {
+      const value = String(label || "").trim();
+      if (!value) continue;
+      const key = `label:${value.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      entries.push({ key, label: value, kind: "label", value });
+    }
+    return entries;
+  }, [suggestedExistingGroups, suggestedExistingTickets, suggestedLabelSeeds]);
+
   useEffect(() => {
     if (!createGroupName && suggestedGroupName) setCreateGroupName(suggestedGroupName);
   }, [createGroupName, suggestedGroupName]);
@@ -1642,45 +1675,68 @@ function StudioInner() {
 
   function applySuggestedGroup(groupId: string) {
     if (!groupId) return;
-    setSection("classification");
+    if (principalGroupId === groupId) {
+      clearPrincipalSelection();
+      return;
+    }
+    if (referenceGroupIds.includes(groupId)) {
+      toggleReferenceGroup(groupId);
+      return;
+    }
     if (classificationFocus === "references") {
       setSelectionTouched((current) => ({ ...current, references: true }));
       setReferenceGroupIds((current) => current.includes(groupId) ? current : [...current, groupId]);
-      setStatus("Sugestao copiada para Referencias.");
       return;
     }
     if (!principalGroupId || classificationFocus === "principal") {
       setSelectionTouched((current) => ({ ...current, principal: true }));
       setPrincipalGroupId(groupId);
-      setStatus("Sugestao copiada para Grupo principal.");
       return;
     }
     if (principalGroupId === groupId) {
-      setStatus("Esse grupo ja esta definido como principal.");
       return;
     }
     setSelectionTouched((current) => ({ ...current, references: true }));
     setReferenceGroupIds((current) => current.includes(groupId) ? current : [...current, groupId]);
-    setStatus("Sugestao copiada para Referencias.");
   }
 
   function applySuggestedTicket(ticketId: string) {
     if (!ticketId) return;
-    setSection("classification");
-    setClassificationFocus("ticket");
+    if (selectedTicketId === ticketId) {
+      clearTicketSelection();
+      return;
+    }
     setSelectionTouched((current) => ({ ...current, ticket: true }));
     setSelectedSeriesId("");
     setSelectedTicketId(ticketId);
-    setStatus("Sugestao copiada para Ticket.");
   }
 
   function applySuggestedLabel(label: string) {
     const value = String(label || "").trim();
     if (!value) return;
-    setSection("classification");
-    setClassificationFocus("labels");
+    if (selectedLabels.includes(value)) {
+      removeLabel(value);
+      return;
+    }
     addLabel(value);
-    setStatus("Sugestao copiada para Etiquetas.");
+  }
+
+  function isSuggestionActive(suggestion: ReadingSuggestionChip) {
+    if (suggestion.kind === "group") return principalGroupId === suggestion.value || referenceGroupIds.includes(suggestion.value);
+    if (suggestion.kind === "ticket") return selectedTicketId === suggestion.value;
+    return selectedLabels.includes(suggestion.value);
+  }
+
+  function handleSuggestionToggle(suggestion: ReadingSuggestionChip) {
+    if (suggestion.kind === "group") {
+      applySuggestedGroup(suggestion.value);
+      return;
+    }
+    if (suggestion.kind === "ticket") {
+      applySuggestedTicket(suggestion.value);
+      return;
+    }
+    applySuggestedLabel(suggestion.value);
   }
 
   function addLabel(label: string) {
@@ -2240,6 +2296,25 @@ function StudioInner() {
                 <div style={S.cardMeta}>Clicar nos chips liga ou desliga a classificacao do email.</div>
               </div>
               <div style={S.focusBadge}>Destino das sugestoes: {classificationFocus === "principal" ? "Grupo principal" : classificationFocus === "references" ? "Referencias" : classificationFocus === "labels" ? "Etiquetas" : "Ticket"}</div>
+            </div>
+            <div style={S.suggestionDock}>
+              <div style={S.suggestionDockMeta}>Sugestoes da leitura. Clica para ligar ou desligar.</div>
+              <div style={S.suggestionDockChips}>
+                {classificationSuggestions.length ? (
+                  classificationSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion.key}
+                      type="button"
+                      style={isSuggestionActive(suggestion) ? S.suggestionDockChipOn : S.suggestionDockChip}
+                      onClick={() => handleSuggestionToggle(suggestion)}
+                    >
+                      {suggestion.label}
+                    </button>
+                  ))
+                ) : (
+                  <span style={S.mutedMini}>Sem sugestoes fortes para este email.</span>
+                )}
+              </div>
             </div>
           </div>
 
@@ -2970,54 +3045,6 @@ function StudioInner() {
 
       {status ? <div style={S.notice}>{status}</div> : null}
 
-      <div style={S.suggestionBar}>
-        <div style={S.suggestionIntro}>
-          <strong>Sugestoes da leitura</strong>
-          <small>Clica numa sugestao para a copiar para a Classificacao.</small>
-        </div>
-        <div style={S.suggestionGroups}>
-          {suggestedExistingGroups.length ? (
-            <div style={S.suggestionGroup}>
-              <span style={S.suggestionLabel}>Grupos</span>
-              <div style={S.chips}>
-                {suggestedExistingGroups.map((group) => (
-                  <button key={group.id} type="button" style={S.suggestionChip} onClick={() => applySuggestedGroup(group.id)}>
-                    {group.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {suggestedExistingTickets.length ? (
-            <div style={S.suggestionGroup}>
-              <span style={S.suggestionLabel}>Tickets</span>
-              <div style={S.chips}>
-                {suggestedExistingTickets.map((ticket) => (
-                  <button key={ticket.id} type="button" style={S.suggestionChip} onClick={() => applySuggestedTicket(ticket.id)}>
-                    {ticket.code}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {suggestedLabelSeeds.length ? (
-            <div style={S.suggestionGroup}>
-              <span style={S.suggestionLabel}>Etiquetas e refs.</span>
-              <div style={S.chips}>
-                {suggestedLabelSeeds.map((label) => (
-                  <button key={label} type="button" style={S.suggestionChip} onClick={() => applySuggestedLabel(label)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {!suggestedExistingGroups.length && !suggestedExistingTickets.length && !suggestedLabelSeeds.length ? (
-            <div style={S.cardMeta}>Ainda nao ha sugestoes fortes para este email.</div>
-          ) : null}
-        </div>
-      </div>
-
       <div style={S.shell}>
         <aside style={S.sidebar}>
           {MENU.map((item) => (
@@ -3084,12 +3111,6 @@ const S: Record<string, React.CSSProperties> = {
   badges: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" },
   badge: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(30,64,175,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
   notice: { padding: "10px 12px", borderRadius: 12, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 12, lineHeight: 1.45 },
-  suggestionBar: { display: "grid", gap: 8, padding: "10px 12px", borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.82)" },
-  suggestionIntro: { display: "grid", gap: 2, fontSize: 12, color: "var(--iccc-muted)" },
-  suggestionGroups: { display: "grid", gap: 8 },
-  suggestionGroup: { display: "grid", gap: 6 },
-  suggestionLabel: { fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--iccc-muted)" },
-  suggestionChip: { borderRadius: 999, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.96)", color: "#1d4ed8", fontSize: 11, fontWeight: 700, padding: "6px 10px", cursor: "pointer" },
   shell: { minHeight: 0, display: "grid", gridTemplateColumns: "220px 320px minmax(0,1fr)", gap: 12 },
   sidebar: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gap: 8, alignContent: "start", overflowY: "auto" },
   menu: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(255,255,255,0.78)", padding: "10px 12px", display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", gap: 10, cursor: "pointer" },
@@ -3127,6 +3148,11 @@ const S: Record<string, React.CSSProperties> = {
   mutedMini: { fontSize: 12, color: "var(--iccc-muted)" },
   focusBadge: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(37,99,235,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
   classificationHeader: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
+  suggestionDock: { marginTop: 10, display: "grid", gap: 8, padding: "10px 12px", borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(248,250,252,0.9)" },
+  suggestionDockMeta: { fontSize: 11, color: "var(--iccc-muted)" },
+  suggestionDockChips: { display: "flex", flexWrap: "wrap", gap: 6 },
+  suggestionDockChip: { borderRadius: 999, border: "1px solid rgba(148,163,184,0.24)", background: "rgba(255,255,255,0.98)", color: "var(--iccc-muted)", fontSize: 10, fontWeight: 700, padding: "4px 8px", cursor: "pointer" },
+  suggestionDockChipOn: { borderRadius: 999, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 10, fontWeight: 700, padding: "4px 8px", cursor: "pointer" },
   titleRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   cardTitle: { fontSize: 15, fontWeight: 800, color: "var(--iccc-text)" },
   cardMeta: { fontSize: 11, lineHeight: 1.4, color: "var(--iccc-muted)" },
