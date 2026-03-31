@@ -14,6 +14,8 @@ type ApplyScopeMode = "current" | "selected" | "principal_group";
 type EmailLabelStatus = "em_analise" | "em_progresso" | "concluido";
 type ClassificationFocus = "principal" | "references" | "labels" | "ticket";
 type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
+type GroupContactDraft = { key: string; name: string; email?: string; company?: string; source?: string };
+type GroupEntityDraft = { key: string; name: string; kind?: string; source?: string };
 type ClassificationMetaDraft = {
   principalStatusEnabled: boolean;
   principalStatusCategorize: boolean;
@@ -214,6 +216,78 @@ function detectCaseType(text: string): string {
   if (/(proposta|orcamento|quote|quotation)/.test(value)) return "proposta";
   if (/(projeto|project|obra|worksite)/.test(value)) return "projeto";
   return "geral";
+}
+
+function inferCompanyName(fromName: string | undefined, fromEmail: string | undefined): string {
+  const rawName = String(fromName || "").trim();
+  if (rawName.includes("|")) {
+    const parts = rawName.split("|").map((part) => part.trim()).filter(Boolean);
+    if (parts.length >= 2) return parts[parts.length - 1];
+  }
+  const email = String(fromEmail || "").trim().toLowerCase();
+  if (!email.includes("@")) return "";
+  const domain = email.split("@")[1] || "";
+  const base = domain.split(".")[0] || "";
+  if (!base) return "";
+  return base
+    .split(/[-_]+/g)
+    .filter(Boolean)
+    .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
+    .join(" ");
+}
+
+function normalizeGroupContactDraft(value: Partial<GroupContactDraft> | null | undefined): GroupContactDraft | null {
+  const name = String(value?.name || "").trim();
+  const email = String(value?.email || "").trim().toLowerCase();
+  const company = String(value?.company || "").trim();
+  const source = String(value?.source || "").trim() || "email";
+  const key = String(value?.key || email || `${normalizeSearchValue(name)}|${normalizeSearchValue(company)}`).trim();
+  if (!key || (!name && !email)) return null;
+  return {
+    key,
+    name: name || email,
+    email: email || undefined,
+    company: company || undefined,
+    source,
+  };
+}
+
+function normalizeGroupEntityDraft(value: Partial<GroupEntityDraft> | null | undefined): GroupEntityDraft | null {
+  const name = String(value?.name || "").trim();
+  const kind = String(value?.kind || "").trim() || "empresa";
+  const source = String(value?.source || "").trim() || "email";
+  const key = String(value?.key || normalizeSearchValue(name)).trim();
+  if (!key || !name) return null;
+  return {
+    key,
+    name,
+    kind,
+    source,
+  };
+}
+
+function dedupeGroupContacts(rows: Array<Partial<GroupContactDraft> | null | undefined>): GroupContactDraft[] {
+  const seen = new Set<string>();
+  const out: GroupContactDraft[] = [];
+  rows.forEach((row) => {
+    const normalized = normalizeGroupContactDraft(row);
+    if (!normalized || seen.has(normalized.key)) return;
+    seen.add(normalized.key);
+    out.push(normalized);
+  });
+  return out;
+}
+
+function dedupeGroupEntities(rows: Array<Partial<GroupEntityDraft> | null | undefined>): GroupEntityDraft[] {
+  const seen = new Set<string>();
+  const out: GroupEntityDraft[] = [];
+  rows.forEach((row) => {
+    const normalized = normalizeGroupEntityDraft(row);
+    if (!normalized || seen.has(normalized.key)) return;
+    seen.add(normalized.key);
+    out.push(normalized);
+  });
+  return out;
 }
 
 function detectReferences(text: string): string[] {
@@ -497,6 +571,11 @@ function StudioInner() {
   const [classificationFocus, setClassificationFocus] = useState<ClassificationFocus>("principal");
   const [managedGroupId, setManagedGroupId] = useState("");
   const [managedGroupDescription, setManagedGroupDescription] = useState("");
+  const [managedGroupNotes, setManagedGroupNotes] = useState("");
+  const [managedGroupContacts, setManagedGroupContacts] = useState<GroupContactDraft[]>([]);
+  const [managedGroupEntities, setManagedGroupEntities] = useState<GroupEntityDraft[]>([]);
+  const [managedContactSearch, setManagedContactSearch] = useState("");
+  const [managedEntitySearch, setManagedEntitySearch] = useState("");
   const [managedGroupEmails, setManagedGroupEmails] = useState<RelatedEmailEntry[]>([]);
   const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
@@ -1058,6 +1137,68 @@ function StudioInner() {
     () => (managedGroupId ? manageableGroups.find((group) => group.id === managedGroupId) || null : null),
     [manageableGroups, managedGroupId]
   );
+
+  const managedGroupContactCandidates = useMemo(() => {
+    const caseEmails = dedupeEmails([
+      ...(selectedEmail ? [selectedEmail] : []),
+      ...managedGroupEmails,
+      ...relatedEmails,
+    ]);
+    const candidates = caseEmails.flatMap((email) => {
+      const company = inferCompanyName(email.fromName, email.fromEmail);
+      return [{
+        key: String(email.fromEmail || "").trim().toLowerCase() || `${normalizeSearchValue(email.fromName || "")}|${normalizeSearchValue(company)}`,
+        name: String(email.fromName || "").trim() || String(email.fromEmail || "").trim(),
+        email: String(email.fromEmail || "").trim().toLowerCase() || undefined,
+        company: company || undefined,
+        source: "email",
+      }];
+    });
+    return dedupeGroupContacts([
+      ...(selectedManagedGroup?.contacts || []),
+      ...candidates,
+    ]);
+  }, [managedGroupEmails, relatedEmails, selectedEmail, selectedManagedGroup?.contacts]);
+
+  const managedGroupEntityCandidates = useMemo(() => {
+    const contactEntities = managedGroupContactCandidates
+      .map((contact) => ({
+        key: normalizeSearchValue(contact.company || inferCompanyName(contact.name, contact.email)),
+        name: String(contact.company || inferCompanyName(contact.name, contact.email) || "").trim(),
+        kind: "empresa",
+        source: contact.source || "email",
+      }))
+      .filter((entity) => entity.name);
+    const groupEntities = manageableGroups
+      .filter((group) => group.id === managedGroupId || selectedEmailGroups.some((entry) => entry.id === group.id))
+      .map((group) => ({
+        key: normalizeSearchValue(group.name),
+        name: group.name,
+        kind: "grupo",
+        source: "grupo",
+      }));
+    return dedupeGroupEntities([
+      ...(selectedManagedGroup?.entities || []),
+      ...contactEntities,
+      ...groupEntities,
+    ]);
+  }, [manageableGroups, managedGroupContactCandidates, managedGroupId, selectedEmailGroups, selectedManagedGroup?.entities]);
+
+  const filteredManagedGroupContacts = useMemo(() => {
+    const q = normalizeSearchValue(managedContactSearch);
+    if (!q) return managedGroupContactCandidates;
+    return managedGroupContactCandidates.filter((contact) =>
+      [contact.name, contact.email, contact.company].some((value) => normalizeSearchValue(String(value || "")).includes(q))
+    );
+  }, [managedContactSearch, managedGroupContactCandidates]);
+
+  const filteredManagedGroupEntities = useMemo(() => {
+    const q = normalizeSearchValue(managedEntitySearch);
+    if (!q) return managedGroupEntityCandidates;
+    return managedGroupEntityCandidates.filter((entity) =>
+      [entity.name, entity.kind, entity.source].some((value) => normalizeSearchValue(String(value || "")).includes(q))
+    );
+  }, [managedEntitySearch, managedGroupEntityCandidates]);
   useEffect(() => {
     setManagedGroupId((current) => {
       if (current && manageableGroups.some((group) => group.id === current)) return current;
@@ -1164,7 +1305,12 @@ function StudioInner() {
 
   useEffect(() => {
     setManagedGroupDescription(String(selectedManagedGroup?.description || "").trim());
-  }, [selectedManagedGroup?.description, selectedManagedGroup?.id]);
+    setManagedGroupNotes(String(selectedManagedGroup?.notes || "").trim());
+    setManagedGroupContacts(dedupeGroupContacts(selectedManagedGroup?.contacts || []));
+    setManagedGroupEntities(dedupeGroupEntities(selectedManagedGroup?.entities || []));
+    setManagedContactSearch("");
+    setManagedEntitySearch("");
+  }, [selectedManagedGroup?.contacts, selectedManagedGroup?.description, selectedManagedGroup?.entities, selectedManagedGroup?.id, selectedManagedGroup?.notes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1531,7 +1677,27 @@ function StudioInner() {
     }
   }
 
-  async function handleSaveManagedGroupDescription() {
+  function toggleManagedGroupContact(contact: Partial<GroupContactDraft>) {
+    const normalized = normalizeGroupContactDraft(contact);
+    if (!normalized) return;
+    setManagedGroupContacts((current) =>
+      current.some((entry) => entry.key === normalized.key)
+        ? current.filter((entry) => entry.key !== normalized.key)
+        : dedupeGroupContacts([...current, normalized])
+    );
+  }
+
+  function toggleManagedGroupEntity(entity: Partial<GroupEntityDraft>) {
+    const normalized = normalizeGroupEntityDraft(entity);
+    if (!normalized) return;
+    setManagedGroupEntities((current) =>
+      current.some((entry) => entry.key === normalized.key)
+        ? current.filter((entry) => entry.key !== normalized.key)
+        : dedupeGroupEntities([...current, normalized])
+    );
+  }
+
+  async function handleSaveManagedGroupProfile() {
     const groupId = String(managedGroupId || "").trim();
     if (!groupId || !selectedManagedGroup) {
       setStatus("Escolhe primeiro um grupo para atualizar.");
@@ -1542,6 +1708,9 @@ function StudioInner() {
       const updated = await updateLinkGroup(groupId, {
         name: selectedManagedGroup.name,
         description: managedGroupDescription,
+        notes: managedGroupNotes,
+        contacts: managedGroupContacts,
+        entities: managedGroupEntities,
         documentsEnabled: selectedManagedGroup.documentsEnabled,
         status: selectedManagedGroup.status,
         labels: selectedManagedGroup.labels,
@@ -1549,9 +1718,9 @@ function StudioInner() {
       });
       setAllGroups((current) => current.map((group) => (group.id === updated.id ? { ...group, ...updated } : group)));
       setCurrentCaseGroups((current) => current.map((group) => (group.id === updated.id ? { ...group, ...updated } : group)));
-      setStatus(`Descricao do grupo ${updated.name} atualizada.`);
+      setStatus(`Grupo ${updated.name} atualizado com descricao, notas e associacoes.`);
     } catch (actionError: any) {
-      setStatus(actionError?.message || "Nao foi possivel atualizar a descricao do grupo.");
+      setStatus(actionError?.message || "Nao foi possivel atualizar o perfil do grupo.");
     } finally {
       setActionBusy(false);
     }
@@ -2395,7 +2564,7 @@ function StudioInner() {
           <div style={S.grid2Wide}>
             <div style={S.card}>
               <div style={S.cardTitle}>Descricao e notas</div>
-              <div style={S.cardMeta}>A descricao ja pode ser atualizada. As notas dedicadas entram no passo seguinte.</div>
+              <div style={S.cardMeta}>Aqui mantemos o contexto base do grupo: descricao curta e notas operacionais relevantes.</div>
               <label style={S.field}>
                 <span style={S.label}>Descricao do grupo</span>
                 <textarea
@@ -2406,21 +2575,88 @@ function StudioInner() {
                   disabled={!selectedManagedGroup}
                 />
               </label>
+              <label style={S.field}>
+                <span style={S.label}>Notas importantes</span>
+                <textarea
+                  style={{ ...S.textarea, minHeight: 110 }}
+                  value={managedGroupNotes}
+                  onChange={(event) => setManagedGroupNotes(event.target.value)}
+                  placeholder={selectedManagedGroup ? "Notas operacionais, alertas e contexto util deste grupo..." : "Escolhe primeiro um grupo"}
+                  disabled={!selectedManagedGroup}
+                />
+              </label>
               <div style={S.inline}>
-                <button type="button" style={S.primaryBtn} onClick={() => void handleSaveManagedGroupDescription()} disabled={actionBusy || !selectedManagedGroup}>
+                <button type="button" style={S.primaryBtn} onClick={() => void handleSaveManagedGroupProfile()} disabled={actionBusy || !selectedManagedGroup}>
                   <Icons.Save size={12} />
-                  Guardar descricao
+                  Guardar grupo
                 </button>
               </div>
-              <div style={S.summaryRow}><span>Notas importantes</span><strong>Preparadas para a fase seguinte</strong></div>
             </div>
 
             <div style={S.card}>
               <div style={S.cardTitle}>Pessoas e entidades</div>
-              <div style={S.cardMeta}>Mantemos aqui a estrutura preparada para normalizacao futura por Outlook, emails e depois Odoo.</div>
-              <div style={S.summaryRow}><span>Contactos normalizados</span><strong>Em preparacao</strong></div>
-              <div style={S.summaryRow}><span>Entidades associadas</span><strong>Em preparacao</strong></div>
-              <div style={S.summaryRow}><span>Fonte da ligacao</span><strong>Outlook / Email / Odoo</strong></div>
+              <div style={S.cardMeta}>Ligacoes do grupo a contactos e entidades reais do proprio caso. Para ja usamos contactos dos emails e do grupo; Outlook e Odoo entram depois.</div>
+              <div style={S.summaryGrid}>
+                <div style={S.summaryRow}><span>Contactos ligados</span><strong>{managedGroupContacts.length}</strong></div>
+                <div style={S.summaryRow}><span>Entidades ligadas</span><strong>{managedGroupEntities.length}</strong></div>
+              </div>
+              <div style={S.grid2}>
+                <div style={S.field}>
+                  <span style={S.label}>Contactos do caso</span>
+                  <input
+                    style={S.input}
+                    value={managedContactSearch}
+                    onChange={(event) => setManagedContactSearch(event.target.value)}
+                    placeholder={selectedManagedGroup ? "Pesquisar nome, email ou empresa..." : "Escolhe primeiro um grupo"}
+                    disabled={!selectedManagedGroup}
+                  />
+                  <div style={S.inlineWrap}>
+                    {managedGroupContacts.length ? managedGroupContacts.map((contact) => (
+                      <button key={contact.key} type="button" style={S.selectedChipOn} onClick={() => toggleManagedGroupContact(contact)} disabled={!selectedManagedGroup}>
+                        {contact.name}{contact.company ? ` · ${contact.company}` : ""}{contact.email ? ` · ${contact.email}` : ""}
+                      </button>
+                    )) : <span style={S.mutedMini}>Sem contactos associados.</span>}
+                  </div>
+                  <div style={S.chips}>
+                    {selectedManagedGroup ? filteredManagedGroupContacts.slice(0, 18).map((contact) => {
+                      const active = managedGroupContacts.some((entry) => entry.key === contact.key);
+                      return (
+                        <button key={contact.key} type="button" style={active ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleManagedGroupContact(contact)}>
+                          {contact.name}{contact.company ? ` · ${contact.company}` : ""}{contact.email ? ` · ${contact.email}` : ""}
+                        </button>
+                      );
+                    }) : null}
+                  </div>
+                </div>
+
+                <div style={S.field}>
+                  <span style={S.label}>Entidades do caso</span>
+                  <input
+                    style={S.input}
+                    value={managedEntitySearch}
+                    onChange={(event) => setManagedEntitySearch(event.target.value)}
+                    placeholder={selectedManagedGroup ? "Pesquisar empresa, grupo ou origem..." : "Escolhe primeiro um grupo"}
+                    disabled={!selectedManagedGroup}
+                  />
+                  <div style={S.inlineWrap}>
+                    {managedGroupEntities.length ? managedGroupEntities.map((entity) => (
+                      <button key={entity.key} type="button" style={S.selectedChipOn} onClick={() => toggleManagedGroupEntity(entity)} disabled={!selectedManagedGroup}>
+                        {entity.name}{entity.kind ? ` · ${entity.kind}` : ""}
+                      </button>
+                    )) : <span style={S.mutedMini}>Sem entidades associadas.</span>}
+                  </div>
+                  <div style={S.chips}>
+                    {selectedManagedGroup ? filteredManagedGroupEntities.slice(0, 18).map((entity) => {
+                      const active = managedGroupEntities.some((entry) => entry.key === entity.key);
+                      return (
+                        <button key={entity.key} type="button" style={active ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleManagedGroupEntity(entity)}>
+                          {entity.name}{entity.kind ? ` · ${entity.kind}` : ""}
+                        </button>
+                      );
+                    }) : null}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 

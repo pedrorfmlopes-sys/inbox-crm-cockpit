@@ -100,6 +100,15 @@ function normalizeGroupStatus(value) {
   return DEFAULT_GROUP_STATUS;
 }
 
+function normalizeSearchToken(value) {
+  return normalizeString(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 function normalizeGroupLabels(value) {
   const rawItems = Array.isArray(value)
     ? value
@@ -117,6 +126,78 @@ function normalizeGroupLabels(value) {
     labels.push(label);
   }
   return labels.sort((a, b) => a.localeCompare(b, "pt"));
+}
+
+function normalizeGroupContacts(value) {
+  const items = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const contacts = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const name = normalizeString(item.name);
+    const email = normalizeString(item.email).toLowerCase();
+    const company = normalizeString(item.company);
+    const source = normalizeString(item.source);
+    const key = normalizeString(item.key) || email || normalizeSearchToken(name);
+    if (!key || !name) continue;
+    const dedupeKey = `${email || normalizeSearchToken(name)}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    contacts.push({
+      key,
+      name,
+      email: email || "",
+      company: company || "",
+      source: source || "",
+    });
+  }
+  return contacts.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt"));
+}
+
+function parseGroupContactsJson(value) {
+  if (Array.isArray(value)) return normalizeGroupContacts(value);
+  const raw = normalizeString(value);
+  if (!raw) return [];
+  try {
+    return normalizeGroupContacts(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeGroupEntities(value) {
+  const items = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const entities = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const name = normalizeString(item.name);
+    const kind = normalizeString(item.kind);
+    const source = normalizeString(item.source);
+    const key = normalizeString(item.key) || normalizeSearchToken(name);
+    if (!key || !name) continue;
+    const dedupeKey = normalizeSearchToken(name);
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    entities.push({
+      key,
+      name,
+      kind: kind || "",
+      source: source || "",
+    });
+  }
+  return entities.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt"));
+}
+
+function parseGroupEntitiesJson(value) {
+  if (Array.isArray(value)) return normalizeGroupEntities(value);
+  const raw = normalizeString(value);
+  if (!raw) return [];
+  try {
+    return normalizeGroupEntities(JSON.parse(raw));
+  } catch {
+    return [];
+  }
 }
 
 function parseGroupLabelsJson(value) {
@@ -777,6 +858,15 @@ function ensureGroup(store, partial) {
     kind: normalizeString(partial?.kind) || current.kind || "custom",
     name: normalizeString(partial?.name) || current.name || "Grupo sem nome",
     description: normalizeString(partial?.description) || current.description || "",
+    notes: Object.prototype.hasOwnProperty.call(partial || {}, "notes")
+      ? normalizeString(partial?.notes)
+      : normalizeString(current.notes),
+    contacts: Object.prototype.hasOwnProperty.call(partial || {}, "contacts")
+      ? normalizeGroupContacts(partial?.contacts)
+      : normalizeGroupContacts(current.contacts),
+    entities: Object.prototype.hasOwnProperty.call(partial || {}, "entities")
+      ? normalizeGroupEntities(partial?.entities)
+      : normalizeGroupEntities(current.entities),
     conversationId: normalizeString(partial?.conversationId) || current.conversationId || "",
     status: normalizeGroupStatus(partial?.status || current.status),
     labels: normalizeGroupLabels(
@@ -1096,6 +1186,9 @@ function buildGroupListEntry(store, group) {
   const gid = normalizeString(group.id);
   return {
     ...group,
+    notes: normalizeString(group.notes),
+    contacts: normalizeGroupContacts(group.contacts),
+    entities: normalizeGroupEntities(group.entities),
     status: normalizeGroupStatus(group.status),
     labels: normalizeGroupLabels(group.labels),
     isArchived: group.isArchived === true,
@@ -1229,6 +1322,9 @@ function mapDbGroupRow(row) {
     kind: CUSTOM_GROUP_KIND,
     name: normalizeString(row.name),
     description: normalizeString(row.description),
+    notes: normalizeString(row.notes_text),
+    contacts: parseGroupContactsJson(row.contacts_json),
+    entities: parseGroupEntitiesJson(row.entities_json),
     status: normalizeGroupStatus(row.status),
     labels: parseGroupLabelsJson(row.labels_json),
     isArchived: row.is_archived === true,
@@ -1529,11 +1625,14 @@ async function syncGroupTicketsFromDb(store) {
 async function upsertDbCustomGroup(group) {
   if (!db.isEnabled()) return;
   await db.query(
-    `INSERT INTO crm_custom_groups (id, name, description, status, is_archived, archived_at, labels_json, documents_enabled, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
+    `INSERT INTO crm_custom_groups (id, name, description, notes_text, contacts_json, entities_json, status, is_archived, archived_at, labels_json, documents_enabled, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12, $13)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name,
        description = EXCLUDED.description,
+       notes_text = EXCLUDED.notes_text,
+       contacts_json = EXCLUDED.contacts_json,
+       entities_json = EXCLUDED.entities_json,
        status = EXCLUDED.status,
        is_archived = EXCLUDED.is_archived,
        archived_at = EXCLUDED.archived_at,
@@ -1544,6 +1643,9 @@ async function upsertDbCustomGroup(group) {
       normalizeString(group?.id),
       normalizeString(group?.name) || "Grupo sem nome",
       normalizeString(group?.description),
+      normalizeString(group?.notes),
+      JSON.stringify(normalizeGroupContacts(group?.contacts)),
+      JSON.stringify(normalizeGroupEntities(group?.entities)),
       normalizeGroupStatus(group?.status),
       group?.isArchived === true,
       group?.isArchived === true ? normalizeString(group?.archivedAt) || nowIso() : null,
@@ -1759,7 +1861,7 @@ async function getDbCustomGroupById(groupId) {
   const gid = normalizeString(groupId);
   if (!gid) return null;
   const result = await db.query(
-    `SELECT id, name, description, status, is_archived, archived_at, labels_json, documents_enabled, created_at, updated_at
+    `SELECT id, name, description, notes_text, contacts_json, entities_json, status, is_archived, archived_at, labels_json, documents_enabled, created_at, updated_at
      FROM crm_custom_groups
      WHERE id = $1`,
     [gid]
@@ -1778,11 +1880,11 @@ async function listDbCustomGroups(query = "") {
     where.push(`(LOWER(name) LIKE $${params.length} OR LOWER(COALESCE(description, '')) LIKE $${params.length})`);
   }
   const result = await db.query(
-    `SELECT g.id, g.name, g.description, g.status, g.is_archived, g.archived_at, g.labels_json, g.documents_enabled, g.created_at, g.updated_at, COUNT(m.email_key)::int AS member_count
+    `SELECT g.id, g.name, g.description, g.notes_text, g.contacts_json, g.entities_json, g.status, g.is_archived, g.archived_at, g.labels_json, g.documents_enabled, g.created_at, g.updated_at, COUNT(m.email_key)::int AS member_count
      FROM crm_custom_groups g
      LEFT JOIN crm_custom_group_members m ON m.group_id = g.id
      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-     GROUP BY g.id, g.name, g.description, g.status, g.is_archived, g.archived_at, g.labels_json, g.documents_enabled, g.created_at, g.updated_at
+     GROUP BY g.id, g.name, g.description, g.notes_text, g.contacts_json, g.entities_json, g.status, g.is_archived, g.archived_at, g.labels_json, g.documents_enabled, g.created_at, g.updated_at
      ORDER BY LOWER(g.name) ASC, g.created_at ASC`,
     params
   );
@@ -1994,6 +2096,9 @@ async function ensureCustomGroupDb() {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
+        notes_text TEXT DEFAULT '',
+        contacts_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+        entities_json JSONB NOT NULL DEFAULT '[]'::jsonb,
         status TEXT NOT NULL DEFAULT 'em_analise',
         is_archived BOOLEAN NOT NULL DEFAULT FALSE,
         archived_at TIMESTAMP NULL,
@@ -2004,6 +2109,18 @@ async function ensureCustomGroupDb() {
       );
     `);
 
+    await db.query(`
+      ALTER TABLE crm_custom_groups
+      ADD COLUMN IF NOT EXISTS notes_text TEXT DEFAULT '';
+    `);
+    await db.query(`
+      ALTER TABLE crm_custom_groups
+      ADD COLUMN IF NOT EXISTS contacts_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+    `);
+    await db.query(`
+      ALTER TABLE crm_custom_groups
+      ADD COLUMN IF NOT EXISTS entities_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+    `);
     await db.query(`
       ALTER TABLE crm_custom_groups
       ADD COLUMN IF NOT EXISTS documents_enabled BOOLEAN NOT NULL DEFAULT TRUE;
@@ -2363,6 +2480,9 @@ export async function createCustomGroup(input) {
     kind: CUSTOM_GROUP_KIND,
     name: normalizeString(input?.name) || "Grupo sem nome",
     description: normalizeString(input?.description),
+    notes: normalizeString(input?.notes),
+    contacts: normalizeGroupContacts(input?.contacts),
+    entities: normalizeGroupEntities(input?.entities),
     status: normalizeGroupStatus(input?.status),
     labels: normalizeGroupLabels(input?.labels),
     isArchived: typeof input?.isArchived === "boolean" ? input.isArchived : false,
@@ -2397,6 +2517,18 @@ export async function updateCustomGroup(groupId, input) {
       Object.prototype.hasOwnProperty.call(input || {}, "description")
         ? normalizeString(input?.description)
         : current.description,
+    notes:
+      Object.prototype.hasOwnProperty.call(input || {}, "notes")
+        ? normalizeString(input?.notes)
+        : current.notes,
+    contacts:
+      Object.prototype.hasOwnProperty.call(input || {}, "contacts")
+        ? normalizeGroupContacts(input?.contacts)
+        : current.contacts,
+    entities:
+      Object.prototype.hasOwnProperty.call(input || {}, "entities")
+        ? normalizeGroupEntities(input?.entities)
+        : current.entities,
     status:
       Object.prototype.hasOwnProperty.call(input || {}, "status")
         ? normalizeGroupStatus(input?.status)

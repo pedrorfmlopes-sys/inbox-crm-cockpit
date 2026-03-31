@@ -185,6 +185,20 @@ export type LinkGroupEntry = {
   kind: "custom" | "conversation" | string;
   name: string;
   description?: string;
+  notes?: string;
+  contacts?: Array<{
+    key: string;
+    name: string;
+    email?: string;
+    company?: string;
+    source?: string;
+  }>;
+  entities?: Array<{
+    key: string;
+    name: string;
+    kind?: string;
+    source?: string;
+  }>;
   conversationId?: string;
   status?: "em_analise" | "em_progresso" | "concluido" | string;
   labels?: string[];
@@ -685,6 +699,9 @@ export async function searchKnownEmails(query = "", options?: { excludeGroupId?:
 export async function createLinkGroup(payload: {
   name: string;
   description?: string;
+  notes?: string;
+  contacts?: Array<{ key?: string; name: string; email?: string; company?: string; source?: string }>;
+  entities?: Array<{ key?: string; name: string; kind?: string; source?: string }>;
   documentsEnabled?: boolean;
   status?: string;
   labels?: string[];
@@ -699,7 +716,18 @@ export async function createLinkGroup(payload: {
 
 export async function updateLinkGroup(
   groupId: string,
-  payload: { name?: string; description?: string; documentsEnabled?: boolean; status?: string; labels?: string[]; isArchived?: boolean; archivedAt?: string }
+  payload: {
+    name?: string;
+    description?: string;
+    notes?: string;
+    contacts?: Array<{ key?: string; name: string; email?: string; company?: string; source?: string }>;
+    entities?: Array<{ key?: string; name: string; kind?: string; source?: string }>;
+    documentsEnabled?: boolean;
+    status?: string;
+    labels?: string[];
+    isArchived?: boolean;
+    archivedAt?: string;
+  }
 ): Promise<LinkGroupEntry> {
   const response: any = await requestJSON(`/api/links/groups/${encodeURIComponent(String(groupId || "").trim())}`, {
     method: "PATCH",
