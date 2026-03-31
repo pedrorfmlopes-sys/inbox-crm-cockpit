@@ -147,6 +147,16 @@ function buildEmailPreviewHtml(email: RelatedEmailEntry | null): string {
   return `<!doctype html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;background:#fff;color:#172b4d;font:14px/1.55 'Segoe UI',sans-serif}body{padding:18px}pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit}</style></head><body><pre>${escapeHtml(text)}</pre></body></html>`;
 }
 
+function decodeBase64Text(content: string): string {
+  try {
+    const binary = globalThis.atob(String(content || "").trim());
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch {
+    return "";
+  }
+}
+
 function buildSnippet(email: RelatedEmailEntry): string {
   const source = String(email.bodyText || "").trim() || htmlToPlainText(String(email.bodyHtml || ""));
   return source.length > 180 ? `${source.slice(0, 177).trim()}...` : source;
@@ -576,6 +586,7 @@ function StudioInner() {
   const [managedGroupEntities, setManagedGroupEntities] = useState<GroupEntityDraft[]>([]);
   const [managedContactSearch, setManagedContactSearch] = useState("");
   const [managedEntitySearch, setManagedEntitySearch] = useState("");
+  const [selectedAttachmentPreviewKey, setSelectedAttachmentPreviewKey] = useState("");
   const [managedGroupEmails, setManagedGroupEmails] = useState<RelatedEmailEntry[]>([]);
   const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
@@ -930,6 +941,44 @@ function StudioInner() {
         }));
     return source.filter((attachment) => String(attachment.name || "").trim());
   }, [attachments, selectedEmail?.attachments, selectedEmailIsCurrent]);
+
+  useEffect(() => {
+    setSelectedAttachmentPreviewKey((current) => {
+      if (current && selectedEmailAttachments.some((attachment) => makeAttachmentKey(attachment) === current)) return current;
+      return selectedEmailAttachments[0] ? makeAttachmentKey(selectedEmailAttachments[0]) : "";
+    });
+  }, [selectedEmailAttachments]);
+
+  const selectedAttachmentPreview = useMemo(
+    () => selectedEmailAttachments.find((attachment) => makeAttachmentKey(attachment) === selectedAttachmentPreviewKey) || selectedEmailAttachments[0] || null,
+    [selectedAttachmentPreviewKey, selectedEmailAttachments]
+  );
+
+  const selectedAttachmentPreviewMode = useMemo(() => {
+    const attachment = selectedAttachmentPreview;
+    if (!attachment) return "none";
+    const contentType = String(attachment.contentType || "").toLowerCase();
+    const name = String(attachment.name || "").toLowerCase();
+    if (/^image\//.test(contentType) || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(name)) return "image";
+    if (contentType.includes("pdf") || /\.pdf$/.test(name)) return "pdf";
+    if (/text|json|xml|csv/.test(contentType) || /\.(txt|csv|json|xml|html?)$/.test(name)) return "text";
+    return "unsupported";
+  }, [selectedAttachmentPreview]);
+
+  const selectedAttachmentPreviewSrc = useMemo(() => {
+    const attachment = selectedAttachmentPreview;
+    if (!attachment || !String(attachment.content || "").trim()) return "";
+    const contentType = String(attachment.contentType || "application/octet-stream").trim() || "application/octet-stream";
+    if (selectedAttachmentPreviewMode === "image" || selectedAttachmentPreviewMode === "pdf") {
+      return `data:${contentType};base64,${String(attachment.content || "").trim()}`;
+    }
+    return "";
+  }, [selectedAttachmentPreview, selectedAttachmentPreviewMode]);
+
+  const selectedAttachmentPreviewText = useMemo(() => {
+    if (selectedAttachmentPreviewMode !== "text") return "";
+    return decodeBase64Text(String(selectedAttachmentPreview?.content || "").trim());
+  }, [selectedAttachmentPreview?.content, selectedAttachmentPreviewMode]);
 
   useEffect(() => {
     setAttachmentPlan((current) => {
@@ -2013,146 +2062,69 @@ function StudioInner() {
               <span>{selectedEmail.fromName || selectedEmail.fromEmail || "--"}</span>
               <span>{formatDate(selectedEmail.messageDateIso || selectedEmail.receivedAtIso) || "--"}</span>
               <span>{Array.isArray(selectedEmail.attachments) ? `${selectedEmail.attachments.length} anexo(s)` : "Sem anexos"}</span>
-              <span>{detectedCaseType}</span>
             </div>
-            {selectedEmailGroups.length ? <div style={S.chips}>{selectedEmailGroups.map((group) => <span key={group.id} style={S.groupChip}>{group.name || groupMap.get(group.id)?.name || group.id}</span>)}</div> : null}
             {previewHtml ? <iframe title={selectedEmail.subject || "Preview"} srcDoc={previewHtml} style={S.preview} sandbox="" /> : <PanelState compact tone="info" title="Preview indisponivel" description="Este email ainda nao tem corpo guardado suficiente para preview." />}
           </div>
 
-          <div style={S.grid2Wide}>
-            <div style={S.stackMini}>
-              <div style={S.card}>
-                <div style={S.cardTitle}>Leitura do email</div>
-                <div style={S.cardMeta}>Assunto, corpo e anexos lidos. As sugestoes continuam na faixa fixa do topo.</div>
-                <div style={S.summaryGrid}>
-                  <div style={S.summaryRow}><span>Tipo detetado</span><strong>{detectedCaseType}</strong></div>
-                  <div style={S.summaryRow}><span>Parceiro detetado</span><strong>{derivePartnerName(selectedEmail) || "--"}</strong></div>
-                  <div style={S.summaryRow}><span>Refs. documento</span><strong>{documentReferences.length ? documentReferences.join(", ") : "--"}</strong></div>
-                  <div style={S.summaryRow}><span>Codigos/artigos</span><strong>{articleReferences.length ? articleReferences.join(", ") : "--"}</strong></div>
-                  <div style={S.summaryRow}><span>Anexos lidos</span><strong>{analyzedAttachmentNames.length ? analyzedAttachmentNames.join(", ") : "--"}</strong></div>
-                  <div style={S.summaryRow}><span>Sugestao de grupo</span><strong>{suggestedGroupName || "--"}</strong></div>
-                </div>
-              </div>
-
-              <div style={S.card}>
-                <div style={S.cardTitle}>Casos semelhantes</div>
-                <div style={S.cardMeta}>Matches por referencia, grupo, ticket e parceiro.</div>
-                {similarCases.length ? (
-                  <div style={S.itemList}>
-                    {similarCases.map((entry) => {
-                      const key = makeEmailKey(entry.email);
-                      const ticketSummary = entry.candidateTickets.map((ticket) => ticket.code).filter(Boolean).join(", ");
-                      return (
-                        <div key={key} style={S.itemRow}>
-                          <button type="button" style={S.similarMainBtn} onClick={() => setSelectedEmailKey(key)}>
-                            <div style={S.itemMeta}>
-                              <strong>{entry.email.subject || "(sem assunto)"}</strong>
-                              <small>{entry.email.fromName || entry.email.fromEmail || "--"} · {formatDate(entry.email.messageDateIso || entry.email.receivedAtIso) || "--"}</small>
-                              <small>{buildSnippet(entry.email) || "Sem preview curto disponivel."}</small>
-                              <div style={S.inlineWrap}>
-                                {entry.matchedRefs.map((reference) => <span key={`${key}-${reference}`} style={S.groupChip}>Ref: {reference}</span>)}
-                                {entry.candidateGroups.slice(0, 2).map((group) => <span key={`${key}-${group.id}`} style={S.groupChip}>{group.name || group.id}</span>)}
-                                {ticketSummary ? <span style={S.groupChip}>TK: {ticketSummary}</span> : null}
-                                {entry.candidateLabels.slice(0, 2).map((label) => <span key={`${key}-${label}`} style={S.groupChip}>{label}</span>)}
-                              </div>
-                            </div>
-                          </button>
-                          <div style={S.stackMini}>
-                            <button type="button" style={S.secondaryBtn} onClick={() => setSelectedEmailKey(key)}>
-                              Ver caso
-                            </button>
-                            {(entry.email.itemId || entry.email.emailWebLink) ? (
-                              <button
-                                type="button"
-                                style={S.secondaryBtn}
-                                onClick={() => void requestCockpitHostAction({ type: "open-email", itemId: entry.email.itemId, emailWebLink: entry.email.emailWebLink })}
-                              >
-                                <Icons.ExternalLink size={12} />
-                                Outlook
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <PanelState compact tone="info" title="Ainda sem casos semelhantes" description="Assim que tivermos matches fortes por referencia, grupo ou ticket, vao aparecer aqui." />
-                )}
+          <div style={S.card}>
+            <div style={S.titleRow}>
+              <div>
+                <div style={S.cardTitle}>Documentos e imagens</div>
+                <div style={S.cardMeta}>Preview simples dos anexos deste email.</div>
               </div>
             </div>
-
-            <div style={S.stackMini}>
-              <div style={S.card}>
-                <div style={S.cardTitle}>Criacao rapida</div>
-                <div style={S.cardMeta}>Criar e ligar grupo ou ticket sem sair da janela.</div>
-                <label style={S.field}>
-                  <span style={S.label}>Novo grupo</span>
-                  <div style={S.compactCreateRow}>
-                    <input style={S.input} value={createGroupName} onChange={(event) => setCreateGroupName(event.target.value)} placeholder="Nome do grupo" />
-                    <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateGroupAndLink()} disabled={actionBusy || !String(createGroupName || "").trim()}>
-                      <Icons.Plus size={12} />
-                      Criar
-                    </button>
-                  </div>
-                </label>
-                <label style={S.field}>
-                  <span style={S.label}>Novo ticket</span>
-                  <input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do ticket" />
-                </label>
-                <label style={S.field}>
-                  <span style={S.label}>Serie de ticket</span>
-                  <div style={S.compactCreateRow}>
-                    <select style={S.select} value={selectedSeriesId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedSeriesId(nextValue); if (nextValue) setSelectedTicketId(""); }}>
-                      <option value="">Sem ticket/caso</option>
-                      {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
-                    </select>
-                    <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateTicketAndLink()} disabled={actionBusy || !selectedSeriesId}>
-                      <Icons.Plus size={12} />
-                      Criar
-                    </button>
-                  </div>
-                </label>
-              </div>
-
-              <div style={S.card}>
-                <div style={S.cardTitle}>Anexos deste email</div>
-                <div style={S.cardMeta}>Escolhe o que analisar, guardar no grupo principal ou reenviar.</div>
-                {selectedEmailAttachments.length ? (
-                  <>
-                    <div style={S.attachList}>
-                      {selectedEmailAttachments.map((attachment) => {
-                        const key = makeAttachmentKey(attachment);
-                        const plan = attachmentPlan[key] || { analyze: false, save: false, forward: false };
-                        const hasContent = Boolean(String(attachment.content || "").trim());
-                        return (
-                          <div key={key} style={S.attachRow}>
-                            <div style={S.attachMeta}>
-                              <strong>{attachment.name}</strong>
-                              <small>{attachment.contentType || "ficheiro"}{attachment.size ? ` · ${Math.round(Number(attachment.size || 0) / 1024)} KB` : ""}{hasContent ? "" : " · sem conteudo guardado"}</small>
-                            </div>
-                            <div style={S.attachChecks}>
-                              <label style={S.check}><input type="checkbox" checked={plan.analyze} onChange={(event) => toggleAttachmentPlan(key, "analyze", event.target.checked)} /><span>Analisar</span></label>
-                              <label style={S.check}><input type="checkbox" checked={plan.save} onChange={(event) => toggleAttachmentPlan(key, "save", event.target.checked)} disabled={!hasContent} /><span>Guardar</span></label>
-                              <label style={S.check}><input type="checkbox" checked={plan.forward} onChange={(event) => toggleAttachmentPlan(key, "forward", event.target.checked)} /><span>Reenviar</span></label>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div style={S.inline}>
-                      <button type="button" style={S.secondaryBtn} onClick={() => void handleSaveSelectedAttachments()} disabled={actionBusy || !principalGroupId}>
-                        <Icons.Save size={12} />
-                        Guardar no grupo principal
+            {selectedEmailAttachments.length ? (
+              <div style={S.stackMini}>
+                <div style={S.attachmentPickerBar}>
+                  {selectedEmailAttachments.map((attachment) => {
+                    const key = makeAttachmentKey(attachment);
+                    const active = key === makeAttachmentKey(selectedAttachmentPreview || {});
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        style={active ? S.groupChipBtnOn : S.groupChipBtn}
+                        onClick={() => setSelectedAttachmentPreviewKey(key)}
+                      >
+                        {attachment.name}
                       </button>
-                      <span style={S.cardMeta}>Necessita de grupo principal selecionado e de anexos com conteudo disponivel.</span>
+                    );
+                  })}
+                </div>
+                {selectedAttachmentPreview ? (
+                  <div style={S.card}>
+                    <div style={S.summaryGrid}>
+                      <div style={S.summaryRow}><span>Ficheiro</span><strong>{selectedAttachmentPreview.name || "--"}</strong></div>
+                      <div style={S.summaryRow}><span>Tipo</span><strong>{selectedAttachmentPreview.contentType || "ficheiro"}</strong></div>
+                      <div style={S.summaryRow}><span>Tamanho</span><strong>{selectedAttachmentPreview.size ? `${Math.round(Number(selectedAttachmentPreview.size || 0) / 1024)} KB` : "--"}</strong></div>
                     </div>
-                  </>
-                ) : (
-                  <PanelState compact tone="info" title="Sem anexos disponiveis" description="Este email nao traz anexos guardados ou ainda nao temos o conteudo disponivel nesta janela." />
-                )}
+                    {selectedAttachmentPreviewMode === "image" && selectedAttachmentPreviewSrc ? (
+                      <div style={S.attachmentPreviewWrap}>
+                        <img src={selectedAttachmentPreviewSrc} alt={selectedAttachmentPreview.name || "Imagem"} style={S.attachmentPreviewImage} />
+                      </div>
+                    ) : null}
+                    {selectedAttachmentPreviewMode === "pdf" && selectedAttachmentPreviewSrc ? (
+                      <iframe title={selectedAttachmentPreview.name || "PDF"} src={selectedAttachmentPreviewSrc} style={S.attachmentPreviewFrame} />
+                    ) : null}
+                    {selectedAttachmentPreviewMode === "text" ? (
+                      selectedAttachmentPreviewText ? (
+                        <pre style={S.attachmentPreviewText}>{selectedAttachmentPreviewText}</pre>
+                      ) : (
+                        <div style={S.attachmentPreviewEmpty}>Nao foi possivel ler o conteudo textual deste ficheiro.</div>
+                      )
+                    ) : null}
+                    {selectedAttachmentPreviewMode === "unsupported" ? (
+                      <div style={S.attachmentPreviewEmpty}>Preview nao disponivel para este tipo de ficheiro.</div>
+                    ) : null}
+                    {selectedAttachmentPreviewMode === "none" ? (
+                      <div style={S.attachmentPreviewEmpty}>Escolhe um anexo para ver o preview.</div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
-            </div>
+            ) : (
+              <PanelState compact tone="info" title="Sem anexos disponiveis" description="Este email nao traz anexos guardados para preview." />
+            )}
           </div>
         </div>
       );
@@ -3077,6 +3049,12 @@ const S: Record<string, React.CSSProperties> = {
   linkBtn: { border: "none", background: "transparent", color: "#2563eb", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 },
   check: { display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--iccc-text)" },
   inlineChecks: { display: "flex", gap: 16, flexWrap: "wrap" },
+  attachmentPickerBar: { display: "flex", flexWrap: "wrap", gap: 8 },
+  attachmentPreviewWrap: { borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "#fff", padding: 12, display: "grid", justifyItems: "center" },
+  attachmentPreviewImage: { display: "block", maxWidth: "100%", maxHeight: 560, borderRadius: 10, objectFit: "contain" },
+  attachmentPreviewFrame: { width: "100%", minHeight: 620, borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "#fff" },
+  attachmentPreviewText: { margin: 0, padding: 14, borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.84)", color: "var(--iccc-text)", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'Segoe UI', sans-serif" },
+  attachmentPreviewEmpty: { padding: "18px 16px", borderRadius: 14, border: "1px dashed rgba(148,163,184,0.32)", background: "rgba(255,255,255,0.7)", color: "var(--iccc-muted)", fontSize: 12 },
   attachList: { display: "grid", gap: 10 },
   attachRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 12, alignItems: "center", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)" },
   attachMeta: { display: "grid", gap: 3, minWidth: 0, color: "var(--iccc-text)" },
