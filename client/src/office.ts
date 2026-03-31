@@ -193,6 +193,9 @@ const GROUP_CATEGORY_PREFIX = "Grupo: ";
 const REFERENCE_CATEGORY_PREFIX = "Ref: ";
 const TICKET_CATEGORY_PREFIX = "TK: ";
 const STATUS_CATEGORY_PREFIX = "Estado: ";
+const GROUP_STATUS_CATEGORY_PREFIX = "Gr: ";
+const TICKET_STATUS_CATEGORY_PREFIX = "E-Tk: ";
+const LABEL_STATUS_CATEGORY_PREFIX = "E-Et: ";
 const LEGACY_TICKET_CATEGORY_PREFIX = "Ticket: ";
 const LEGACY_LABEL_CATEGORY_PREFIX = "Etiqueta: ";
 const ODOO_LINKED_NOTICE = "iccc-odoo-linked";
@@ -226,8 +229,36 @@ function isReservedManagedCategoryName(name: string): boolean {
     || label.startsWith(TICKET_CATEGORY_PREFIX)
     || label.startsWith(LEGACY_TICKET_CATEGORY_PREFIX)
     || label.startsWith(STATUS_CATEGORY_PREFIX)
+    || label.startsWith(GROUP_STATUS_CATEGORY_PREFIX)
+    || label.startsWith(TICKET_STATUS_CATEGORY_PREFIX)
+    || label.startsWith(LABEL_STATUS_CATEGORY_PREFIX)
     || label.startsWith(LEGACY_LABEL_CATEGORY_PREFIX)
   );
+}
+
+function normalizeGroupStatusCategoryLabel(value: string | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "concluido") return "Concluido";
+  if (normalized === "em_progresso") return "Em progresso";
+  if (normalized === "em_analise") return "Em analise";
+  return String(value || "").trim();
+}
+
+function normalizeTicketStatusCategoryLabel(value: string | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "open" || normalized === "aberto") return "Aberto";
+  if (normalized === "closed" || normalized === "fechado") return "Fechado";
+  return normalizeGroupStatusCategoryLabel(value);
+}
+
+function resolveStatusCategoryColor(label: string, colors: any): any {
+  const normalized = String(label || "").trim().toLowerCase();
+  if (normalized === "em analise") return firstCategoryColor(colors, ["Preset3", "Preset1", "Preset0"]);
+  if (normalized === "em progresso") return firstCategoryColor(colors, ["Preset1", "Preset5", "Preset0"]);
+  if (normalized === "concluido") return firstCategoryColor(colors, ["Preset4", "Preset14", "Preset0"]);
+  if (normalized === "aberto") return firstCategoryColor(colors, ["Preset22", "Preset7", "Preset0"]);
+  if (normalized === "fechado") return firstCategoryColor(colors, ["Preset4", "Preset14", "Preset0"]);
+  return firstCategoryColor(colors, ["Preset12", "Preset0"]);
 }
 
 function resolveManagedCategoryColor(displayName: string, colors: any): any {
@@ -247,11 +278,19 @@ function resolveManagedCategoryColor(displayName: string, colors: any): any {
   }
 
   if (label.startsWith(STATUS_CATEGORY_PREFIX)) {
-    const normalized = label.slice(STATUS_CATEGORY_PREFIX.length).trim().toLowerCase();
-    if (normalized === "em analise") return firstCategoryColor(colors, ["Preset3", "Preset1", "Preset0"]);
-    if (normalized === "em progresso") return firstCategoryColor(colors, ["Preset1", "Preset5", "Preset0"]);
-    if (normalized === "concluido") return firstCategoryColor(colors, ["Preset4", "Preset14", "Preset0"]);
-    return firstCategoryColor(colors, ["Preset12", "Preset0"]);
+    return resolveStatusCategoryColor(label.slice(STATUS_CATEGORY_PREFIX.length).trim(), colors);
+  }
+
+  if (label.startsWith(GROUP_STATUS_CATEGORY_PREFIX)) {
+    return resolveStatusCategoryColor(label.slice(GROUP_STATUS_CATEGORY_PREFIX.length).trim(), colors);
+  }
+
+  if (label.startsWith(TICKET_STATUS_CATEGORY_PREFIX)) {
+    return resolveStatusCategoryColor(label.slice(TICKET_STATUS_CATEGORY_PREFIX.length).trim(), colors);
+  }
+
+  if (label.startsWith(LABEL_STATUS_CATEGORY_PREFIX)) {
+    return resolveStatusCategoryColor(label.slice(LABEL_STATUS_CATEGORY_PREFIX.length).trim(), colors);
   }
 
   if (label.startsWith(TICKET_CATEGORY_PREFIX)) {
@@ -614,20 +653,15 @@ function normalizeUniqueCategoryValues(values: string[] | undefined): string[] {
   return Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)));
 }
 
-function normalizeStatusCategoryLabel(value: string | undefined): string {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "concluido") return "Concluido";
-  if (normalized === "em_progresso") return "Em progresso";
-  if (normalized === "em_analise") return "Em analise";
-  return String(value || "").trim();
-}
-
 export async function syncManagedOutlookCategories(input: {
   principalGroupNames?: string[];
   referenceGroupNames?: string[];
   groupNames?: string[];
   ticketCodes?: string[];
   statuses?: string[];
+  groupStatuses?: string[];
+  ticketStatuses?: string[];
+  labelStatuses?: string[];
   labelNames?: string[];
   managedLabelNames?: string[];
 }): Promise<void> {
@@ -641,9 +675,21 @@ export async function syncManagedOutlookCategories(input: {
     ...referenceGroupNames.map((name) => `${REFERENCE_CATEGORY_PREFIX}${name}`),
     ...normalizeUniqueCategoryValues(input?.ticketCodes).map((code) => `${TICKET_CATEGORY_PREFIX}${code}`),
     ...normalizeUniqueCategoryValues(input?.statuses)
-      .map((status) => normalizeStatusCategoryLabel(status))
+      .map((status) => normalizeGroupStatusCategoryLabel(status))
       .filter(Boolean)
       .map((label) => `${STATUS_CATEGORY_PREFIX}${label}`),
+    ...normalizeUniqueCategoryValues(input?.groupStatuses)
+      .map((status) => normalizeGroupStatusCategoryLabel(status))
+      .filter(Boolean)
+      .map((label) => `${GROUP_STATUS_CATEGORY_PREFIX}${label}`),
+    ...normalizeUniqueCategoryValues(input?.ticketStatuses)
+      .map((status) => normalizeTicketStatusCategoryLabel(status))
+      .filter(Boolean)
+      .map((label) => `${TICKET_STATUS_CATEGORY_PREFIX}${label}`),
+    ...normalizeUniqueCategoryValues(input?.labelStatuses)
+      .map((status) => normalizeGroupStatusCategoryLabel(status))
+      .filter(Boolean)
+      .map((label) => `${LABEL_STATUS_CATEGORY_PREFIX}${label}`),
     ...labelNames,
   ];
   const currentCategories = await getCurrentItemCategoryNames();
@@ -653,6 +699,9 @@ export async function syncManagedOutlookCategories(input: {
     || name.startsWith(TICKET_CATEGORY_PREFIX)
     || name.startsWith(LEGACY_TICKET_CATEGORY_PREFIX)
     || name.startsWith(STATUS_CATEGORY_PREFIX)
+    || name.startsWith(GROUP_STATUS_CATEGORY_PREFIX)
+    || name.startsWith(TICKET_STATUS_CATEGORY_PREFIX)
+    || name.startsWith(LABEL_STATUS_CATEGORY_PREFIX)
     || name.startsWith(LEGACY_LABEL_CATEGORY_PREFIX)
     || managedLabelSet.has(String(name || "").trim().toLowerCase())
   );
@@ -679,6 +728,9 @@ export async function getManagedOutlookCategorySnapshot(): Promise<{
   groupNames: string[];
   ticketCodes: string[];
   statuses: string[];
+  groupStatuses: string[];
+  ticketStatuses: string[];
+  labelStatuses: string[];
   labelNames: string[];
 }>;
 export async function getManagedOutlookCategorySnapshot(knownLabelNames: string[]): Promise<{
@@ -687,6 +739,9 @@ export async function getManagedOutlookCategorySnapshot(knownLabelNames: string[
   groupNames: string[];
   ticketCodes: string[];
   statuses: string[];
+  groupStatuses: string[];
+  ticketStatuses: string[];
+  labelStatuses: string[];
   labelNames: string[];
 }>;
 export async function getManagedOutlookCategorySnapshot(knownLabelNames?: string[]): Promise<{
@@ -695,6 +750,9 @@ export async function getManagedOutlookCategorySnapshot(knownLabelNames?: string
   groupNames: string[];
   ticketCodes: string[];
   statuses: string[];
+  groupStatuses: string[];
+  ticketStatuses: string[];
+  labelStatuses: string[];
   labelNames: string[];
 }> {
   const currentCategories = await getCurrentItemCategoryNames();
@@ -721,6 +779,18 @@ export async function getManagedOutlookCategorySnapshot(knownLabelNames?: string
       .filter((name) => name.startsWith(STATUS_CATEGORY_PREFIX))
       .map((name) => name.slice(STATUS_CATEGORY_PREFIX.length).trim())
       .filter(Boolean),
+    groupStatuses: currentCategories
+      .filter((name) => name.startsWith(GROUP_STATUS_CATEGORY_PREFIX))
+      .map((name) => name.slice(GROUP_STATUS_CATEGORY_PREFIX.length).trim())
+      .filter(Boolean),
+    ticketStatuses: currentCategories
+      .filter((name) => name.startsWith(TICKET_STATUS_CATEGORY_PREFIX))
+      .map((name) => name.slice(TICKET_STATUS_CATEGORY_PREFIX.length).trim())
+      .filter(Boolean),
+    labelStatuses: currentCategories
+      .filter((name) => name.startsWith(LABEL_STATUS_CATEGORY_PREFIX))
+      .map((name) => name.slice(LABEL_STATUS_CATEGORY_PREFIX.length).trim())
+      .filter(Boolean),
     labelNames: currentCategories
       .filter((name) =>
         name.startsWith(LEGACY_LABEL_CATEGORY_PREFIX)
@@ -741,6 +811,9 @@ export async function syncLinkCategoriesToComposeDraft(input: {
   groupNames?: string[];
   ticketCodes?: string[];
   statuses?: string[];
+  groupStatuses?: string[];
+  ticketStatuses?: string[];
+  labelStatuses?: string[];
   labelNames?: string[];
   managedLabelNames?: string[];
   hasOdooLinks?: boolean;
@@ -752,6 +825,9 @@ export async function syncLinkCategoriesToComposeDraft(input: {
     || normalizeUniqueCategoryValues(input?.referenceGroupNames).length
     || normalizeUniqueCategoryValues(input?.ticketCodes).length
     || normalizeUniqueCategoryValues(input?.statuses).length
+    || normalizeUniqueCategoryValues(input?.groupStatuses).length
+    || normalizeUniqueCategoryValues(input?.ticketStatuses).length
+    || normalizeUniqueCategoryValues(input?.labelStatuses).length
     || normalizeUniqueCategoryValues(input?.labelNames).length
     || normalizeUniqueCategoryValues(input?.managedLabelNames).length
   );
@@ -777,6 +853,9 @@ export async function syncLinkCategoriesToComposeDraft(input: {
       referenceGroupNames: input?.referenceGroupNames,
       ticketCodes: input?.ticketCodes,
       statuses: input?.statuses,
+      groupStatuses: input?.groupStatuses,
+      ticketStatuses: input?.ticketStatuses,
+      labelStatuses: input?.labelStatuses,
       labelNames: input?.labelNames,
       managedLabelNames: input?.managedLabelNames,
     }).catch(() => {

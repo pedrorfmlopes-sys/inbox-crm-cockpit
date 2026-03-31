@@ -153,6 +153,14 @@ export type RelevantEmailPayload = {
   labels?: string[];
   removedInheritedLabels?: string[];
   labelStates?: Record<string, "em_analise" | "em_progresso" | "concluido" | string>;
+  classificationMeta?: {
+    principalStatusEnabled?: boolean;
+    principalStatusCategorize?: boolean;
+    referenceStatusEnabled?: boolean;
+    referenceStatusCategorize?: boolean;
+    ticketStatusEnabled?: boolean;
+    ticketStatusCategorize?: boolean;
+  };
   membershipKind?: "principal" | "referencia" | string;
   attachments?: Array<{
     id?: string;
@@ -283,6 +291,14 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
   labels?: string[];
   removedInheritedLabels?: string[];
   labelStates?: Record<string, string>;
+  classificationMeta?: {
+    principalStatusEnabled?: boolean;
+    principalStatusCategorize?: boolean;
+    referenceStatusEnabled?: boolean;
+    referenceStatusCategorize?: boolean;
+    ticketStatusEnabled?: boolean;
+    ticketStatusCategorize?: boolean;
+  };
   membershipKind?: "principal" | "referencia" | string;
   relatedRecords?: Array<{ model: string; recordId: number; recordName: string }>;
   relatedGroups?: Array<{ id: string; name?: string; kind?: string; relationKind?: "principal" | "referencia" | string }>;
@@ -528,6 +544,16 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
           .filter(([label, value]) => label && value)
       )
     : {};
+  const normalizedClassificationMeta = entry?.classificationMeta && typeof entry.classificationMeta === "object"
+    ? {
+        principalStatusEnabled: entry.classificationMeta.principalStatusEnabled === true,
+        principalStatusCategorize: entry.classificationMeta.principalStatusCategorize === true,
+        referenceStatusEnabled: entry.classificationMeta.referenceStatusEnabled === true,
+        referenceStatusCategorize: entry.classificationMeta.referenceStatusCategorize === true,
+        ticketStatusEnabled: entry.classificationMeta.ticketStatusEnabled === true,
+        ticketStatusCategorize: entry.classificationMeta.ticketStatusCategorize === true,
+      }
+    : undefined;
   return {
     ...normalizeLinkEntry(entry),
     emailKey: String(entry?.emailKey || "").trim(),
@@ -535,6 +561,7 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
     labels: Array.isArray(entry?.labels) ? entry.labels.map((label: any) => String(label || "").trim()).filter(Boolean) : [],
     removedInheritedLabels: Array.isArray(entry?.removedInheritedLabels) ? entry.removedInheritedLabels.map((label: any) => String(label || "").trim()).filter(Boolean) : [],
     labelStates: normalizedLabelStates,
+    classificationMeta: normalizedClassificationMeta,
     membershipKind: String(entry?.membershipKind || "").trim() || undefined,
     bodyText: String(entry?.bodyText || "").trim(),
     bodyHtml: String(entry?.bodyHtml || "").trim(),

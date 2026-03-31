@@ -135,6 +135,23 @@ function parseLabelStatesJson(value) {
   return normalizeEmailLabelStates(value);
 }
 
+function normalizeEmailClassificationMeta(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return {
+    principalStatusEnabled: value.principalStatusEnabled === true,
+    principalStatusCategorize: value.principalStatusCategorize === true,
+    referenceStatusEnabled: value.referenceStatusEnabled === true,
+    referenceStatusCategorize: value.referenceStatusCategorize === true,
+    ticketStatusEnabled: value.ticketStatusEnabled === true,
+    ticketStatusCategorize: value.ticketStatusCategorize === true,
+  };
+}
+
+function parseClassificationMetaJson(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return normalizeEmailClassificationMeta(value);
+}
+
 function normalizeGroupMembershipKind(value) {
   const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, "_");
   if (normalized === "referencia" || normalized === "reference" || normalized === "linked" || normalized === "link") {
@@ -411,6 +428,9 @@ function normalizeEmailInput(input) {
       : undefined,
     labelStates: Object.prototype.hasOwnProperty.call(input || {}, "labelStates")
       ? normalizeEmailLabelStates(input?.labelStates)
+      : undefined,
+    classificationMeta: Object.prototype.hasOwnProperty.call(input || {}, "classificationMeta")
+      ? normalizeEmailClassificationMeta(input?.classificationMeta)
       : undefined,
     ...(attachments.length ? { attachments } : {}),
   };
@@ -700,7 +720,7 @@ function upsertEmail(store, input) {
   const next = {
     ...current,
     ...Object.fromEntries(Object.entries(normalized).filter(([key, value]) => {
-      if (key === "status" || key === "labels" || key === "removedInheritedLabels" || key === "labelStates") {
+      if (key === "status" || key === "labels" || key === "removedInheritedLabels" || key === "labelStates" || key === "classificationMeta") {
         return Object.prototype.hasOwnProperty.call(input || {}, key);
       }
       return Boolean(value);
@@ -720,6 +740,9 @@ function upsertEmail(store, input) {
   }
   if (Object.prototype.hasOwnProperty.call(input || {}, "labelStates")) {
     next.labelStates = normalized.labelStates && typeof normalized.labelStates === "object" ? normalized.labelStates : {};
+  }
+  if (Object.prototype.hasOwnProperty.call(input || {}, "classificationMeta")) {
+    next.classificationMeta = normalized.classificationMeta && typeof normalized.classificationMeta === "object" ? normalized.classificationMeta : {};
   }
 
   if (!next.messageDateIso) {
@@ -933,6 +956,7 @@ function buildEmailListEntry(email, extra = {}) {
     labels: normalizeGroupLabels(email?.labels),
     removedInheritedLabels: normalizeGroupLabels(email?.removedInheritedLabels),
     labelStates: normalizeEmailLabelStates(email?.labelStates),
+    classificationMeta: normalizeEmailClassificationMeta(email?.classificationMeta),
     createdAt: normalizeString(email?.createdAt),
     updatedAt: normalizeString(email?.updatedAt),
     attachments: normalizeAttachments(email?.attachments),
@@ -1234,6 +1258,7 @@ function mapDbGroupMemberRow(row) {
     labels: parseGroupLabelsJson(row.labels_json),
     removedInheritedLabels: parseGroupLabelsJson(row.removed_inherited_labels_json),
     labelStates: parseLabelStatesJson(row.label_states_json),
+    classificationMeta: parseClassificationMetaJson(row.classification_meta_json),
     createdAt: normalizeString(row.created_at),
     updatedAt: normalizeString(row.updated_at),
     attachments: parseAttachmentsJson(row.attachments_json),
@@ -1645,8 +1670,8 @@ async function upsertDbCustomGroupMember(groupId, email, membershipKind = DEFAUL
   if (!groupId || !emailKey) return;
   await db.query(
     `INSERT INTO crm_custom_group_members
-       (group_id, email_key, relation_kind, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, body_text, body_html, status, labels_json, removed_inherited_labels_json, label_states_json, attachments_json, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb, $21, $22)
+       (group_id, email_key, relation_kind, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, body_text, body_html, status, labels_json, removed_inherited_labels_json, label_states_json, classification_meta_json, attachments_json, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb, $21::jsonb, $22, $23)
      ON CONFLICT (group_id, email_key) DO UPDATE SET
        relation_kind = EXCLUDED.relation_kind,
        item_id = EXCLUDED.item_id,
@@ -1665,6 +1690,7 @@ async function upsertDbCustomGroupMember(groupId, email, membershipKind = DEFAUL
        labels_json = EXCLUDED.labels_json,
        removed_inherited_labels_json = EXCLUDED.removed_inherited_labels_json,
        label_states_json = EXCLUDED.label_states_json,
+       classification_meta_json = EXCLUDED.classification_meta_json,
        attachments_json = EXCLUDED.attachments_json,
        updated_at = EXCLUDED.updated_at`,
     [
@@ -1687,6 +1713,7 @@ async function upsertDbCustomGroupMember(groupId, email, membershipKind = DEFAUL
       JSON.stringify(normalizeGroupLabels(email?.labels)),
       JSON.stringify(normalizeGroupLabels(email?.removedInheritedLabels)),
       JSON.stringify(normalizeEmailLabelStates(email?.labelStates)),
+      JSON.stringify(normalizeEmailClassificationMeta(email?.classificationMeta)),
       JSON.stringify(normalizeAttachments(email?.attachments)),
       normalizeString(email?.createdAt) || nowIso(),
       normalizeString(email?.updatedAt) || nowIso(),
@@ -1846,6 +1873,7 @@ async function getDbCustomGroupContext(input) {
         m.labels_json,
         m.removed_inherited_labels_json,
         m.label_states_json,
+        m.classification_meta_json,
         m.attachments_json
      FROM crm_custom_group_members m
      JOIN crm_custom_groups g ON g.id = m.group_id
@@ -2018,6 +2046,7 @@ async function ensureCustomGroupDb() {
         labels_json JSONB DEFAULT '[]'::jsonb,
         removed_inherited_labels_json JSONB DEFAULT '[]'::jsonb,
         label_states_json JSONB DEFAULT '{}'::jsonb,
+        classification_meta_json JSONB DEFAULT '{}'::jsonb,
         attachments_json JSONB DEFAULT '[]'::jsonb,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2054,6 +2083,10 @@ async function ensureCustomGroupDb() {
     await db.query(`
       ALTER TABLE crm_custom_group_members
       ADD COLUMN IF NOT EXISTS label_states_json JSONB DEFAULT '{}'::jsonb;
+    `);
+    await db.query(`
+      ALTER TABLE crm_custom_group_members
+      ADD COLUMN IF NOT EXISTS classification_meta_json JSONB DEFAULT '{}'::jsonb;
     `);
     await db.query(`
       ALTER TABLE crm_custom_group_members

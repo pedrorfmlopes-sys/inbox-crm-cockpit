@@ -14,6 +14,14 @@ type ApplyScopeMode = "current" | "selected" | "principal_group";
 type EmailLabelStatus = "em_analise" | "em_progresso" | "concluido";
 type ClassificationFocus = "principal" | "references" | "labels" | "ticket";
 type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
+type ClassificationMetaDraft = {
+  principalStatusEnabled: boolean;
+  principalStatusCategorize: boolean;
+  referenceStatusEnabled: boolean;
+  referenceStatusCategorize: boolean;
+  ticketStatusEnabled: boolean;
+  ticketStatusCategorize: boolean;
+};
 type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
 type StudioParams = {
   conversationId?: string;
@@ -40,10 +48,47 @@ const LABEL_STATUS_OPTIONS: Array<{ value: EmailLabelStatus; label: string }> = 
   { value: "concluido", label: "Concluido" },
 ];
 
+const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
+  principalStatusEnabled: false,
+  principalStatusCategorize: false,
+  referenceStatusEnabled: false,
+  referenceStatusCategorize: false,
+  ticketStatusEnabled: false,
+  ticketStatusCategorize: false,
+};
+
 function formatEmailLabelStatus(value: string | undefined): string {
   if (value === "concluido") return "Concluido";
   if (value === "em_progresso") return "Em progresso";
   return "Em analise";
+}
+
+function formatGroupStatusLabel(value: string | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "concluido") return "Concluido";
+  if (normalized === "em_progresso") return "Em progresso";
+  if (normalized === "em_analise") return "Em analise";
+  return String(value || "").trim() || "--";
+}
+
+function formatTicketStatusLabel(value: string | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "open") return "Aberto";
+  if (normalized === "closed") return "Fechado";
+  return formatGroupStatusLabel(value);
+}
+
+function normalizeClassificationMetaDraft(
+  value?: Partial<ClassificationMetaDraft> | null
+): ClassificationMetaDraft {
+  return {
+    principalStatusEnabled: value?.principalStatusEnabled === true,
+    principalStatusCategorize: value?.principalStatusCategorize === true,
+    referenceStatusEnabled: value?.referenceStatusEnabled === true,
+    referenceStatusCategorize: value?.referenceStatusCategorize === true,
+    ticketStatusEnabled: value?.ticketStatusEnabled === true,
+    ticketStatusCategorize: value?.ticketStatusCategorize === true,
+  };
 }
 
 function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
@@ -441,6 +486,7 @@ function StudioInner() {
   const [labelInput, setLabelInput] = useState("");
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [labelDrafts, setLabelDrafts] = useState<Record<string, LabelDraft>>({});
+  const [classificationMetaDraft, setClassificationMetaDraft] = useState<ClassificationMetaDraft>(EMPTY_CLASSIFICATION_META);
   const [createGroupName, setCreateGroupName] = useState("");
   const [createTicketTitle, setCreateTicketTitle] = useState("");
   const [attachmentPlan, setAttachmentPlan] = useState<Record<string, { analyze: boolean; save: boolean; forward: boolean }>>({});
@@ -1085,6 +1131,26 @@ function StudioInner() {
     () => (referenceGroups.length ? referenceGroups.map((group) => group.name || group.id).join(", ") : "--"),
     [referenceGroups]
   );
+  const principalGroupStatusLabel = useMemo(
+    () => principalGroup?.status ? formatGroupStatusLabel(principalGroup.status) : "",
+    [principalGroup?.status]
+  );
+  const referenceGroupStatusEntries = useMemo(
+    () =>
+      referenceGroups
+        .map((group) => ({
+          id: group.id,
+          name: group.name || group.id,
+          status: formatGroupStatusLabel(group.status),
+          hasStatus: Boolean(String(group.status || "").trim()),
+        }))
+        .filter((entry) => entry.hasStatus),
+    [referenceGroups]
+  );
+  const ticketStatusLabel = useMemo(
+    () => selectedTicket?.status ? formatTicketStatusLabel(selectedTicket.status) : "",
+    [selectedTicket?.status]
+  );
   const ticketSummary = useMemo(() => {
     if (selectedTicket?.code) return selectedTicket.code;
     if (relatedTickets.length) {
@@ -1154,6 +1220,7 @@ function StudioInner() {
     setSelectionTouched({ principal: false, references: false, ticket: false });
     setSelectedLabels([]);
     setLabelDrafts({});
+    setClassificationMetaDraft(normalizeClassificationMetaDraft(selectedEmail?.classificationMeta));
   }, [selectedEmailKey]);
 
   useEffect(() => {
@@ -1349,6 +1416,16 @@ function StudioInner() {
     setSelectedLabels((current) => current.filter((entry) => entry !== label));
   }
 
+  function updateClassificationMeta(patch: Partial<ClassificationMetaDraft>) {
+    setClassificationMetaDraft((current) => {
+      const next = { ...current, ...patch };
+      if (!next.principalStatusEnabled) next.principalStatusCategorize = false;
+      if (!next.referenceStatusEnabled) next.referenceStatusCategorize = false;
+      if (!next.ticketStatusEnabled) next.ticketStatusCategorize = false;
+      return next;
+    });
+  }
+
   async function handleCreateGroupAndLink() {
     const name = String(createGroupName || "").trim();
     if (!name) {
@@ -1391,7 +1468,13 @@ function StudioInner() {
         description: String(selectedEmail?.bodyText || "").trim().slice(0, 4000),
         labels: selectedLabels,
         groupIds,
-        email: currentEmailPayload,
+        email: {
+          ...currentEmailPayload,
+          labels: selectedLabels.filter((label) => !inheritedLabels.includes(label)),
+          removedInheritedLabels: inheritedLabels.filter((label) => !selectedLabels.includes(label)),
+          labelStates: selectedLabelStates,
+          classificationMeta: classificationMetaDraft,
+        },
         membershipKind: principalGroupId ? "principal" : "referencia",
       });
       setRelatedTickets((current) => [ticket, ...current.filter((entry) => entry.id !== ticket.id)]);
@@ -1555,6 +1638,10 @@ function StudioInner() {
       const emailLabelStatus = selectedLabelStatuses[0] || "";
       const removedInheritedLabels = inheritedLabels.filter((label) => !selectedLabels.includes(label));
       const emailOwnedSelectedLabels = selectedLabels.filter((label) => !inheritedLabels.includes(label));
+      const principalStatusValues = classificationMetaDraft.principalStatusEnabled && principalGroup?.status ? [principalGroup.status] : [];
+      const referenceStatusValues = classificationMetaDraft.referenceStatusEnabled
+        ? Array.from(new Set(referenceGroups.map((group) => String(group.status || "").trim()).filter(Boolean)))
+        : [];
 
       let finalTicket: GroupTicketEntry | null = null;
       const buildTargetPayload = (targetEmail: RelatedEmailEntry): RelevantEmailPayload => {
@@ -1599,6 +1686,7 @@ function StudioInner() {
         labels: emailOwnedSelectedLabels,
         removedInheritedLabels,
         labelStates: selectedLabelStates,
+        classificationMeta: classificationMetaDraft,
       });
 
       const baseTargetEmail = effectiveTargetEmails[0];
@@ -1685,9 +1773,29 @@ function StudioInner() {
           referenceGroupNames: categorySettings?.enabled === true && categorySettings?.includeGroups !== false
             ? referenceGroups.map((group) => String(group.name || "").trim()).filter(Boolean)
             : [],
-          ticketCodes: categorySettings?.enabled === true && categorySettings?.includeTickets !== false && finalTicket?.code ? [finalTicket.code] : [],
-          statuses: categorySettings?.enabled === true && categorySettings?.includeStatuses !== false
-            ? (finalTicket?.status ? [finalTicket.status] : selectedLabelStatuses)
+          ticketCodes: categorySettings?.enabled === true
+            && categorySettings?.includeTickets !== false
+            && (finalTicket?.code || selectedTicket?.code)
+            ? [String(finalTicket?.code || selectedTicket?.code || "").trim()]
+            : [],
+          statuses: [],
+          groupStatuses: categorySettings?.enabled === true
+            && categorySettings?.includeStatuses !== false
+            ? [
+                ...(classificationMetaDraft.principalStatusCategorize ? principalStatusValues : []),
+                ...(classificationMetaDraft.referenceStatusCategorize ? referenceStatusValues : []),
+              ]
+            : [],
+          ticketStatuses: categorySettings?.enabled === true
+            && categorySettings?.includeStatuses !== false
+            && classificationMetaDraft.ticketStatusEnabled
+            && classificationMetaDraft.ticketStatusCategorize
+            && (finalTicket?.status || selectedTicket?.status)
+            ? [String(finalTicket?.status || selectedTicket?.status || "").trim()]
+            : [],
+          labelStatuses: categorySettings?.enabled === true
+            && categorySettings?.includeStatuses !== false
+            ? selectedLabelStatuses
             : [],
           labelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true ? categorizableLabels : [],
           managedLabelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true
@@ -1940,6 +2048,29 @@ function StudioInner() {
                   Criar
                 </button>
               </div>
+              <div style={S.inlineChecks}>
+                <label style={S.check}>
+                  <input
+                    type="checkbox"
+                    checked={classificationMetaDraft.principalStatusEnabled}
+                    onChange={(event) => updateClassificationMeta({ principalStatusEnabled: event.target.checked })}
+                    disabled={!principalGroup?.status}
+                  />
+                  <span>Estado do grupo</span>
+                </label>
+                <label style={S.check}>
+                  <input
+                    type="checkbox"
+                    checked={classificationMetaDraft.principalStatusCategorize}
+                    onChange={(event) => updateClassificationMeta({ principalStatusCategorize: event.target.checked, principalStatusEnabled: event.target.checked ? true : classificationMetaDraft.principalStatusEnabled })}
+                    disabled={!principalGroup?.status || !classificationMetaDraft.principalStatusEnabled}
+                  />
+                  <span>Categoria Outlook</span>
+                </label>
+              </div>
+              <div style={S.cardMeta}>
+                {principalGroup?.status ? `Estado atual do grupo: ${principalGroupStatusLabel}` : "Este grupo ainda nao tem estado definido."}
+              </div>
             </div>
           </div>
 
@@ -1963,6 +2094,33 @@ function StudioInner() {
                     {group.name}
                   </button>
                 ))}
+              </div>
+              <div style={S.inlineChecks}>
+                <label style={S.check}>
+                  <input
+                    type="checkbox"
+                    checked={classificationMetaDraft.referenceStatusEnabled}
+                    onChange={(event) => updateClassificationMeta({ referenceStatusEnabled: event.target.checked })}
+                    disabled={!referenceGroupStatusEntries.length}
+                  />
+                  <span>Estado das referencias</span>
+                </label>
+                <label style={S.check}>
+                  <input
+                    type="checkbox"
+                    checked={classificationMetaDraft.referenceStatusCategorize}
+                    onChange={(event) => updateClassificationMeta({ referenceStatusCategorize: event.target.checked, referenceStatusEnabled: event.target.checked ? true : classificationMetaDraft.referenceStatusEnabled })}
+                    disabled={!referenceGroupStatusEntries.length || !classificationMetaDraft.referenceStatusEnabled}
+                  />
+                  <span>Categoria Outlook</span>
+                </label>
+              </div>
+              <div style={S.inlineWrap}>
+                {referenceGroupStatusEntries.length ? referenceGroupStatusEntries.map((entry) => (
+                  <span key={`${entry.id}-status`} style={S.groupChip}>
+                    {entry.name}: {entry.status}
+                  </span>
+                )) : <span style={S.mutedMini}>As referencias atuais ainda nao trazem estado definido.</span>}
               </div>
             </div>
           </div>
@@ -2076,6 +2234,29 @@ function StudioInner() {
                   Criar ticket
                 </button>
               </div>
+              <div style={S.inlineChecks}>
+                <label style={S.check}>
+                  <input
+                    type="checkbox"
+                    checked={classificationMetaDraft.ticketStatusEnabled}
+                    onChange={(event) => updateClassificationMeta({ ticketStatusEnabled: event.target.checked })}
+                    disabled={!selectedTicket?.status}
+                  />
+                  <span>Estado do ticket</span>
+                </label>
+                <label style={S.check}>
+                  <input
+                    type="checkbox"
+                    checked={classificationMetaDraft.ticketStatusCategorize}
+                    onChange={(event) => updateClassificationMeta({ ticketStatusCategorize: event.target.checked, ticketStatusEnabled: event.target.checked ? true : classificationMetaDraft.ticketStatusEnabled })}
+                    disabled={!selectedTicket?.status || !classificationMetaDraft.ticketStatusEnabled}
+                  />
+                  <span>Categoria Outlook</span>
+                </label>
+              </div>
+              <div style={S.cardMeta}>
+                {selectedTicket?.status ? `Estado atual do ticket: ${ticketStatusLabel}` : "Este ticket ainda nao tem estado operacional definido."}
+              </div>
             </div>
           </div>
 
@@ -2105,8 +2286,11 @@ function StudioInner() {
             <div style={S.cardTitle}>Atualizar email</div>
             <div style={S.summaryGrid}>
               <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
+              <div style={S.summaryRow}><span>Estado grupo</span><strong>{classificationMetaDraft.principalStatusEnabled ? principalGroupStatusLabel || "--" : "--"}</strong></div>
               <div style={S.summaryRow}><span>Referencias</span><strong>{referenceGroupSummary}</strong></div>
+              <div style={S.summaryRow}><span>Estado referencias</span><strong>{classificationMetaDraft.referenceStatusEnabled ? (referenceGroupStatusEntries.length ? referenceGroupStatusEntries.map((entry) => entry.status).join(", ") : "--") : "--"}</strong></div>
               <div style={S.summaryRow}><span>Ticket</span><strong>{ticketSummary}</strong></div>
+              <div style={S.summaryRow}><span>Estado ticket</span><strong>{classificationMetaDraft.ticketStatusEnabled ? ticketStatusLabel || "--" : "--"}</strong></div>
               <div style={S.summaryRow}><span>Etiquetas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
               <div style={S.summaryRow}><span>Estado por etiquetas</span><strong>{emailStatusSummary}</strong></div>
             </div>
