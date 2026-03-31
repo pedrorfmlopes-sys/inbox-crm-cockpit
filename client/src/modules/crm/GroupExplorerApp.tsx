@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as pdfjsLib from "pdfjs-dist";
 import {
   deleteGroupDocument,
   getGroupDocumentContentUrl,
@@ -17,6 +18,8 @@ import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 import "../../global.css";
 
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+
 type EmailSortMode = "date_desc" | "date_asc" | "subject_asc" | "subject_desc";
 type EmailAttachmentFilter = "all" | "with" | "without";
 type DocumentFilterMode = "all" | "selected_email";
@@ -28,6 +31,92 @@ type PreviewState =
   | { kind: "text"; text: string }
   | { kind: "unsupported" };
 type EmailAttachmentEntry = NonNullable<RelatedEmailEntry["attachments"]>[number];
+
+function dataUrlToUint8Array(dataUrl: string): Uint8Array {
+  const base64 = stripDataUrlPrefix(dataUrl);
+  const binary = globalThis.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function PdfPreview({ dataUrl, title }: { dataUrl: string; title: string }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [pageCount, setPageCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const host = hostRef.current;
+    if (!host || !dataUrl) {
+      setStatus("error");
+      return;
+    }
+
+    host.innerHTML = "";
+    setStatus("loading");
+    setPageCount(0);
+
+    (async () => {
+      try {
+        const loadingTask = pdfjsLib.getDocument({ data: dataUrlToUint8Array(dataUrl) });
+        const pdf = await loadingTask.promise;
+        if (cancelled) {
+          void loadingTask.destroy();
+          return;
+        }
+
+        const nextPageCount = Number(pdf.numPages || 0);
+        setPageCount(nextPageCount);
+
+        for (let pageNumber = 1; pageNumber <= nextPageCount; pageNumber += 1) {
+          if (cancelled) break;
+          const page = await pdf.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: 1.15 });
+          const canvas = document.createElement("canvas");
+          canvas.style.display = "block";
+          canvas.style.width = "100%";
+          canvas.style.maxWidth = `${Math.ceil(viewport.width)}px`;
+          canvas.style.height = "auto";
+          canvas.style.margin = pageNumber === nextPageCount ? "0 auto" : "0 auto 12px auto";
+          canvas.style.background = "#fff";
+          canvas.style.borderRadius = "8px";
+          canvas.style.boxShadow = "0 6px 16px rgba(15,23,42,0.08)";
+          const context = canvas.getContext("2d", { alpha: false });
+          if (!context) continue;
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          host.appendChild(canvas);
+          await page.render({ canvasContext: context, viewport }).promise;
+        }
+
+        if (!cancelled) setStatus("ready");
+      } catch (error) {
+        console.warn("[group-explorer] pdf preview failed", error);
+        if (!cancelled) setStatus("error");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (hostRef.current) hostRef.current.innerHTML = "";
+    };
+  }, [dataUrl]);
+
+  if (status === "error") {
+    return <PanelState compact tone="info" title="Preview PDF indisponivel" description="Este PDF foi detetado, mas nao foi possivel renderiza-lo dentro do add-in." />;
+  }
+
+  return (
+    <div style={styles.pdfPreviewShell} aria-label={title}>
+      {status === "loading" ? <div style={styles.pdfPreviewMeta}>A carregar PDF...</div> : null}
+      {status === "ready" && pageCount > 0 ? <div style={styles.pdfPreviewMeta}>{pageCount} pagina(s)</div> : null}
+      <div ref={hostRef} style={styles.pdfPreviewCanvasHost} />
+    </div>
+  );
+}
 
 function closeExplorer() {
   try { (window as any).Office?.context?.ui?.messageParent?.("close"); } catch {}
@@ -884,7 +973,9 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
             ) : selectedDocumentPreview?.kind === "image" ? (
               <div style={styles.previewFrame}><img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} /></div>
             ) : selectedDocumentPreview?.kind === "pdf" ? (
-              <div style={styles.previewFrame}><iframe title={selectedDocument.name} src={selectedDocumentPreview.dataUrl} style={styles.previewIframe} /></div>
+              <div style={styles.previewFrame}>
+                <PdfPreview title={selectedDocument.name} dataUrl={selectedDocumentPreview.dataUrl} />
+              </div>
             ) : selectedDocumentPreview?.kind === "office" ? (
               <div style={styles.previewFrame}>
                 <iframe
@@ -967,5 +1058,8 @@ const styles: Record<string, React.CSSProperties> = {
   previewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 0, height: "100%" },
   previewImage: { width: "100%", height: "100%", minHeight: 0, objectFit: "contain", display: "block", background: "#fff" },
   previewIframe: { width: "100%", height: "100%", border: "none", display: "block", background: "#fff" },
+  pdfPreviewShell: { display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", height: "100%", minHeight: 0, background: "#f8fafc" },
+  pdfPreviewMeta: { padding: "8px 12px", fontSize: 10, fontWeight: 700, color: "#64748b", borderBottom: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.8)" },
+  pdfPreviewCanvasHost: { overflow: "auto", padding: 12, display: "grid", justifyItems: "center", alignContent: "start", gap: 12, minHeight: 0 },
   previewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", height: "100%", overflow: "auto", boxSizing: "border-box" },
 };
