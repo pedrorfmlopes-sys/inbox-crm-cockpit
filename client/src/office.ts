@@ -34,6 +34,7 @@ const GRAPH_NAA_AUTHORITY = `https://login.microsoftonline.com/${GRAPH_NAA_TENAN
 const GRAPH_ATTACHMENT_SCOPES = ["Mail.Read", "User.Read"];
 const GRAPH_PEOPLE_SCOPES = ["People.Read", "User.Read"];
 const GRAPH_NAA_REDIRECT_URI = `${window.location.origin}/`;
+const GRAPH_RUNTIME_ENABLED = false;
 
 let nestableMsalPromise: Promise<any> | null = null;
 
@@ -137,6 +138,7 @@ async function acquireGraphTokenWithNaa(scopes: string[], options?: { allowPromp
 }
 
 async function getGraphAccessToken(scopes: string[], options?: { allowPrompts?: boolean }): Promise<string> {
+  if (!GRAPH_RUNTIME_ENABLED) return "";
   return await acquireGraphTokenWithNaa(scopes, options);
 }
 
@@ -507,6 +509,7 @@ export type OutlookContactSuggestion = {
 export async function getOutlookContactSuggestionByEmail(emailRaw: string): Promise<OutlookContactSuggestion | null> {
   const email = String(emailRaw || "").trim().toLowerCase();
   if (!email) return null;
+  if (!GRAPH_RUNTIME_ENABLED) return null;
 
   try {
     const token = await getGraphAccessToken(GRAPH_PEOPLE_SCOPES, { allowPrompts: false });
@@ -1826,7 +1829,7 @@ export async function getAttachments(): Promise<OutlookAttachment[]> {
     const needsGraphFallback =
       fileAttachments.length > 0 &&
       (mergedResults.length < fileAttachments.length || !mergedResults.some((attachment) => String(attachment.content || "").trim()));
-    if (needsGraphFallback) {
+    if (GRAPH_RUNTIME_ENABLED && needsGraphFallback) {
       const graphResults = await getAttachmentsViaGraphForCurrentItem();
       if (graphResults.length) {
         return mergeOutlookAttachments(mergedResults, graphResults);
