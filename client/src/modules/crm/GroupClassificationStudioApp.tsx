@@ -1315,7 +1315,12 @@ function StudioInner() {
       .filter(Boolean) as LinkGroupEntry[],
     [businessGroups, favoriteGroupIds]
   );
+  const favoriteReferenceGroups = useMemo(
+    () => favoritePrincipalGroups.filter((group) => group.id !== principalGroupId).slice(0, 6),
+    [favoritePrincipalGroups, principalGroupId]
+  );
   const normalizedPrincipalSearch = useMemo(() => normalizeSearchValue(principalSearch), [principalSearch]);
+  const normalizedReferenceSearch = useMemo(() => normalizeSearchValue(referenceSearch), [referenceSearch]);
   const exactPrincipalSearchGroup = useMemo(
     () =>
       normalizedPrincipalSearch
@@ -1323,13 +1328,31 @@ function StudioInner() {
         : null,
     [businessGroups, normalizedPrincipalSearch]
   );
+  const exactReferenceSearchGroup = useMemo(
+    () =>
+      normalizedReferenceSearch
+        ? businessGroups.find((group) =>
+          group.id !== principalGroupId
+          && normalizeSearchValue(String(group.name || "")) === normalizedReferenceSearch
+        ) || null
+        : null,
+    [businessGroups, normalizedReferenceSearch, principalGroupId]
+  );
   const principalSearchResults = useMemo(() => {
     if (!normalizedPrincipalSearch) return [];
     return filteredPrincipalGroups.slice(0, 6);
   }, [filteredPrincipalGroups, normalizedPrincipalSearch]);
+  const referenceSearchResults = useMemo(() => {
+    if (!normalizedReferenceSearch) return [];
+    return filteredReferenceGroups.slice(0, 6);
+  }, [filteredReferenceGroups, normalizedReferenceSearch]);
   const principalCanCreate = useMemo(
     () => Boolean(String(principalSearch || "").trim() && !exactPrincipalSearchGroup),
     [exactPrincipalSearchGroup, principalSearch]
+  );
+  const referenceCanCreate = useMemo(
+    () => Boolean(String(referenceSearch || "").trim() && !exactReferenceSearchGroup),
+    [exactReferenceSearchGroup, referenceSearch]
   );
   const principalSettingsTargetGroup = useMemo(
     () => exactPrincipalSearchGroup || principalGroup || null,
@@ -1339,6 +1362,11 @@ function StudioInner() {
     () => referenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[],
     [groupMap, referenceGroupIds]
   );
+  const referenceSettingsTargetGroup = useMemo(() => {
+    if (exactReferenceSearchGroup) return exactReferenceSearchGroup;
+    if (referenceGroups.length === 1) return referenceGroups[0];
+    return null;
+  }, [exactReferenceSearchGroup, referenceGroups]);
   const manageableGroups = useMemo(() => {
     const rows = new Map<string, LinkGroupEntry>();
     for (const group of contextualGroups) {
@@ -1710,6 +1738,10 @@ function StudioInner() {
     setCreateGroupName(nextValue);
   }
 
+  function setReferenceSearchValue(value: string) {
+    setReferenceSearch(String(value || "").trim());
+  }
+
   function selectPrincipalGroup(group: LinkGroupEntry | null) {
     if (!group?.id) return;
     setSelectionTouched((current) => ({ ...current, principal: true }));
@@ -1728,6 +1760,20 @@ function StudioInner() {
       return;
     }
     selectPrincipalGroup(group);
+  }
+
+  function toggleFavoriteReferenceGroup(group: LinkGroupEntry) {
+    if (!group?.id) return;
+    const sameGroup = referenceGroupIds.includes(group.id);
+    setReferenceSearchValue(group.name);
+    if (sameGroup) {
+      toggleReferenceGroup(group.id);
+      if (normalizeSearchValue(referenceSearch) === normalizeSearchValue(group.name)) {
+        setReferenceSearchValue("");
+      }
+      return;
+    }
+    toggleReferenceGroup(group.id);
   }
 
   function openManagedGroupFromPrincipal(group: LinkGroupEntry | null) {
@@ -1811,8 +1857,8 @@ function StudioInner() {
       return Boolean(suggestionText && normalizedPrincipalSearch === suggestionText);
     }
     if (classificationFocus === "references") {
-      const groupId = resolveSuggestionGroupId(suggestion);
-      return Boolean(groupId && referenceGroupIds.includes(groupId));
+      const suggestionText = normalizeSearchValue(String(suggestion.label || suggestion.value || "").trim());
+      return Boolean(suggestionText && normalizedReferenceSearch === suggestionText);
     }
     if (classificationFocus === "ticket") {
       const ticketId = resolveSuggestionTicketId(suggestion);
@@ -1832,6 +1878,17 @@ function StudioInner() {
         return;
       }
       setPrincipalSearchValue(suggestionText);
+      return;
+    }
+    if (classificationFocus === "references") {
+      const suggestionText = String(suggestion.label || suggestion.value || "").trim();
+      const normalizedSuggestion = normalizeSearchValue(suggestionText);
+      if (!suggestionText) return;
+      if (normalizedReferenceSearch === normalizedSuggestion) {
+        setReferenceSearchValue("");
+        return;
+      }
+      setReferenceSearchValue(suggestionText);
       return;
     }
     if (classificationFocus === "labels") {
@@ -1883,8 +1940,8 @@ function StudioInner() {
     });
   }
 
-  async function handleCreateGroupAndLink(nameOverride?: string) {
-    const name = String(nameOverride || createGroupName || principalSearch || "").trim();
+  async function handleCreateGroupAndLink(kind: "principal" | "referencia" = "principal", nameOverride?: string) {
+    const name = String(nameOverride || createGroupName || (kind === "principal" ? principalSearch : referenceSearch) || "").trim();
     if (!name) {
       setStatus("Define primeiro o nome do grupo.");
       return;
@@ -1898,15 +1955,22 @@ function StudioInner() {
       });
       await addEmailToLinkGroup(created.id, {
         ...currentEmailPayload,
-        membershipKind: "principal",
+        membershipKind: kind,
       });
       setAllGroups((current) => current.some((entry) => entry.id === created.id) ? current : [created, ...current]);
-      setPrincipalGroupId(created.id);
+      if (kind === "principal") {
+        setPrincipalGroupId(created.id);
+        setPrincipalSearchValue(created.name);
+      } else {
+        setReferenceGroupIds((current) => current.includes(created.id) ? current : [...current, created.id]);
+        setReferenceSearchValue(created.name);
+      }
       setManagedGroupId(created.id);
-      setPrincipalSearchValue(created.name);
       setCreateGroupName("");
       await refreshSelectedEmailContext();
-      setStatus(`Grupo "${created.name}" criado e email ligado como principal.`);
+      setStatus(kind === "principal"
+        ? `Grupo "${created.name}" criado e email ligado como principal.`
+        : `Grupo "${created.name}" criado e email ligado como referencia.`);
     } catch (actionError: any) {
       setStatus(actionError?.message || "Nao foi possivel criar e ligar o grupo.");
     } finally {
@@ -2484,7 +2548,7 @@ function StudioInner() {
                     style={String(principalSearch || "").trim() ? S.iconActionBtn : S.iconActionBtnDisabled}
                     onClick={() => {
                       if (principalCanCreate) {
-                        void handleCreateGroupAndLink(principalSearch);
+                        void handleCreateGroupAndLink("principal", principalSearch);
                         return;
                       }
                       if (exactPrincipalSearchGroup) {
@@ -2575,13 +2639,86 @@ function StudioInner() {
                   </button>
                 )) : <span style={S.mutedMini}>Sem referencias</span>}
               </div>
-              <input style={S.input} value={referenceSearch} onChange={(event) => setReferenceSearch(event.target.value)} placeholder="Pesquisar referencias..." />
-              <div style={S.chips}>
-                {filteredReferenceGroups.map((group) => (
-                  <button key={group.id} type="button" style={referenceGroupIds.includes(group.id) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleReferenceGroup(group.id)}>
-                    {group.name}
+              <div style={S.stackMini}>
+                <div style={S.fieldLineLabel}>Favoritos</div>
+                <div style={S.compactRowWrap}>
+                  {favoriteReferenceGroups.length ? (
+                    favoriteReferenceGroups.map((group) => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        style={referenceGroupIds.includes(group.id) ? S.miniChipOn : S.miniChip}
+                        onClick={() => toggleFavoriteReferenceGroup(group)}
+                      >
+                        {group.name}
+                      </button>
+                    ))
+                  ) : (
+                    <span style={S.mutedMini}>Sem grupos favoritos.</span>
+                  )}
+                </div>
+              </div>
+              <div style={S.stackMini}>
+                <div style={S.fieldLineLabel}>Pesquisar ou criar</div>
+                <div style={S.searchActionRow}>
+                  <input
+                    style={S.input}
+                    value={referenceSearch}
+                    onChange={(event) => setReferenceSearchValue(event.target.value)}
+                    placeholder="Escreve o nome da referencia..."
+                  />
+                  <button
+                    type="button"
+                    style={String(referenceSearch || "").trim() ? S.iconActionBtn : S.iconActionBtnDisabled}
+                    onClick={() => {
+                      if (referenceCanCreate) {
+                        void handleCreateGroupAndLink("referencia", referenceSearch);
+                        return;
+                      }
+                      if (exactReferenceSearchGroup) {
+                        toggleReferenceGroup(exactReferenceSearchGroup.id);
+                        setReferenceSearchValue(exactReferenceSearchGroup.name);
+                      }
+                    }}
+                    disabled={!String(referenceSearch || "").trim()}
+                    title={referenceCanCreate ? "Criar referencia" : exactReferenceSearchGroup ? "Ligar ou desligar referencia existente" : "Pesquisar referencia"}
+                  >
+                    {referenceCanCreate ? <Icons.Plus size={14} /> : <Icons.Search size={14} />}
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    style={referenceSettingsTargetGroup ? S.iconActionBtn : S.iconActionBtnDisabled}
+                    onClick={() => openManagedGroupFromPrincipal(referenceSettingsTargetGroup)}
+                    disabled={!referenceSettingsTargetGroup}
+                    title={referenceSettingsTargetGroup ? "Abrir configuracao da referencia" : "Seleciona ou encontra uma referencia para abrir a configuracao"}
+                  >
+                    <Icons.Settings size={14} />
+                  </button>
+                </div>
+                {referenceSearchResults.length ? (
+                  <div style={S.searchResultList}>
+                    {referenceSearchResults.map((group) => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        style={referenceGroupIds.includes(group.id) ? S.searchResultBtnOn : S.searchResultBtn}
+                        onClick={() => {
+                          toggleReferenceGroup(group.id);
+                          setReferenceSearchValue(group.name);
+                        }}
+                      >
+                        <span>{group.name}</span>
+                        {referenceGroupIds.includes(group.id) ? <span style={S.resultMiniMeta}>Ligada</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : String(referenceSearch || "").trim() ? (
+                  <div style={S.cardMeta}>
+                    {referenceCanCreate
+                      ? `Ainda nao existe nenhum grupo com este nome. Usa o + para criar "${String(referenceSearch || "").trim()}".`
+                      : "Referencia exata encontrada. Usa a lupa para a ligar ou desligar."}
+                  </div>
+                ) : null}
               </div>
               <div style={S.inlineChecks}>
                 <label style={S.check}>
