@@ -28,6 +28,12 @@ export type OutlookAttachment = {
   contentId?: string;
 };
 
+const GRAPH_NAA_CLIENT_ID = "67f42759-4576-461a-b87b-c78332f7a1e7";
+const GRAPH_NAA_AUTHORITY = "https://login.microsoftonline.com/common";
+const GRAPH_ATTACHMENT_SCOPES = ["Mail.Read", "User.Read"];
+
+let nestableMsalPromise: Promise<any> | null = null;
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -75,6 +81,172 @@ async function ensureOfficeReady(): Promise<any> {
 
   clientLog.log("[office] onReady finished");
   return OfficeAny;
+}
+
+async function getNestableMsalInstance(): Promise<any | null> {
+  const OfficeAny = await ensureOfficeReady();
+  const supportsNaa = Boolean(OfficeAny?.context?.requirements?.isSetSupported?.("NestedAppAuth", "1.1"));
+  if (!supportsNaa) return null;
+  if (!nestableMsalPromise) {
+    nestableMsalPromise = (async () => {
+      const { createNestablePublicClientApplication } = await import("@azure/msal-browser");
+      return await createNestablePublicClientApplication({
+        auth: {
+          clientId: GRAPH_NAA_CLIENT_ID,
+          authority: GRAPH_NAA_AUTHORITY,
+        },
+        cache: {
+          cacheLocation: "localStorage",
+        },
+      });
+    })().catch((error) => {
+      nestableMsalPromise = null;
+      throw error;
+    });
+  }
+  return await nestableMsalPromise;
+}
+
+async function acquireGraphTokenWithNaa(scopes: string[]): Promise<string> {
+  try {
+    const msal = await getNestableMsalInstance();
+    if (!msal) return "";
+    const { InteractionRequiredAuthError } = await import("@azure/msal-browser");
+    const tokenRequest = { scopes };
+    try {
+      const authResult = await msal.acquireTokenSilent(tokenRequest);
+      return String(authResult?.accessToken || "").trim();
+    } catch (error: any) {
+      const interactionRequired =
+        error instanceof InteractionRequiredAuthError
+        || String(error?.name || "").trim() === "InteractionRequiredAuthError"
+        || /interaction_required|consent_required|login_required/i.test(String(error?.errorCode || error?.message || ""));
+      if (!interactionRequired) throw error;
+      const authResult = await msal.acquireTokenPopup(tokenRequest);
+      return String(authResult?.accessToken || "").trim();
+    }
+  } catch (error) {
+    clientLog.warn("[office] NAA Graph token acquisition failed", error);
+    return "";
+  }
+}
+
+async function acquireGraphTokenWithOfficeRuntime(allowPrompts = true): Promise<string> {
+  try {
+    const ort: any = (window as any).OfficeRuntime;
+    const auth = ort?.auth;
+    if (!auth?.getAccessToken) return "";
+    const token = await auth.getAccessToken({
+      allowSignInPrompt: allowPrompts,
+      allowConsentPrompt: allowPrompts,
+      forMSGraphAccess: true,
+    });
+    return String(token || "").trim();
+  } catch (error) {
+    clientLog.warn("[office] OfficeRuntime Graph token acquisition failed", error);
+    return "";
+  }
+}
+
+async function getGraphAccessToken(scopes: string[], options?: { allowPrompts?: boolean }): Promise<string> {
+  const naaToken = await acquireGraphTokenWithNaa(scopes);
+  if (naaToken) return naaToken;
+  return await acquireGraphTokenWithOfficeRuntime(options?.allowPrompts !== false);
+}
+
+async function getCurrentMessageRestId(): Promise<string> {
+  try {
+    const OfficeAny = await ensureOfficeReady();
+    const mailbox = OfficeAny?.context?.mailbox;
+    const item = mailbox?.item;
+    const itemId = String(item?.itemId || "").trim();
+    if (!itemId) return "";
+    try {
+      if (typeof mailbox?.convertToRestId === "function" && OfficeAny?.MailboxEnums?.RestVersion?.v2_0) {
+        return String(mailbox.convertToRestId(itemId, OfficeAny.MailboxEnums.RestVersion.v2_0) || "").trim() || itemId;
+      }
+    } catch (error) {
+      clientLog.warn("[office] convertToRestId failed", error);
+    }
+    return itemId;
+  } catch (error) {
+    clientLog.warn("[office] getCurrentMessageRestId failed", error);
+    return "";
+  }
+}
+
+function mergeOutlookAttachments(primary: OutlookAttachment[], fallback: OutlookAttachment[]): OutlookAttachment[] {
+  const byKey = new Map<string, OutlookAttachment>();
+  const makeKey = (attachment: Partial<OutlookAttachment>) =>
+    String(attachment?.id || attachment?.contentId || attachment?.name || "").trim().toLowerCase();
+  for (const attachment of fallback) {
+    const key = makeKey(attachment);
+    if (!key) continue;
+    byKey.set(key, { ...attachment });
+  }
+  for (const attachment of primary) {
+    const key = makeKey(attachment);
+    if (!key) continue;
+    const existing = byKey.get(key);
+    byKey.set(key, {
+      ...(existing || {}),
+      ...attachment,
+      content: String(attachment.content || existing?.content || "").trim(),
+    });
+  }
+  return Array.from(byKey.values()).filter((attachment) => String(attachment.name || "").trim());
+}
+
+async function getAttachmentsViaGraphForCurrentItem(): Promise<OutlookAttachment[]> {
+  const messageId = await getCurrentMessageRestId();
+  if (!messageId) return [];
+  const token = await getGraphAccessToken(GRAPH_ATTACHMENT_SCOPES, { allowPrompts: true });
+  if (!token) return [];
+  const headers = { Authorization: `Bearer ${token}` };
+  try {
+    const listRes = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}/attachments?$select=id,name,contentType,size,isInline,contentId`,
+      { headers }
+    );
+    if (!listRes.ok) {
+      clientLog.warn("[office] Graph attachment list failed", { status: listRes.status });
+      return [];
+    }
+    const listBody: any = await listRes.json();
+    const rawItems = Array.isArray(listBody?.value) ? listBody.value : [];
+    const results: OutlookAttachment[] = [];
+    for (const summary of rawItems) {
+      const attachmentId = String(summary?.id || "").trim();
+      const attachmentName = String(summary?.name || "").trim();
+      if (!attachmentId || !attachmentName) continue;
+      try {
+        const detailRes = await fetch(
+          `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+          { headers }
+        );
+        if (!detailRes.ok) {
+          clientLog.warn("[office] Graph attachment detail failed", { attachmentId, status: detailRes.status });
+          continue;
+        }
+        const detail: any = await detailRes.json();
+        results.push({
+          id: attachmentId || undefined,
+          name: attachmentName,
+          contentType: String(detail?.contentType || summary?.contentType || "application/octet-stream").trim(),
+          size: Number(detail?.size || summary?.size || 0) || undefined,
+          isInline: Boolean(detail?.isInline ?? summary?.isInline),
+          contentId: String(detail?.contentId || summary?.contentId || "").trim() || undefined,
+          content: String(detail?.contentBytes || "").trim(),
+        });
+      } catch (error) {
+        clientLog.warn("[office] Graph attachment detail exception", { attachmentId, error });
+      }
+    }
+    return results.filter((attachment) => attachment.name);
+  } catch (error) {
+    clientLog.warn("[office] Graph attachment fallback failed", error);
+    return [];
+  }
 }
 
 function normalizeRecipients(arr: any): Recipient[] {
@@ -351,16 +523,7 @@ export async function getOutlookContactSuggestionByEmail(emailRaw: string): Prom
   if (!email) return null;
 
   try {
-    const ort: any = (window as any).OfficeRuntime;
-    const auth = ort?.auth;
-    if (!auth?.getAccessToken) return null;
-
-    const token = await auth.getAccessToken({
-      allowSignInPrompt: false,
-      allowConsentPrompt: false,
-      forMSGraphAccess: true,
-    });
-
+    const token = await acquireGraphTokenWithOfficeRuntime(false);
     if (!token) return null;
 
     const q = encodeURIComponent(`"${email}"`);
@@ -1432,63 +1595,72 @@ export async function getAttachments(): Promise<OutlookAttachment[]> {
     if (!item?.attachments) return [];
 
     const attachments = item.attachments;
+    const fileAttachments = Array.from(attachments).filter((att: any) => att?.attachmentType === "file");
     const results: OutlookAttachment[] = [];
 
-    for (const att of attachments) {
+    for (const att of fileAttachments) {
       // Only process file attachments
-      if (att.attachmentType === "file") {
-        try {
-          const content = await new Promise<string>((resolve, reject) => {
-            item.getAttachmentContentAsync(att.id, async (result: any) => {
-              if (result.status !== OfficeAny.AsyncResultStatus.Succeeded) {
-                reject(new Error(result.error?.message));
-                return;
-              }
+      try {
+        const content = await new Promise<string>((resolve, reject) => {
+          item.getAttachmentContentAsync(att.id, async (result: any) => {
+            if (result.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+              reject(new Error(result.error?.message));
+              return;
+            }
 
-              const format = String(result?.value?.format || "").trim().toLowerCase();
-              const rawContent = String(result?.value?.content || "").trim();
-              if (!rawContent) {
-                resolve("");
-                return;
-              }
+            const format = String(result?.value?.format || "").trim().toLowerCase();
+            const rawContent = String(result?.value?.content || "").trim();
+            if (!rawContent) {
+              resolve("");
+              return;
+            }
 
-              if (!format || format === "base64") {
-                resolve(rawContent);
-                return;
-              }
+            if (!format || format === "base64") {
+              resolve(rawContent);
+              return;
+            }
 
-              if (format === "url") {
-                try {
-                  const response = await fetch(rawContent);
-                  if (!response.ok) {
-                    reject(new Error(`Falha ao descarregar conteudo do anexo (${response.status})`));
-                    return;
-                  }
-                  const buffer = await response.arrayBuffer();
-                  resolve(arrayBufferToBase64(buffer));
-                  return;
-                } catch (error: any) {
-                  reject(error);
+            if (format === "url") {
+              try {
+                const response = await fetch(rawContent);
+                if (!response.ok) {
+                  reject(new Error(`Falha ao descarregar conteudo do anexo (${response.status})`));
                   return;
                 }
+                const buffer = await response.arrayBuffer();
+                resolve(arrayBufferToBase64(buffer));
+                return;
+              } catch (error: any) {
+                reject(error);
+                return;
               }
+            }
 
-              resolve(rawContent);
-            });
+            resolve(rawContent);
           });
+        });
 
-          results.push({
-            id: String(att.id || "").trim() || undefined,
-            name: String(att.name || "").trim(),
-            contentType: String(att.contentType || "").trim(),
-            size: Number(att.size || 0) || undefined,
-            isInline: Boolean((att as any).isInline),
-            contentId: String((att as any).contentId || "").trim() || undefined,
-            content: content,
-          });
-        } catch (e) {
-          clientLog.error(`[office] Failed to download attachment ${att.name}`, e);
-        }
+        results.push({
+          id: String(att.id || "").trim() || undefined,
+          name: String(att.name || "").trim(),
+          contentType: String(att.contentType || "").trim(),
+          size: Number(att.size || 0) || undefined,
+          isInline: Boolean((att as any).isInline),
+          contentId: String((att as any).contentId || "").trim() || undefined,
+          content: content,
+        });
+      } catch (e) {
+        clientLog.error(`[office] Failed to download attachment ${att.name}`, e);
+      }
+    }
+
+    const needsGraphFallback =
+      fileAttachments.length > 0 &&
+      (results.length < fileAttachments.length || !results.some((attachment) => String(attachment.content || "").trim()));
+    if (needsGraphFallback) {
+      const graphResults = await getAttachmentsViaGraphForCurrentItem();
+      if (graphResults.length) {
+        return mergeOutlookAttachments(results, graphResults);
       }
     }
 
