@@ -664,6 +664,20 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   }, [currentEmailKey, currentSavableAttachments]);
 
   async function handleOpenClassificationStudio() {
+    const studioSeedPayload = {
+      ...currentEmailLinkPayload,
+      bodyText: String(bodyText || "").trim(),
+      bodyHtml: String(bodyHtml || "").trim(),
+      attachments: (attachments || []).map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        contentType: attachment.contentType,
+        size: attachment.size,
+        isInline: attachment.isInline,
+        contentId: attachment.contentId,
+        content: String(attachment.content || "").trim(),
+      })),
+    };
     const params: Record<string, string> = {};
     if (currentEmailLinkPayload.itemId) params.itemId = currentEmailLinkPayload.itemId;
     if (currentEmailLinkPayload.internetMessageId) params.internetMessageId = currentEmailLinkPayload.internetMessageId;
@@ -674,21 +688,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     if (currentEmailLinkPayload.receivedAtIso) params.receivedAtIso = currentEmailLinkPayload.receivedAtIso;
     try {
       const seedKey = `${GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX}${Date.now()}:${currentEmailLinkPayload.itemId || currentEmailLinkPayload.internetMessageId || currentEmailLinkPayload.conversationId || "email"}`;
-      const snapshot = {
-        ...currentEmailLinkPayload,
-        bodyText: String(bodyText || "").trim(),
-        bodyHtml: String(bodyHtml || "").trim(),
-        attachments: (attachments || []).map((attachment) => ({
-          id: attachment.id,
-          name: attachment.name,
-          contentType: attachment.contentType,
-          size: attachment.size,
-          isInline: attachment.isInline,
-          contentId: attachment.contentId,
-          content: String(attachment.content || "").trim(),
-        })),
-      };
-      localStorage.setItem(seedKey, JSON.stringify(snapshot));
+      localStorage.setItem(seedKey, JSON.stringify(studioSeedPayload));
       params.seedKey = seedKey;
     } catch {
       // best effort only; keep opening the studio even if the snapshot cache fails
@@ -700,7 +700,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
         || currentEmailLinkPayload.conversationId
         || currentEmailLinkPayload.subject
       ) {
-        await registerRelevantEmail(currentEmailLinkPayload);
+        await registerRelevantEmail(studioSeedPayload);
       }
     } catch {
       // keep opening the studio even if the pre-registration fails
