@@ -213,6 +213,42 @@ function makeAttachmentKey(attachment: { id?: string; name?: string; contentId?:
   return String(attachment.id || attachment.contentId || attachment.name || "").trim();
 }
 
+function mergeAttachmentSources(
+  primary: Array<{ id?: string; name?: string; contentType?: string; content?: string; size?: number; isInline?: boolean; contentId?: string }>,
+  fallback: Array<{ id?: string; name?: string; contentType?: string; content?: string; size?: number; isInline?: boolean; contentId?: string }>
+) {
+  const byKey = new Map<string, { id?: string; name?: string; contentType: string; content: string; size?: number; isInline?: boolean; contentId?: string }>();
+  for (const attachment of fallback) {
+    const key = makeAttachmentKey(attachment).toLowerCase();
+    if (!key) continue;
+    byKey.set(key, {
+      id: attachment.id,
+      name: String(attachment.name || "").trim(),
+      contentType: String(attachment.contentType || "application/octet-stream"),
+      content: String(attachment.content || ""),
+      size: attachment.size,
+      isInline: attachment.isInline,
+      contentId: attachment.contentId,
+    });
+  }
+  for (const attachment of primary) {
+    const key = makeAttachmentKey(attachment).toLowerCase();
+    if (!key) continue;
+    const existing = byKey.get(key);
+    byKey.set(key, {
+      ...(existing || {}),
+      id: attachment.id || existing?.id,
+      name: String(attachment.name || existing?.name || "").trim(),
+      contentType: String(attachment.contentType || existing?.contentType || "application/octet-stream"),
+      content: String(attachment.content || existing?.content || ""),
+      size: attachment.size || existing?.size,
+      isInline: typeof attachment.isInline === "boolean" ? attachment.isInline : existing?.isInline,
+      contentId: attachment.contentId || existing?.contentId,
+    });
+  }
+  return Array.from(byKey.values()).filter((attachment) => String(attachment.name || "").trim());
+}
+
 function derivePartnerName(email: RelatedEmailEntry | null): string {
   const fromName = String(email?.fromName || "").trim();
   if (fromName) return fromName;
@@ -991,17 +1027,18 @@ function StudioInner() {
           isInline: attachment.isInline,
           contentId: attachment.contentId,
         }));
+    const emailSource = (selectedEmail?.attachments || []).map((attachment) => ({
+      id: attachment.id,
+      name: attachment.name,
+      contentType: String(attachment.contentType || "application/octet-stream"),
+      content: String(attachment.content || ""),
+      size: attachment.size,
+      isInline: attachment.isInline,
+      contentId: attachment.contentId,
+    }));
     const source = selectedEmailIsCurrent
-      ? currentSource
-      : (selectedEmail?.attachments || []).map((attachment) => ({
-          id: attachment.id,
-          name: attachment.name,
-          contentType: String(attachment.contentType || "application/octet-stream"),
-          content: String(attachment.content || ""),
-          size: attachment.size,
-          isInline: attachment.isInline,
-          contentId: attachment.contentId,
-        }));
+      ? mergeAttachmentSources(currentSource, emailSource)
+      : emailSource;
     return source.filter((attachment) => String(attachment.name || "").trim());
   }, [attachments, currentSeed?.attachments, selectedEmail?.attachments, selectedEmailIsCurrent]);
 
