@@ -2957,7 +2957,7 @@ function StudioInner() {
               <span style={S.sectionName}>Resumo e gravacao</span>
               <span style={S.sectionMeta}>Revisao final do que vai ser aplicado</span>
             </div>
-            <div style={S.sectionBody}>
+            <div style={S.sectionBodyScroll}>
               <div style={S.subTitle}>Ambito de aplicacao</div>
               <select style={S.select} value={applyScopeMode} onChange={(event) => setApplyScopeMode(event.target.value as ApplyScopeMode)}>
                 <option value="current">So email atual</option>
@@ -2983,7 +2983,7 @@ function StudioInner() {
                 <div style={S.summaryRow}><span>Etiquetas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
                 <div style={S.summaryRow}><span>Estado por etiquetas</span><strong>{emailStatusSummary}</strong></div>
               </div>
-              <div style={S.inline}>
+              <div style={S.summaryActionBar}>
                 <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length && !selectedLabels.length && !(selectedEmail?.labels || []).length && !String(selectedEmail?.status || "").trim())}>
                   <Icons.Save size={12} />
                   Gravar / atualizar
@@ -3592,5 +3592,6 @@ const S: Record<string, React.CSSProperties> = {
   similarMainBtn: { border: "none", background: "transparent", padding: 0, margin: 0, textAlign: "left", display: "grid", minWidth: 0, cursor: "pointer" },
   summaryRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "9px 11px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)", fontSize: 12, color: "var(--iccc-text)" },
   summaryGrid: { display: "grid", gap: 8 },
+  summaryActionBar: { position: "sticky", bottom: -12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", paddingTop: 12, paddingBottom: 4, background: "linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.96) 16%, rgba(255,255,255,0.98) 100%)" },
   note: { padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(191,219,254,0.8)", background: "#eff6ff", color: "#1d4ed8", fontSize: 13, lineHeight: 1.5 },
 };
