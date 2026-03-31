@@ -1018,6 +1018,20 @@ function StudioInner() {
     const rows = q ? labelCatalog.filter((label) => label.toLowerCase().includes(q)) : labelCatalog;
     return rows.slice(0, 24);
   }, [classificationLabelInput, labelCatalog]);
+  const normalizedClassificationLabelSearch = useMemo(
+    () => String(classificationLabelInput || "").trim().toLowerCase(),
+    [classificationLabelInput]
+  );
+  const exactClassificationLabel = useMemo(
+    () => normalizedClassificationLabelSearch
+      ? labelCatalog.find((label) => label.toLowerCase() === normalizedClassificationLabelSearch) || null
+      : null,
+    [labelCatalog, normalizedClassificationLabelSearch]
+  );
+  const classificationLabelCanCreate = useMemo(
+    () => Boolean(String(classificationLabelInput || "").trim() && !exactClassificationLabel),
+    [classificationLabelInput, exactClassificationLabel]
+  );
   const availableTicketChoices = useMemo(() => {
     const rows = [...relatedTickets, ...ticketSearchResults].reduce<GroupTicketEntry[]>((acc, ticket) => {
       if (!ticket?.id || acc.some((entry) => entry.id === ticket.id)) return acc;
@@ -2757,7 +2771,7 @@ function StudioInner() {
               <span style={S.sectionName}>Etiquetas</span>
               <span style={S.sectionMeta}>Etiquetas do email, com categoria e estado opcionais</span>
             </button>
-            <div style={S.sectionBody}>
+            <div style={S.sectionBodyScroll}>
               <div style={S.inlineWrap}>
                 {summaryLabels.length ? summaryLabels.map((label) => (
                   <button key={label} type="button" style={S.selectedChipOn} onClick={() => removeLabel(label)}>
@@ -2765,19 +2779,67 @@ function StudioInner() {
                   </button>
                 )) : <span style={S.mutedMini}>Sem etiquetas</span>}
               </div>
-              <div style={S.compactCreateRow}>
-                <input style={S.input} value={classificationLabelInput} onChange={(event) => setClassificationLabelInput(event.target.value)} placeholder="Pesquisar ou criar etiqueta..." />
-                <button type="button" style={S.secondaryBtn} onClick={() => addLabel(classificationLabelInput)} disabled={!String(classificationLabelInput || "").trim()}>
-                  <Icons.Plus size={12} />
-                  Adicionar
-                </button>
-              </div>
-              <div style={S.chips}>
-                {filteredClassificationLabels.map((label) => (
-                  <button key={label} type="button" style={selectedLabels.includes(label) ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => addLabel(label)}>
-                    {label}
+              <div style={S.stackMini}>
+                <div style={S.fieldLineLabel}>Pesquisar ou criar</div>
+                <div style={S.compactSearchActionRow}>
+                  <input
+                    style={S.input}
+                    value={classificationLabelInput}
+                    onChange={(event) => setClassificationLabelInput(event.target.value)}
+                    placeholder="Escreve o nome da etiqueta..."
+                  />
+                  <button
+                    type="button"
+                    style={String(classificationLabelInput || "").trim() ? S.iconActionBtn : S.iconActionBtnDisabled}
+                    onClick={() => {
+                      const rawValue = String(classificationLabelInput || "").trim();
+                      if (!rawValue) return;
+                      if (classificationLabelCanCreate) {
+                        addLabel(rawValue);
+                        return;
+                      }
+                      if (exactClassificationLabel) {
+                        if (selectedLabels.includes(exactClassificationLabel)) {
+                          removeLabel(exactClassificationLabel);
+                        } else {
+                          addLabel(exactClassificationLabel);
+                        }
+                      }
+                    }}
+                    disabled={!String(classificationLabelInput || "").trim()}
+                    title={classificationLabelCanCreate ? "Criar etiqueta" : exactClassificationLabel ? "Ligar ou desligar etiqueta existente" : "Pesquisar etiqueta"}
+                  >
+                    {classificationLabelCanCreate ? <Icons.Plus size={14} /> : <Icons.Search size={14} />}
                   </button>
-                ))}
+                </div>
+                {filteredClassificationLabels.length && String(classificationLabelInput || "").trim() ? (
+                  <div style={S.searchResultList}>
+                    {filteredClassificationLabels.map((label) => (
+                      <button
+                        key={label}
+                        type="button"
+                        style={selectedLabels.includes(label) ? S.searchResultBtnOn : S.searchResultBtn}
+                        onClick={() => {
+                          if (selectedLabels.includes(label)) {
+                            removeLabel(label);
+                          } else {
+                            addLabel(label);
+                          }
+                          setClassificationLabelInput(label);
+                        }}
+                      >
+                        <span>{label}</span>
+                        {selectedLabels.includes(label) ? <span style={S.resultMiniMeta}>Ligada</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : String(classificationLabelInput || "").trim() ? (
+                  <div style={S.cardMeta}>
+                    {classificationLabelCanCreate
+                      ? `Ainda nao existe nenhuma etiqueta com este nome. Usa o + para criar "${String(classificationLabelInput || "").trim()}".`
+                      : "Etiqueta exata encontrada. Usa a lupa para a ligar ou desligar."}
+                  </div>
+                ) : null}
               </div>
               {selectedLabels.length ? (
                 <div style={S.labelGrid}>
@@ -3464,11 +3526,13 @@ const S: Record<string, React.CSSProperties> = {
   sectionName: { fontSize: 13, fontWeight: 700 },
   sectionMeta: { fontSize: 10, color: "var(--iccc-muted)" },
   sectionBody: { padding: 12, display: "grid", gap: 10 },
+  sectionBodyScroll: { padding: 12, display: "grid", gap: 10, maxHeight: "min(52vh, 520px)", overflowY: "auto", paddingRight: 8 },
   stackMini: { display: "grid", gap: 6 },
   fieldLineLabel: { fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--iccc-muted)" },
   compactRowWrap: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
   sectionControls: { display: "grid", gridTemplateColumns: "minmax(0,1fr) 260px", gap: 10 },
   compactCreateRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center" },
+  compactSearchActionRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) 34px", gap: 8, alignItems: "center" },
   searchActionRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) 34px 34px", gap: 8, alignItems: "center" },
   iconActionBtn: { width: 34, height: 34, borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.92)", color: "#1d4ed8", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   iconActionBtnDisabled: { width: 34, height: 34, borderRadius: 10, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", color: "rgba(100,116,139,0.55)", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "not-allowed" },
