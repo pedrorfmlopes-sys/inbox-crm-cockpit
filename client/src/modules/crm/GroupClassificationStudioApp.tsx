@@ -31,6 +31,7 @@ type ClassificationMetaDraft = {
   referenceStatusCategorize: boolean;
   ticketStatusEnabled: boolean;
   ticketStatusCategorize: boolean;
+  categorizedLabelNames?: string[];
 };
 type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
 type StudioParams = {
@@ -72,12 +73,13 @@ const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
 function createLabelDraftFromCatalog(
   entry?: Partial<GroupLabelCatalogEntry> | null,
   current?: Partial<LabelDraft> | null,
-  explicitStatus?: string
+  explicitStatus?: string,
+  explicitCategorize?: boolean
 ): LabelDraft {
   const normalizedExplicitStatus = String(explicitStatus || "").trim() as EmailLabelStatus | "";
   const hasStatus = current?.hasStatus ?? (normalizedExplicitStatus ? true : entry?.hasStatus === true);
   return {
-    categorize: current?.categorize ?? (entry?.categorize === true),
+    categorize: current?.categorize ?? (typeof explicitCategorize === "boolean" ? explicitCategorize : entry?.categorize === true),
     hasStatus,
     status: hasStatus
       ? ((current?.status || normalizedExplicitStatus || entry?.status || "em_analise") as EmailLabelStatus)
@@ -116,6 +118,9 @@ function normalizeClassificationMetaDraft(
     referenceStatusCategorize: value?.referenceStatusCategorize === true,
     ticketStatusEnabled: value?.ticketStatusEnabled === true,
     ticketStatusCategorize: value?.ticketStatusCategorize === true,
+    categorizedLabelNames: Array.isArray(value?.categorizedLabelNames)
+      ? value.categorizedLabelNames.map((label) => String(label || "").trim()).filter(Boolean)
+      : [],
   };
 }
 
@@ -1527,6 +1532,12 @@ function StudioInner() {
       : {},
     [selectedEmail?.labelStates]
   );
+  const selectedEmailCategorizedLabelNames = useMemo(
+    () => Array.isArray(selectedEmail?.classificationMeta?.categorizedLabelNames)
+      ? selectedEmail.classificationMeta.categorizedLabelNames.map((label) => String(label || "").trim()).filter(Boolean)
+      : [],
+    [selectedEmail?.classificationMeta?.categorizedLabelNames]
+  );
   const summaryLabels = useMemo(
     () => selectedLabels,
     [selectedLabels]
@@ -1669,12 +1680,15 @@ function StudioInner() {
         next[label] = createLabelDraftFromCatalog(
           findGroupLabelCatalogEntry(labelCatalogEntries, label),
           current[label],
-          selectedEmailLabelStates[label]
+          selectedEmailLabelStates[label],
+          selectedEmailCategorizedLabelNames.length
+            ? selectedEmailCategorizedLabelNames.includes(label)
+            : undefined
         );
       }
       return next;
     });
-  }, [emailOwnedLabels, inheritedLabels, labelCatalogEntries, labelCatalogReady, selectedEmailLabelStates, selectedEmailRemovedInheritedLabels, selectedLabels.length]);
+  }, [emailOwnedLabels, inheritedLabels, labelCatalogEntries, labelCatalogReady, selectedEmailCategorizedLabelNames, selectedEmailLabelStates, selectedEmailRemovedInheritedLabels, selectedLabels.length]);
 
   useEffect(() => {
     if (!selectedLabels.length) return;
@@ -1685,7 +1699,10 @@ function StudioInner() {
         const resolved = createLabelDraftFromCatalog(
           findGroupLabelCatalogEntry(labelCatalogEntries, label),
           current[label],
-          selectedEmailLabelStates[label]
+          selectedEmailLabelStates[label],
+          selectedEmailCategorizedLabelNames.length
+            ? selectedEmailCategorizedLabelNames.includes(label)
+            : undefined
         );
         const previous = current[label];
         if (
@@ -1700,7 +1717,7 @@ function StudioInner() {
       }
       return changed ? next : current;
     });
-  }, [labelCatalogEntries, selectedEmailLabelStates, selectedLabels]);
+  }, [labelCatalogEntries, selectedEmailCategorizedLabelNames, selectedEmailLabelStates, selectedLabels]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1981,7 +1998,14 @@ function StudioInner() {
       ? current
       : {
           ...current,
-          [value]: createLabelDraftFromCatalog(findGroupLabelCatalogEntry(labelCatalogEntries, value)),
+          [value]: createLabelDraftFromCatalog(
+            findGroupLabelCatalogEntry(labelCatalogEntries, value),
+            undefined,
+            selectedEmailLabelStates[value],
+            selectedEmailCategorizedLabelNames.length
+              ? selectedEmailCategorizedLabelNames.includes(value)
+              : undefined
+          ),
         });
     setLabelInput("");
   }
@@ -2307,7 +2331,10 @@ function StudioInner() {
         labels: emailOwnedSelectedLabels,
         removedInheritedLabels,
         labelStates: selectedLabelStates,
-        classificationMeta: classificationMetaDraft,
+        classificationMeta: {
+          ...classificationMetaDraft,
+          categorizedLabelNames: categorizableLabels,
+        },
       });
 
       const baseTargetEmail = effectiveTargetEmails[0];
@@ -2336,6 +2363,10 @@ function StudioInner() {
           labels: emailOwnedSelectedLabels,
           removedInheritedLabels,
           labelStates: selectedLabelStates,
+          classificationMeta: {
+            ...classificationMetaDraft,
+            categorizedLabelNames: categorizableLabels,
+          },
         };
         const targetGroups = getEmailGroupRelations(targetEmail);
         const currentGroupIds = targetGroups.map((group) => String(group.id || "").trim()).filter(Boolean);
@@ -2692,7 +2723,7 @@ function StudioInner() {
                     onChange={(event) => updateClassificationMeta({ principalStatusCategorize: event.target.checked, principalStatusEnabled: event.target.checked ? true : classificationMetaDraft.principalStatusEnabled })}
                     disabled={!principalGroup?.status || !classificationMetaDraft.principalStatusEnabled}
                   />
-                  <span>Categoria Outlook</span>
+                  <span>Estado em categoria Outlook</span>
                 </label>
               </div>
               <div style={S.cardMeta}>
@@ -2814,7 +2845,7 @@ function StudioInner() {
                     onChange={(event) => updateClassificationMeta({ referenceStatusCategorize: event.target.checked, referenceStatusEnabled: event.target.checked ? true : classificationMetaDraft.referenceStatusEnabled })}
                     disabled={!referenceGroupStatusEntries.length || !classificationMetaDraft.referenceStatusEnabled}
                   />
-                  <span>Categoria Outlook</span>
+                  <span>Estado em categoria Outlook</span>
                 </label>
               </div>
               <div style={S.inlineWrap}>
@@ -3005,7 +3036,7 @@ function StudioInner() {
                     onChange={(event) => updateClassificationMeta({ ticketStatusCategorize: event.target.checked, ticketStatusEnabled: event.target.checked ? true : classificationMetaDraft.ticketStatusEnabled })}
                     disabled={!selectedTicket?.status || !classificationMetaDraft.ticketStatusEnabled}
                   />
-                  <span>Categoria Outlook</span>
+                  <span>Estado em categoria Outlook</span>
                 </label>
               </div>
               <div style={S.cardMeta}>

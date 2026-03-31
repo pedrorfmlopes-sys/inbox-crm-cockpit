@@ -15,7 +15,6 @@ const PRIMARY_FILE_PATH = path.join(PRIMARY_DATA_DIR, "links.json");
 const LEGACY_FILE_PATH = path.join(process.cwd(), "server", "data", "links.json");
 const STORE_VERSION = 2;
 const CUSTOM_GROUP_KIND = "custom";
-const DEFAULT_GROUP_STATUS = "em_analise";
 const DEFAULT_GROUP_MEMBERSHIP_KIND = "principal";
 const DEFAULT_GROUP_TICKET_STATUS = "open";
 const DEFAULT_GROUP_TICKET_YEAR_MODE = "none";
@@ -91,13 +90,14 @@ function normalizeRecordId(value) {
 
 function normalizeGroupStatus(value) {
   const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, "_");
+  if (!normalized) return "";
   if (normalized === "concluido" || normalized === "concluido." || normalized === "completed" || normalized === "done") {
     return "concluido";
   }
   if (normalized === "em_progresso" || normalized === "progresso" || normalized === "in_progress" || normalized === "progress") {
     return "em_progresso";
   }
-  return DEFAULT_GROUP_STATUS;
+  return "em_analise";
 }
 
 function normalizeSearchToken(value) {
@@ -218,7 +218,7 @@ function parseLabelStatesJson(value) {
 
 function normalizeEmailClassificationMeta(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return {
+  const next = {
     principalStatusEnabled: value.principalStatusEnabled === true,
     principalStatusCategorize: value.principalStatusCategorize === true,
     referenceStatusEnabled: value.referenceStatusEnabled === true,
@@ -226,6 +226,10 @@ function normalizeEmailClassificationMeta(value) {
     ticketStatusEnabled: value.ticketStatusEnabled === true,
     ticketStatusCategorize: value.ticketStatusCategorize === true,
   };
+  if (Object.prototype.hasOwnProperty.call(value, "categorizedLabelNames")) {
+    next.categorizedLabelNames = normalizeGroupLabels(value.categorizedLabelNames);
+  }
+  return next;
 }
 
 function parseClassificationMetaJson(value) {
@@ -868,7 +872,9 @@ function ensureGroup(store, partial) {
       ? normalizeGroupEntities(partial?.entities)
       : normalizeGroupEntities(current.entities),
     conversationId: normalizeString(partial?.conversationId) || current.conversationId || "",
-    status: normalizeGroupStatus(partial?.status || current.status),
+    status: Object.prototype.hasOwnProperty.call(partial || {}, "status")
+      ? normalizeGroupStatus(partial?.status)
+      : normalizeGroupStatus(current.status),
     labels: normalizeGroupLabels(
       Object.prototype.hasOwnProperty.call(partial || {}, "labels")
         ? partial?.labels

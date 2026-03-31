@@ -1140,6 +1140,16 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                         ...directLabels,
                     ])
                 );
+                const hasExplicitCategorizedLabels = Array.isArray(classificationMeta?.categorizedLabelNames);
+                const categorizedLabels = hasExplicitCategorizedLabels
+                    ? Array.from(
+                        new Set(
+                            classificationMeta.categorizedLabelNames
+                                .map((label: any) => String(label || "").trim())
+                                .filter((label: string) => Boolean(label) && effectiveLabels.some((entry) => entry.toLowerCase() === label.toLowerCase()))
+                        )
+                    )
+                    : effectiveLabels;
                 const labelStates = emailEntry?.labelStates && typeof emailEntry.labelStates === "object"
                     ? Object.entries(emailEntry.labelStates)
                         .map(([label, value]) => [String(label || "").trim(), String(value || "").trim()] as const)
@@ -1183,7 +1193,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     ticketStatuses,
                     labelStatuses,
                     ticketCodes,
-                    labelNames: effectiveLabels,
+                    labelNames: categorizedLabels,
                     managedLabelNames: Array.from(new Set([...effectiveLabels, ...removedInheritedLabels])),
                 });
             })

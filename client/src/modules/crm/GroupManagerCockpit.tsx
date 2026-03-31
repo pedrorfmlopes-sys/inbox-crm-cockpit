@@ -86,13 +86,14 @@ type QuickLinkDraft = {
 type GroupDraft = {
   name: string;
   description: string;
-  status: "em_analise" | "em_progresso" | "concluido";
+  status: "" | "em_analise" | "em_progresso" | "concluido";
   labelsText: string;
   documentsEnabled: boolean;
   isArchived: boolean;
 };
 
 const STATUS_OPTIONS: Array<{ value: GroupDraft["status"]; label: string }> = [
+  { value: "", label: "Sem estado" },
   { value: "em_analise", label: "Em analise" },
   { value: "em_progresso", label: "Em progresso" },
   { value: "concluido", label: "Concluido" },
@@ -273,6 +274,7 @@ function buildGroupLabelCatalogEntry(label: string, draft?: Partial<ManagedLabel
 }
 
 function statusLabel(value: string | undefined): string {
+  if (!String(value || "").trim()) return "Sem estado";
   if (value === "concluido") return "Concluido";
   if (value === "em_progresso") return "Em progresso";
   return "Em analise";
@@ -315,7 +317,9 @@ function createDraft(group: LinkGroupEntry | null): GroupDraft {
   return {
     name: String(group?.name || "").trim(),
     description: String(group?.description || "").trim(),
-    status: group?.status === "em_progresso" || group?.status === "concluido" ? group.status : "em_analise",
+    status: group?.status === "em_analise" || group?.status === "em_progresso" || group?.status === "concluido"
+      ? group.status
+      : "",
     labelsText: labelsToText(group?.labels),
     documentsEnabled: group?.documentsEnabled !== false,
     isArchived: group?.isArchived === true,
@@ -344,7 +348,7 @@ function draftChanged(group: LinkGroupEntry | null, draft: GroupDraft): boolean 
   return (
     String(group.name || "") !== draft.name
     || String(group.description || "") !== draft.description
-    || String(group.status || "em_analise") !== draft.status
+    || String(group.status || "") !== draft.status
     || labelsToText(group.labels) !== labelsToText(parseLabels(draft.labelsText))
     || (group.documentsEnabled !== false) !== draft.documentsEnabled
     || (group.isArchived === true) !== draft.isArchived
@@ -1288,7 +1292,22 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   }
 
   async function persistLabelCatalog(nextCatalog: GroupLabelCatalogEntry[]) {
-    await saveSettings({ groupLabelCatalog: normalizeGroupLabelCatalog(nextCatalog) });
+    const normalizedCatalog = normalizeGroupLabelCatalog(nextCatalog);
+    const hasCategorizedLabels = normalizedCatalog.some((entry) => entry.categorize === true);
+    await saveSettings({
+      groupLabelCatalog: normalizedCatalog,
+      ...(hasCategorizedLabels
+        ? {
+            groupOutlookCategories: {
+              enabled: settings?.groupOutlookCategories?.enabled === true,
+              includeGroups: settings?.groupOutlookCategories?.includeGroups !== false,
+              includeTickets: settings?.groupOutlookCategories?.includeTickets !== false,
+              includeStatuses: settings?.groupOutlookCategories?.includeStatuses !== false,
+              includeLabels: true,
+            },
+          }
+        : {}),
+    });
   }
 
   async function ensureCatalogLabels(labels: string[]): Promise<string[]> {
@@ -1410,10 +1429,9 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     }
     setBusy(true);
     try {
-      const group = await createLinkGroup("/", {
+      const group = await createLinkGroup({
         name,
         description: "",
-        status: "em_analise",
         labels: [],
         documentsEnabled: true,
         isArchived: false,
@@ -1468,7 +1486,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
             await updateLinkGroup(principalGroupId, {
               name: principalGroup.name,
               description: principalGroup.description,
-              status: principalGroup.status,
+              status: principalGroup.status || "",
               labels: mergedLabels,
               documentsEnabled: principalGroup.documentsEnabled !== false,
               isArchived: principalGroup.isArchived === true,
@@ -1581,7 +1599,6 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       const group = await createLinkGroup({
         name,
         labels: [],
-        status: "em_analise",
         documentsEnabled: true,
       });
       setGroupQuery("");
@@ -1609,7 +1626,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       await updateLinkGroup(selectedGroup.id, {
         name,
         description: draft.description,
-        status: draft.status,
+        status: draft.status || "",
         labels,
         documentsEnabled: draft.documentsEnabled,
         isArchived: draft.isArchived,
@@ -3308,9 +3325,11 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                         }}
                       >
                         <div style={S.groupName}>{group.name}</div>
-                        <span style={{ ...S.statusBadge, ...(group.status === "concluido" ? S.statusDone : group.status === "em_progresso" ? S.statusProgress : S.statusAnalysis) }}>
-                          {statusLabel(group.status)}
-                        </span>
+                        {String(group.status || "").trim() ? (
+                          <span style={{ ...S.statusBadge, ...(group.status === "concluido" ? S.statusDone : group.status === "em_progresso" ? S.statusProgress : S.statusAnalysis) }}>
+                            {statusLabel(group.status)}
+                          </span>
+                        ) : null}
                       </button>
                       <button
                         type="button"

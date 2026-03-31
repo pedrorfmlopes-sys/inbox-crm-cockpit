@@ -160,6 +160,7 @@ export type RelevantEmailPayload = {
     referenceStatusCategorize?: boolean;
     ticketStatusEnabled?: boolean;
     ticketStatusCategorize?: boolean;
+    categorizedLabelNames?: string[];
   };
   membershipKind?: "principal" | "referencia" | string;
   attachments?: Array<{
@@ -312,6 +313,7 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
     referenceStatusCategorize?: boolean;
     ticketStatusEnabled?: boolean;
     ticketStatusCategorize?: boolean;
+    categorizedLabelNames?: string[];
   };
   membershipKind?: "principal" | "referencia" | string;
   relatedRecords?: Array<{ model: string; recordId: number; recordName: string }>;
