@@ -12,7 +12,7 @@ type SectionId = "emails" | "classification" | "labels" | "filters" | "summary" 
 type ScopeMode = "related" | "all";
 type ApplyScopeMode = "current" | "selected" | "principal_group";
 type EmailLabelStatus = "em_analise" | "em_progresso" | "concluido";
-type ClassificationFocus = "principal" | "references" | "labels" | "ticket";
+type ClassificationFocus = "principal" | "references" | "labels" | "ticket" | "summary";
 type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
 type ReadingSuggestionChip = { key: string; label: string; kind: "group" | "ticket" | "label"; value: string };
 type GroupContactDraft = { key: string; name: string; email?: string; company?: string; source?: string };
@@ -1721,22 +1721,50 @@ function StudioInner() {
     addLabel(value);
   }
 
+  function resolveSuggestionGroupId(suggestion: ReadingSuggestionChip) {
+    if (suggestion.kind === "group") return suggestion.value;
+    const normalized = normalizeSearchValue(String(suggestion.label || suggestion.value || ""));
+    const match = businessGroups.find((group) => normalizeSearchValue(String(group.name || "")) === normalized);
+    return String(match?.id || "").trim();
+  }
+
+  function resolveSuggestionTicketId(suggestion: ReadingSuggestionChip) {
+    if (suggestion.kind === "ticket") return suggestion.value;
+    const normalized = normalizeSearchValue(String(suggestion.label || suggestion.value || ""));
+    const match = availableTicketChoices.find((ticket) => normalizeSearchValue(String(ticket.code || "")) === normalized);
+    return String(match?.id || "").trim();
+  }
+
   function isSuggestionActive(suggestion: ReadingSuggestionChip) {
-    if (suggestion.kind === "group") return principalGroupId === suggestion.value || referenceGroupIds.includes(suggestion.value);
-    if (suggestion.kind === "ticket") return selectedTicketId === suggestion.value;
-    return selectedLabels.includes(suggestion.value);
+    if (classificationFocus === "summary") return false;
+    if (classificationFocus === "principal") {
+      const groupId = resolveSuggestionGroupId(suggestion);
+      return Boolean(groupId && principalGroupId === groupId);
+    }
+    if (classificationFocus === "references") {
+      const groupId = resolveSuggestionGroupId(suggestion);
+      return Boolean(groupId && referenceGroupIds.includes(groupId));
+    }
+    if (classificationFocus === "ticket") {
+      const ticketId = resolveSuggestionTicketId(suggestion);
+      return Boolean(ticketId && selectedTicketId === ticketId);
+    }
+    return selectedLabels.includes(String(suggestion.label || suggestion.value || "").trim());
   }
 
   function handleSuggestionToggle(suggestion: ReadingSuggestionChip) {
-    if (suggestion.kind === "group") {
-      applySuggestedGroup(suggestion.value);
+    if (classificationFocus === "summary") return;
+    if (classificationFocus === "labels") {
+      applySuggestedLabel(suggestion.label || suggestion.value);
       return;
     }
-    if (suggestion.kind === "ticket") {
-      applySuggestedTicket(suggestion.value);
+    if (classificationFocus === "ticket") {
+      const ticketId = resolveSuggestionTicketId(suggestion);
+      if (ticketId) applySuggestedTicket(ticketId);
       return;
     }
-    applySuggestedLabel(suggestion.value);
+    const groupId = resolveSuggestionGroupId(suggestion);
+    if (groupId) applySuggestedGroup(groupId);
   }
 
   function addLabel(label: string) {
@@ -2289,13 +2317,12 @@ function StudioInner() {
     if (section === "classification") {
       return (
         <div style={S.stack}>
-          <div style={S.card}>
+          <div style={S.cardSticky}>
             <div style={S.classificationHeader}>
               <div>
                 <div style={S.cardTitle}>Classificacao</div>
                 <div style={S.cardMeta}>Clicar nos chips liga ou desliga a classificacao do email.</div>
               </div>
-              <div style={S.focusBadge}>Destino das sugestoes: {classificationFocus === "principal" ? "Grupo principal" : classificationFocus === "references" ? "Referencias" : classificationFocus === "labels" ? "Etiquetas" : "Ticket"}</div>
             </div>
             <div style={S.suggestionDock}>
               <div style={S.suggestionDockMeta}>Sugestoes da leitura. Clica para ligar ou desligar.</div>
@@ -2316,9 +2343,17 @@ function StudioInner() {
                 )}
               </div>
             </div>
+            <div style={S.classificationFocusBar}>
+              <button type="button" style={classificationFocus === "principal" ? S.classificationFocusBtnOn : S.classificationFocusBtn} onClick={() => setClassificationFocus("principal")}>Grupo principal</button>
+              <button type="button" style={classificationFocus === "references" ? S.classificationFocusBtnOn : S.classificationFocusBtn} onClick={() => setClassificationFocus("references")}>Referencias</button>
+              <button type="button" style={classificationFocus === "labels" ? S.classificationFocusBtnOn : S.classificationFocusBtn} onClick={() => setClassificationFocus("labels")}>Etiquetas</button>
+              <button type="button" style={classificationFocus === "ticket" ? S.classificationFocusBtnOn : S.classificationFocusBtn} onClick={() => setClassificationFocus("ticket")}>Ticket</button>
+              <button type="button" style={classificationFocus === "summary" ? S.classificationFocusBtnOn : S.classificationFocusBtn} onClick={() => setClassificationFocus("summary")}>Resumo</button>
+            </div>
           </div>
 
-          <div style={S.sectionCard}>
+          {classificationFocus === "principal" ? (
+          <div style={S.classificationSectionCard}>
             <button type="button" style={classificationFocus === "principal" ? S.sectionHeadOn : S.sectionHead} onClick={() => setClassificationFocus("principal")}>
               <span style={S.sectionName}>Grupo principal</span>
               <span style={S.sectionMeta}>Casa principal do email</span>
@@ -2387,8 +2422,10 @@ function StudioInner() {
               </div>
             </div>
           </div>
+          ) : null}
 
-          <div style={S.sectionCard}>
+          {classificationFocus === "references" ? (
+          <div style={S.classificationSectionCard}>
             <button type="button" style={classificationFocus === "references" ? S.sectionHeadOn : S.sectionHead} onClick={() => setClassificationFocus("references")}>
               <span style={S.sectionName}>Referencias</span>
               <span style={S.sectionMeta}>Outros grupos ligados a este email</span>
@@ -2438,8 +2475,10 @@ function StudioInner() {
               </div>
             </div>
           </div>
+          ) : null}
 
-          <div style={S.sectionCard}>
+          {classificationFocus === "labels" ? (
+          <div style={S.classificationSectionCard}>
             <button type="button" style={classificationFocus === "labels" ? S.sectionHeadOn : S.sectionHead} onClick={() => setClassificationFocus("labels")}>
               <span style={S.sectionName}>Etiquetas</span>
               <span style={S.sectionMeta}>Etiquetas do email, com categoria e estado opcionais</span>
@@ -2492,8 +2531,10 @@ function StudioInner() {
               ) : null}
             </div>
           </div>
+          ) : null}
 
-          <div style={S.sectionCard}>
+          {classificationFocus === "ticket" ? (
+          <div style={S.classificationSectionCard}>
             <button type="button" style={classificationFocus === "ticket" ? S.sectionHeadOn : S.sectionHead} onClick={() => setClassificationFocus("ticket")}>
               <span style={S.sectionName}>Ticket</span>
               <span style={S.sectionMeta}>Escolher ticket existente ou criar novo</span>
@@ -2573,13 +2614,16 @@ function StudioInner() {
               </div>
             </div>
           </div>
+          ) : null}
 
-          <div style={S.sectionCard}>
+          {classificationFocus === "summary" ? (
+          <div style={S.classificationSectionCard}>
             <div style={S.sectionHeadStatic}>
-              <span style={S.sectionName}>Ambito de aplicacao</span>
-              <span style={S.sectionMeta}>Escolhe a que emails esta classificacao se aplica</span>
+              <span style={S.sectionName}>Resumo e gravacao</span>
+              <span style={S.sectionMeta}>Revisao final do que vai ser aplicado</span>
             </div>
             <div style={S.sectionBody}>
+              <div style={S.subTitle}>Ambito de aplicacao</div>
               <select style={S.select} value={applyScopeMode} onChange={(event) => setApplyScopeMode(event.target.value as ApplyScopeMode)}>
                 <option value="current">So email atual</option>
                 <option value="selected">Emails selecionados ({selectedTargetCount})</option>
@@ -2593,29 +2637,27 @@ function StudioInner() {
               <div style={S.cardMeta}>
                 Em modo multiplo, aplicamos a classificacao atual exatamente aos emails escolhidos.
               </div>
+              <div style={S.subTitle}>Atualizar email</div>
+              <div style={S.summaryGrid}>
+                <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
+                <div style={S.summaryRow}><span>Estado grupo</span><strong>{classificationMetaDraft.principalStatusEnabled ? principalGroupStatusLabel || "--" : "--"}</strong></div>
+                <div style={S.summaryRow}><span>Referencias</span><strong>{referenceGroupSummary}</strong></div>
+                <div style={S.summaryRow}><span>Estado referencias</span><strong>{classificationMetaDraft.referenceStatusEnabled ? (referenceGroupStatusEntries.length ? referenceGroupStatusEntries.map((entry) => entry.status).join(", ") : "--") : "--"}</strong></div>
+                <div style={S.summaryRow}><span>Ticket</span><strong>{ticketSummary}</strong></div>
+                <div style={S.summaryRow}><span>Estado ticket</span><strong>{classificationMetaDraft.ticketStatusEnabled ? ticketStatusLabel || "--" : "--"}</strong></div>
+                <div style={S.summaryRow}><span>Etiquetas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
+                <div style={S.summaryRow}><span>Estado por etiquetas</span><strong>{emailStatusSummary}</strong></div>
+              </div>
+              <div style={S.inline}>
+                <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length && !selectedLabels.length && !(selectedEmail?.labels || []).length && !String(selectedEmail?.status || "").trim())}>
+                  <Icons.Save size={12} />
+                  Gravar / atualizar
+                </button>
+                <span style={S.cardMeta}>Mantemos a logica atual de gravacao enquanto fechamos a nova estrutura.</span>
+              </div>
             </div>
           </div>
-
-          <div style={S.card}>
-            <div style={S.cardTitle}>Atualizar email</div>
-            <div style={S.summaryGrid}>
-              <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
-              <div style={S.summaryRow}><span>Estado grupo</span><strong>{classificationMetaDraft.principalStatusEnabled ? principalGroupStatusLabel || "--" : "--"}</strong></div>
-              <div style={S.summaryRow}><span>Referencias</span><strong>{referenceGroupSummary}</strong></div>
-              <div style={S.summaryRow}><span>Estado referencias</span><strong>{classificationMetaDraft.referenceStatusEnabled ? (referenceGroupStatusEntries.length ? referenceGroupStatusEntries.map((entry) => entry.status).join(", ") : "--") : "--"}</strong></div>
-              <div style={S.summaryRow}><span>Ticket</span><strong>{ticketSummary}</strong></div>
-              <div style={S.summaryRow}><span>Estado ticket</span><strong>{classificationMetaDraft.ticketStatusEnabled ? ticketStatusLabel || "--" : "--"}</strong></div>
-              <div style={S.summaryRow}><span>Etiquetas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
-              <div style={S.summaryRow}><span>Estado por etiquetas</span><strong>{emailStatusSummary}</strong></div>
-            </div>
-            <div style={S.inline}>
-              <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length && !selectedLabels.length && !(selectedEmail?.labels || []).length && !String(selectedEmail?.status || "").trim())}>
-                <Icons.Save size={12} />
-                Gravar / atualizar
-              </button>
-              <span style={S.cardMeta}>Mantemos a logica atual de gravacao enquanto fechamos a nova estrutura.</span>
-            </div>
-          </div>
+          ) : null}
         </div>
       );
     }
@@ -3132,7 +3174,9 @@ const S: Record<string, React.CSSProperties> = {
   workCol: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, overflow: "hidden" },
   stack: { height: "100%", minHeight: 0, display: "grid", gap: 10, alignContent: "start", overflowY: "auto", paddingRight: 2 },
   card: { borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.74)", padding: 12, display: "grid", gap: 10 },
+  cardSticky: { position: "sticky", top: 0, zIndex: 4, borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.97)", padding: 12, display: "grid", gap: 10, boxShadow: "0 8px 24px rgba(15,23,42,0.06)" },
   sectionCard: { borderRadius: 16, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", overflow: "hidden", display: "grid" },
+  classificationSectionCard: { borderRadius: 16, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", overflow: "hidden", display: "grid", scrollMarginTop: 168 },
   sectionHead: { width: "100%", border: "none", borderBottom: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.58)", color: "var(--iccc-text)", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, cursor: "pointer" },
   sectionHeadOn: { width: "100%", border: "none", borderBottom: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.9)", color: "#1d4ed8", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, cursor: "pointer" },
   sectionHeadStatic: { borderBottom: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.58)", color: "var(--iccc-text)", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 },
@@ -3146,13 +3190,15 @@ const S: Record<string, React.CSSProperties> = {
   selectedChipOn: { borderRadius: 999, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 700, padding: "7px 11px", cursor: "pointer" },
   selectedChipPending: { borderRadius: 999, border: "1px solid rgba(245,158,11,0.24)", background: "rgba(254,243,199,0.92)", color: "#b45309", fontSize: 12, fontWeight: 700, padding: "7px 11px", cursor: "pointer" },
   mutedMini: { fontSize: 12, color: "var(--iccc-muted)" },
-  focusBadge: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(37,99,235,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
   classificationHeader: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
   suggestionDock: { marginTop: 10, display: "grid", gap: 8, padding: "10px 12px", borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(248,250,252,0.9)" },
   suggestionDockMeta: { fontSize: 11, color: "var(--iccc-muted)" },
   suggestionDockChips: { display: "flex", flexWrap: "wrap", gap: 6 },
   suggestionDockChip: { borderRadius: 999, border: "1px solid rgba(148,163,184,0.24)", background: "rgba(255,255,255,0.98)", color: "var(--iccc-muted)", fontSize: 10, fontWeight: 700, padding: "4px 8px", cursor: "pointer" },
   suggestionDockChipOn: { borderRadius: 999, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 10, fontWeight: 700, padding: "4px 8px", cursor: "pointer" },
+  classificationFocusBar: { display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 0, borderRadius: 12, overflow: "hidden", border: "1px solid rgba(37,99,235,0.24)", background: "rgba(239,246,255,0.75)" },
+  classificationFocusBtn: { height: 30, border: "none", borderRight: "1px solid rgba(37,99,235,0.24)", background: "transparent", color: "#475569", fontSize: 11, fontWeight: 700, cursor: "pointer" },
+  classificationFocusBtnOn: { height: 30, border: "none", borderRight: "1px solid rgba(37,99,235,0.24)", background: "rgba(37,99,235,0.16)", color: "#1d4ed8", fontSize: 11, fontWeight: 800, cursor: "pointer" },
   titleRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   cardTitle: { fontSize: 15, fontWeight: 800, color: "var(--iccc-text)" },
   cardMeta: { fontSize: 11, lineHeight: 1.4, color: "var(--iccc-muted)" },
