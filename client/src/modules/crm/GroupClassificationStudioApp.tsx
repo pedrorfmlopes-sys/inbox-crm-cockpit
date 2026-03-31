@@ -2,7 +2,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
 import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction, syncManagedOutlookCategories } from "@/office";
-import { getSettings } from "@/settings";
+import {
+  findGroupLabelCatalogEntry,
+  getGroupLabelCatalogLabels,
+  getSettings,
+  normalizeGroupLabelCatalog,
+  type GroupLabelCatalogEntry,
+  type GroupLabelStatus,
+} from "@/settings";
 import { PanelState } from "@/ui/PanelState";
 import { applySkin } from "@/ui/skins";
 import * as Icons from "@/ui/icons";
@@ -11,7 +18,7 @@ import "../../global.css";
 type SectionId = "emails" | "classification" | "labels" | "filters" | "groups";
 type ScopeMode = "related" | "all";
 type ApplyScopeMode = "current" | "selected" | "principal_group";
-type EmailLabelStatus = "em_analise" | "em_progresso" | "concluido";
+type EmailLabelStatus = GroupLabelStatus;
 type ClassificationFocus = "principal" | "references" | "labels" | "ticket" | "summary";
 type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
 type ReadingSuggestionChip = { key: string; label: string; kind: "group" | "ticket" | "label"; value: string };
@@ -61,6 +68,22 @@ const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
   ticketStatusEnabled: false,
   ticketStatusCategorize: false,
 };
+
+function createLabelDraftFromCatalog(
+  entry?: Partial<GroupLabelCatalogEntry> | null,
+  current?: Partial<LabelDraft> | null,
+  explicitStatus?: string
+): LabelDraft {
+  const normalizedExplicitStatus = String(explicitStatus || "").trim() as EmailLabelStatus | "";
+  const hasStatus = current?.hasStatus ?? (normalizedExplicitStatus ? true : entry?.hasStatus === true);
+  return {
+    categorize: current?.categorize ?? (entry?.categorize === true),
+    hasStatus,
+    status: hasStatus
+      ? ((current?.status || normalizedExplicitStatus || entry?.status || "em_analise") as EmailLabelStatus)
+      : undefined,
+  };
+}
 
 function formatEmailLabelStatus(value: string | undefined): string {
   if (value === "concluido") return "Concluido";
@@ -656,6 +679,8 @@ function StudioInner() {
   const [ticketSearch, setTicketSearch] = useState("");
   const [ticketSearchResults, setTicketSearchResults] = useState<GroupTicketEntry[]>([]);
   const [labelInput, setLabelInput] = useState("");
+  const [labelCatalogReady, setLabelCatalogReady] = useState(false);
+  const [labelCatalogEntries, setLabelCatalogEntries] = useState<GroupLabelCatalogEntry[]>([]);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [labelDrafts, setLabelDrafts] = useState<Record<string, LabelDraft>>({});
   const [classificationMetaDraft, setClassificationMetaDraft] = useState<ClassificationMetaDraft>(EMPTY_CLASSIFICATION_META);
@@ -696,12 +721,16 @@ function StudioInner() {
       try {
         const settings = await getSettings();
         applySkin(settings.skinId || "soft");
+        setLabelCatalogEntries(normalizeGroupLabelCatalog(settings.groupLabelCatalog || []));
         setFavoriteGroupIds(Array.isArray((settings as any)?.groupFavoriteIds)
           ? Array.from(new Set((settings as any).groupFavoriteIds.map((entry: any) => String(entry || "").trim()).filter(Boolean)))
           : []);
       } catch {
         applySkin("soft");
+        setLabelCatalogEntries([]);
         setFavoriteGroupIds([]);
+      } finally {
+        setLabelCatalogReady(true);
       }
     })();
   }, []);
@@ -980,11 +1009,12 @@ function StudioInner() {
   const previewHtml = useMemo(() => buildEmailPreviewHtml(selectedEmail), [selectedEmail]);
   const labelCatalog = useMemo(() => {
     const values = new Set<string>();
+    getGroupLabelCatalogLabels(labelCatalogEntries).forEach((label) => values.add(label));
     allGroups.forEach((group) => (group.labels || []).forEach((label) => String(label || "").trim() && values.add(String(label).trim())));
     relatedTickets.forEach((ticket) => (ticket.labels || []).forEach((label) => String(label || "").trim() && values.add(String(label).trim())));
     selectedLabels.forEach((label) => values.add(label));
     return Array.from(values).sort((a, b) => a.localeCompare(b, "pt"));
-  }, [allGroups, relatedTickets, selectedLabels]);
+  }, [allGroups, labelCatalogEntries, relatedTickets, selectedLabels]);
   const filteredLabelCatalog = useMemo(() => {
     const q = String(labelInput || "").trim().toLowerCase();
     return q ? labelCatalog.filter((label) => label.toLowerCase().includes(q)) : labelCatalog;
@@ -1628,6 +1658,7 @@ function StudioInner() {
   }, [selectedEmailKey]);
 
   useEffect(() => {
+    if (!labelCatalogReady) return;
     if (selectedLabels.length || (!inheritedLabels.length && !emailOwnedLabels.length && !selectedEmailRemovedInheritedLabels.length)) return;
     const visibleInherited = inheritedLabels.filter((label) => !selectedEmailRemovedInheritedLabels.includes(label));
     const seedLabels = mergeLabels(visibleInherited, emailOwnedLabels);
@@ -1635,16 +1666,41 @@ function StudioInner() {
     setLabelDrafts((current) => {
       const next = { ...current };
       for (const label of seedLabels) {
-        const initialStatus = String(selectedEmailLabelStates[label] || "").trim();
-        next[label] = {
-          categorize: current[label]?.categorize ?? false,
-          hasStatus: current[label]?.hasStatus ?? Boolean(initialStatus),
-          status: (current[label]?.status || initialStatus || undefined) as EmailLabelStatus | undefined,
-        };
+        next[label] = createLabelDraftFromCatalog(
+          findGroupLabelCatalogEntry(labelCatalogEntries, label),
+          current[label],
+          selectedEmailLabelStates[label]
+        );
       }
       return next;
     });
-  }, [emailOwnedLabels, inheritedLabels, selectedEmailLabelStates, selectedEmailRemovedInheritedLabels, selectedLabels.length]);
+  }, [emailOwnedLabels, inheritedLabels, labelCatalogEntries, labelCatalogReady, selectedEmailLabelStates, selectedEmailRemovedInheritedLabels, selectedLabels.length]);
+
+  useEffect(() => {
+    if (!selectedLabels.length) return;
+    setLabelDrafts((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const label of selectedLabels) {
+        const resolved = createLabelDraftFromCatalog(
+          findGroupLabelCatalogEntry(labelCatalogEntries, label),
+          current[label],
+          selectedEmailLabelStates[label]
+        );
+        const previous = current[label];
+        if (
+          !previous
+          || previous.categorize !== resolved.categorize
+          || previous.hasStatus !== resolved.hasStatus
+          || previous.status !== resolved.status
+        ) {
+          next[label] = resolved;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [labelCatalogEntries, selectedEmailLabelStates, selectedLabels]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1921,7 +1977,12 @@ function StudioInner() {
     const value = String(label || "").trim();
     if (!value) return;
     setSelectedLabels((current) => current.includes(value) ? current : [...current, value]);
-    setLabelDrafts((current) => current[value] ? current : { ...current, [value]: { categorize: false, hasStatus: false, status: undefined } });
+    setLabelDrafts((current) => current[value]
+      ? current
+      : {
+          ...current,
+          [value]: createLabelDraftFromCatalog(findGroupLabelCatalogEntry(labelCatalogEntries, value)),
+        });
     setLabelInput("");
   }
 

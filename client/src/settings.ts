@@ -90,6 +90,15 @@ export type GroupTicketUiSettings = {
   aiInstructions: string;
 };
 
+export type GroupLabelStatus = "em_analise" | "em_progresso" | "concluido";
+
+export type GroupLabelCatalogEntry = {
+  label: string;
+  categorize: boolean;
+  hasStatus: boolean;
+  status?: GroupLabelStatus;
+};
+
 export type InvoiceStudioSettings = {
   enabled: boolean;
   baseUrl: string;
@@ -229,7 +238,7 @@ export type CockpitSettingsV1 = {
 
   // Optional extra: central label manager for group labels
   groupLabelsManagerEnabled: boolean;
-  groupLabelCatalog: string[];
+  groupLabelCatalog: GroupLabelCatalogEntry[];
   groupFavoriteIds: string[];
   groupTicketsEnabled: boolean;
   groupTicketUi: GroupTicketUiSettings;
@@ -554,6 +563,64 @@ function emitSettingsUpdated(settings: CockpitSettingsV1): void {
   }
 }
 
+function normalizeGroupLabelStatus(value: any): GroupLabelStatus | undefined {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "em_progresso") return "em_progresso";
+  if (raw === "concluido") return "concluido";
+  if (raw === "em_analise") return "em_analise";
+  return undefined;
+}
+
+export function normalizeGroupLabelCatalog(
+  entries: any,
+  fallback: GroupLabelCatalogEntry[] = []
+): GroupLabelCatalogEntry[] {
+  const byKey = new Map<string, GroupLabelCatalogEntry>();
+
+  const commit = (raw: any) => {
+    const rawLabel = typeof raw === "string" ? raw : raw?.label ?? raw?.name ?? raw?.value ?? raw?.id;
+    const label = String(rawLabel || "").trim();
+    if (!label) return;
+    const key = label.toLowerCase();
+    const previous = byKey.get(key);
+    const categorize = typeof raw?.categorize === "boolean"
+      ? Boolean(raw.categorize)
+      : previous?.categorize ?? false;
+    const hasStatus = typeof raw?.hasStatus === "boolean"
+      ? Boolean(raw.hasStatus)
+      : previous?.hasStatus ?? false;
+    const status = normalizeGroupLabelStatus(raw?.status ?? raw?.defaultStatus ?? previous?.status);
+    byKey.set(key, {
+      label: previous?.label || label,
+      categorize,
+      hasStatus,
+      status: hasStatus ? (status || "em_analise") : undefined,
+    });
+  };
+
+  for (const entry of Array.isArray(fallback) ? fallback : []) {
+    commit(entry);
+  }
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    commit(entry);
+  }
+
+  return Array.from(byKey.values()).sort((a, b) => a.label.localeCompare(b.label, "pt-PT"));
+}
+
+export function getGroupLabelCatalogLabels(catalog: GroupLabelCatalogEntry[] | null | undefined): string[] {
+  return normalizeGroupLabelCatalog(catalog || []).map((entry) => entry.label);
+}
+
+export function findGroupLabelCatalogEntry(
+  catalog: GroupLabelCatalogEntry[] | null | undefined,
+  label: string
+): GroupLabelCatalogEntry | null {
+  const normalized = String(label || "").trim().toLowerCase();
+  if (!normalized) return null;
+  return normalizeGroupLabelCatalog(catalog || []).find((entry) => entry.label.toLowerCase() === normalized) || null;
+}
+
 function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSettingsV1> | null): CockpitSettingsV1 {
   if (!incoming) return base;
   const incomingLayout = ((incoming as any).crm2OdooLayout || {});
@@ -643,7 +710,7 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
       ? Boolean((incoming as any).groupLabelsManagerEnabled)
       : base.groupLabelsManagerEnabled,
     groupLabelCatalog: Array.isArray((incoming as any).groupLabelCatalog)
-      ? Array.from(new Set((incoming as any).groupLabelCatalog.map((entry: any) => String(entry || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-PT"))
+      ? normalizeGroupLabelCatalog((incoming as any).groupLabelCatalog, base.groupLabelCatalog)
       : base.groupLabelCatalog,
     groupFavoriteIds: Array.isArray((incoming as any).groupFavoriteIds)
       ? Array.from(new Set((incoming as any).groupFavoriteIds.map((entry: any) => String(entry || "").trim()).filter(Boolean)))
