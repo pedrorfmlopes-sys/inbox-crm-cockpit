@@ -51,6 +51,8 @@ type TicketSeriesDraft = {
   isActive: boolean;
 };
 
+const GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX = "iccc_group_classification_seed_v1:";
+
 type TicketUiDraft = {
   autoLinkMode: "confirm" | "auto";
   suggestDraftOnCreate: boolean;
@@ -670,6 +672,27 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     if (currentEmailLinkPayload.fromEmail) params.fromEmail = currentEmailLinkPayload.fromEmail;
     if (currentEmailLinkPayload.fromName) params.fromName = currentEmailLinkPayload.fromName;
     if (currentEmailLinkPayload.receivedAtIso) params.receivedAtIso = currentEmailLinkPayload.receivedAtIso;
+    try {
+      const seedKey = `${GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX}${Date.now()}:${currentEmailLinkPayload.itemId || currentEmailLinkPayload.internetMessageId || currentEmailLinkPayload.conversationId || "email"}`;
+      const snapshot = {
+        ...currentEmailLinkPayload,
+        bodyText: String(bodyText || "").trim(),
+        bodyHtml: String(bodyHtml || "").trim(),
+        attachments: (attachments || []).map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          contentType: attachment.contentType,
+          size: attachment.size,
+          isInline: attachment.isInline,
+          contentId: attachment.contentId,
+          content: String(attachment.content || "").trim(),
+        })),
+      };
+      localStorage.setItem(seedKey, JSON.stringify(snapshot));
+      params.seedKey = seedKey;
+    } catch {
+      // best effort only; keep opening the studio even if the snapshot cache fails
+    }
     try {
       if (
         currentEmailLinkPayload.itemId

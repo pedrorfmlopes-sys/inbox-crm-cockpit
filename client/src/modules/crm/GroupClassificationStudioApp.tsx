@@ -33,7 +33,10 @@ type StudioParams = {
   fromEmail?: string;
   fromName?: string;
   receivedAtIso?: string;
+  seedKey?: string;
 };
+
+const GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX = "iccc_group_classification_seed_v1:";
 
 const MENU: Array<{ id: SectionId; label: string; icon: React.ReactNode; help: string }> = [
   { id: "emails", label: "Emails", icon: <Icons.MessageSquare size={15} />, help: "Lista e preview base do caso." },
@@ -505,7 +508,56 @@ function readParams(): StudioParams {
     fromEmail: String(params.get("fromEmail") || "").trim() || undefined,
     fromName: String(params.get("fromName") || "").trim() || undefined,
     receivedAtIso: String(params.get("receivedAtIso") || "").trim() || undefined,
+    seedKey: String(params.get("seedKey") || "").trim() || undefined,
   };
+}
+
+function readSeedEmail(params: StudioParams): RelatedEmailEntry | null {
+  const key = String(params.seedKey || "").trim();
+  if (!key || !key.startsWith(GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX)) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed: any = JSON.parse(raw);
+    const itemId = String(parsed?.itemId || "").trim();
+    const internetMessageId = String(parsed?.internetMessageId || "").trim();
+    const conversationId = String(parsed?.conversationId || "").trim();
+    const subject = String(parsed?.subject || "").trim();
+    const fromEmail = String(parsed?.fromEmail || "").trim();
+    const fromName = String(parsed?.fromName || "").trim();
+    const receivedAtIso = String(parsed?.receivedAtIso || parsed?.messageDateIso || "").trim();
+    if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
+    return {
+      emailKey: itemId || internetMessageId || `${conversationId}|${subject || fromEmail}`,
+      itemId: itemId || undefined,
+      internetMessageId: internetMessageId || undefined,
+      conversationId: conversationId || undefined,
+      subject: subject || "(sem assunto)",
+      fromEmail: fromEmail || undefined,
+      fromName: fromName || undefined,
+      receivedAtIso: receivedAtIso || undefined,
+      messageDateIso: receivedAtIso || undefined,
+      bodyText: String(parsed?.bodyText || "").trim(),
+      bodyHtml: String(parsed?.bodyHtml || "").trim(),
+      attachments: Array.isArray(parsed?.attachments)
+        ? parsed.attachments
+          .map((attachment: any) => ({
+            id: String(attachment?.id || "").trim() || undefined,
+            name: String(attachment?.name || "").trim(),
+            contentType: String(attachment?.contentType || "application/octet-stream").trim(),
+            size: Number(attachment?.size || 0) || undefined,
+            isInline: Boolean(attachment?.isInline),
+            contentId: String(attachment?.contentId || "").trim() || undefined,
+            content: String(attachment?.content || "").trim(),
+          }))
+          .filter((attachment: any) => attachment.name)
+        : [],
+      relatedGroups: [],
+      relatedReasons: [],
+    };
+  } catch {
+    return null;
+  }
 }
 
 function buildFallbackEmail(params: StudioParams): RelatedEmailEntry | null {
@@ -591,7 +643,7 @@ function StudioInner() {
   const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
 
-  const currentSeed = useMemo(() => buildFallbackEmail(params), [params]);
+  const currentSeed = useMemo(() => readSeedEmail(params) || buildFallbackEmail(params), [params]);
   const currentContext = useMemo(() => ({
     conversationId: String(ctx.conversationId || params.conversationId || "").trim(),
     internetMessageId: String(ctx.internetMessageId || params.internetMessageId || "").trim(),
@@ -928,8 +980,19 @@ function StudioInner() {
   }, [relatedTickets, ticketSearchResults]);
 
   const selectedEmailAttachments = useMemo(() => {
-    const source = selectedEmailIsCurrent
+    const currentSource = attachments.length
       ? attachments.map((attachment) => ({ ...attachment }))
+      : (currentSeed?.attachments || []).map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          contentType: String(attachment.contentType || "application/octet-stream"),
+          content: String(attachment.content || ""),
+          size: attachment.size,
+          isInline: attachment.isInline,
+          contentId: attachment.contentId,
+        }));
+    const source = selectedEmailIsCurrent
+      ? currentSource
       : (selectedEmail?.attachments || []).map((attachment) => ({
           id: attachment.id,
           name: attachment.name,
@@ -940,7 +1003,7 @@ function StudioInner() {
           contentId: attachment.contentId,
         }));
     return source.filter((attachment) => String(attachment.name || "").trim());
-  }, [attachments, selectedEmail?.attachments, selectedEmailIsCurrent]);
+  }, [attachments, currentSeed?.attachments, selectedEmail?.attachments, selectedEmailIsCurrent]);
 
   useEffect(() => {
     setSelectedAttachmentPreviewKey((current) => {
