@@ -33,6 +33,7 @@ const GRAPH_NAA_TENANT_ID = "7eff32de-43f1-447b-af3e-af8d2939e93d";
 const GRAPH_NAA_AUTHORITY = `https://login.microsoftonline.com/${GRAPH_NAA_TENANT_ID}`;
 const GRAPH_ATTACHMENT_SCOPES = ["Mail.Read", "User.Read"];
 const GRAPH_PEOPLE_SCOPES = ["People.Read", "User.Read"];
+const GRAPH_NAA_REDIRECT_URI = `${window.location.origin}/`;
 
 let nestableMsalPromise: Promise<any> | null = null;
 
@@ -96,6 +97,7 @@ async function getNestableMsalInstance(): Promise<any | null> {
         auth: {
           clientId: GRAPH_NAA_CLIENT_ID,
           authority: GRAPH_NAA_AUTHORITY,
+          redirectUri: GRAPH_NAA_REDIRECT_URI,
         },
         cache: {
           cacheLocation: "localStorage",
