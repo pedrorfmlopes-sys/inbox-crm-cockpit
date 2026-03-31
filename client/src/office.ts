@@ -698,6 +698,113 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return globalThis.btoa(binary);
 }
 
+function uint8ArraysToBase64(chunks: Uint8Array[]): string {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return arrayBufferToBase64(merged.buffer);
+}
+
+async function getCurrentMessageAsEmlBase64(): Promise<string> {
+  try {
+    const OfficeAny = await ensureOfficeReady();
+    const item = OfficeAny?.context?.mailbox?.item;
+    if (!item?.getAsFileAsync) return "";
+
+    const file: any = await new Promise((resolve, reject) => {
+      try {
+        item.getAsFileAsync((result: any) => {
+          if (result?.status === OfficeAny.AsyncResultStatus.Succeeded && result?.value) resolve(result.value);
+          else reject(new Error(result?.error?.message || "getAsFileAsync failed"));
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    const sliceCount = Number(file?.sliceCount || 0);
+    if (!sliceCount || !file?.getSliceAsync) return "";
+
+    const chunks: Uint8Array[] = [];
+    try {
+      for (let index = 0; index < sliceCount; index += 1) {
+        const sliceResult: any = await new Promise((resolve, reject) => {
+          try {
+            file.getSliceAsync(index, (result: any) => {
+              if (result?.status === OfficeAny.AsyncResultStatus.Succeeded && result?.value) resolve(result.value);
+              else reject(new Error(result?.error?.message || `getSliceAsync failed @${index}`));
+            });
+          } catch (error) {
+            reject(error);
+          }
+        });
+
+        const data = sliceResult?.data;
+        if (Array.isArray(data)) {
+          chunks.push(Uint8Array.from(data));
+        } else if (data instanceof ArrayBuffer) {
+          chunks.push(new Uint8Array(data));
+        } else if (ArrayBuffer.isView(data)) {
+          chunks.push(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+        } else if (typeof data === "string" && data) {
+          chunks.push(Uint8Array.from(Array.from(data).map((char) => char.charCodeAt(0) & 0xff)));
+        }
+      }
+    } finally {
+      try {
+        if (typeof file?.closeAsync === "function") {
+          file.closeAsync(() => {});
+        }
+      } catch {
+        // noop
+      }
+    }
+
+    if (!chunks.length) return "";
+    return uint8ArraysToBase64(chunks);
+  } catch (error) {
+    clientLog.warn("[office] getCurrentMessageAsEmlBase64 failed", error);
+    return "";
+  }
+}
+
+async function getAttachmentsViaEmlForCurrentItem(): Promise<OutlookAttachment[]> {
+  try {
+    const emlBase64 = await getCurrentMessageAsEmlBase64();
+    if (!emlBase64) return [];
+
+    const response = await fetch("/api/links/eml/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ emlBase64 }),
+    });
+    if (!response.ok) {
+      clientLog.warn("[office] EML attachment extract failed", { status: response.status });
+      return [];
+    }
+    const payload: any = await response.json();
+    const rawAttachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
+    return rawAttachments
+      .map((attachment: any) => ({
+        id: String(attachment?.id || "").trim() || undefined,
+        name: String(attachment?.name || "").trim(),
+        contentType: String(attachment?.contentType || "application/octet-stream").trim(),
+        size: Number(attachment?.size || 0) || undefined,
+        isInline: Boolean(attachment?.isInline),
+        contentId: String(attachment?.contentId || "").trim() || undefined,
+        content: String(attachment?.content || "").trim(),
+      }))
+      .filter((attachment: OutlookAttachment) => attachment.name && attachment.content);
+  } catch (error) {
+    clientLog.warn("[office] EML attachment fallback failed", error);
+    return [];
+  }
+}
+
 async function addCategoriesToCurrentItem(displayNames: string[]): Promise<void> {
   const uniqueNames = Array.from(new Set((displayNames || []).map((name) => String(name || "").trim()).filter(Boolean)));
   if (!uniqueNames.length) return;
@@ -1684,17 +1791,29 @@ export async function getAttachments(): Promise<OutlookAttachment[]> {
       }
     }
 
-    const needsGraphFallback =
+    let mergedResults = results;
+
+    const needsEmlFallback =
       fileAttachments.length > 0 &&
-      (results.length < fileAttachments.length || !results.some((attachment) => String(attachment.content || "").trim()));
-    if (needsGraphFallback) {
-      const graphResults = await getAttachmentsViaGraphForCurrentItem();
-      if (graphResults.length) {
-        return mergeOutlookAttachments(results, graphResults);
+      (mergedResults.length < fileAttachments.length || !mergedResults.some((attachment) => String(attachment.content || "").trim()));
+    if (needsEmlFallback) {
+      const emlResults = await getAttachmentsViaEmlForCurrentItem();
+      if (emlResults.length) {
+        mergedResults = mergeOutlookAttachments(mergedResults, emlResults);
       }
     }
 
-    return results;
+    const needsGraphFallback =
+      fileAttachments.length > 0 &&
+      (mergedResults.length < fileAttachments.length || !mergedResults.some((attachment) => String(attachment.content || "").trim()));
+    if (needsGraphFallback) {
+      const graphResults = await getAttachmentsViaGraphForCurrentItem();
+      if (graphResults.length) {
+        return mergeOutlookAttachments(mergedResults, graphResults);
+      }
+    }
+
+    return mergedResults;
   } catch (error) {
     clientLog.error("[office] getAttachments error", error);
     return [];

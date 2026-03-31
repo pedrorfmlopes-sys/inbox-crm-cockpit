@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import { simpleParser } from "mailparser";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1958,6 +1959,41 @@ app.post("/api/links/attachments/extract-text", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "attachment_text_extract_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/eml/extract", async (req, res) => {
+  try {
+    const emlBase64 = stripInlineBase64Prefix(req.body?.emlBase64 || req.body?.content || "");
+    if (!emlBase64) {
+      return res.status(400).json({ ok: false, error: "eml_missing" });
+    }
+
+    const parsed = await simpleParser(Buffer.from(emlBase64, "base64"));
+    const attachments = Array.isArray(parsed?.attachments)
+      ? parsed.attachments
+        .map((attachment) => ({
+          id: String(attachment?.cid || attachment?.checksum || attachment?.filename || "").trim() || undefined,
+          name: String(attachment?.filename || "").trim(),
+          contentType: String(attachment?.contentType || "application/octet-stream").trim(),
+          size: Number(attachment?.size || attachment?.content?.length || 0) || undefined,
+          isInline: Boolean(attachment?.contentDisposition === "inline"),
+          contentId: String(attachment?.cid || "").trim() || undefined,
+          content: Buffer.isBuffer(attachment?.content) ? attachment.content.toString("base64") : "",
+        }))
+        .filter((attachment) => attachment.name && attachment.content)
+      : [];
+
+    return res.json({
+      ok: true,
+      subject: String(parsed?.subject || "").trim(),
+      bodyText: String(parsed?.text || "").trim(),
+      bodyHtml: String(parsed?.html || "").trim(),
+      attachments,
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "eml_extract_failed", details: String(e?.message || e) });
   }
 });
 
