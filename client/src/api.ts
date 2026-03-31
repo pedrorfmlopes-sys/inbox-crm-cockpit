@@ -568,6 +568,9 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
         referenceStatusCategorize: entry.classificationMeta.referenceStatusCategorize === true,
         ticketStatusEnabled: entry.classificationMeta.ticketStatusEnabled === true,
         ticketStatusCategorize: entry.classificationMeta.ticketStatusCategorize === true,
+        categorizedLabelNames: Array.isArray(entry.classificationMeta.categorizedLabelNames)
+          ? entry.classificationMeta.categorizedLabelNames.map((label: any) => String(label || "").trim()).filter(Boolean)
+          : undefined,
       }
     : undefined;
   return {

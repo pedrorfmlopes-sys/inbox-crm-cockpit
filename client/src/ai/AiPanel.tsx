@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import type { OutlookMessageContext } from "../office";
-import { getEmailBodyText } from "../office";
+import { getEmailBodyText, syncOutlookCategorySource } from "../office";
 import { aiGenerate, type AiLocale, type AiMode, type AiTone } from "./aiClient";
 import { getSettings, saveSettings, type CockpitSettingsV1, type LangOption, type AppLocale } from "../settings";
+import { CRM_FOLLOW_UP_CATEGORY } from "../outlookCategories";
 
 type Action = "summarize" | "reply" | "tasks" | "rewrite";
 
@@ -586,7 +587,7 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
 
   const [reminderDate, setReminderDate] = useState<string>("");
   const [reminderCreateEvent, setReminderCreateEvent] = useState<boolean>(true);
-  const REMINDER_CATEGORY = "CRM: Follow-up";
+  const REMINDER_CATEGORY = CRM_FOLLOW_UP_CATEGORY;
 
   type ResultSlot = { html: string; text: string; ts: number };
   const makeEmptySlots = (): ResultSlot[] =>
@@ -856,38 +857,6 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx.conversationId, emailKey, rawBody, body]);
 
-
-  async function ensureMasterCategory(displayName: string): Promise<void> {
-    const OfficeAny: any = (window as any).Office;
-    if (!OfficeAny?.context?.mailbox?.masterCategories) return;
-    await new Promise<void>((resolve) => {
-      try {
-        OfficeAny.context.mailbox.masterCategories.getAsync((res: any) => {
-          if (res.status !== OfficeAny.AsyncResultStatus.Succeeded) return resolve();
-          const list = res.value || [];
-          const exists = list.some((c: any) => (c.displayName || c.name) === displayName);
-          if (exists) return resolve();
-          const color = OfficeAny.MailboxEnums?.CategoryColor?.Preset0;
-          OfficeAny.context.mailbox.masterCategories.addAsync([{ displayName, color }], (_r2: any) => resolve());
-        });
-      } catch {
-        resolve();
-      }
-    });
-  }
-
-  async function addCategoryToItem(displayName: string): Promise<void> {
-    const OfficeAny: any = (window as any).Office;
-    if (!OfficeAny?.context?.mailbox?.item?.categories?.addAsync) return;
-    await new Promise<void>((resolve) => {
-      try {
-        OfficeAny.context.mailbox.item.categories.addAsync([displayName], (_: any) => resolve());
-      } catch {
-        resolve();
-      }
-    });
-  }
-
   function makeDueDate(offsetDays: number): Date {
     const d = new Date();
     d.setDate(d.getDate() + offsetDays);
@@ -932,8 +901,12 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
     setBusy(true);
     setErr("");
     try {
-      await ensureMasterCategory(REMINDER_CATEGORY);
-      await addCategoryToItem(REMINDER_CATEGORY);
+      await syncOutlookCategorySource({
+        specialCategories: [REMINDER_CATEGORY],
+        managedSpecialCategories: [REMINDER_CATEGORY],
+      }, {
+        manageClassificationFamilies: false,
+      });
       if (reminderCreateEvent) openCalendarReminder(due);
       setNotice(`Lembrete marcado para ${due.toLocaleDateString()} (categoria aplicada).`);
       setSheet("");

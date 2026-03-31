@@ -1057,7 +1057,7 @@ export function SettingsPanel(): JSX.Element {
                     />
                     <div>
                       <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ticket</div>
-                      <div style={S.hint}>Exemplo: <b>Ticket: RTK-26-0001</b></div>
+                      <div style={S.hint}>Exemplo: <b>TK: RTK-26-0001</b></div>
                     </div>
                   </label>
 
@@ -1078,7 +1078,7 @@ export function SettingsPanel(): JSX.Element {
                     />
                     <div>
                       <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Estado</div>
-                      <div style={S.hint}>Exemplo: <b>Estado: Em analise</b></div>
+                      <div style={S.hint}>Exemplo: <b>Gr: Em analise</b> · <b>E-Tk: Aberto</b> · <b>E-Et: Em progresso</b></div>
                     </div>
                   </label>
 
@@ -1099,7 +1099,7 @@ export function SettingsPanel(): JSX.Element {
                     />
                     <div>
                       <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Etiquetas</div>
-                      <div style={S.hint}>Exemplo: <b>Etiqueta: PED-1128</b></div>
+                      <div style={S.hint}>Exemplo: <b>PED-1128</b></div>
                     </div>
                   </label>
                 </div>

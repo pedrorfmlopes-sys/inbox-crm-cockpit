@@ -4,6 +4,7 @@ import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiCl
 import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubjectInComposeDraft, openAiSettings, addBase64AttachmentToCompose, openAiReplyTargetPicker, syncLinkCategoriesToComposeDraft, type AiReplyTargetSelection } from "@/office";
 import { getSettings } from "@/settings";
 import { getRelatedEmailContext, logLearningInteraction, type RelevantEmailPayload } from "@/api";
+import { buildOutlookCategorySourceFromRelatedContext, mergeOutlookCategorySources, ODOO_LINKED_CATEGORY, type OutlookCategorySource } from "@/outlookCategories";
 import { buildAiContextBundle, type AiContextBundle } from "./contextBundle";
 import * as Icons from "@/ui/icons";
 
@@ -828,49 +829,27 @@ export const AiCockpit: React.FC = () => {
         };
     }
 
-    async function collectDraftLinkSnapshot(payload: RelevantEmailPayload | null, fallbackHasOdooLinks = false) {
+    async function collectDraftCategorySource(payload: RelevantEmailPayload | null, fallbackHasOdooLinks = false): Promise<OutlookCategorySource> {
         if (!payload) {
-            return { principalGroupNames: [], referenceGroupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: fallbackHasOdooLinks };
+            return buildOutlookCategorySourceFromRelatedContext({
+                email: null,
+                groups: [],
+                tickets: [],
+                settings,
+                specialCategories: fallbackHasOdooLinks ? [ODOO_LINKED_CATEGORY] : [],
+                managedSpecialCategories: [ODOO_LINKED_CATEGORY],
+            });
         }
         const response = await getRelatedEmailContext(payload);
-        const customGroups = Array.isArray(response?.groups)
-            ? response.groups.filter((group: any) => String(group?.kind || "").trim().toLowerCase() === "custom")
-            : [];
-        const customGroupsById = new Map(
-            customGroups
-                .map((group: any) => [String(group?.id || "").trim(), group] as const)
-                .filter(([id]) => Boolean(id))
-        );
-        const relatedCustomGroups = Array.isArray(response?.email?.relatedGroups)
-            ? response.email.relatedGroups
-                .filter((group: any) => String(group?.kind || customGroupsById.get(String(group?.id || "").trim())?.kind || "").trim().toLowerCase() === "custom")
-            : [];
-        const principalGroupNames = Array.from(new Set(
-            relatedCustomGroups
-                .filter((group: any) => String(group?.relationKind || "").trim().toLowerCase() === "principal")
-                .map((group: any) => String(group?.name || customGroupsById.get(String(group?.id || "").trim())?.name || "").trim())
-                .filter(Boolean)
-        ));
-        const referenceGroupNames = Array.from(new Set(
-            relatedCustomGroups
-                .filter((group: any) => String(group?.relationKind || "").trim().toLowerCase() === "referencia")
-                .map((group: any) => String(group?.name || customGroupsById.get(String(group?.id || "").trim())?.name || "").trim())
-                .filter(Boolean)
-        ));
-        const statuses = customGroups.map((group: any) => String(group?.status || "").trim()).filter(Boolean);
-        const ticketCodes = (Array.isArray(response?.tickets) ? response.tickets : [])
-            .map((ticket: any) => String(ticket?.code || "").trim())
-            .filter(Boolean);
         const hasOdooLinks = fallbackHasOdooLinks || Boolean(response?.email?.relatedRecords?.length);
-        return {
-            principalGroupNames: principalGroupNames.length || referenceGroupNames.length
-                ? principalGroupNames
-                : customGroups.map((group: any) => String(group?.name || "").trim()).filter(Boolean),
-            referenceGroupNames,
-            ticketCodes,
-            statuses,
-            hasOdooLinks,
-        };
+        return buildOutlookCategorySourceFromRelatedContext({
+            email: response?.email || null,
+            groups: Array.isArray(response?.groups) ? response.groups : [],
+            tickets: Array.isArray(response?.tickets) ? response.tickets : [],
+            settings,
+            specialCategories: hasOdooLinks ? [ODOO_LINKED_CATEGORY] : [],
+            managedSpecialCategories: [ODOO_LINKED_CATEGORY],
+        });
     }
 
     function pickPreferredTicketCode(currentSnapshot: { ticketCodes: string[] }, targetSnapshot: { ticketCodes: string[] }, shouldIncludeTarget: boolean): string {
@@ -885,53 +864,48 @@ export const AiCockpit: React.FC = () => {
     }
 
     async function loadDraftLinkMetadata(): Promise<{
-        principalGroupNames: string[];
-        referenceGroupNames: string[];
-        ticketCodes: string[];
-        statuses: string[];
-        hasOdooLinks: boolean;
+        source: OutlookCategorySource;
         preferredTicketCode: string;
     }> {
-        const currentSnapshot = await collectDraftLinkSnapshot(buildPayloadFromCurrent(), links.length > 0);
+        const currentSnapshot = await collectDraftCategorySource(buildPayloadFromCurrent(), links.length > 0);
         const shouldIncludeTarget = Boolean(replyTargetEmail && !isSameStoredEmailTarget(ctx, replyTargetEmail));
         const targetSnapshot = shouldIncludeTarget
-            ? await collectDraftLinkSnapshot(buildPayloadFromTarget(), false)
-            : { principalGroupNames: [], referenceGroupNames: [], ticketCodes: [], statuses: [], hasOdooLinks: false };
+            ? await collectDraftCategorySource(buildPayloadFromTarget(), false)
+            : {
+                principalGroupNames: [],
+                referenceGroupNames: [],
+                ticketCodes: [],
+                labelNames: [],
+                managedLabelNames: [],
+                groupStatuses: [],
+                ticketStatuses: [],
+                labelStatuses: [],
+                specialCategories: [],
+                managedSpecialCategories: [],
+            };
 
         return {
-            principalGroupNames: mergeUniqueStrings(currentSnapshot.principalGroupNames, targetSnapshot.principalGroupNames),
-            referenceGroupNames: mergeUniqueStrings(currentSnapshot.referenceGroupNames, targetSnapshot.referenceGroupNames),
-            ticketCodes: mergeUniqueStrings(currentSnapshot.ticketCodes, targetSnapshot.ticketCodes),
-            statuses: mergeUniqueStrings(currentSnapshot.statuses, targetSnapshot.statuses),
-            hasOdooLinks: currentSnapshot.hasOdooLinks || targetSnapshot.hasOdooLinks,
+            source: mergeOutlookCategorySources(currentSnapshot, shouldIncludeTarget ? targetSnapshot : null),
             preferredTicketCode: pickPreferredTicketCode(currentSnapshot, targetSnapshot, shouldIncludeTarget),
         };
     }
 
-    async function loadDraftLinkCategories(): Promise<{
-        principalGroupNames: string[];
-        referenceGroupNames: string[];
-        ticketCodes: string[];
-        statuses: string[];
-        hasOdooLinks: boolean;
-    } | null> {
-        if (settings?.groupOutlookCategories?.enabled !== true) return null;
+    async function loadDraftLinkCategories(): Promise<OutlookCategorySource | null> {
         const metadata = await loadDraftLinkMetadata();
-        return {
-            principalGroupNames: settings?.groupOutlookCategories?.includeGroups !== false
-                ? metadata.principalGroupNames
-                : [],
-            referenceGroupNames: settings?.groupOutlookCategories?.includeGroups !== false
-                ? metadata.referenceGroupNames
-                : [],
-            ticketCodes: settings?.groupOutlookCategories?.includeTickets !== false
-                ? metadata.ticketCodes
-                : [],
-            statuses: settings?.groupOutlookCategories?.includeStatuses !== false
-                ? metadata.statuses
-                : [],
-            hasOdooLinks: metadata.hasOdooLinks,
-        };
+        const source = metadata.source;
+        const hasAnyCategories = Boolean(
+            source.principalGroupNames.length
+            || source.referenceGroupNames.length
+            || source.ticketCodes.length
+            || source.labelNames.length
+            || source.groupStatuses.length
+            || source.ticketStatuses.length
+            || source.labelStatuses.length
+            || source.specialCategories.length
+            || source.managedLabelNames.length
+            || source.managedSpecialCategories.length
+        );
+        return hasAnyCategories ? source : null;
     }
 
     useEffect(() => {

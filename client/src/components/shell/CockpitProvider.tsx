@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, openAppSettings, syncManagedOutlookCategories, syncOdooLinkedCategory, syncOdooLinkedNotification, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, syncOdooLinkedNotification, syncOutlookCategorySource, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
+import { buildOutlookCategorySourceFromRelatedContext, ODOO_LINKED_CATEGORY, type OutlookCategorySource } from "@/outlookCategories";
 
 export type CockpitTab = "ai" | "crm" | "crm2" | "related" | "groups" | "files" | "settings";
 export type SettingsPanelSection = "general" | "conns" | "ai" | "persona" | "signature" | "references" | "groups" | "crm2layout" | "protection";
@@ -248,26 +249,17 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         emailKey: "",
         groupId: null,
     });
-    const [currentCustomGroupContext, setCurrentCustomGroupContext] = useState<{
-        principalNames: string[];
-        referenceNames: string[];
-        statuses: string[];
-        groupStatuses: string[];
-        ticketStatuses: string[];
-        labelStatuses: string[];
-        ticketCodes: string[];
-        labelNames: string[];
-        managedLabelNames: string[];
-    }>({
-        principalNames: [],
-        referenceNames: [],
-        statuses: [],
-        groupStatuses: [],
-        ticketStatuses: [],
-        labelStatuses: [],
+    const [currentOutlookCategorySource, setCurrentOutlookCategorySource] = useState<OutlookCategorySource>({
+        principalGroupNames: [],
+        referenceGroupNames: [],
         ticketCodes: [],
         labelNames: [],
         managedLabelNames: [],
+        groupStatuses: [],
+        ticketStatuses: [],
+        labelStatuses: [],
+        specialCategories: [],
+        managedSpecialCategories: [],
     });
     const [startupChecks, setStartupChecks] = useState<StartupCheck[]>(() => createStartupChecks());
     const [startupNoticeState, setStartupNoticeState] = useState<StartupNotice | null>(null);
@@ -1055,16 +1047,17 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     useEffect(() => {
         const hasContextIdentity = Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
         if (!hasContextIdentity) {
-            setCurrentCustomGroupContext({
-                principalNames: [],
-                referenceNames: [],
-                statuses: [],
-                groupStatuses: [],
-                ticketStatuses: [],
-                labelStatuses: [],
+            setCurrentOutlookCategorySource({
+                principalGroupNames: [],
+                referenceGroupNames: [],
                 ticketCodes: [],
                 labelNames: [],
                 managedLabelNames: [],
+                groupStatuses: [],
+                ticketStatuses: [],
+                labelStatuses: [],
+                specialCategories: links.length > 0 ? [ODOO_LINKED_CATEGORY] : [],
+                managedSpecialCategories: [ODOO_LINKED_CATEGORY],
             });
             return;
         }
@@ -1082,179 +1075,65 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         getRelatedEmailContext(payload)
             .then((response) => {
                 if (cancelled) return;
-                const customGroups = Array.isArray(response?.groups)
-                    ? response.groups
-                        .filter((group) => group.kind === "custom")
-                    : [];
-                const customGroupsById = new Map(
-                    customGroups
-                        .map((group) => [String(group.id || "").trim(), group] as const)
-                        .filter(([id]) => Boolean(id))
-                );
-                const emailCustomGroups = Array.isArray(response?.email?.relatedGroups)
-                    ? response.email.relatedGroups
-                        .filter((group) => String(group?.kind || customGroupsById.get(String(group?.id || "").trim())?.kind || "").trim().toLowerCase() === "custom")
-                    : [];
-                const principalNames = Array.from(
-                    new Set(
-                        emailCustomGroups
-                            .filter((group) => String(group?.relationKind || "").trim().toLowerCase() === "principal")
-                            .map((group) => String(group?.name || customGroupsById.get(String(group?.id || "").trim())?.name || "").trim())
-                            .filter(Boolean)
-                    )
-                );
-                const principalGroups = emailCustomGroups
-                    .filter((group) => String(group?.relationKind || "").trim().toLowerCase() === "principal")
-                    .map((group) => customGroupsById.get(String(group?.id || "").trim()) || group)
-                    .filter(Boolean);
-                const referenceGroups = emailCustomGroups
-                    .filter((group) => String(group?.relationKind || "").trim().toLowerCase() === "referencia")
-                    .map((group) => customGroupsById.get(String(group?.id || "").trim()) || group)
-                    .filter(Boolean);
-                const referenceNames = Array.from(
-                    new Set(
-                        referenceGroups
-                            .map((group) => String((group as any)?.name || "").trim())
-                            .filter(Boolean)
-                    )
-                );
-                const emailEntry = response?.email || null;
-                const classificationMeta = emailEntry?.classificationMeta || {};
-                const inheritedLabels = Array.from(
-                    new Set(
-                        [...principalGroups, ...referenceGroups]
-                            .flatMap((group: any) => Array.isArray(group?.labels) ? group.labels : [])
-                            .map((label: any) => String(label || "").trim())
-                            .filter(Boolean)
-                    )
-                );
-                const removedInheritedLabels = Array.isArray(emailEntry?.removedInheritedLabels)
-                    ? emailEntry.removedInheritedLabels.map((label: any) => String(label || "").trim()).filter(Boolean)
-                    : [];
-                const directLabels = Array.isArray(emailEntry?.labels)
-                    ? emailEntry.labels.map((label: any) => String(label || "").trim()).filter(Boolean)
-                    : [];
-                const effectiveLabels = Array.from(
-                    new Set([
-                        ...inheritedLabels.filter((label) => !removedInheritedLabels.some((removed) => removed.toLowerCase() === label.toLowerCase())),
-                        ...directLabels,
-                    ])
-                );
-                const hasExplicitCategorizedLabels = Array.isArray(classificationMeta?.categorizedLabelNames);
-                const categorizedLabels = hasExplicitCategorizedLabels
-                    ? Array.from(
-                        new Set(
-                            classificationMeta.categorizedLabelNames
-                                .map((label: any) => String(label || "").trim())
-                                .filter((label: string) => Boolean(label) && effectiveLabels.some((entry) => entry.toLowerCase() === label.toLowerCase()))
-                        )
-                    )
-                    : effectiveLabels;
-                const labelStates = emailEntry?.labelStates && typeof emailEntry.labelStates === "object"
-                    ? Object.entries(emailEntry.labelStates)
-                        .map(([label, value]) => [String(label || "").trim(), String(value || "").trim()] as const)
-                        .filter(([label, value]) => Boolean(label) && Boolean(value) && effectiveLabels.some((entry) => entry.toLowerCase() === label.toLowerCase()))
-                    : [];
-                const statuses: string[] = [];
-                const groupStatuses = Array.from(
-                    new Set([
-                        ...(classificationMeta?.principalStatusEnabled && classificationMeta?.principalStatusCategorize
-                            ? principalGroups.map((group: any) => String(group?.status || "").trim()).filter(Boolean)
-                            : []),
-                        ...(classificationMeta?.referenceStatusEnabled && classificationMeta?.referenceStatusCategorize
-                            ? referenceGroups.map((group: any) => String(group?.status || "").trim()).filter(Boolean)
-                            : []),
-                    ])
-                );
-                const ticketCodes = Array.from(
-                    new Set(
-                        (Array.isArray(response?.tickets) ? response.tickets : [])
-                            .map((ticket) => String(ticket?.code || "").trim())
-                            .filter(Boolean)
-                    )
-                );
-                const ticketStatuses = Array.from(
-                    new Set(
-                        classificationMeta?.ticketStatusEnabled && classificationMeta?.ticketStatusCategorize
-                            ? (Array.isArray(response?.tickets) ? response.tickets : [])
-                                .map((ticket) => String(ticket?.status || "").trim())
-                                .filter(Boolean)
-                            : []
-                    )
-                );
-                const labelStatuses = Array.from(new Set(labelStates.map(([, value]) => value)));
-                setCurrentCustomGroupContext({
-                    principalNames: principalNames.length || referenceNames.length
-                        ? principalNames
-                        : Array.from(new Set(customGroups.map((group) => String(group.name || "").trim()).filter(Boolean))),
-                    referenceNames,
-                    statuses,
-                    groupStatuses,
-                    ticketStatuses,
-                    labelStatuses,
-                    ticketCodes,
-                    labelNames: categorizedLabels,
-                    managedLabelNames: Array.from(new Set([...effectiveLabels, ...removedInheritedLabels])),
-                });
+                setCurrentOutlookCategorySource(buildOutlookCategorySourceFromRelatedContext({
+                    email: response?.email || null,
+                    groups: Array.isArray(response?.groups) ? response.groups : [],
+                    tickets: Array.isArray(response?.tickets) ? response.tickets : [],
+                    settings,
+                    specialCategories: links.length > 0 ? [ODOO_LINKED_CATEGORY] : [],
+                    managedSpecialCategories: [ODOO_LINKED_CATEGORY],
+                }));
             })
             .catch(() => {
-                if (!cancelled) setCurrentCustomGroupContext({
-                    principalNames: [],
-                    referenceNames: [],
-                    statuses: [],
-                    groupStatuses: [],
-                    ticketStatuses: [],
-                    labelStatuses: [],
+                if (!cancelled) setCurrentOutlookCategorySource({
+                    principalGroupNames: [],
+                    referenceGroupNames: [],
                     ticketCodes: [],
                     labelNames: [],
                     managedLabelNames: [],
+                    groupStatuses: [],
+                    ticketStatuses: [],
+                    labelStatuses: [],
+                    specialCategories: links.length > 0 ? [ODOO_LINKED_CATEGORY] : [],
+                    managedSpecialCategories: [ODOO_LINKED_CATEGORY],
                 });
             });
 
         return () => {
             cancelled = true;
         };
-    }, [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, links.length]);
+    }, [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, links.length, settings?.groupOutlookCategories]);
 
     useEffect(() => {
-        syncOdooLinkedCategory(links.length > 0).catch(() => {
-            // best-effort host hint only
-        });
         syncOdooLinkedNotification(links.length > 0, links.length).catch(() => {
             // best-effort host hint only
         });
-        syncManagedOutlookCategories({
-            principalGroupNames: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeGroups !== false
-                ? currentCustomGroupContext.principalNames
-                : [],
-            referenceGroupNames: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeGroups !== false
-                ? currentCustomGroupContext.referenceNames
-                : [],
-            ticketCodes: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeTickets !== false
-                ? currentCustomGroupContext.ticketCodes
-                : [],
-            statuses: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeStatuses !== false
-                ? currentCustomGroupContext.statuses
-                : [],
-            groupStatuses: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeStatuses !== false
-                ? currentCustomGroupContext.groupStatuses
-                : [],
-            ticketStatuses: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeStatuses !== false
-                ? currentCustomGroupContext.ticketStatuses
-                : [],
-            labelStatuses: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeStatuses !== false
-                ? currentCustomGroupContext.labelStatuses
-                : [],
-            labelNames: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeLabels === true
-                ? currentCustomGroupContext.labelNames
-                : [],
-            managedLabelNames: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeLabels === true
-                ? currentCustomGroupContext.managedLabelNames
-                : [],
-        }).catch(() => {
-            // best-effort host hint only
-        });
-    }, [ctx.itemId, currentCustomGroupContext, links.length, settings?.groupOutlookCategories]);
+        let cancelled = false;
+        void (async () => {
+            const knownLabelNames = Array.from(new Set([
+                ...currentOutlookCategorySource.managedLabelNames,
+                ...(Array.isArray(settings?.groupLabelCatalog) ? settings.groupLabelCatalog.map((entry) => String(entry?.label || "").trim()).filter(Boolean) : []),
+            ]));
+            const snapshot = await getManagedOutlookCategorySnapshot(knownLabelNames).catch(() => null);
+            if (cancelled) return;
+            const expectedItemToken = await getCurrentItemToken().catch(() => "");
+            if (cancelled) return;
+            await syncOutlookCategorySource({
+                ...currentOutlookCategorySource,
+                managedLabelNames: [
+                    ...currentOutlookCategorySource.managedLabelNames,
+                    ...((snapshot?.labelNames || []).map((label) => String(label || "").trim()).filter(Boolean)),
+                ],
+            }, {
+                expectedItemToken,
+            }).catch(() => {
+                // best-effort host hint only
+            });
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [ctx.itemId, currentOutlookCategorySource, links.length, settings?.groupLabelCatalog]);
 
     const setAiState = (update: Partial<AiState>) => {
         if (!ctx.conversationId) return;
