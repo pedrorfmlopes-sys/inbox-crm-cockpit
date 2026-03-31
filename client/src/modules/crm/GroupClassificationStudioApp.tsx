@@ -679,6 +679,7 @@ function StudioInner() {
   const [managedGroupEmails, setManagedGroupEmails] = useState<RelatedEmailEntry[]>([]);
   const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
+  const [favoriteGroupIds, setFavoriteGroupIds] = useState<string[]>([]);
 
   const currentSeed = useMemo(() => readSeedEmail(params) || buildFallbackEmail(params), [params]);
   const currentContext = useMemo(() => ({
@@ -696,8 +697,12 @@ function StudioInner() {
       try {
         const settings = await getSettings();
         applySkin(settings.skinId || "soft");
+        setFavoriteGroupIds(Array.isArray((settings as any)?.groupFavoriteIds)
+          ? Array.from(new Set((settings as any).groupFavoriteIds.map((entry: any) => String(entry || "").trim()).filter(Boolean)))
+          : []);
       } catch {
         applySkin("soft");
+        setFavoriteGroupIds([]);
       }
     })();
   }, []);
@@ -991,8 +996,14 @@ function StudioInner() {
       if (!q) return true;
       return normalizeSearchValue(String(group.name || "")).includes(q);
     });
-    return rows.slice(0, 18);
-  }, [businessGroups, principalSearch]);
+    return rows
+      .sort((a, b) => {
+        const favoriteDelta = Number(favoriteGroupIds.includes(b.id)) - Number(favoriteGroupIds.includes(a.id));
+        if (favoriteDelta) return favoriteDelta;
+        return String(a.name || "").localeCompare(String(b.name || ""), "pt");
+      })
+      .slice(0, 18);
+  }, [businessGroups, favoriteGroupIds, principalSearch]);
   const filteredReferenceGroups = useMemo(() => {
     const q = normalizeSearchValue(referenceSearch);
     const rows = businessGroups.filter((group) => {
@@ -1298,6 +1309,32 @@ function StudioInner() {
   }, [detectedCaseType, documentReferences, emailContextMeta, getEmailGroupRelations, knownEmails, relatedEmails, selectedEmail, selectedEmailGroups, selectedEmailTicketIds, contextualTickets]);
   const selectedTicket = useMemo(() => availableTicketChoices.find((ticket) => ticket.id === selectedTicketId) || relatedTickets.find((ticket) => ticket.id === selectedTicketId) || null, [availableTicketChoices, relatedTickets, selectedTicketId]);
   const principalGroup = useMemo(() => (principalGroupId ? groupMap.get(principalGroupId) || null : null), [groupMap, principalGroupId]);
+  const favoritePrincipalGroups = useMemo(
+    () => favoriteGroupIds
+      .map((groupId) => businessGroups.find((group) => group.id === groupId) || null)
+      .filter(Boolean) as LinkGroupEntry[],
+    [businessGroups, favoriteGroupIds]
+  );
+  const normalizedPrincipalSearch = useMemo(() => normalizeSearchValue(principalSearch), [principalSearch]);
+  const exactPrincipalSearchGroup = useMemo(
+    () =>
+      normalizedPrincipalSearch
+        ? businessGroups.find((group) => normalizeSearchValue(String(group.name || "")) === normalizedPrincipalSearch) || null
+        : null,
+    [businessGroups, normalizedPrincipalSearch]
+  );
+  const principalSearchResults = useMemo(() => {
+    if (!normalizedPrincipalSearch) return [];
+    return filteredPrincipalGroups.slice(0, 6);
+  }, [filteredPrincipalGroups, normalizedPrincipalSearch]);
+  const principalCanCreate = useMemo(
+    () => Boolean(String(principalSearch || "").trim() && !exactPrincipalSearchGroup),
+    [exactPrincipalSearchGroup, principalSearch]
+  );
+  const principalSettingsTargetGroup = useMemo(
+    () => exactPrincipalSearchGroup || principalGroup || null,
+    [exactPrincipalSearchGroup, principalGroup]
+  );
   const referenceGroups = useMemo(
     () => referenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[],
     [groupMap, referenceGroupIds]
@@ -1667,6 +1704,38 @@ function StudioInner() {
     setPrincipalGroupId("");
   }
 
+  function setPrincipalSearchValue(value: string) {
+    const nextValue = String(value || "").trim();
+    setPrincipalSearch(nextValue);
+    setCreateGroupName(nextValue);
+  }
+
+  function selectPrincipalGroup(group: LinkGroupEntry | null) {
+    if (!group?.id) return;
+    setSelectionTouched((current) => ({ ...current, principal: true }));
+    setPrincipalGroupId(group.id);
+    setPrincipalSearchValue(group.name);
+  }
+
+  function toggleFavoritePrincipalGroup(group: LinkGroupEntry) {
+    if (!group?.id) return;
+    const sameGroup = principalGroupId === group.id;
+    if (sameGroup) {
+      clearPrincipalSelection();
+      if (normalizeSearchValue(principalSearch) === normalizeSearchValue(group.name)) {
+        setPrincipalSearchValue("");
+      }
+      return;
+    }
+    selectPrincipalGroup(group);
+  }
+
+  function openManagedGroupFromPrincipal(group: LinkGroupEntry | null) {
+    if (!group?.id) return;
+    setManagedGroupId(group.id);
+    setSection("groups");
+  }
+
   function clearTicketSelection() {
     setSelectionTouched((current) => ({ ...current, ticket: true }));
     setSelectedTicketId("");
@@ -1738,8 +1807,8 @@ function StudioInner() {
   function isSuggestionActive(suggestion: ReadingSuggestionChip) {
     if (classificationFocus === "summary") return false;
     if (classificationFocus === "principal") {
-      const groupId = resolveSuggestionGroupId(suggestion);
-      return Boolean(groupId && principalGroupId === groupId);
+      const suggestionText = normalizeSearchValue(String(suggestion.label || suggestion.value || "").trim());
+      return Boolean(suggestionText && normalizedPrincipalSearch === suggestionText);
     }
     if (classificationFocus === "references") {
       const groupId = resolveSuggestionGroupId(suggestion);
@@ -1754,6 +1823,17 @@ function StudioInner() {
 
   function handleSuggestionToggle(suggestion: ReadingSuggestionChip) {
     if (classificationFocus === "summary") return;
+    if (classificationFocus === "principal") {
+      const suggestionText = String(suggestion.label || suggestion.value || "").trim();
+      const normalizedSuggestion = normalizeSearchValue(suggestionText);
+      if (!suggestionText) return;
+      if (normalizedPrincipalSearch === normalizedSuggestion) {
+        setPrincipalSearchValue("");
+        return;
+      }
+      setPrincipalSearchValue(suggestionText);
+      return;
+    }
     if (classificationFocus === "labels") {
       applySuggestedLabel(suggestion.label || suggestion.value);
       return;
@@ -1803,8 +1883,8 @@ function StudioInner() {
     });
   }
 
-  async function handleCreateGroupAndLink() {
-    const name = String(createGroupName || "").trim();
+  async function handleCreateGroupAndLink(nameOverride?: string) {
+    const name = String(nameOverride || createGroupName || principalSearch || "").trim();
     if (!name) {
       setStatus("Define primeiro o nome do grupo.");
       return;
@@ -1822,6 +1902,9 @@ function StudioInner() {
       });
       setAllGroups((current) => current.some((entry) => entry.id === created.id) ? current : [created, ...current]);
       setPrincipalGroupId(created.id);
+      setManagedGroupId(created.id);
+      setPrincipalSearchValue(created.name);
+      setCreateGroupName("");
       await refreshSelectedEmailContext();
       setStatus(`Grupo "${created.name}" criado e email ligado como principal.`);
     } catch (actionError: any) {
@@ -2368,34 +2451,88 @@ function StudioInner() {
                   <span style={S.mutedMini}>Sem grupo principal</span>
                 )}
               </div>
-              <div style={S.sectionControls}>
-                <input style={S.input} value={principalSearch} onChange={(event) => setPrincipalSearch(event.target.value)} placeholder="Pesquisar grupo principal..." />
-                <select style={S.select} value={principalGroupId} onChange={(event) => { setSelectionTouched((current) => ({ ...current, principal: true })); setPrincipalGroupId(event.target.value); }}>
-                  <option value="">Sem grupo principal</option>
-                  {filteredPrincipalGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-                </select>
+              <div style={S.stackMini}>
+                <div style={S.fieldLineLabel}>Favoritos</div>
+                <div style={S.compactRowWrap}>
+                  {favoritePrincipalGroups.length ? (
+                    favoritePrincipalGroups.slice(0, 6).map((group) => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        style={group.id === principalGroupId ? S.miniChipOn : S.miniChip}
+                        onClick={() => toggleFavoritePrincipalGroup(group)}
+                      >
+                        {group.name}
+                      </button>
+                    ))
+                  ) : (
+                    <span style={S.mutedMini}>Sem grupos favoritos.</span>
+                  )}
+                </div>
               </div>
-              <div style={S.chips}>
-                {filteredPrincipalGroups.map((group) => (
+              <div style={S.stackMini}>
+                <div style={S.fieldLineLabel}>Pesquisar ou criar</div>
+                <div style={S.searchActionRow}>
+                  <input
+                    style={S.input}
+                    value={principalSearch}
+                    onChange={(event) => setPrincipalSearchValue(event.target.value)}
+                    placeholder="Escreve o nome do grupo..."
+                  />
                   <button
-                    key={group.id}
                     type="button"
-                    style={group.id === principalGroupId ? S.groupChipBtnOn : S.groupChipBtn}
+                    style={String(principalSearch || "").trim() ? S.iconActionBtn : S.iconActionBtnDisabled}
                     onClick={() => {
-                      setSelectionTouched((current) => ({ ...current, principal: true }));
-                      setPrincipalGroupId(group.id === principalGroupId ? "" : group.id);
+                      if (principalCanCreate) {
+                        void handleCreateGroupAndLink(principalSearch);
+                        return;
+                      }
+                      if (exactPrincipalSearchGroup) {
+                        selectPrincipalGroup(exactPrincipalSearchGroup);
+                      }
                     }}
+                    disabled={!String(principalSearch || "").trim()}
+                    title={principalCanCreate ? "Criar grupo" : exactPrincipalSearchGroup ? "Selecionar grupo existente" : "Pesquisar grupo"}
                   >
-                    {group.name}
+                    {principalCanCreate ? <Icons.Plus size={14} /> : <Icons.Search size={14} />}
                   </button>
-                ))}
-              </div>
-              <div style={S.compactCreateRow}>
-                <input style={S.input} value={createGroupName} onChange={(event) => setCreateGroupName(event.target.value)} placeholder="Criar grupo na hora..." />
-                <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateGroupAndLink()} disabled={actionBusy || !String(createGroupName || "").trim()}>
-                  <Icons.Plus size={12} />
-                  Criar
-                </button>
+                  <button
+                    type="button"
+                    style={principalSettingsTargetGroup ? S.iconActionBtn : S.iconActionBtnDisabled}
+                    onClick={() => openManagedGroupFromPrincipal(principalSettingsTargetGroup)}
+                    disabled={!principalSettingsTargetGroup}
+                    title={principalSettingsTargetGroup ? "Abrir configuracao do grupo" : "Seleciona ou cria um grupo para abrir a configuracao"}
+                  >
+                    <Icons.Settings size={14} />
+                  </button>
+                </div>
+                {principalSearchResults.length ? (
+                  <div style={S.searchResultList}>
+                    {principalSearchResults.map((group) => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        style={group.id === principalGroupId ? S.searchResultBtnOn : S.searchResultBtn}
+                        onClick={() => {
+                          if (group.id === principalGroupId) {
+                            clearPrincipalSelection();
+                            return;
+                          }
+                          selectPrincipalGroup(group);
+                        }}
+                      >
+                        <span>{group.name}</span>
+                        {group.id === principalGroupId ? <span style={S.resultMiniMeta}>Ligado</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : String(principalSearch || "").trim() ? (
+                  <div style={S.cardMeta}>
+                    {principalCanCreate
+                      ? `Ainda nao existe nenhum grupo com este nome. Usa o + para criar "${String(principalSearch || "").trim()}".`
+                      : "Grupo exato encontrado. Usa a lupa para o ligar."}
+                  </div>
+                ) : null}
               </div>
               <div style={S.inlineChecks}>
                 <label style={S.check}>
@@ -2733,8 +2870,15 @@ function StudioInner() {
       return (
         <div style={S.stack}>
           <div style={S.card}>
-            <div style={S.cardTitle}>Dossier do grupo</div>
-            <div style={S.cardMeta}>Descricao, notas, emails, documentos e associacoes do grupo.</div>
+            <div style={S.titleRow}>
+              <div>
+                <div style={S.cardTitle}>Dossier do grupo</div>
+                <div style={S.cardMeta}>Descricao, notas, emails, documentos e associacoes do grupo.</div>
+              </div>
+              <button type="button" style={S.secondaryBtn} onClick={() => { setSection("classification"); setClassificationFocus("principal"); }}>
+                Voltar a Classificacao
+              </button>
+            </div>
             <div style={S.grid2}>
               <label style={S.field}>
                 <span style={S.label}>Grupo a gerir</span>
@@ -3184,11 +3328,18 @@ const S: Record<string, React.CSSProperties> = {
   sectionMeta: { fontSize: 10, color: "var(--iccc-muted)" },
   sectionBody: { padding: 12, display: "grid", gap: 10 },
   stackMini: { display: "grid", gap: 6 },
+  fieldLineLabel: { fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--iccc-muted)" },
+  compactRowWrap: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
   sectionControls: { display: "grid", gridTemplateColumns: "minmax(0,1fr) 260px", gap: 10 },
   compactCreateRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center" },
+  searchActionRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) 34px 34px", gap: 8, alignItems: "center" },
+  iconActionBtn: { width: 34, height: 34, borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.92)", color: "#1d4ed8", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  iconActionBtnDisabled: { width: 34, height: 34, borderRadius: 10, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", color: "rgba(100,116,139,0.55)", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "not-allowed" },
   inlineWrap: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
   selectedChipOn: { borderRadius: 999, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 700, padding: "7px 11px", cursor: "pointer" },
   selectedChipPending: { borderRadius: 999, border: "1px solid rgba(245,158,11,0.24)", background: "rgba(254,243,199,0.92)", color: "#b45309", fontSize: 12, fontWeight: 700, padding: "7px 11px", cursor: "pointer" },
+  miniChip: { borderRadius: 999, border: "1px solid rgba(148,163,184,0.22)", background: "rgba(255,255,255,0.94)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 600, padding: "5px 9px", cursor: "pointer" },
+  miniChipOn: { borderRadius: 999, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 11, fontWeight: 700, padding: "5px 9px", cursor: "pointer" },
   mutedMini: { fontSize: 12, color: "var(--iccc-muted)" },
   classificationHeader: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
   suggestionDock: { marginTop: 10, display: "grid", gap: 8, padding: "10px 12px", borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(248,250,252,0.9)" },
@@ -3207,6 +3358,10 @@ const S: Record<string, React.CSSProperties> = {
   groupChip: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(29,78,216,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
   groupChipBtn: { borderRadius: 999, border: "1px solid rgba(148,163,184,0.24)", background: "rgba(255,255,255,0.92)", color: "var(--iccc-text)", fontSize: 12, fontWeight: 700, padding: "8px 12px", cursor: "pointer" },
   groupChipBtnOn: { borderRadius: 999, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 700, padding: "8px 12px", cursor: "pointer" },
+  searchResultList: { display: "grid", gap: 6 },
+  searchResultBtn: { width: "100%", borderRadius: 10, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)", fontSize: 12, fontWeight: 600, padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, cursor: "pointer", textAlign: "left" },
+  searchResultBtnOn: { width: "100%", borderRadius: 10, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 700, padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, cursor: "pointer", textAlign: "left" },
+  resultMiniMeta: { fontSize: 10, fontWeight: 700, color: "inherit", opacity: 0.85 },
   preview: { width: "100%", minHeight: 520, borderRadius: 14, overflow: "hidden", border: "1px solid rgba(148,163,184,0.24)", background: "#fff" },
   grid2: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 },
   grid2Wide: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 },
