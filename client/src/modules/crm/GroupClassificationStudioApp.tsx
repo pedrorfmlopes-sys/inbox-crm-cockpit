@@ -629,19 +629,6 @@ function StudioInner() {
     );
     return values.sort((a, b) => a.localeCompare(b, "pt"));
   }, [contextualGroups, contextualTickets]);
-  const manageableGroups = useMemo(() => {
-    const rows = new Map<string, LinkGroupEntry>();
-    for (const group of contextualGroups) {
-      if (!group?.id) continue;
-      rows.set(group.id, group);
-    }
-    if (principalGroup?.id) rows.set(principalGroup.id, principalGroup);
-    for (const group of referenceGroups) {
-      if (!group?.id) continue;
-      rows.set(group.id, group);
-    }
-    return Array.from(rows.values()).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt"));
-  }, [contextualGroups, principalGroup, referenceGroups]);
   const emailContextMeta = useMemo(() => {
     const map = new Map<string, { groupIds: string[]; labels: string[]; ticketIds: string[] }>();
     for (const email of emailPool) {
@@ -783,46 +770,6 @@ function StudioInner() {
     return Array.isArray(meta?.ticketIds) ? meta.ticketIds.filter(Boolean) : [];
   }, [emailContextMeta, selectedEmail]);
 
-  const similarCases = useMemo(() => {
-    if (!selectedEmail) return [];
-    const selectedKey = makeEmailKey(selectedEmail);
-    const selectedPartner = normalizeSearchValue(`${derivePartnerName(selectedEmail)} ${selectedEmail.fromEmail || ""}`);
-    const selectedGroups = new Set(selectedEmailGroups.map((group) => group.id));
-    const selectedTickets = new Set(selectedEmailTicketIds);
-    const emailUniverse = dedupeEmails([...relatedEmails, ...knownEmails]);
-    return emailUniverse
-      .filter((email) => makeEmailKey(email) && makeEmailKey(email) !== selectedKey)
-      .map((email) => {
-        const key = makeEmailKey(email);
-        const text = buildEmailCorpus(email);
-        const matchedRefs = matchReferenceSet(text, documentReferences);
-        const meta = emailContextMeta.get(key) || { groupIds: [], labels: [], ticketIds: [] };
-        const candidateGroups = getEmailGroupRelations(email);
-        const overlapGroups = meta.groupIds.filter((groupId) => selectedGroups.has(groupId));
-        const overlapTickets = meta.ticketIds.filter((ticketId) => selectedTickets.has(ticketId));
-        const candidatePartner = normalizeSearchValue(`${derivePartnerName(email)} ${email.fromEmail || ""}`);
-        const samePartner = Boolean(selectedPartner && candidatePartner && (candidatePartner.includes(selectedPartner) || selectedPartner.includes(candidatePartner)));
-        const sameType = detectCaseType(text) === detectedCaseType && detectedCaseType !== "geral";
-        const score =
-          matchedRefs.length * 140
-          + overlapGroups.length * 36
-          + overlapTickets.length * 42
-          + (samePartner ? 18 : 0)
-          + (sameType ? 8 : 0);
-        return {
-          email,
-          score,
-          matchedRefs,
-          candidateGroups,
-          candidateTickets: contextualTickets.filter((ticket) => meta.ticketIds.includes(ticket.id)).slice(0, 2),
-          candidateLabels: meta.labels.slice(0, 3),
-        };
-      })
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score || String(b.email.messageDateIso || b.email.receivedAtIso || "").localeCompare(String(a.email.messageDateIso || a.email.receivedAtIso || "")))
-      .slice(0, 6);
-  }, [detectedCaseType, documentReferences, emailContextMeta, getEmailGroupRelations, knownEmails, relatedEmails, selectedEmail, selectedEmailGroups, selectedEmailTicketIds, contextualTickets]);
-
   useEffect(() => {
     if (!selectedEmail) return;
     if (!selectionTouched.principal) {
@@ -838,13 +785,6 @@ function StudioInner() {
     if (!principalGroupId) return;
     setReferenceGroupIds((current) => current.filter((groupId) => groupId !== principalGroupId));
   }, [principalGroupId]);
-
-  useEffect(() => {
-    setManagedGroupId((current) => {
-      if (current && manageableGroups.some((group) => group.id === current)) return current;
-      return principalGroupId || manageableGroups[0]?.id || "";
-    });
-  }, [manageableGroups, principalGroupId]);
 
   useEffect(() => {
     if (!selectedEmailKey) return;
@@ -1056,16 +996,74 @@ function StudioInner() {
       content: attachment.content,
     })),
   }), [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
+  const similarCases = useMemo(() => {
+    if (!selectedEmail) return [];
+    const selectedKey = makeEmailKey(selectedEmail);
+    const selectedPartner = normalizeSearchValue(`${derivePartnerName(selectedEmail)} ${selectedEmail.fromEmail || ""}`);
+    const selectedGroups = new Set(selectedEmailGroups.map((group) => group.id));
+    const selectedTickets = new Set(selectedEmailTicketIds);
+    const emailUniverse = dedupeEmails([...relatedEmails, ...knownEmails]);
+    return emailUniverse
+      .filter((email) => makeEmailKey(email) && makeEmailKey(email) !== selectedKey)
+      .map((email) => {
+        const key = makeEmailKey(email);
+        const text = buildEmailCorpus(email);
+        const matchedRefs = matchReferenceSet(text, documentReferences);
+        const meta = emailContextMeta.get(key) || { groupIds: [], labels: [], ticketIds: [] };
+        const candidateGroups = getEmailGroupRelations(email);
+        const overlapGroups = meta.groupIds.filter((groupId) => selectedGroups.has(groupId));
+        const overlapTickets = meta.ticketIds.filter((ticketId) => selectedTickets.has(ticketId));
+        const candidatePartner = normalizeSearchValue(`${derivePartnerName(email)} ${email.fromEmail || ""}`);
+        const samePartner = Boolean(selectedPartner && candidatePartner && (candidatePartner.includes(selectedPartner) || selectedPartner.includes(candidatePartner)));
+        const sameType = detectCaseType(text) === detectedCaseType && detectedCaseType !== "geral";
+        const score =
+          matchedRefs.length * 140
+          + overlapGroups.length * 36
+          + overlapTickets.length * 42
+          + (samePartner ? 18 : 0)
+          + (sameType ? 8 : 0);
+        return {
+          email,
+          score,
+          matchedRefs,
+          candidateGroups,
+          candidateTickets: contextualTickets.filter((ticket) => meta.ticketIds.includes(ticket.id)).slice(0, 2),
+          candidateLabels: meta.labels.slice(0, 3),
+        };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score || String(b.email.messageDateIso || b.email.receivedAtIso || "").localeCompare(String(a.email.messageDateIso || a.email.receivedAtIso || "")))
+      .slice(0, 6);
+  }, [detectedCaseType, documentReferences, emailContextMeta, getEmailGroupRelations, knownEmails, relatedEmails, selectedEmail, selectedEmailGroups, selectedEmailTicketIds, contextualTickets]);
   const selectedTicket = useMemo(() => availableTicketChoices.find((ticket) => ticket.id === selectedTicketId) || relatedTickets.find((ticket) => ticket.id === selectedTicketId) || null, [availableTicketChoices, relatedTickets, selectedTicketId]);
   const principalGroup = useMemo(() => (principalGroupId ? groupMap.get(principalGroupId) || null : null), [groupMap, principalGroupId]);
   const referenceGroups = useMemo(
     () => referenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[],
     [groupMap, referenceGroupIds]
   );
+  const manageableGroups = useMemo(() => {
+    const rows = new Map<string, LinkGroupEntry>();
+    for (const group of contextualGroups) {
+      if (!group?.id) continue;
+      rows.set(group.id, group);
+    }
+    if (principalGroup?.id) rows.set(principalGroup.id, principalGroup);
+    for (const group of referenceGroups) {
+      if (!group?.id) continue;
+      rows.set(group.id, group);
+    }
+    return Array.from(rows.values()).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt"));
+  }, [contextualGroups, principalGroup, referenceGroups]);
   const selectedManagedGroup = useMemo(
     () => (managedGroupId ? manageableGroups.find((group) => group.id === managedGroupId) || null : null),
     [manageableGroups, managedGroupId]
   );
+  useEffect(() => {
+    setManagedGroupId((current) => {
+      if (current && manageableGroups.some((group) => group.id === current)) return current;
+      return principalGroupId || manageableGroups[0]?.id || "";
+    });
+  }, [manageableGroups, principalGroupId]);
   const inheritedLabels = useMemo(
     () =>
       mergeLabels(
@@ -2637,7 +2635,7 @@ function StudioInner() {
               <Icons.Save size={12} />
               Gravar / atualizar
             </button>
-            <button type="button" style={S.secondaryBtn} onClick={() => setActiveSection("classification")}>
+            <button type="button" style={S.secondaryBtn} onClick={() => setSection("classification")}>
               Voltar a Classificacao
             </button>
           </div>
