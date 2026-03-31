@@ -1145,6 +1145,23 @@ function buildCockpitViewUrl(view: string, params: Record<string, string>) {
   return url;
 }
 
+function tryOpenStandaloneWindow(url: URL, name: string, features: string): boolean {
+  try {
+    const popup = window.open(url.toString(), name, features);
+    if (popup) {
+      try {
+        popup.focus();
+      } catch {
+        // best effort
+      }
+      return true;
+    }
+  } catch (error) {
+    clientLog.warn("[office] standalone window fallback failed", error);
+  }
+  return false;
+}
+
 /**
  * Opens a separate window using Office Dialog API.
  * Guard: only one dialog at a time (evita "já existe uma dialog ativa").
@@ -1280,13 +1297,40 @@ export async function openGroupSettings(params: Record<string, string> = {}) {
 }
 
 export async function openGroupClassificationStudio(params: Record<string, string> = {}) {
+  const url = buildCockpitViewUrl("group-classification-studio", params);
   try {
-    return await openCockpitView("group-classification-studio", params, { height: 84, width: 74, displayInIframe: false, timeoutMs: 9000 });
+    return await openCockpitView("group-classification-studio", params, {
+      height: 84,
+      width: 74,
+      displayInIframe: false,
+      timeoutMs: 16000,
+    });
   } catch (error) {
-    const url = buildCockpitViewUrl("group-classification-studio", params);
-    clientLog.warn("[office] group classification studio fallback to same-window navigation", error);
-    window.location.assign(url.toString());
+    clientLog.warn("[office] group classification studio dialog failed; retrying standalone dialog", error);
   }
+
+  await sleep(450);
+
+  try {
+    return await openCockpitView("group-classification-studio", params, {
+      height: 84,
+      width: 74,
+      displayInIframe: false,
+      timeoutMs: 16000,
+    });
+  } catch (error) {
+    clientLog.warn("[office] group classification studio retry failed; trying popup fallback", error);
+  }
+
+  const popupOpened = tryOpenStandaloneWindow(
+    url,
+    "iccc-group-classification-studio",
+    "popup=yes,width=1520,height=980,resizable=yes,scrollbars=yes"
+  );
+
+  if (popupOpened) return null;
+
+  throw new Error("Nao foi possivel abrir a janela externa do Classificar.");
 }
 
 export async function openAppSettings(params: Record<string, string> = {}) {

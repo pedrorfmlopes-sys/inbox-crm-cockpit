@@ -705,7 +705,11 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     } catch {
       // keep opening the studio even if the pre-registration fails
     }
-    await openGroupClassificationStudio(params);
+    try {
+      await openGroupClassificationStudio(params);
+    } catch (error: any) {
+      setMsg(error?.message || "Nao foi possivel abrir a janela externa do Classificar.");
+    }
   }
 
   useEffect(() => {
