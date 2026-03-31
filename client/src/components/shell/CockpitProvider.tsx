@@ -252,12 +252,22 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         principalNames: string[];
         referenceNames: string[];
         statuses: string[];
+        groupStatuses: string[];
+        ticketStatuses: string[];
+        labelStatuses: string[];
         ticketCodes: string[];
+        labelNames: string[];
+        managedLabelNames: string[];
     }>({
         principalNames: [],
         referenceNames: [],
         statuses: [],
+        groupStatuses: [],
+        ticketStatuses: [],
+        labelStatuses: [],
         ticketCodes: [],
+        labelNames: [],
+        managedLabelNames: [],
     });
     const [startupChecks, setStartupChecks] = useState<StartupCheck[]>(() => createStartupChecks());
     const [startupNoticeState, setStartupNoticeState] = useState<StartupNotice | null>(null);
@@ -1045,7 +1055,17 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     useEffect(() => {
         const hasContextIdentity = Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
         if (!hasContextIdentity) {
-            setCurrentCustomGroupContext({ principalNames: [], referenceNames: [], statuses: [], ticketCodes: [] });
+            setCurrentCustomGroupContext({
+                principalNames: [],
+                referenceNames: [],
+                statuses: [],
+                groupStatuses: [],
+                ticketStatuses: [],
+                labelStatuses: [],
+                ticketCodes: [],
+                labelNames: [],
+                managedLabelNames: [],
+            });
             return;
         }
         let cancelled = false;
@@ -1083,15 +1103,59 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                             .filter(Boolean)
                     )
                 );
+                const principalGroups = emailCustomGroups
+                    .filter((group) => String(group?.relationKind || "").trim().toLowerCase() === "principal")
+                    .map((group) => customGroupsById.get(String(group?.id || "").trim()) || group)
+                    .filter(Boolean);
+                const referenceGroups = emailCustomGroups
+                    .filter((group) => String(group?.relationKind || "").trim().toLowerCase() === "referencia")
+                    .map((group) => customGroupsById.get(String(group?.id || "").trim()) || group)
+                    .filter(Boolean);
                 const referenceNames = Array.from(
                     new Set(
-                        emailCustomGroups
-                            .filter((group) => String(group?.relationKind || "").trim().toLowerCase() === "referencia")
-                            .map((group) => String(group?.name || customGroupsById.get(String(group?.id || "").trim())?.name || "").trim())
+                        referenceGroups
+                            .map((group) => String((group as any)?.name || "").trim())
                             .filter(Boolean)
                     )
                 );
-                const statuses = Array.from(new Set(customGroups.map((group) => String(group.status || "").trim()).filter(Boolean)));
+                const emailEntry = response?.email || null;
+                const classificationMeta = emailEntry?.classificationMeta || {};
+                const inheritedLabels = Array.from(
+                    new Set(
+                        [...principalGroups, ...referenceGroups]
+                            .flatMap((group: any) => Array.isArray(group?.labels) ? group.labels : [])
+                            .map((label: any) => String(label || "").trim())
+                            .filter(Boolean)
+                    )
+                );
+                const removedInheritedLabels = Array.isArray(emailEntry?.removedInheritedLabels)
+                    ? emailEntry.removedInheritedLabels.map((label: any) => String(label || "").trim()).filter(Boolean)
+                    : [];
+                const directLabels = Array.isArray(emailEntry?.labels)
+                    ? emailEntry.labels.map((label: any) => String(label || "").trim()).filter(Boolean)
+                    : [];
+                const effectiveLabels = Array.from(
+                    new Set([
+                        ...inheritedLabels.filter((label) => !removedInheritedLabels.some((removed) => removed.toLowerCase() === label.toLowerCase())),
+                        ...directLabels,
+                    ])
+                );
+                const labelStates = emailEntry?.labelStates && typeof emailEntry.labelStates === "object"
+                    ? Object.entries(emailEntry.labelStates)
+                        .map(([label, value]) => [String(label || "").trim(), String(value || "").trim()] as const)
+                        .filter(([label, value]) => Boolean(label) && Boolean(value) && effectiveLabels.some((entry) => entry.toLowerCase() === label.toLowerCase()))
+                    : [];
+                const statuses: string[] = [];
+                const groupStatuses = Array.from(
+                    new Set([
+                        ...(classificationMeta?.principalStatusEnabled && classificationMeta?.principalStatusCategorize
+                            ? principalGroups.map((group: any) => String(group?.status || "").trim()).filter(Boolean)
+                            : []),
+                        ...(classificationMeta?.referenceStatusEnabled && classificationMeta?.referenceStatusCategorize
+                            ? referenceGroups.map((group: any) => String(group?.status || "").trim()).filter(Boolean)
+                            : []),
+                    ])
+                );
                 const ticketCodes = Array.from(
                     new Set(
                         (Array.isArray(response?.tickets) ? response.tickets : [])
@@ -1099,17 +1163,42 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                             .filter(Boolean)
                     )
                 );
+                const ticketStatuses = Array.from(
+                    new Set(
+                        classificationMeta?.ticketStatusEnabled && classificationMeta?.ticketStatusCategorize
+                            ? (Array.isArray(response?.tickets) ? response.tickets : [])
+                                .map((ticket) => String(ticket?.status || "").trim())
+                                .filter(Boolean)
+                            : []
+                    )
+                );
+                const labelStatuses = Array.from(new Set(labelStates.map(([, value]) => value)));
                 setCurrentCustomGroupContext({
                     principalNames: principalNames.length || referenceNames.length
                         ? principalNames
                         : Array.from(new Set(customGroups.map((group) => String(group.name || "").trim()).filter(Boolean))),
                     referenceNames,
                     statuses,
+                    groupStatuses,
+                    ticketStatuses,
+                    labelStatuses,
                     ticketCodes,
+                    labelNames: effectiveLabels,
+                    managedLabelNames: Array.from(new Set([...effectiveLabels, ...removedInheritedLabels])),
                 });
             })
             .catch(() => {
-                if (!cancelled) setCurrentCustomGroupContext({ principalNames: [], referenceNames: [], statuses: [], ticketCodes: [] });
+                if (!cancelled) setCurrentCustomGroupContext({
+                    principalNames: [],
+                    referenceNames: [],
+                    statuses: [],
+                    groupStatuses: [],
+                    ticketStatuses: [],
+                    labelStatuses: [],
+                    ticketCodes: [],
+                    labelNames: [],
+                    managedLabelNames: [],
+                });
             });
 
         return () => {
@@ -1136,6 +1225,21 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 : [],
             statuses: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeStatuses !== false
                 ? currentCustomGroupContext.statuses
+                : [],
+            groupStatuses: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeStatuses !== false
+                ? currentCustomGroupContext.groupStatuses
+                : [],
+            ticketStatuses: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeStatuses !== false
+                ? currentCustomGroupContext.ticketStatuses
+                : [],
+            labelStatuses: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeStatuses !== false
+                ? currentCustomGroupContext.labelStatuses
+                : [],
+            labelNames: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeLabels === true
+                ? currentCustomGroupContext.labelNames
+                : [],
+            managedLabelNames: settings?.groupOutlookCategories?.enabled === true && settings?.groupOutlookCategories?.includeLabels === true
+                ? currentCustomGroupContext.managedLabelNames
                 : [],
         }).catch(() => {
             // best-effort host hint only
