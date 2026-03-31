@@ -1205,7 +1205,22 @@ type CockpitHostAction =
   | { type: "close" }
   | { type: "open-email"; itemId?: string; emailWebLink?: string }
   | { type: "reply-current" }
-  | { type: "forward-current" };
+  | { type: "forward-current" }
+  | {
+      type: "sync-managed-categories";
+      payload: {
+        principalGroupNames?: string[];
+        referenceGroupNames?: string[];
+        groupNames?: string[];
+        ticketCodes?: string[];
+        statuses?: string[];
+        groupStatuses?: string[];
+        ticketStatuses?: string[];
+        labelStatuses?: string[];
+        labelNames?: string[];
+        managedLabelNames?: string[];
+      };
+    };
 
 async function executeCockpitHostAction(action: CockpitHostAction): Promise<void> {
   if (action.type === "close") {
@@ -1228,6 +1243,11 @@ async function executeCockpitHostAction(action: CockpitHostAction): Promise<void
 
   if (action.type === "forward-current") {
     await displayForwardForm("", true);
+    return;
+  }
+
+  if (action.type === "sync-managed-categories") {
+    await syncManagedOutlookCategories(action.payload || {});
     return;
   }
 }
