@@ -2023,7 +2023,7 @@ function StudioInner() {
             <div style={S.stackMini}>
               <div style={S.card}>
                 <div style={S.cardTitle}>Leitura do email</div>
-                <div style={S.cardMeta}>Resumo tecnico do assunto, corpo e anexos. As sugestoes clicaveis continuam na faixa fixa do topo.</div>
+                <div style={S.cardMeta}>Assunto, corpo e anexos lidos. As sugestoes continuam na faixa fixa do topo.</div>
                 <div style={S.summaryGrid}>
                   <div style={S.summaryRow}><span>Tipo detetado</span><strong>{detectedCaseType}</strong></div>
                   <div style={S.summaryRow}><span>Parceiro detetado</span><strong>{derivePartnerName(selectedEmail) || "--"}</strong></div>
@@ -2036,7 +2036,7 @@ function StudioInner() {
 
               <div style={S.card}>
                 <div style={S.cardTitle}>Casos semelhantes</div>
-                <div style={S.cardMeta}>Emails ja guardados que parecem pertencer ao mesmo dossier, sobretudo por referencia documental.</div>
+                <div style={S.cardMeta}>Matches por referencia, grupo, ticket e parceiro.</div>
                 {similarCases.length ? (
                   <div style={S.itemList}>
                     {similarCases.map((entry) => {
@@ -2085,7 +2085,7 @@ function StudioInner() {
             <div style={S.stackMini}>
               <div style={S.card}>
                 <div style={S.cardTitle}>Criacao rapida</div>
-                <div style={S.cardMeta}>Criar e ligar grupo ou ticket sem sair desta janela.</div>
+                <div style={S.cardMeta}>Criar e ligar grupo ou ticket sem sair da janela.</div>
                 <label style={S.field}>
                   <span style={S.label}>Novo grupo</span>
                   <div style={S.compactCreateRow}>
@@ -2117,7 +2117,7 @@ function StudioInner() {
 
               <div style={S.card}>
                 <div style={S.cardTitle}>Anexos deste email</div>
-                <div style={S.cardMeta}>Cada anexo pode ser marcado para analisar, guardar no grupo principal ou reenviar mais tarde.</div>
+                <div style={S.cardMeta}>Escolhe o que analisar, guardar no grupo principal ou reenviar.</div>
                 {selectedEmailAttachments.length ? (
                   <>
                     <div style={S.attachList}>
@@ -2165,7 +2165,7 @@ function StudioInner() {
             <div style={S.classificationHeader}>
               <div>
                 <div style={S.cardTitle}>Classificacao</div>
-                <div style={S.cardMeta}>Os chips azuis mostram o que fica ligado ao email. Clicar neles desliga a ligacao.</div>
+                <div style={S.cardMeta}>Clicar nos chips liga ou desliga a classificacao do email.</div>
               </div>
               <div style={S.focusBadge}>Destino das sugestoes: {classificationFocus === "principal" ? "Grupo principal" : classificationFocus === "references" ? "Referencias" : classificationFocus === "labels" ? "Etiquetas" : "Ticket"}</div>
             </div>
@@ -2236,7 +2236,7 @@ function StudioInner() {
                 </label>
               </div>
               <div style={S.cardMeta}>
-                {principalGroup?.status ? `Estado atual do grupo: ${principalGroupStatusLabel}` : "Este grupo ainda nao tem estado definido."}
+                {principalGroup?.status ? `Estado atual: ${principalGroupStatusLabel}` : "Sem estado definido neste grupo."}
               </div>
             </div>
           </div>
@@ -2287,7 +2287,7 @@ function StudioInner() {
                   <span key={`${entry.id}-status`} style={S.groupChip}>
                     {entry.name}: {entry.status}
                   </span>
-                )) : <span style={S.mutedMini}>As referencias atuais ainda nao trazem estado definido.</span>}
+                )) : <span style={S.mutedMini}>Sem estado nas referencias atuais.</span>}
               </div>
             </div>
           </div>
@@ -2422,7 +2422,7 @@ function StudioInner() {
                 </label>
               </div>
               <div style={S.cardMeta}>
-                {selectedTicket?.status ? `Estado atual do ticket: ${ticketStatusLabel}` : "Este ticket ainda nao tem estado operacional definido."}
+                {selectedTicket?.status ? `Estado atual: ${ticketStatusLabel}` : "Sem estado definido neste ticket."}
               </div>
             </div>
           </div>
@@ -2545,7 +2545,7 @@ function StudioInner() {
         <div style={S.stack}>
           <div style={S.card}>
             <div style={S.cardTitle}>Dossier do grupo</div>
-            <div style={S.cardMeta}>Aqui tratamos o grupo como dossier: descricao, emails ligados e documentos guardados.</div>
+            <div style={S.cardMeta}>Descricao, notas, emails, documentos e associacoes do grupo.</div>
             <div style={S.grid2}>
               <label style={S.field}>
                 <span style={S.label}>Grupo a gerir</span>
@@ -2737,7 +2737,7 @@ function StudioInner() {
       <div style={S.stack}>
         <div style={S.card}>
           <div style={S.cardTitle}>Resumo vivo</div>
-          <div style={S.cardMeta}>O que ves aqui reflete o estado atual da classificacao. Os chips servem para desligar rapidamente ligacoes antes de gravar.</div>
+          <div style={S.cardMeta}>Espelho do estado atual. Os chips tambem servem para desligar antes de gravar.</div>
           <div style={S.summaryGrid}>
             <div style={S.summaryRow}><span>Email selecionado</span><strong>{selectedEmail?.subject || "--"}</strong></div>
             <div style={S.summaryRow}><span>Anexos</span><strong>{selectedEmailAttachments.length}</strong></div>
@@ -3037,15 +3037,15 @@ const S: Record<string, React.CSSProperties> = {
   emailSnippet: { fontSize: 12, lineHeight: 1.45, color: "var(--iccc-text-soft, #334155)" },
   counter: { minWidth: 22, height: 22, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 700 },
   workCol: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, overflow: "hidden" },
-  stack: { height: "100%", minHeight: 0, display: "grid", gap: 12, alignContent: "start", overflowY: "auto", paddingRight: 2 },
-  card: { borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.74)", padding: 14, display: "grid", gap: 12 },
+  stack: { height: "100%", minHeight: 0, display: "grid", gap: 10, alignContent: "start", overflowY: "auto", paddingRight: 2 },
+  card: { borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.74)", padding: 12, display: "grid", gap: 10 },
   sectionCard: { borderRadius: 16, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", overflow: "hidden", display: "grid" },
   sectionHead: { width: "100%", border: "none", borderBottom: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.58)", color: "var(--iccc-text)", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, cursor: "pointer" },
   sectionHeadOn: { width: "100%", border: "none", borderBottom: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.9)", color: "#1d4ed8", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, cursor: "pointer" },
   sectionHeadStatic: { borderBottom: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.58)", color: "var(--iccc-text)", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 },
-  sectionName: { fontSize: 14, fontWeight: 700 },
-  sectionMeta: { fontSize: 11, color: "var(--iccc-muted)" },
-  sectionBody: { padding: 14, display: "grid", gap: 12 },
+  sectionName: { fontSize: 13, fontWeight: 700 },
+  sectionMeta: { fontSize: 10, color: "var(--iccc-muted)" },
+  sectionBody: { padding: 12, display: "grid", gap: 10 },
   stackMini: { display: "grid", gap: 6 },
   sectionControls: { display: "grid", gridTemplateColumns: "minmax(0,1fr) 260px", gap: 10 },
   compactCreateRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center" },
@@ -3056,8 +3056,8 @@ const S: Record<string, React.CSSProperties> = {
   focusBadge: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(37,99,235,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
   classificationHeader: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
   titleRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
-  cardTitle: { fontSize: 16, fontWeight: 800, color: "var(--iccc-text)" },
-  cardMeta: { fontSize: 12, lineHeight: 1.45, color: "var(--iccc-muted)" },
+  cardTitle: { fontSize: 15, fontWeight: 800, color: "var(--iccc-text)" },
+  cardMeta: { fontSize: 11, lineHeight: 1.4, color: "var(--iccc-muted)" },
   metaLine: { display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: "var(--iccc-muted)" },
   chips: { display: "flex", flexWrap: "wrap", gap: 8 },
   groupChip: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(29,78,216,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
@@ -3085,7 +3085,7 @@ const S: Record<string, React.CSSProperties> = {
   itemRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 12, alignItems: "center", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)" },
   itemMeta: { display: "grid", gap: 4, minWidth: 0, color: "var(--iccc-text)" },
   similarMainBtn: { border: "none", background: "transparent", padding: 0, margin: 0, textAlign: "left", display: "grid", minWidth: 0, cursor: "pointer" },
-  summaryRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)", fontSize: 13, color: "var(--iccc-text)" },
+  summaryRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "9px 11px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)", fontSize: 12, color: "var(--iccc-text)" },
   summaryGrid: { display: "grid", gap: 8 },
   note: { padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(191,219,254,0.8)", background: "#eff6ff", color: "#1d4ed8", fontSize: 13, lineHeight: 1.5 },
 };
