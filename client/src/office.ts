@@ -885,7 +885,13 @@ async function getCurrentItemCategoryNames(): Promise<string[]> {
 async function hasExpectedCurrentItemToken(expectedItemToken?: string): Promise<boolean> {
   if (!expectedItemToken) return true;
   const currentToken = await getCurrentItemToken().catch(() => "");
-  return Boolean(currentToken) && currentToken === expectedItemToken;
+  if (!currentToken) {
+    clientLog.warn("[office] current item token unavailable during category sync; continuing without strict guard", {
+      expectedItemToken,
+    });
+    return true;
+  }
+  return currentToken === expectedItemToken;
 }
 
 function getCurrentManagedCategoryNames(currentCategories: string[], plan: OutlookCategoryPlan): string[] {

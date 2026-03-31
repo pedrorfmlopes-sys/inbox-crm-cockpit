@@ -4,7 +4,14 @@ import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, check
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
-import { buildOutlookCategorySourceFromRelatedContext, ODOO_LINKED_CATEGORY, type OutlookCategorySource } from "@/outlookCategories";
+import {
+    areOutlookCategorySourcesEqual,
+    buildOutlookCategoryPlan,
+    buildOutlookCategorySourceFromRelatedContext,
+    getOutlookCategoryPlanSignature,
+    ODOO_LINKED_CATEGORY,
+    type OutlookCategorySource,
+} from "@/outlookCategories";
 
 export type CockpitTab = "ai" | "crm" | "crm2" | "related" | "groups" | "files" | "settings";
 export type SettingsPanelSection = "general" | "conns" | "ai" | "persona" | "signature" | "references" | "groups" | "crm2layout" | "protection";
@@ -153,6 +160,16 @@ function buildContextEmailKey(ctx: OutlookMessageContext): string {
     ].join("|");
 }
 
+function buildOutlookCategorySyncIdentity(ctx: OutlookMessageContext): string {
+    const internetMessageId = String(ctx.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+    const itemId = String(ctx.itemId || "").trim();
+    const conversationId = String(ctx.conversationId || "").trim();
+    if (internetMessageId) return `imid:${internetMessageId}`;
+    if (itemId) return `item:${itemId}`;
+    if (conversationId) return `conv:${conversationId}`;
+    return "";
+}
+
 function readPersistedConnectivitySnapshot(): ConnectivitySnapshot | null {
     try {
         const raw = localStorage.getItem(CONNECTIVITY_CACHE_STORAGE_KEY);
@@ -230,6 +247,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const warmStartupRef = useRef<boolean>(hasWarmBootHint());
     const currentViewRef = useRef<string>((new URLSearchParams(window.location.search).get("view") || "taskpane").toLowerCase());
+    const liveItemTrackingEnabled = currentViewRef.current !== "group-classification-studio";
     const [tab, setTab] = useState<CockpitTab>(() => readPersistedTab());
     const [settingsSection, setSettingsSectionState] = useState<SettingsPanelSection>(() => readPersistedSettingsSection());
     const [ctx, setCtx] = useState<OutlookMessageContext>({});
@@ -264,6 +282,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [startupChecks, setStartupChecks] = useState<StartupCheck[]>(() => createStartupChecks());
     const [startupNoticeState, setStartupNoticeState] = useState<StartupNotice | null>(null);
     const [startupNoticeDismissed, setStartupNoticeDismissed] = useState(false);
+    const lastOutlookCategorySyncRef = useRef<{ identity: string; signature: string } | null>(null);
 
     function resetStartupPreflight() {
         setStartupChecks(createStartupChecks());
@@ -970,6 +989,11 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     useEffect(() => {
         loadContextAndLinks('init');
 
+        if (!liveItemTrackingEnabled) {
+            clientLog("info", `[Cockpit] live item tracking disabled for view ${currentViewRef.current}`);
+            return;
+        }
+
         let unsub: (() => void) | null = null;
         (async () => {
             try {
@@ -1047,7 +1071,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     useEffect(() => {
         const hasContextIdentity = Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
         if (!hasContextIdentity) {
-            setCurrentOutlookCategorySource({
+            const nextSource: OutlookCategorySource = {
                 principalGroupNames: [],
                 referenceGroupNames: [],
                 ticketCodes: [],
@@ -1058,7 +1082,11 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 labelStatuses: [],
                 specialCategories: links.length > 0 ? [ODOO_LINKED_CATEGORY] : [],
                 managedSpecialCategories: [ODOO_LINKED_CATEGORY],
-            });
+            };
+            setCurrentOutlookCategorySource((current) => (
+                areOutlookCategorySourcesEqual(current, nextSource) ? current : nextSource
+            ));
+            lastOutlookCategorySyncRef.current = null;
             return;
         }
         let cancelled = false;
@@ -1075,28 +1103,36 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         getRelatedEmailContext(payload)
             .then((response) => {
                 if (cancelled) return;
-                setCurrentOutlookCategorySource(buildOutlookCategorySourceFromRelatedContext({
+                const nextSource = buildOutlookCategorySourceFromRelatedContext({
                     email: response?.email || null,
                     groups: Array.isArray(response?.groups) ? response.groups : [],
                     tickets: Array.isArray(response?.tickets) ? response.tickets : [],
                     settings,
                     specialCategories: links.length > 0 ? [ODOO_LINKED_CATEGORY] : [],
                     managedSpecialCategories: [ODOO_LINKED_CATEGORY],
-                }));
+                });
+                setCurrentOutlookCategorySource((current) => (
+                    areOutlookCategorySourcesEqual(current, nextSource) ? current : nextSource
+                ));
             })
             .catch(() => {
-                if (!cancelled) setCurrentOutlookCategorySource({
-                    principalGroupNames: [],
-                    referenceGroupNames: [],
-                    ticketCodes: [],
-                    labelNames: [],
-                    managedLabelNames: [],
-                    groupStatuses: [],
-                    ticketStatuses: [],
-                    labelStatuses: [],
-                    specialCategories: links.length > 0 ? [ODOO_LINKED_CATEGORY] : [],
-                    managedSpecialCategories: [ODOO_LINKED_CATEGORY],
-                });
+                if (!cancelled) {
+                    const nextSource: OutlookCategorySource = {
+                        principalGroupNames: [],
+                        referenceGroupNames: [],
+                        ticketCodes: [],
+                        labelNames: [],
+                        managedLabelNames: [],
+                        groupStatuses: [],
+                        ticketStatuses: [],
+                        labelStatuses: [],
+                        specialCategories: links.length > 0 ? [ODOO_LINKED_CATEGORY] : [],
+                        managedSpecialCategories: [ODOO_LINKED_CATEGORY],
+                    };
+                    setCurrentOutlookCategorySource((current) => (
+                        areOutlookCategorySourcesEqual(current, nextSource) ? current : nextSource
+                    ));
+                }
             });
 
         return () => {
@@ -1118,17 +1154,30 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (cancelled) return;
             const expectedItemToken = await getCurrentItemToken().catch(() => "");
             if (cancelled) return;
-            await syncOutlookCategorySource({
+            const syncSource = {
                 ...currentOutlookCategorySource,
                 managedLabelNames: [
                     ...currentOutlookCategorySource.managedLabelNames,
                     ...((snapshot?.labelNames || []).map((label) => String(label || "").trim()).filter(Boolean)),
                 ],
-            }, {
+            };
+            const syncIdentity = buildOutlookCategorySyncIdentity(ctx) || "__no-item__";
+            const syncSignature = getOutlookCategoryPlanSignature(buildOutlookCategoryPlan(syncSource));
+            if (
+                lastOutlookCategorySyncRef.current?.identity === syncIdentity
+                && lastOutlookCategorySyncRef.current?.signature === syncSignature
+            ) {
+                return;
+            }
+            const applied = await syncOutlookCategorySource(syncSource, {
                 expectedItemToken,
-            }).catch(() => {
-                // best-effort host hint only
-            });
+            }).catch(() => false);
+            if (!cancelled && applied) {
+                lastOutlookCategorySyncRef.current = {
+                    identity: syncIdentity,
+                    signature: syncSignature,
+                };
+            }
         })();
         return () => {
             cancelled = true;

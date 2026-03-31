@@ -117,6 +117,40 @@ export function mergeOutlookCategorySources(
   });
 }
 
+function sortNormalizedCategoryValues(values: readonly string[]): string[] {
+  return [...values].sort((left, right) => {
+    const normalizedLeft = String(left || "").trim().toLowerCase();
+    const normalizedRight = String(right || "").trim().toLowerCase();
+    if (normalizedLeft !== normalizedRight) return normalizedLeft.localeCompare(normalizedRight, "pt");
+    return String(left || "").trim().localeCompare(String(right || "").trim(), "pt");
+  });
+}
+
+export function getOutlookCategorySourceSignature(
+  source?: Partial<OutlookCategorySource> | null
+): string {
+  const normalized = normalizeOutlookCategorySource(source);
+  return JSON.stringify({
+    principalGroupNames: sortNormalizedCategoryValues(normalized.principalGroupNames),
+    referenceGroupNames: sortNormalizedCategoryValues(normalized.referenceGroupNames),
+    ticketCodes: sortNormalizedCategoryValues(normalized.ticketCodes),
+    labelNames: sortNormalizedCategoryValues(normalized.labelNames),
+    managedLabelNames: sortNormalizedCategoryValues(normalized.managedLabelNames),
+    groupStatuses: sortNormalizedCategoryValues(normalized.groupStatuses),
+    ticketStatuses: sortNormalizedCategoryValues(normalized.ticketStatuses),
+    labelStatuses: sortNormalizedCategoryValues(normalized.labelStatuses),
+    specialCategories: sortNormalizedCategoryValues(normalized.specialCategories),
+    managedSpecialCategories: sortNormalizedCategoryValues(normalized.managedSpecialCategories),
+  });
+}
+
+export function areOutlookCategorySourcesEqual(
+  left?: Partial<OutlookCategorySource> | null,
+  right?: Partial<OutlookCategorySource> | null
+): boolean {
+  return getOutlookCategorySourceSignature(left) === getOutlookCategorySourceSignature(right);
+}
+
 export function isManagedCategoryFamilyName(name: string): boolean {
   const label = String(name || "").trim();
   return MANAGED_CATEGORY_PREFIXES.some((prefix) => label.startsWith(prefix));
@@ -158,6 +192,15 @@ export function buildOutlookCategoryPlan(
     managedSpecialCategories: normalizedSource.managedSpecialCategories,
     manageClassificationFamilies: options?.manageClassificationFamilies !== false,
   };
+}
+
+export function getOutlookCategoryPlanSignature(plan: OutlookCategoryPlan): string {
+  return JSON.stringify({
+    desiredCategories: sortNormalizedCategoryValues(normalizeUniqueCategoryValues(plan.desiredCategories)),
+    managedLabelNames: sortNormalizedCategoryValues(normalizeUniqueCategoryValues(plan.managedLabelNames)),
+    managedSpecialCategories: sortNormalizedCategoryValues(normalizeUniqueCategoryValues(plan.managedSpecialCategories)),
+    manageClassificationFamilies: plan.manageClassificationFamilies !== false,
+  });
 }
 
 export function buildOutlookCategorySourceFromLegacyInput(input?: LegacyManagedOutlookCategoryInput | null): OutlookCategorySource {

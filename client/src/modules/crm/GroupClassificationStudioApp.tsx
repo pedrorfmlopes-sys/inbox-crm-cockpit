@@ -563,6 +563,10 @@ function mergeLabels(base: string[], extra: string[]): string[] {
   }, []);
 }
 
+function areStringListsEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function readParams(): StudioParams {
   const params = new URLSearchParams(window.location.search);
   return {
@@ -1724,7 +1728,9 @@ function StudioInner() {
     let cancelled = false;
     void (async () => {
       if (!selectedEmailIsCurrent) {
-        if (!cancelled) setOutlookLabelCategories([]);
+        if (!cancelled) {
+          setOutlookLabelCategories((current) => (current.length ? [] : current));
+        }
         return;
       }
       try {
@@ -1736,9 +1742,11 @@ function StudioInner() {
         );
         if (cancelled) return;
         const labels = (snapshot?.labelNames || []).map((label) => String(label || "").trim()).filter(Boolean);
-        setOutlookLabelCategories(labels);
+        setOutlookLabelCategories((current) => (areStringListsEqual(current, labels) ? current : labels));
       } catch {
-        if (!cancelled) setOutlookLabelCategories([]);
+        if (!cancelled) {
+          setOutlookLabelCategories((current) => (current.length ? [] : current));
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -1747,17 +1755,31 @@ function StudioInner() {
   useEffect(() => {
     if (!outlookLabelCategories.length) return;
     setLabelDrafts((current) => {
+      let changed = false;
       const next = { ...current };
       for (const label of outlookLabelCategories) {
-        next[label] = {
+        const resolved = {
           categorize: true,
           hasStatus: current[label]?.hasStatus ?? false,
           status: current[label]?.status,
         };
+        const previous = current[label];
+        if (
+          !previous
+          || previous.categorize !== resolved.categorize
+          || previous.hasStatus !== resolved.hasStatus
+          || previous.status !== resolved.status
+        ) {
+          next[label] = resolved;
+          changed = true;
+        }
       }
-      return next;
+      return changed ? next : current;
     });
-    setSelectedLabels((current) => mergeLabels(current, outlookLabelCategories));
+    setSelectedLabels((current) => {
+      const next = mergeLabels(current, outlookLabelCategories);
+      return areStringListsEqual(current, next) ? current : next;
+    });
   }, [outlookLabelCategories]);
 
   async function handleClose() {
