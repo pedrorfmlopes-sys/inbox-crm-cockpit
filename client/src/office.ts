@@ -29,8 +29,10 @@ export type OutlookAttachment = {
 };
 
 const GRAPH_NAA_CLIENT_ID = "67f42759-4576-461a-b87b-c78332f7a1e7";
-const GRAPH_NAA_AUTHORITY = "https://login.microsoftonline.com/common";
+const GRAPH_NAA_TENANT_ID = "7eff32de-43f1-447b-af3e-af8d2939e93d";
+const GRAPH_NAA_AUTHORITY = `https://login.microsoftonline.com/${GRAPH_NAA_TENANT_ID}`;
 const GRAPH_ATTACHMENT_SCOPES = ["Mail.Read", "User.Read"];
+const GRAPH_PEOPLE_SCOPES = ["People.Read", "User.Read"];
 
 let nestableMsalPromise: Promise<any> | null = null;
 
@@ -107,7 +109,7 @@ async function getNestableMsalInstance(): Promise<any | null> {
   return await nestableMsalPromise;
 }
 
-async function acquireGraphTokenWithNaa(scopes: string[]): Promise<string> {
+async function acquireGraphTokenWithNaa(scopes: string[], options?: { allowPrompts?: boolean }): Promise<string> {
   try {
     const msal = await getNestableMsalInstance();
     if (!msal) return "";
@@ -122,6 +124,7 @@ async function acquireGraphTokenWithNaa(scopes: string[]): Promise<string> {
         || String(error?.name || "").trim() === "InteractionRequiredAuthError"
         || /interaction_required|consent_required|login_required/i.test(String(error?.errorCode || error?.message || ""));
       if (!interactionRequired) throw error;
+      if (options?.allowPrompts === false) return "";
       const authResult = await msal.acquireTokenPopup(tokenRequest);
       return String(authResult?.accessToken || "").trim();
     }
@@ -131,27 +134,8 @@ async function acquireGraphTokenWithNaa(scopes: string[]): Promise<string> {
   }
 }
 
-async function acquireGraphTokenWithOfficeRuntime(allowPrompts = true): Promise<string> {
-  try {
-    const ort: any = (window as any).OfficeRuntime;
-    const auth = ort?.auth;
-    if (!auth?.getAccessToken) return "";
-    const token = await auth.getAccessToken({
-      allowSignInPrompt: allowPrompts,
-      allowConsentPrompt: allowPrompts,
-      forMSGraphAccess: true,
-    });
-    return String(token || "").trim();
-  } catch (error) {
-    clientLog.warn("[office] OfficeRuntime Graph token acquisition failed", error);
-    return "";
-  }
-}
-
 async function getGraphAccessToken(scopes: string[], options?: { allowPrompts?: boolean }): Promise<string> {
-  const naaToken = await acquireGraphTokenWithNaa(scopes);
-  if (naaToken) return naaToken;
-  return await acquireGraphTokenWithOfficeRuntime(options?.allowPrompts !== false);
+  return await acquireGraphTokenWithNaa(scopes, options);
 }
 
 async function getCurrentMessageRestId(): Promise<string> {
@@ -523,7 +507,7 @@ export async function getOutlookContactSuggestionByEmail(emailRaw: string): Prom
   if (!email) return null;
 
   try {
-    const token = await acquireGraphTokenWithOfficeRuntime(false);
+    const token = await getGraphAccessToken(GRAPH_PEOPLE_SCOPES, { allowPrompts: false });
     if (!token) return null;
 
     const q = encodeURIComponent(`"${email}"`);
