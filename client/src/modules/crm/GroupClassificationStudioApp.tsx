@@ -105,6 +105,28 @@ function buildSnippet(email: RelatedEmailEntry): string {
   return source.length > 180 ? `${source.slice(0, 177).trim()}...` : source;
 }
 
+function buildEmailCorpus(email: RelatedEmailEntry): string {
+  return [
+    email.subject,
+    email.fromName,
+    email.fromEmail,
+    email.bodyText,
+    htmlToPlainText(String(email.bodyHtml || "")),
+    ...(email.attachments || []).map((attachment) => attachment.name),
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function matchReferenceSet(text: string, references: string[]): string[] {
+  const compactHaystack = String(text || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  return references.filter((reference) => {
+    const compactReference = compactReferenceValue(reference);
+    return Boolean(compactReference && compactHaystack.includes(compactReference));
+  });
+}
+
 function formatDate(value: string | undefined): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -714,6 +736,46 @@ function StudioInner() {
     const meta = emailContextMeta.get(makeEmailKey(selectedEmail));
     return Array.isArray(meta?.ticketIds) ? meta.ticketIds.filter(Boolean) : [];
   }, [emailContextMeta, selectedEmail]);
+
+  const similarCases = useMemo(() => {
+    if (!selectedEmail) return [];
+    const selectedKey = makeEmailKey(selectedEmail);
+    const selectedPartner = normalizeSearchValue(`${derivePartnerName(selectedEmail)} ${selectedEmail.fromEmail || ""}`);
+    const selectedGroups = new Set(selectedEmailGroups.map((group) => group.id));
+    const selectedTickets = new Set(selectedEmailTicketIds);
+    const emailUniverse = dedupeEmails([...relatedEmails, ...knownEmails]);
+    return emailUniverse
+      .filter((email) => makeEmailKey(email) && makeEmailKey(email) !== selectedKey)
+      .map((email) => {
+        const key = makeEmailKey(email);
+        const text = buildEmailCorpus(email);
+        const matchedRefs = matchReferenceSet(text, documentReferences);
+        const meta = emailContextMeta.get(key) || { groupIds: [], labels: [], ticketIds: [] };
+        const candidateGroups = getEmailGroupRelations(email);
+        const overlapGroups = meta.groupIds.filter((groupId) => selectedGroups.has(groupId));
+        const overlapTickets = meta.ticketIds.filter((ticketId) => selectedTickets.has(ticketId));
+        const candidatePartner = normalizeSearchValue(`${derivePartnerName(email)} ${email.fromEmail || ""}`);
+        const samePartner = Boolean(selectedPartner && candidatePartner && (candidatePartner.includes(selectedPartner) || selectedPartner.includes(candidatePartner)));
+        const sameType = detectCaseType(text) === detectedCaseType && detectedCaseType !== "geral";
+        const score =
+          matchedRefs.length * 140
+          + overlapGroups.length * 36
+          + overlapTickets.length * 42
+          + (samePartner ? 18 : 0)
+          + (sameType ? 8 : 0);
+        return {
+          email,
+          score,
+          matchedRefs,
+          candidateGroups,
+          candidateTickets: contextualTickets.filter((ticket) => meta.ticketIds.includes(ticket.id)).slice(0, 2),
+          candidateLabels: meta.labels.slice(0, 3),
+        };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score || String(b.email.messageDateIso || b.email.receivedAtIso || "").localeCompare(String(a.email.messageDateIso || a.email.receivedAtIso || "")))
+      .slice(0, 6);
+  }, [detectedCaseType, documentReferences, emailContextMeta, getEmailGroupRelations, knownEmails, relatedEmails, selectedEmail, selectedEmailGroups, selectedEmailTicketIds, contextualTickets]);
 
   useEffect(() => {
     if (!selectedEmail) return;
@@ -1683,86 +1745,139 @@ function StudioInner() {
           </div>
 
           <div style={S.grid2Wide}>
-            <div style={S.card}>
-              <div style={S.cardTitle}>Leitura do email</div>
-              <div style={S.cardMeta}>Leitura tecnica do assunto, corpo e anexos para preparar a classificacao. As sugestoes clicaveis ficam na faixa fixa do topo.</div>
-              <div style={S.summaryRow}><span>Tipo detetado</span><strong>{detectedCaseType}</strong></div>
-              <div style={S.summaryRow}><span>Parceiro detetado</span><strong>{derivePartnerName(selectedEmail) || "--"}</strong></div>
-              <div style={S.summaryRow}><span>Anexos lidos</span><strong>{analyzedAttachmentNames.length ? analyzedAttachmentNames.join(", ") : "--"}</strong></div>
-              <div style={S.summaryRow}><span>Refs. documento</span><strong>{documentReferences.length ? documentReferences.join(", ") : "--"}</strong></div>
-              <div style={S.summaryRow}><span>Codigos/artigos</span><strong>{articleReferences.length ? articleReferences.join(", ") : "--"}</strong></div>
-              <div style={S.summaryRow}><span>Sugestao de grupo</span><strong>{suggestedGroupName || "--"}</strong></div>
+            <div style={S.stackMini}>
+              <div style={S.card}>
+                <div style={S.cardTitle}>Leitura do email</div>
+                <div style={S.cardMeta}>Resumo tecnico do assunto, corpo e anexos. As sugestoes clicaveis continuam na faixa fixa do topo.</div>
+                <div style={S.summaryGrid}>
+                  <div style={S.summaryRow}><span>Tipo detetado</span><strong>{detectedCaseType}</strong></div>
+                  <div style={S.summaryRow}><span>Parceiro detetado</span><strong>{derivePartnerName(selectedEmail) || "--"}</strong></div>
+                  <div style={S.summaryRow}><span>Refs. documento</span><strong>{documentReferences.length ? documentReferences.join(", ") : "--"}</strong></div>
+                  <div style={S.summaryRow}><span>Codigos/artigos</span><strong>{articleReferences.length ? articleReferences.join(", ") : "--"}</strong></div>
+                  <div style={S.summaryRow}><span>Anexos lidos</span><strong>{analyzedAttachmentNames.length ? analyzedAttachmentNames.join(", ") : "--"}</strong></div>
+                  <div style={S.summaryRow}><span>Sugestao de grupo</span><strong>{suggestedGroupName || "--"}</strong></div>
+                </div>
+              </div>
+
+              <div style={S.card}>
+                <div style={S.cardTitle}>Casos semelhantes</div>
+                <div style={S.cardMeta}>Emails ja guardados que parecem pertencer ao mesmo dossier, sobretudo por referencia documental.</div>
+                {similarCases.length ? (
+                  <div style={S.itemList}>
+                    {similarCases.map((entry) => {
+                      const key = makeEmailKey(entry.email);
+                      const ticketSummary = entry.candidateTickets.map((ticket) => ticket.code).filter(Boolean).join(", ");
+                      return (
+                        <div key={key} style={S.itemRow}>
+                          <button type="button" style={S.similarMainBtn} onClick={() => setSelectedEmailKey(key)}>
+                            <div style={S.itemMeta}>
+                              <strong>{entry.email.subject || "(sem assunto)"}</strong>
+                              <small>{entry.email.fromName || entry.email.fromEmail || "--"} · {formatDate(entry.email.messageDateIso || entry.email.receivedAtIso) || "--"}</small>
+                              <small>{buildSnippet(entry.email) || "Sem preview curto disponivel."}</small>
+                              <div style={S.inlineWrap}>
+                                {entry.matchedRefs.map((reference) => <span key={`${key}-${reference}`} style={S.groupChip}>Ref: {reference}</span>)}
+                                {entry.candidateGroups.slice(0, 2).map((group) => <span key={`${key}-${group.id}`} style={S.groupChip}>{group.name || group.id}</span>)}
+                                {ticketSummary ? <span style={S.groupChip}>TK: {ticketSummary}</span> : null}
+                                {entry.candidateLabels.slice(0, 2).map((label) => <span key={`${key}-${label}`} style={S.groupChip}>{label}</span>)}
+                              </div>
+                            </div>
+                          </button>
+                          <div style={S.stackMini}>
+                            <button type="button" style={S.secondaryBtn} onClick={() => setSelectedEmailKey(key)}>
+                              Ver caso
+                            </button>
+                            {(entry.email.itemId || entry.email.emailWebLink) ? (
+                              <button
+                                type="button"
+                                style={S.secondaryBtn}
+                                onClick={() => void requestCockpitHostAction({ type: "open-email", itemId: entry.email.itemId, emailWebLink: entry.email.emailWebLink })}
+                              >
+                                <Icons.ExternalLink size={12} />
+                                Outlook
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <PanelState compact tone="info" title="Ainda sem casos semelhantes" description="Assim que tivermos matches fortes por referencia, grupo ou ticket, vao aparecer aqui." />
+                )}
+              </div>
             </div>
 
-            <div style={S.card}>
-              <div style={S.cardTitle}>Criacao rapida</div>
-              <div style={S.cardMeta}>Ja comecamos aqui a criar e ligar grupos ou tickets sem sair da janela.</div>
-              <label style={S.field}>
-                <span style={S.label}>Novo grupo</span>
-                <div style={S.inline}>
-                  <input style={S.input} value={createGroupName} onChange={(event) => setCreateGroupName(event.target.value)} placeholder="Nome do grupo" />
-                  <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateGroupAndLink()} disabled={actionBusy || !String(createGroupName || "").trim()}>
-                    <Icons.Plus size={12} />
-                    Criar grupo
-                  </button>
-                </div>
-              </label>
-              <label style={S.field}>
-                <span style={S.label}>Novo ticket</span>
-                <input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do ticket" />
-              </label>
-              <label style={S.field}>
-                <span style={S.label}>Serie de ticket</span>
-                <div style={S.inline}>
-                  <select style={S.select} value={selectedSeriesId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedSeriesId(nextValue); if (nextValue) setSelectedTicketId(""); }}>
-                    <option value="">Sem ticket/caso</option>
-                    {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
-                  </select>
-                  <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateTicketAndLink()} disabled={actionBusy || !selectedSeriesId}>
-                    <Icons.Plus size={12} />
-                    Criar ticket
-                  </button>
-                </div>
-              </label>
-            </div>
-          </div>
+            <div style={S.stackMini}>
+              <div style={S.card}>
+                <div style={S.cardTitle}>Criacao rapida</div>
+                <div style={S.cardMeta}>Criar e ligar grupo ou ticket sem sair desta janela.</div>
+                <label style={S.field}>
+                  <span style={S.label}>Novo grupo</span>
+                  <div style={S.compactCreateRow}>
+                    <input style={S.input} value={createGroupName} onChange={(event) => setCreateGroupName(event.target.value)} placeholder="Nome do grupo" />
+                    <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateGroupAndLink()} disabled={actionBusy || !String(createGroupName || "").trim()}>
+                      <Icons.Plus size={12} />
+                      Criar
+                    </button>
+                  </div>
+                </label>
+                <label style={S.field}>
+                  <span style={S.label}>Novo ticket</span>
+                  <input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do ticket" />
+                </label>
+                <label style={S.field}>
+                  <span style={S.label}>Serie de ticket</span>
+                  <div style={S.compactCreateRow}>
+                    <select style={S.select} value={selectedSeriesId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedSeriesId(nextValue); if (nextValue) setSelectedTicketId(""); }}>
+                      <option value="">Sem ticket/caso</option>
+                      {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
+                    </select>
+                    <button type="button" style={S.secondaryBtn} onClick={() => void handleCreateTicketAndLink()} disabled={actionBusy || !selectedSeriesId}>
+                      <Icons.Plus size={12} />
+                      Criar
+                    </button>
+                  </div>
+                </label>
+              </div>
 
-          <div style={S.card}>
-            <div style={S.cardTitle}>Anexos deste email</div>
-            <div style={S.cardMeta}>Cada anexo pode ser marcado para analisar, guardar no grupo principal ou reenviar mais tarde.</div>
-            {selectedEmailAttachments.length ? (
-              <>
-                <div style={S.attachList}>
-                  {selectedEmailAttachments.map((attachment) => {
-                    const key = makeAttachmentKey(attachment);
-                    const plan = attachmentPlan[key] || { analyze: false, save: false, forward: false };
-                    const hasContent = Boolean(String(attachment.content || "").trim());
-                    return (
-                      <div key={key} style={S.attachRow}>
-                        <div style={S.attachMeta}>
-                          <strong>{attachment.name}</strong>
-                          <small>{attachment.contentType || "ficheiro"}{attachment.size ? ` · ${Math.round(Number(attachment.size || 0) / 1024)} KB` : ""}{hasContent ? "" : " · sem conteudo guardado"}</small>
-                        </div>
-                        <div style={S.attachChecks}>
-                          <label style={S.check}><input type="checkbox" checked={plan.analyze} onChange={(event) => toggleAttachmentPlan(key, "analyze", event.target.checked)} /><span>Analisar</span></label>
-                          <label style={S.check}><input type="checkbox" checked={plan.save} onChange={(event) => toggleAttachmentPlan(key, "save", event.target.checked)} disabled={!hasContent} /><span>Guardar</span></label>
-                          <label style={S.check}><input type="checkbox" checked={plan.forward} onChange={(event) => toggleAttachmentPlan(key, "forward", event.target.checked)} /><span>Reenviar</span></label>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={S.inline}>
-                  <button type="button" style={S.secondaryBtn} onClick={() => void handleSaveSelectedAttachments()} disabled={actionBusy || !principalGroupId}>
-                    <Icons.Save size={12} />
-                    Guardar no grupo principal
-                  </button>
-                  <span style={S.cardMeta}>Necessita de grupo principal selecionado e de anexos com conteudo disponivel.</span>
-                </div>
-              </>
-            ) : (
-              <PanelState compact tone="info" title="Sem anexos disponiveis" description="Este email nao traz anexos guardados ou ainda nao temos o conteudo disponivel nesta janela." />
-            )}
+              <div style={S.card}>
+                <div style={S.cardTitle}>Anexos deste email</div>
+                <div style={S.cardMeta}>Cada anexo pode ser marcado para analisar, guardar no grupo principal ou reenviar mais tarde.</div>
+                {selectedEmailAttachments.length ? (
+                  <>
+                    <div style={S.attachList}>
+                      {selectedEmailAttachments.map((attachment) => {
+                        const key = makeAttachmentKey(attachment);
+                        const plan = attachmentPlan[key] || { analyze: false, save: false, forward: false };
+                        const hasContent = Boolean(String(attachment.content || "").trim());
+                        return (
+                          <div key={key} style={S.attachRow}>
+                            <div style={S.attachMeta}>
+                              <strong>{attachment.name}</strong>
+                              <small>{attachment.contentType || "ficheiro"}{attachment.size ? ` · ${Math.round(Number(attachment.size || 0) / 1024)} KB` : ""}{hasContent ? "" : " · sem conteudo guardado"}</small>
+                            </div>
+                            <div style={S.attachChecks}>
+                              <label style={S.check}><input type="checkbox" checked={plan.analyze} onChange={(event) => toggleAttachmentPlan(key, "analyze", event.target.checked)} /><span>Analisar</span></label>
+                              <label style={S.check}><input type="checkbox" checked={plan.save} onChange={(event) => toggleAttachmentPlan(key, "save", event.target.checked)} disabled={!hasContent} /><span>Guardar</span></label>
+                              <label style={S.check}><input type="checkbox" checked={plan.forward} onChange={(event) => toggleAttachmentPlan(key, "forward", event.target.checked)} /><span>Reenviar</span></label>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={S.inline}>
+                      <button type="button" style={S.secondaryBtn} onClick={() => void handleSaveSelectedAttachments()} disabled={actionBusy || !principalGroupId}>
+                        <Icons.Save size={12} />
+                        Guardar no grupo principal
+                      </button>
+                      <span style={S.cardMeta}>Necessita de grupo principal selecionado e de anexos com conteudo disponivel.</span>
+                    </div>
+                  </>
+                ) : (
+                  <PanelState compact tone="info" title="Sem anexos disponiveis" description="Este email nao traz anexos guardados ou ainda nao temos o conteudo disponivel nesta janela." />
+                )}
+              </div>
+            </div>
           </div>
         </div>
       );
@@ -2551,6 +2666,7 @@ const S: Record<string, React.CSSProperties> = {
   itemList: { display: "grid", gap: 10 },
   itemRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 12, alignItems: "center", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)" },
   itemMeta: { display: "grid", gap: 4, minWidth: 0, color: "var(--iccc-text)" },
+  similarMainBtn: { border: "none", background: "transparent", padding: 0, margin: 0, textAlign: "left", display: "grid", minWidth: 0, cursor: "pointer" },
   summaryRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)", fontSize: 13, color: "var(--iccc-text)" },
   summaryGrid: { display: "grid", gap: 8 },
   note: { padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(191,219,254,0.8)", background: "#eff6ff", color: "#1d4ed8", fontSize: 13, lineHeight: 1.5 },
