@@ -29,8 +29,7 @@ import {
 } from "@/api";
 import { aiGenerate } from "@/ai/aiClient";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { displayNewMessageForm, displayReplyForm, getManagedOutlookCategorySnapshot, openGroupClassificationStudio, openGroupExplorer, openGroupSettings, openLinkedOutlookEmail, setSubjectInComposeDraft, syncOutlookCategorySource } from "@/office";
-import { buildOutlookCategorySourceFromRelatedContext } from "@/outlookCategories";
+import { displayNewMessageForm, displayReplyForm, openGroupClassificationStudio, openGroupExplorer, openGroupSettings, openLinkedOutlookEmail, setSubjectInComposeDraft, syncCurrentItemOutlookCategoriesFromContext } from "@/office";
 import {
   findGroupLabelCatalogEntry,
   getGroupLabelCatalogLabels,
@@ -1173,21 +1172,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   }
 
   async function syncCurrentEmailOutlookCategories() {
-    const related = await getRelatedEmailContext(currentEmailLinkPayload);
-    const knownLabelNames = Array.from(new Set([
-      ...(Array.isArray(settings?.groupLabelCatalog) ? settings.groupLabelCatalog.map((entry) => String(entry?.label || "").trim()).filter(Boolean) : []),
-      ...(Array.isArray(related?.email?.labels) ? related.email.labels.map((label) => String(label || "").trim()).filter(Boolean) : []),
-      ...(Array.isArray(related?.email?.removedInheritedLabels) ? related.email.removedInheritedLabels.map((label) => String(label || "").trim()).filter(Boolean) : []),
-      ...(Array.isArray(related?.email?.classificationMeta?.categorizedLabelNames) ? related.email.classificationMeta.categorizedLabelNames.map((label) => String(label || "").trim()).filter(Boolean) : []),
-    ]));
-    const snapshot = await getManagedOutlookCategorySnapshot(knownLabelNames).catch(() => null);
-    await syncOutlookCategorySource(buildOutlookCategorySourceFromRelatedContext({
-      email: related?.email || null,
-      groups: Array.isArray(related?.groups) ? related.groups : [],
-      tickets: Array.isArray(related?.tickets) ? related.tickets : [],
-      settings,
-      currentOutlookLabelNames: snapshot?.labelNames || [],
-    }));
+    await syncCurrentItemOutlookCategoriesFromContext();
   }
 
   const rankedGroups = useMemo(

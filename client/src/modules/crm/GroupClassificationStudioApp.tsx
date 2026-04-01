@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
 import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction } from "@/office";
-import { buildOutlookCategorySourceFromRelatedContext, ODOO_LINKED_CATEGORY } from "@/outlookCategories";
 import {
   findGroupLabelCatalogEntry,
   getGroupLabelCatalogLabels,
@@ -2441,37 +2440,8 @@ function StudioInner() {
 
       const includesCurrentTarget = effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
       if (includesCurrentTarget) {
-        const settings = await getSettings().catch(() => null);
-        const syncLabelSnapshot = await getManagedOutlookCategorySnapshot(
-          mergeLabels(
-            mergeLabels(
-              mergeLabels(labelCatalog, summaryLabels),
-              mergeLabels(selectedEmail?.labels || [], selectedEmailCategorizedLabelNames)
-            ),
-            mergeLabels(selectedEmail?.removedInheritedLabels || [], removedInheritedLabels)
-          )
-        ).catch(() => null);
-        const refreshedCurrentEmail = await getRelatedEmailContext({
-          itemId: String(currentContext.itemId || "").trim() || undefined,
-          internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
-          conversationId: String(currentContext.conversationId || "").trim() || undefined,
-          subject: String(currentContext.subject || "").trim() || undefined,
-          fromEmail: String(currentContext.fromEmail || "").trim() || undefined,
-          fromName: String(currentContext.fromName || "").trim() || undefined,
-          receivedAtIso: String(currentContext.receivedAtIso || "").trim() || undefined,
-          messageDateIso: String(currentContext.receivedAtIso || "").trim() || undefined,
-        }).catch(() => null);
         await requestCockpitHostAction({
-          type: "sync-managed-categories",
-          payload: buildOutlookCategorySourceFromRelatedContext({
-            email: refreshedCurrentEmail?.email || null,
-            groups: Array.isArray(refreshedCurrentEmail?.groups) ? refreshedCurrentEmail.groups : [],
-            tickets: Array.isArray(refreshedCurrentEmail?.tickets) ? refreshedCurrentEmail.tickets : [],
-            settings,
-            currentOutlookLabelNames: syncLabelSnapshot?.labelNames || [],
-            specialCategories: refreshedCurrentEmail?.email?.relatedRecords?.length ? [ODOO_LINKED_CATEGORY] : [],
-            managedSpecialCategories: [ODOO_LINKED_CATEGORY],
-          }),
+          type: "sync-current-item-categories",
         }).catch(() => undefined);
       }
 

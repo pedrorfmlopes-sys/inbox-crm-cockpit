@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, syncOdooLinkedNotification, syncOutlookCategorySource, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, syncOdooLinkedNotification, syncOutlookCategorySource, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -282,6 +282,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [startupChecks, setStartupChecks] = useState<StartupCheck[]>(() => createStartupChecks());
     const [startupNoticeState, setStartupNoticeState] = useState<StartupNotice | null>(null);
     const [startupNoticeDismissed, setStartupNoticeDismissed] = useState(false);
+    const [outlookCategoryRefreshTick, setOutlookCategoryRefreshTick] = useState(0);
     const lastOutlookCategorySyncRef = useRef<{ identity: string; signature: string } | null>(null);
 
     function resetStartupPreflight() {
@@ -365,6 +366,14 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated as EventListener);
         return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated as EventListener);
+    }, []);
+
+    useEffect(() => {
+        const handleOutlookCategoryContextInvalidated = () => {
+            setOutlookCategoryRefreshTick((current) => current + 1);
+        };
+        window.addEventListener(OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, handleOutlookCategoryContextInvalidated as EventListener);
+        return () => window.removeEventListener(OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, handleOutlookCategoryContextInvalidated as EventListener);
     }, []);
 
     useEffect(() => {
@@ -1138,7 +1147,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return () => {
             cancelled = true;
         };
-    }, [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, links.length, settings?.groupOutlookCategories]);
+    }, [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, links.length, outlookCategoryRefreshTick, settings?.groupOutlookCategories]);
 
     useEffect(() => {
         syncOdooLinkedNotification(links.length > 0, links.length).catch(() => {

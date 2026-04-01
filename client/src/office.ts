@@ -1,5 +1,8 @@
 import { clientLog } from "./logger";
+import { getLinks, getRelatedEmailContext } from "./api";
+import { getSettings } from "./settings";
 import {
+  buildOutlookCategorySourceFromRelatedContext,
   GROUP_CATEGORY_PREFIX,
   REFERENCE_CATEGORY_PREFIX,
   TICKET_CATEGORY_PREFIX,
@@ -57,9 +60,47 @@ const GRAPH_NAA_REDIRECT_URI = `${window.location.origin}/`;
 const GRAPH_RUNTIME_ENABLED = false;
 
 let nestableMsalPromise: Promise<any> | null = null;
+export const OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT = "iccc-outlook-category-context-invalidated";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function dispatchOutlookCategoryContextInvalidated() {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
+  try {
+    window.dispatchEvent(new CustomEvent(OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT));
+  } catch {
+    // best effort only
+  }
+}
+
+function collectKnownOutlookCategoryLabelNames(input: {
+  settings: Awaited<ReturnType<typeof getSettings>> | null;
+  email: any;
+  groups: any[];
+  tickets: any[];
+}): string[] {
+  return Array.from(new Set([
+    ...(Array.isArray(input.settings?.groupLabelCatalog)
+      ? input.settings.groupLabelCatalog.map((entry) => String(entry?.label || "").trim()).filter(Boolean)
+      : []),
+    ...(Array.isArray(input.email?.labels)
+      ? input.email.labels.map((label: unknown) => String(label || "").trim()).filter(Boolean)
+      : []),
+    ...(Array.isArray(input.email?.removedInheritedLabels)
+      ? input.email.removedInheritedLabels.map((label: unknown) => String(label || "").trim()).filter(Boolean)
+      : []),
+    ...(Array.isArray(input.email?.classificationMeta?.categorizedLabelNames)
+      ? input.email.classificationMeta.categorizedLabelNames.map((label: unknown) => String(label || "").trim()).filter(Boolean)
+      : []),
+    ...(Array.isArray(input.groups)
+      ? input.groups.flatMap((group: any) => Array.isArray(group?.labels) ? group.labels : []).map((label: unknown) => String(label || "").trim()).filter(Boolean)
+      : []),
+    ...(Array.isArray(input.tickets)
+      ? input.tickets.flatMap((ticket: any) => Array.isArray(ticket?.labels) ? ticket.labels : []).map((label: unknown) => String(label || "").trim()).filter(Boolean)
+      : []),
+  ]));
 }
 
 async function waitForOffice(maxWaitMs = 5000): Promise<any> {
@@ -955,6 +996,55 @@ export async function syncOutlookCategorySource(
   );
 }
 
+export async function syncCurrentItemOutlookCategoriesFromContext(
+  options?: { expectedItemToken?: string }
+): Promise<boolean> {
+  const currentContext = await getSelectedMessageContext().catch(() => ({} as OutlookMessageContext));
+  const hasCurrentIdentity = Boolean(
+    String(currentContext.itemId || "").trim()
+    || String(currentContext.internetMessageId || "").trim()
+    || String(currentContext.conversationId || "").trim()
+  );
+  if (!hasCurrentIdentity) return false;
+
+  const expectedItemToken = String(options?.expectedItemToken || "").trim() || await getCurrentItemToken().catch(() => "");
+  const payload = {
+    itemId: String(currentContext.itemId || "").trim() || undefined,
+    internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
+    conversationId: String(currentContext.conversationId || "").trim() || undefined,
+    subject: String(currentContext.subject || "").trim() || undefined,
+    fromEmail: String(currentContext.fromEmail || "").trim() || undefined,
+    fromName: String(currentContext.fromName || "").trim() || undefined,
+    receivedAtIso: String(currentContext.receivedDateTimeIso || "").trim() || undefined,
+    messageDateIso: String(currentContext.receivedDateTimeIso || "").trim() || undefined,
+  };
+  const [settings, related, links] = await Promise.all([
+    getSettings().catch(() => null),
+    getRelatedEmailContext(payload).catch(() => null),
+    getLinks(payload.conversationId, payload.internetMessageId, payload.itemId).catch(() => []),
+  ]);
+  const knownLabelNames = collectKnownOutlookCategoryLabelNames({
+    settings,
+    email: related?.email || null,
+    groups: Array.isArray(related?.groups) ? related.groups : [],
+    tickets: Array.isArray(related?.tickets) ? related.tickets : [],
+  });
+  const snapshot = await getManagedOutlookCategorySnapshot(knownLabelNames).catch(() => null);
+  const applied = await syncOutlookCategorySource(buildOutlookCategorySourceFromRelatedContext({
+    email: related?.email || null,
+    groups: Array.isArray(related?.groups) ? related.groups : [],
+    tickets: Array.isArray(related?.tickets) ? related.tickets : [],
+    settings,
+    currentOutlookLabelNames: snapshot?.labelNames || [],
+    specialCategories: Array.isArray(links) && links.length ? [ODOO_LINKED_CATEGORY] : [],
+    managedSpecialCategories: [ODOO_LINKED_CATEGORY],
+  }), {
+    expectedItemToken,
+  });
+  if (applied) dispatchOutlookCategoryContextInvalidated();
+  return applied;
+}
+
 export async function syncOdooLinkedCategory(hasLinks: boolean): Promise<void> {
   await syncOutlookCategorySource(
     {
@@ -1181,6 +1271,7 @@ type CockpitHostAction =
   | { type: "open-email"; itemId?: string; emailWebLink?: string }
   | { type: "reply-current" }
   | { type: "forward-current" }
+  | { type: "sync-current-item-categories" }
   | {
       type: "sync-managed-categories";
       payload: (LegacyManagedOutlookCategoryInput & Partial<OutlookCategorySource>);
@@ -1210,12 +1301,19 @@ async function executeCockpitHostAction(action: CockpitHostAction): Promise<void
     return;
   }
 
+  if (action.type === "sync-current-item-categories") {
+    await syncCurrentItemOutlookCategoriesFromContext();
+    return;
+  }
+
   if (action.type === "sync-managed-categories") {
     if ("groupNames" in (action.payload || {}) || "statuses" in (action.payload || {})) {
       await syncManagedOutlookCategories(action.payload || {});
+      dispatchOutlookCategoryContextInvalidated();
       return;
     }
     await syncOutlookCategorySource(action.payload || {});
+    dispatchOutlookCategoryContextInvalidated();
     return;
   }
 }
