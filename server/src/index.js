@@ -21,6 +21,8 @@ import {
   deleteDocumentFromGroup,
   deleteCustomGroup,
   detectGroupTicketsForEmail,
+  getDocumentContentFromGroup,
+  getEmailAttachmentContent,
   getRelatedEmails,
   listAttachmentFlagsByGroup,
   listDocumentsByGroup,
@@ -1883,21 +1885,20 @@ app.get("/api/links/groups/:groupId/documents/:documentId/content", async (req, 
     const groupId = String(req.params.groupId || "").trim();
     const documentId = String(req.params.documentId || "").trim();
     const download = String(req.query.download || "").trim() === "1";
-    const documents = await listDocumentsByGroup(groupId);
-    const document = Array.isArray(documents)
-      ? documents.find((entry) => String(entry?.id || "").trim() === documentId)
-      : null;
+    const payload = await getDocumentContentFromGroup(groupId, documentId);
+    const document = payload?.document || null;
+    const buffer = payload?.buffer || null;
 
-    if (!document?.contentBase64) {
+    if (!document || !buffer?.length) {
       return res.status(404).json({ ok: false, error: "group_document_not_found" });
     }
 
     const contentType = normalizeStoredDocumentMimeType(document.contentType, document.name);
     const fileName = String(document.name || "documento").replace(/["\r\n]/g, "_");
-    const buffer = Buffer.from(String(document.contentBase64 || "").replace(/^data:[^,]+,/, ""), "base64");
 
     res.setHeader("Content-Type", contentType);
     res.setHeader("Content-Length", String(buffer.length));
+    res.setHeader("X-File-Name", fileName);
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader(
       "Content-Disposition",
@@ -1907,6 +1908,37 @@ app.get("/api/links/groups/:groupId/documents/:documentId/content", async (req, 
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_document_content_failed", details: String(e?.message || e) });
+  }
+});
+
+app.get("/api/links/emails/:emailId/attachments/:attachmentKey/content", async (req, res) => {
+  try {
+    const emailId = String(req.params.emailId || "").trim();
+    const attachmentKey = String(req.params.attachmentKey || "").trim();
+    const download = String(req.query.download || "").trim() === "1";
+    const payload = await getEmailAttachmentContent(emailId, attachmentKey);
+    const attachment = payload?.attachment || null;
+    const buffer = payload?.buffer || null;
+
+    if (!attachment || !buffer?.length) {
+      return res.status(404).json({ ok: false, error: "email_attachment_not_found" });
+    }
+
+    const contentType = normalizeStoredDocumentMimeType(attachment.contentType, attachment.name);
+    const fileName = String(attachment.name || "anexo").replace(/["\r\n]/g, "_");
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Length", String(buffer.length));
+    res.setHeader("X-File-Name", fileName);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader(
+      "Content-Disposition",
+      `${download ? "attachment" : "inline"}; filename="${fileName}"`
+    );
+    return res.send(buffer);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "email_attachment_content_failed", details: String(e?.message || e) });
   }
 });
 

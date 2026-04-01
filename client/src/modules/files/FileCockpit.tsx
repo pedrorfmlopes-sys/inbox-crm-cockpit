@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Icons from "../../ui/icons";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { getAttachments } from "@/office";
-import { getInvoiceStudioBatchStatus, uploadToInvoiceStudio } from "@/api";
+import { getEmailAttachmentContentBase64, getInvoiceStudioBatchStatus, getRelatedEmailContext, uploadToInvoiceStudio } from "@/api";
 import { PanelState, type PanelStateTone } from "../../ui/PanelState";
 
 type InvoiceJobState = {
@@ -136,10 +136,56 @@ export const FileCockpit: React.FC = () => {
             setStatus({
                 tone: "loading",
                 title: "A importar anexos",
-                description: "Estamos a ler os anexos disponiveis no email atual.",
+                description: "Estamos a ler os anexos persistidos do email atual e, se preciso, a fallback para o Outlook.",
             });
-            const atts = await getAttachments();
-            if (atts.length === 0) {
+            let imported = 0;
+            const persisted = await getRelatedEmailContext({
+                itemId: String(ctx?.itemId || "").trim(),
+                internetMessageId: String(ctx?.internetMessageId || "").trim(),
+                conversationId: String(ctx?.conversationId || "").trim(),
+                subject: String(ctx?.subject || "").trim(),
+                fromEmail: String(ctx?.fromEmail || "").trim(),
+                receivedAtIso: String(ctx?.receivedDateTimeIso || "").trim(),
+            }).catch(() => null);
+
+            const persistedEmail = persisted?.email || null;
+            const persistedAttachments = Array.isArray(persistedEmail?.attachments) ? persistedEmail.attachments : [];
+            if (persistedEmail?.id && persistedAttachments.length) {
+                for (const attachment of persistedAttachments) {
+                    let content = String(attachment?.content || "").trim();
+                    if (!content && attachment?.hasContent) {
+                        const remoteId = String(attachment?.key || attachment?.id || "").trim();
+                        if (remoteId) {
+                            try {
+                                const loaded = await getEmailAttachmentContentBase64(String(persistedEmail.id || "").trim(), remoteId);
+                                content = String(loaded.base64 || "").trim();
+                            } catch {
+                                content = "";
+                            }
+                        }
+                    }
+                    if (!content) continue;
+                    addFile({
+                        name: String(attachment?.name || "").trim(),
+                        type: String(attachment?.contentType || "application/octet-stream").trim(),
+                        content,
+                    });
+                    imported += 1;
+                }
+            }
+
+            if (!imported) {
+                const atts = await getAttachments();
+                for (const att of atts) {
+                    addFile({
+                        name: att.name,
+                        type: att.contentType,
+                        content: att.content,
+                    });
+                    imported += 1;
+                }
+            }
+            if (imported === 0) {
                 setMsg("Nenhum anexo encontrado neste email.");
                 setStatus({
                     tone: "empty",
@@ -147,20 +193,11 @@ export const FileCockpit: React.FC = () => {
                     description: "Podes importar ficheiros do computador ou selecionar outro email com anexos.",
                 });
             } else {
-                let counts = 0;
-                for (const att of atts) {
-                    addFile({
-                        name: att.name,
-                        type: att.contentType,
-                        content: att.content,
-                    });
-                    counts++;
-                }
-                setMsg(`${counts} anexos importados com sucesso.`);
+                setMsg(`${imported} anexos importados com sucesso.`);
                 setStatus({
                     tone: "success",
                     title: "Anexos importados",
-                    description: `${counts} anexo(s) disponiveis para leitura, resumo ou envio para o InvoiceStudio.`,
+                    description: `${imported} anexo(s) disponiveis para leitura, resumo ou envio para o InvoiceStudio.`,
                 });
             }
         } catch (e: any) {

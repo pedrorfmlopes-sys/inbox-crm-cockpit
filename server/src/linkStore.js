@@ -10,9 +10,14 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-const PRIMARY_DATA_DIR = path.resolve(__dirname, "../data");
+const PRIMARY_DATA_DIR = process.env.ICC_DATA_DIR
+  ? path.resolve(process.env.ICC_DATA_DIR)
+  : path.resolve(__dirname, "../data");
 const PRIMARY_FILE_PATH = path.join(PRIMARY_DATA_DIR, "links.json");
 const LEGACY_FILE_PATH = path.join(process.cwd(), "server", "data", "links.json");
+const DOCUMENT_STORAGE_ROOT = process.env.ICC_DOCUMENT_STORAGE_ROOT
+  ? path.resolve(process.env.ICC_DOCUMENT_STORAGE_ROOT)
+  : path.join(PRIMARY_DATA_DIR, "documents");
 const STORE_VERSION = 2;
 const CUSTOM_GROUP_KIND = "custom";
 const DEFAULT_GROUP_MEMBERSHIP_KIND = "principal";
@@ -533,18 +538,105 @@ function normalizeEmailLabelStates(value) {
   return next;
 }
 
-function normalizeAttachments(value) {
+function makeEmailAttachmentIdentitySeed(input = {}) {
+  return [
+    normalizeString(input?.id),
+    normalizeString(input?.contentId),
+    normalizeDocumentName(input?.name),
+    normalizeString(input?.contentType),
+    String(Number(input?.size || 0) || ""),
+  ].filter(Boolean).join("|");
+}
+
+function makeEmailAttachmentKey(input = {}) {
+  const explicit = normalizeString(input?.key);
+  if (explicit) return explicit;
+  const seed = makeEmailAttachmentIdentitySeed(input) || crypto.randomUUID();
+  return `att_${crypto.createHash("sha1").update(seed).digest("hex").slice(0, 20)}`;
+}
+
+function normalizeEmailAttachmentInput(input = {}, current = {}) {
+  const content = normalizeBase64Content(input?.content || current?.content);
+  const storageProvider = normalizeDocumentStorageProvider(input?.storageProvider ?? current?.storageProvider);
+  return {
+    key: makeEmailAttachmentKey({ ...current, ...input }),
+    id: normalizeString(input?.id ?? current?.id),
+    name: normalizeString(input?.name ?? current?.name),
+    contentType: normalizeString(input?.contentType ?? current?.contentType),
+    size: Number(input?.size || current?.size || 0) || estimateBase64Size(content) || undefined,
+    isInline: typeof input?.isInline === "boolean" ? input.isInline : Boolean(current?.isInline),
+    contentId: normalizeString(input?.contentId ?? current?.contentId),
+    content,
+    storageProvider,
+    storageBasePath: normalizeString(input?.storageBasePath ?? current?.storageBasePath),
+    storagePathHint: normalizeString(input?.storagePathHint ?? current?.storagePathHint).replace(/\\/g, "/"),
+    hasContent:
+      typeof input?.hasContent === "boolean"
+        ? input.hasContent
+        : Boolean(
+          content
+          || (isFileBackedDocumentProvider(storageProvider)
+            && (normalizeString(input?.storageBasePath ?? current?.storageBasePath)
+              || normalizeString(input?.storagePathHint ?? current?.storagePathHint)))
+        ),
+  };
+}
+
+function emailAttachmentHasStoredContent(input = {}) {
+  const attachment = normalizeEmailAttachmentInput(input);
+  if (attachment.content) return true;
+  if (!isFileBackedDocumentProvider(attachment.storageProvider)) return false;
+  return Boolean(attachment.storageBasePath || attachment.storagePathHint);
+}
+
+function findExistingEmailAttachment(existingAttachments, attachment) {
+  const key = normalizeString(attachment?.key);
+  const id = normalizeString(attachment?.id);
+  const contentId = normalizeString(attachment?.contentId);
+  const identitySeed = makeEmailAttachmentIdentitySeed(attachment);
+  return (existingAttachments || []).find((entry) => {
+    const current = normalizeEmailAttachmentInput(entry);
+    if (key && current.key === key) return true;
+    if (id && current.id && current.id === id) return true;
+    if (contentId && current.contentId && current.contentId === contentId) return true;
+    return identitySeed && makeEmailAttachmentIdentitySeed(current) === identitySeed;
+  }) || null;
+}
+
+function normalizeAttachments(value, options = {}) {
   if (!Array.isArray(value)) return [];
+  const existingAttachments = Array.isArray(options?.existingAttachments)
+    ? options.existingAttachments.map((attachment) => normalizeEmailAttachmentInput(attachment))
+    : [];
   return value
-    .map((attachment) => ({
-      id: normalizeString(attachment?.id),
-      name: normalizeString(attachment?.name),
-      contentType: normalizeString(attachment?.contentType),
-      size: Number(attachment?.size || 0) || undefined,
-      isInline: Boolean(attachment?.isInline),
-      contentId: normalizeString(attachment?.contentId),
-      content: normalizeBase64Content(attachment?.content),
-    }))
+    .map((attachment) => {
+      const existing = findExistingEmailAttachment(existingAttachments, attachment);
+      const normalized = normalizeEmailAttachmentInput({
+        ...existing,
+        ...attachment,
+        storageProvider: Object.prototype.hasOwnProperty.call(attachment || {}, "storageProvider")
+          ? attachment?.storageProvider
+          : existing?.storageProvider,
+        storageBasePath: Object.prototype.hasOwnProperty.call(attachment || {}, "storageBasePath")
+          ? attachment?.storageBasePath
+          : existing?.storageBasePath,
+        storagePathHint: Object.prototype.hasOwnProperty.call(attachment || {}, "storagePathHint")
+          ? attachment?.storagePathHint
+          : existing?.storagePathHint,
+      }, existing || {});
+      if (!normalized.content && existing && emailAttachmentHasStoredContent(existing)) {
+        return normalizeEmailAttachmentInput({
+          ...normalized,
+          key: existing.key || normalized.key,
+          storageProvider: existing.storageProvider,
+          storageBasePath: existing.storageBasePath,
+          storagePathHint: existing.storagePathHint,
+          content: "",
+          hasContent: true,
+        }, existing);
+      }
+      return normalized;
+    })
     .filter((attachment) => attachment.name);
 }
 
@@ -563,8 +655,298 @@ function normalizeDocumentName(value) {
   return normalizeString(value).replace(/[\\/:*?"<>|]+/g, "_");
 }
 
+function normalizeDocumentStorageProvider(value) {
+  const normalized = normalizeString(value).toLowerCase();
+  if (normalized === "local" || normalized === "onedrive") return normalized;
+  return "cloud";
+}
+
+function isFileBackedDocumentProvider(value) {
+  const provider = normalizeDocumentStorageProvider(value);
+  return provider === "local" || provider === "onedrive";
+}
+
+function documentHasStoredContent(doc) {
+  if (!doc || typeof doc !== "object") return false;
+  if (normalizeBase64Content(doc.contentBase64 || doc.content)) return true;
+  if (!isFileBackedDocumentProvider(doc.storageProvider)) return false;
+  return Boolean(normalizeString(doc.storageBasePath) || normalizeString(doc.storagePathHint));
+}
+
+function looksLikeWebUrl(value) {
+  return /^https?:\/\//i.test(normalizeString(value));
+}
+
+function normalizeRelativeDocumentPath(value) {
+  return normalizeString(value)
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((segment) => normalizeDocumentName(segment))
+    .filter((segment) => segment && segment !== "." && segment !== "..")
+    .join("/");
+}
+
+function buildDefaultEmailAttachmentRelativePath(email, attachment) {
+  const emailFolder = [
+    normalizeDocumentName(email?.conversationId) || normalizeDocumentName(email?.id) || "email",
+    normalizeDocumentName(email?.internetMessageId || email?.itemId || email?.id).slice(0, 80) || "item",
+  ].filter(Boolean).join("__");
+  const fileName = `${normalizeDocumentName(attachment?.key) || "anexo"}__${normalizeDocumentName(attachment?.name) || "anexo"}`;
+  return path.posix.join("emails", emailFolder || "email", fileName || "anexo");
+}
+
+function buildDefaultDocumentRelativePath(group, doc) {
+  const groupFolder = [
+    normalizeDocumentName(group?.name) || "grupo",
+    normalizeDocumentName(group?.id) || "grupo",
+  ].filter(Boolean).join("__");
+  const fileName = `${normalizeDocumentName(doc?.id) || "documento"}__${normalizeDocumentName(doc?.name) || "documento"}`;
+  return path.posix.join(groupFolder || "grupo", fileName || "documento");
+}
+
+function resolveStoredDocumentFileLocation(group, input) {
+  const doc = normalizeGroupDocumentInput(input);
+  const provider = normalizeDocumentStorageProvider(doc.storageProvider);
+  if (!isFileBackedDocumentProvider(provider)) {
+    return null;
+  }
+
+  const configuredBasePath = normalizeString(doc.storageBasePath);
+  if (!configuredBasePath) {
+    throw new Error("Define primeiro a pasta base dos documentos nos Settings antes de guardares ficheiros fora do Cockpit Cloud.");
+  }
+  if (looksLikeWebUrl(configuredBasePath)) {
+    throw new Error("Para ja, OneDrive/SharePoint deve ser configurado com uma pasta sincronizada local ou caminho UNC, nao com URL web.");
+  }
+
+  const basePath = path.resolve(configuredBasePath);
+  const rawHint = normalizeString(doc.storagePathHint);
+  let relativePath = "";
+  if (rawHint) {
+    const candidateAbsolute = path.isAbsolute(rawHint) ? path.resolve(rawHint) : "";
+    if (candidateAbsolute) {
+      const relativeFromBase = path.relative(basePath, candidateAbsolute);
+      if (relativeFromBase && !relativeFromBase.startsWith("..") && !path.isAbsolute(relativeFromBase)) {
+        relativePath = normalizeRelativeDocumentPath(relativeFromBase);
+      }
+    }
+    if (!relativePath) {
+      relativePath = normalizeRelativeDocumentPath(rawHint);
+    }
+  }
+  if (!relativePath) {
+    relativePath = buildDefaultDocumentRelativePath(group, doc);
+  }
+
+  const filePath = path.resolve(basePath, relativePath);
+  const relativeCheck = path.relative(basePath, filePath);
+  if (!relativeCheck || relativeCheck.startsWith("..") || path.isAbsolute(relativeCheck)) {
+    throw new Error("O caminho configurado para o documento saiu da pasta base permitida.");
+  }
+
+  return {
+    provider,
+    basePath,
+    relativePath: relativePath.replace(/\\/g, "/"),
+    filePath,
+  };
+}
+
+function resolveStoredEmailAttachmentFileLocation(email, input) {
+  const attachment = normalizeEmailAttachmentInput(input);
+  const provider = normalizeDocumentStorageProvider(attachment.storageProvider);
+  if (!isFileBackedDocumentProvider(provider)) {
+    return null;
+  }
+
+  const configuredBasePath = normalizeString(attachment.storageBasePath);
+  if (!configuredBasePath || looksLikeWebUrl(configuredBasePath)) {
+    return null;
+  }
+
+  const basePath = path.resolve(configuredBasePath);
+  const rawHint = normalizeString(attachment.storagePathHint);
+  let relativePath = "";
+  if (rawHint) {
+    const candidateAbsolute = path.isAbsolute(rawHint) ? path.resolve(rawHint) : "";
+    if (candidateAbsolute) {
+      const relativeFromBase = path.relative(basePath, candidateAbsolute);
+      if (relativeFromBase && !relativeFromBase.startsWith("..") && !path.isAbsolute(relativeFromBase)) {
+        relativePath = normalizeRelativeDocumentPath(relativeFromBase);
+      }
+    }
+    if (!relativePath) {
+      relativePath = normalizeRelativeDocumentPath(rawHint);
+    }
+  }
+  if (!relativePath) {
+    relativePath = buildDefaultEmailAttachmentRelativePath(email, attachment);
+  }
+
+  const filePath = path.resolve(basePath, relativePath);
+  const relativeCheck = path.relative(basePath, filePath);
+  if (!relativeCheck || relativeCheck.startsWith("..") || path.isAbsolute(relativeCheck)) {
+    return null;
+  }
+
+  return {
+    provider,
+    basePath,
+    relativePath: relativePath.replace(/\\/g, "/"),
+    filePath,
+  };
+}
+
+function persistEmailAttachmentContentForProvider(email, input) {
+  const attachment = normalizeEmailAttachmentInput(input);
+  const provider = normalizeDocumentStorageProvider(attachment.storageProvider);
+  if (!attachment.content) return { ...attachment, storageProvider: provider };
+  if (!isFileBackedDocumentProvider(provider)) {
+    return {
+      ...attachment,
+      storageProvider: "cloud",
+      storageBasePath: "",
+      storagePathHint: "",
+      hasContent: true,
+    };
+  }
+
+  const location = resolveStoredEmailAttachmentFileLocation(email, {
+    ...attachment,
+    storageProvider: provider,
+  });
+  if (!location) {
+    return {
+      ...attachment,
+      storageProvider: "cloud",
+      storageBasePath: "",
+      storagePathHint: "",
+      hasContent: true,
+    };
+  }
+
+  fs.mkdirSync(path.dirname(location.filePath), { recursive: true });
+  fs.writeFileSync(location.filePath, Buffer.from(attachment.content, "base64"));
+
+  return {
+    ...attachment,
+    storageProvider: location.provider,
+    storageBasePath: location.basePath,
+    storagePathHint: location.relativePath,
+    content: "",
+    hasContent: true,
+  };
+}
+
+function readStoredEmailAttachmentBuffer(email, input) {
+  const attachment = normalizeEmailAttachmentInput(input);
+  if (attachment.content) {
+    return Buffer.from(attachment.content, "base64");
+  }
+  if (!isFileBackedDocumentProvider(attachment.storageProvider)) {
+    return null;
+  }
+  const location = resolveStoredEmailAttachmentFileLocation(email, attachment);
+  if (!location || !fs.existsSync(location.filePath)) {
+    return null;
+  }
+  return fs.readFileSync(location.filePath);
+}
+
+function deleteStoredEmailAttachmentContent(email, input) {
+  const attachment = normalizeEmailAttachmentInput(input);
+  if (!isFileBackedDocumentProvider(attachment.storageProvider)) return;
+  const location = resolveStoredEmailAttachmentFileLocation(email, attachment);
+  if (!location || !fs.existsSync(location.filePath)) return;
+  fs.unlinkSync(location.filePath);
+}
+
+function persistEmailAttachmentsForProvider(email, attachments, options = {}) {
+  const storageProvider = normalizeDocumentStorageProvider(options?.storageProvider);
+  const storageBasePath = normalizeString(options?.storageBasePath);
+  const existingAttachments = Array.isArray(options?.existingAttachments)
+    ? options.existingAttachments.map((attachment) => normalizeEmailAttachmentInput(attachment))
+    : [];
+  return normalizeAttachments(attachments, { existingAttachments }).map((attachment) => {
+    const existing = findExistingEmailAttachment(existingAttachments, attachment);
+    if (!attachment.content && existing && emailAttachmentHasStoredContent(existing)) {
+      return normalizeEmailAttachmentInput({
+        ...attachment,
+        key: existing.key || attachment.key,
+        storageProvider: existing.storageProvider,
+        storageBasePath: existing.storageBasePath,
+        storagePathHint: existing.storagePathHint,
+        content: "",
+        hasContent: true,
+      }, existing);
+    }
+    return persistEmailAttachmentContentForProvider(email, {
+      ...attachment,
+      storageProvider,
+      storageBasePath,
+    });
+  });
+}
+
+function persistDocumentContentForProvider(group, input) {
+  const doc = normalizeGroupDocumentInput(input);
+  const provider = normalizeDocumentStorageProvider(doc.storageProvider);
+  if (!doc.contentBase64) return { ...doc, storageProvider: provider };
+  if (!isFileBackedDocumentProvider(provider)) {
+    return {
+      ...doc,
+      storageProvider: "cloud",
+      storageBasePath: "",
+      storagePathHint: "",
+    };
+  }
+
+  const location = resolveStoredDocumentFileLocation(group, {
+    ...doc,
+    storageProvider: provider,
+  });
+  if (!location) {
+    return { ...doc, storageProvider: "cloud" };
+  }
+
+  fs.mkdirSync(path.dirname(location.filePath), { recursive: true });
+  fs.writeFileSync(location.filePath, Buffer.from(doc.contentBase64, "base64"));
+
+  return {
+    ...doc,
+    storageProvider: location.provider,
+    storageBasePath: location.basePath,
+    storagePathHint: location.relativePath,
+    contentBase64: "",
+  };
+}
+
+function readStoredDocumentBuffer(group, input) {
+  const doc = normalizeGroupDocumentInput(input);
+  if (doc.contentBase64) {
+    return Buffer.from(doc.contentBase64, "base64");
+  }
+  if (!isFileBackedDocumentProvider(doc.storageProvider)) {
+    return null;
+  }
+  const location = resolveStoredDocumentFileLocation(group, doc);
+  if (!location || !fs.existsSync(location.filePath)) {
+    return null;
+  }
+  return fs.readFileSync(location.filePath);
+}
+
+function deleteStoredDocumentContent(group, input) {
+  const doc = normalizeGroupDocumentInput(input);
+  if (!isFileBackedDocumentProvider(doc.storageProvider)) return;
+  const location = resolveStoredDocumentFileLocation(group, doc);
+  if (!location || !fs.existsSync(location.filePath)) return;
+  fs.unlinkSync(location.filePath);
+}
+
 function normalizeGroupDocumentInput(input = {}) {
   const contentBase64 = normalizeBase64Content(input?.contentBase64 || input?.content);
+  const storageProvider = normalizeDocumentStorageProvider(input?.storageProvider);
   return {
     id: normalizeString(input?.id) || `doc_${crypto.randomUUID()}`,
     name: normalizeDocumentName(input?.name) || "documento",
@@ -576,9 +958,13 @@ function normalizeGroupDocumentInput(input = {}) {
     sourceInternetMessageId: normalizeMessageId(input?.sourceInternetMessageId),
     sourceConversationId: normalizeString(input?.sourceConversationId),
     sourceEmailSubject: normalizeString(input?.sourceEmailSubject),
-    storageProvider: normalizeString(input?.storageProvider),
+    storageProvider,
     storageBasePath: normalizeString(input?.storageBasePath),
-    storagePathHint: normalizeString(input?.storagePathHint),
+    storagePathHint: normalizeString(input?.storagePathHint).replace(/\\/g, "/"),
+    hasContent:
+      typeof input?.hasContent === "boolean"
+        ? input.hasContent
+        : Boolean(contentBase64 || (isFileBackedDocumentProvider(storageProvider) && (normalizeString(input?.storageBasePath) || normalizeString(input?.storagePathHint)))),
     createdAt: normalizeString(input?.createdAt) || nowIso(),
     updatedAt: normalizeString(input?.updatedAt) || nowIso(),
   };
@@ -834,6 +1220,17 @@ function upsertEmail(store, input) {
     next.messageDateIso = next.receivedAtIso || next.sentAtIso || next.linkedAt || now;
   }
   if (!next.receivedAtIso) next.receivedAtIso = next.messageDateIso;
+  if (Array.isArray(input?.attachments)) {
+    next.attachments = persistEmailAttachmentsForProvider(
+      { ...next, id: emailId },
+      normalized.attachments,
+      {
+        existingAttachments: current.attachments,
+        storageProvider: input?.attachmentStorageProvider,
+        storageBasePath: input?.attachmentStorageBasePath,
+      }
+    );
+  }
 
   store.emails[emailId] = next;
 
@@ -1708,7 +2105,7 @@ async function upsertDbGroupDocument(groupId, input) {
   if (!db.isEnabled()) return;
   const gid = normalizeString(groupId);
   const doc = normalizeGroupDocumentInput(input);
-  if (!gid || !doc.id || !doc.contentBase64) return;
+  if (!gid || !doc.id || !documentHasStoredContent(doc)) return;
 
   await db.query(
     `INSERT INTO crm_custom_group_documents
@@ -1736,7 +2133,7 @@ async function upsertDbGroupDocument(groupId, input) {
       doc.name,
       doc.contentType,
       doc.size,
-      doc.contentBase64,
+      doc.contentBase64 || "",
       doc.sourceEmailKey,
       doc.sourceItemId,
       doc.sourceInternetMessageId,
@@ -3022,9 +3419,25 @@ export async function saveDocumentsToGroup(groupId, input) {
   const docs = Array.isArray(input?.documents) ? input.documents.map((doc) => normalizeGroupDocumentInput(doc)).filter((doc) => doc.contentBase64) : [];
   if (!docs.length) throw new Error("Sem documentos válidos para guardar.");
 
+  const persistedDocs = [];
+  try {
+    for (const doc of docs) {
+      persistedDocs.push(persistDocumentContentForProvider(group, doc));
+    }
+  } catch (error) {
+    for (const storedDoc of persistedDocs) {
+      try {
+        deleteStoredDocumentContent(group, storedDoc);
+      } catch {
+        // best-effort rollback of files already written in this batch
+      }
+    }
+    throw error;
+  }
+
   const current = Array.isArray(store.groupDocuments[gid]) ? store.groupDocuments[gid].map((doc) => normalizeGroupDocumentInput(doc)) : [];
   const byId = new Map(current.map((doc) => [doc.id, doc]));
-  for (const doc of docs) {
+  for (const doc of persistedDocs) {
     byId.set(doc.id, {
       ...doc,
       updatedAt: nowIso(),
@@ -3035,10 +3448,17 @@ export async function saveDocumentsToGroup(groupId, input) {
   if (store.groups[gid]) store.groups[gid].updatedAt = nowIso();
   if (useDurableDb) {
     try {
-      for (const doc of docs) {
+      for (const doc of persistedDocs) {
         await upsertDbGroupDocument(gid, doc);
       }
     } catch (error) {
+      for (const doc of persistedDocs) {
+        try {
+          deleteStoredDocumentContent(group, doc);
+        } catch {
+          // best-effort cleanup if DB persistence fails after file storage
+        }
+      }
       throw durablePersistenceError("guardar documentos no grupo", error);
     }
   }
@@ -3057,10 +3477,9 @@ export async function deleteDocumentFromGroup(groupId, documentId) {
   const gid = normalizeString(groupId);
   const did = normalizeString(documentId);
   const current = Array.isArray(store.groupDocuments[gid]) ? store.groupDocuments[gid] : [];
+  const removedDoc = current.find((doc) => normalizeString(doc?.id) === did) || null;
   const next = current.filter((doc) => normalizeString(doc?.id) !== did);
   const removed = next.length !== current.length;
-  store.groupDocuments[gid] = next;
-  if (removed && store.groups[gid]) store.groups[gid].updatedAt = nowIso();
   if (useDurableDb && removed) {
     try {
       await deleteDbGroupDocument(gid, did);
@@ -3068,9 +3487,61 @@ export async function deleteDocumentFromGroup(groupId, documentId) {
       throw durablePersistenceError("eliminar o documento do grupo", error);
     }
   }
+  if (removed && removedDoc) {
+    deleteStoredDocumentContent(store.groups[gid], removedDoc);
+  }
+  store.groupDocuments[gid] = next;
+  if (removed && store.groups[gid]) store.groups[gid].updatedAt = nowIso();
   if (removed) writeCacheStore(store);
 
   return { ok: true, removed, groupId: gid, documentId: did };
+}
+
+export async function getDocumentContentFromGroup(groupId, documentId) {
+  const gid = normalizeString(groupId);
+  const did = normalizeString(documentId);
+  if (!gid || !did) return null;
+
+  const store = readState();
+  const group = store.groups?.[gid] || { id: gid, name: gid };
+  const documents = await listDocumentsByGroup(gid);
+  const document = Array.isArray(documents)
+    ? documents.find((entry) => normalizeString(entry?.id) === did)
+    : null;
+  if (!document) return null;
+
+  const buffer = readStoredDocumentBuffer(group, document);
+  if (!buffer?.length) return null;
+
+  return {
+    document,
+    buffer,
+  };
+}
+
+export async function getEmailAttachmentContent(emailId, attachmentKey) {
+  const eid = normalizeString(emailId);
+  const aid = normalizeString(attachmentKey);
+  if (!eid || !aid) return null;
+
+  const store = readState();
+  const email = store.emails?.[eid];
+  if (!email) return null;
+
+  const attachments = normalizeAttachments(email.attachments);
+  const attachment = attachments.find((entry) =>
+    normalizeString(entry?.key) === aid || normalizeString(entry?.id) === aid
+  ) || null;
+  if (!attachment) return null;
+
+  const buffer = readStoredEmailAttachmentBuffer(email, attachment);
+  if (!buffer?.length) return null;
+
+  return {
+    email: buildEmailListEntry(email),
+    attachment,
+    buffer,
+  };
 }
 
 function findSeriesConflict(store, prefix, excludeId = "") {

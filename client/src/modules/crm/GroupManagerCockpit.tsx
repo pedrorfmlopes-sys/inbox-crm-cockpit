@@ -744,7 +744,11 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
         || currentEmailLinkPayload.conversationId
         || currentEmailLinkPayload.subject
       ) {
-        await registerRelevantEmail(studioSeedPayload);
+        await registerRelevantEmail({
+          ...studioSeedPayload,
+          attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
+          attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
+        });
       }
     } catch {
       // keep opening the studio even if the pre-registration fails

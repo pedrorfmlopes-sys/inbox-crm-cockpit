@@ -5,6 +5,8 @@ import {
     deleteLinkGroup,
     deleteGroupDocument,
     getGroupAttachmentFlags,
+    getGroupDocumentContentBase64,
+    getGroupDocumentContentUrl,
     getGroupEmails,
     getGroupDocuments,
     getRelatedEmailContext,
@@ -923,27 +925,26 @@ export const GroupsCockpit: React.FC = () => {
     }
 
     function handleDownloadDocument(doc: GroupDocumentEntry) {
-        const base64 = String(doc?.contentBase64 || "").trim();
-        if (!base64) {
+        if (!selectedGroup?.id || !doc?.id || doc.hasContent === false) {
             setMsg("Este documento nao tem conteudo disponivel para download.");
             return;
         }
-        const byteCharacters = globalThis.atob(base64);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i += 1) byteNumbers[i] = byteCharacters.charCodeAt(i);
-        const blob = new Blob([new Uint8Array(byteNumbers)], { type: doc.contentType || "application/octet-stream" });
-        const url = URL.createObjectURL(blob);
         const anchor = downloadAnchorRef.current || globalThis.document.createElement("a");
         downloadAnchorRef.current = anchor;
-        anchor.href = url;
-        anchor.download = doc.name || "documento";
+        anchor.href = getGroupDocumentContentUrl(selectedGroup.id, doc.id, { download: true });
+        anchor.target = "_blank";
+        anchor.rel = "noopener";
         anchor.click();
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
     }
 
     async function handleAttachDocument(document: GroupDocumentEntry) {
         try {
-            await addBase64AttachmentToCompose(document.name || "documento", String(document.contentBase64 || ""));
+            if (!selectedGroup?.id || !document?.id || document.hasContent === false) {
+                setMsg("Este documento nao tem conteudo disponivel para anexar.");
+                return;
+            }
+            const payload = await getGroupDocumentContentBase64(selectedGroup.id, document.id);
+            await addBase64AttachmentToCompose(document.name || payload.fileName || "documento", payload.base64);
             setMsg(`Documento "${document.name}" anexado ao email em edicao.`);
         } catch (error: any) {
             setMsg(error?.message || "Nao foi possivel anexar o documento.");
@@ -1363,7 +1364,7 @@ export const GroupsCockpit: React.FC = () => {
                                 ) : null}
                                 {groupDocuments.map((document) => {
                                     const active = makeDocumentKey(document) === makeDocumentKey(selectedDocument || {});
-                                    const canAttach = Boolean(document.contentBase64);
+                                    const canAttach = document.hasContent !== false;
                                     return (
                                         <div key={makeDocumentKey(document)} style={active ? styles.documentRowActive : styles.documentRow}>
                                             <button
@@ -1376,7 +1377,7 @@ export const GroupsCockpit: React.FC = () => {
                                                 <div style={styles.documentMiniMeta}>{formatBytes(document.size) || document.contentType || "Documento"}</div>
                                             </button>
                                             <div style={styles.emailActions}>
-                                                <IconButton title="Download" icon={<Icons.Download size={10} />} onClick={() => handleDownloadDocument(document)} disabled={!document.contentBase64} />
+                                                <IconButton title="Download" icon={<Icons.Download size={10} />} onClick={() => handleDownloadDocument(document)} disabled={document.hasContent === false} />
                                                 <IconButton title="Abrir explorador neste documento" icon={<Icons.ExternalLink size={10} />} onClick={() => void handleOpenExplorer({ documentId: document.id })} disabled={busyAction} />
                                                 <IconButton title="Anexar ao email em edicao" icon={<Icons.Upload size={10} />} onClick={() => void handleAttachDocument(document)} disabled={!canAttach} />
                                                 <IconButton title="Remover documento" icon={<Icons.Trash size={10} />} onClick={() => void handleDeleteDocument(document)} disabled={busyAction} tone="danger" />

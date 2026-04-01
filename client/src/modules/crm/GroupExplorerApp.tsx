@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import {
   deleteGroupDocument,
+  getGroupDocumentContentBase64,
+  getGroupDocumentTextContent,
   getGroupDocumentContentUrl,
   getGroupDocuments,
   getGroupEmails,
@@ -25,8 +27,8 @@ type EmailAttachmentFilter = "all" | "with" | "without";
 type DocumentFilterMode = "all" | "selected_email";
 type PreviewMode = "email" | "document";
 type PreviewState =
-  | { kind: "image"; dataUrl: string }
-  | { kind: "pdf"; dataUrl: string }
+  | { kind: "image"; src: string }
+  | { kind: "pdf"; src: string }
   | { kind: "office"; url: string }
   | { kind: "text"; text: string }
   | { kind: "unsupported" };
@@ -306,8 +308,8 @@ function inferDocumentKind(document: GroupDocumentEntry): "image" | "pdf" | "off
   ) {
     return "office";
   }
-  if (!stripDataUrlPrefix(document.contentBase64)) return "unsupported";
   if (type.startsWith("text/") || type.includes("json") || type.includes("xml") || type.includes("csv") || /\.(txt|md|json|xml|csv|log|ya?ml)$/.test(name)) return "text";
+  if (!stripDataUrlPrefix(document.contentBase64)) return "unsupported";
   return "unsupported";
 }
 
@@ -332,22 +334,30 @@ function buildOfficePreviewUrl(groupId: string, document: GroupDocumentEntry | n
   return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
 }
 
-function buildDocumentPreview(groupId: string, document: GroupDocumentEntry | null): PreviewState | null {
+function buildDocumentPreview(groupId: string, document: GroupDocumentEntry | null, textPreview?: string): PreviewState | null {
   if (!document) return null;
   const kind = inferDocumentKind(document);
   if (kind === "office") {
     const url = buildOfficePreviewUrl(groupId, document);
     return url ? { kind, url } : { kind: "unsupported" };
   }
-  if (!document.contentBase64) return null;
+  if (kind === "text") {
+    if (typeof textPreview === "string" && textPreview.trim()) return { kind, text: textPreview };
+    if (!document.contentBase64) return null;
+    try { return { kind, text: globalThis.atob(stripDataUrlPrefix(document.contentBase64)) }; } catch { return { kind: "unsupported" }; }
+  }
+  if (!document.contentBase64) {
+    if (!groupId || !document.id || document.hasContent === false) return null;
+    const src = getGroupDocumentContentUrl(groupId, document.id);
+    if (kind === "image") return { kind, src };
+    if (kind === "pdf") return { kind, src };
+    return null;
+  }
   const base64 = stripDataUrlPrefix(document.contentBase64);
   if (!base64) return null;
-  const dataUrl = `data:${normalizeDocumentMimeType(document.contentType, document.name)};base64,${base64}`;
-  if (kind === "image") return { kind, dataUrl };
-  if (kind === "pdf") return { kind, dataUrl };
-  if (kind === "text") {
-    try { return { kind, text: globalThis.atob(base64) }; } catch { return { kind: "unsupported" }; }
-  }
+  const src = `data:${normalizeDocumentMimeType(document.contentType, document.name)};base64,${base64}`;
+  if (kind === "image") return { kind, src };
+  if (kind === "pdf") return { kind, src };
   return { kind: "unsupported" };
 }
 
@@ -465,6 +475,7 @@ export default function GroupExplorerApp(): JSX.Element {
   const [previewMode, setPreviewMode] = useState<PreviewMode>("document");
   const [liveCurrentContext, setLiveCurrentContext] = useState<OutlookMessageContext | null>(null);
   const [liveCurrentAttachments, setLiveCurrentAttachments] = useState<OutlookAttachment[]>([]);
+  const [documentTextPreviewById, setDocumentTextPreviewById] = useState<Record<string, string>>({});
 
   useEffect(() => {
     (async () => {
@@ -602,9 +613,13 @@ export default function GroupExplorerApp(): JSX.Element {
     return mergeEmailAttachments(persisted, liveCurrentAttachments);
   }, [liveCurrentAttachments, liveCurrentContext, selectedEmail]);
 
+  const selectedDocumentTextPreview = useMemo(
+    () => (selectedDocument?.id ? documentTextPreviewById[selectedDocument.id] : ""),
+    [documentTextPreviewById, selectedDocument?.id]
+  );
   const selectedDocumentPreview = useMemo(
-    () => buildDocumentPreview(selectedGroupId, selectedDocument),
-    [selectedDocument, selectedGroupId]
+    () => buildDocumentPreview(selectedGroupId, selectedDocument, selectedDocumentTextPreview),
+    [selectedDocument, selectedDocumentTextPreview, selectedGroupId]
   );
   const selectedEmailPreviewHtml = useMemo(
     () => buildEmailPreviewHtml(selectedEmail, selectedEmailAttachments),
@@ -634,6 +649,35 @@ export default function GroupExplorerApp(): JSX.Element {
       setPreviewMode("email");
     }
   }, [selectedDocument, selectedEmailHasPreview, selectedEmailKey]);
+
+  useEffect(() => {
+    const documentId = String(selectedDocument?.id || "").trim();
+    if (!selectedGroupId || !documentId || !selectedDocument) return;
+    if (inferDocumentKind(selectedDocument) !== "text") return;
+    if (selectedDocument.contentBase64 || documentTextPreviewById[documentId]) return;
+    if (selectedDocument.hasContent === false) return;
+
+    let cancelled = false;
+    void getGroupDocumentTextContent(selectedGroupId, documentId)
+      .then((text) => {
+        if (cancelled) return;
+        setDocumentTextPreviewById((current) => (
+          current[documentId] === text ? current : { ...current, [documentId]: text }
+        ));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDocumentTextPreviewById((current) => (
+          Object.prototype.hasOwnProperty.call(current, documentId)
+            ? current
+            : { ...current, [documentId]: "" }
+        ));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [documentTextPreviewById, selectedDocument, selectedGroupId]);
 
   async function refreshCurrentGroup() {
     if (!selectedGroupId) return;
@@ -716,27 +760,26 @@ export default function GroupExplorerApp(): JSX.Element {
   }
 
 function handleDownloadDocument(document: GroupDocumentEntry) {
-  const base64 = stripDataUrlPrefix(document.contentBase64);
-  if (!base64) {
+  if (!selectedGroupId || !document?.id || document.hasContent === false) {
     setNotice("Este documento nao tem conteudo disponivel para download.");
     return;
-    }
-    const bytes = globalThis.atob(base64);
-    const buffer = new Array(bytes.length);
-    for (let index = 0; index < bytes.length; index += 1) buffer[index] = bytes.charCodeAt(index);
-  const blob = new Blob([new Uint8Array(buffer)], { type: normalizeDocumentMimeType(document.contentType, document.name) });
-    const url = URL.createObjectURL(blob);
-    const anchor = downloadAnchorRef.current || globalThis.document.createElement("a");
-    downloadAnchorRef.current = anchor;
-    anchor.href = url;
-    anchor.download = document.name || "documento";
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
+  const anchor = downloadAnchorRef.current || globalThis.document.createElement("a");
+  downloadAnchorRef.current = anchor;
+  anchor.href = getGroupDocumentContentUrl(selectedGroupId, document.id, { download: true });
+  anchor.target = "_blank";
+  anchor.rel = "noopener";
+  anchor.click();
+}
 
   async function handleAttachDocument(document: GroupDocumentEntry) {
     try {
-      await addBase64AttachmentToCompose(document.name || "documento", stripDataUrlPrefix(document.contentBase64));
+      if (!selectedGroupId || !document?.id || document.hasContent === false) {
+        setNotice("Este documento nao tem conteudo disponivel para anexar.");
+        return;
+      }
+      const payload = await getGroupDocumentContentBase64(selectedGroupId, document.id);
+      await addBase64AttachmentToCompose(document.name || payload.fileName || "documento", payload.base64);
       setNotice(`Documento "${document.name}" anexado ao email em edicao.`);
     } catch (nextError: any) {
       setError(nextError?.message || "Nao foi possivel anexar o documento.");
@@ -892,8 +935,8 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
                         </div>
                       </button>
                       <div style={styles.cardActions}>
-                        <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(document)} disabled={!document.contentBase64} title="Download"><Icons.Download size={10} /></button>
-                        <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(document)} disabled={!document.contentBase64} title="Anexar ao email"><Icons.Upload size={10} /></button>
+                        <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(document)} disabled={document.hasContent === false} title="Download"><Icons.Download size={10} /></button>
+                        <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(document)} disabled={document.hasContent === false} title="Anexar ao email"><Icons.Upload size={10} /></button>
                         <button type="button" style={styles.iconBtnDanger} onClick={() => void handleDeleteDocument(document)} disabled={busy} title="Apagar"><Icons.Trash size={10} /></button>
                       </div>
                     </div>
@@ -949,8 +992,8 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
                 ) : null}
                 {selectedDocument ? (
                   <>
-                  <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(selectedDocument)} disabled={!selectedDocument.contentBase64} title="Download"><Icons.Download size={10} /></button>
-                  <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(selectedDocument)} disabled={!selectedDocument.contentBase64} title="Anexar ao email"><Icons.Upload size={10} /></button>
+                  <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(selectedDocument)} disabled={selectedDocument.hasContent === false} title="Download"><Icons.Download size={10} /></button>
+                  <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(selectedDocument)} disabled={selectedDocument.hasContent === false} title="Anexar ao email"><Icons.Upload size={10} /></button>
                   </>
                 ) : null}
               </div>
@@ -971,10 +1014,12 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
             ) : !selectedDocument ? (
               <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe um documento para abrir o preview." />
             ) : selectedDocumentPreview?.kind === "image" ? (
-              <div style={styles.previewFrame}><img src={selectedDocumentPreview.dataUrl} alt={selectedDocument.name} style={styles.previewImage} /></div>
+              <div style={styles.previewFrame}><img src={selectedDocumentPreview.src} alt={selectedDocument.name} style={styles.previewImage} /></div>
             ) : selectedDocumentPreview?.kind === "pdf" ? (
               <div style={styles.previewFrame}>
-                <PdfPreview title={selectedDocument.name} dataUrl={selectedDocumentPreview.dataUrl} />
+                {selectedDocumentPreview.src.startsWith("data:")
+                  ? <PdfPreview title={selectedDocument.name} dataUrl={selectedDocumentPreview.src} />
+                  : <iframe title={selectedDocument.name} src={selectedDocumentPreview.src} style={styles.previewIframe} />}
               </div>
             ) : selectedDocumentPreview?.kind === "office" ? (
               <div style={styles.previewFrame}>

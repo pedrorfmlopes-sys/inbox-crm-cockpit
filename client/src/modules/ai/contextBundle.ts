@@ -107,6 +107,50 @@ function dedupeLinkedRecords(entries: LinkEntry[]): Array<{ model: string; recor
     });
 }
 
+function makeAttachmentIdentity(entry: Partial<OutlookAttachment> & { key?: string }): string {
+  return [
+    normalizeText((entry as any)?.id),
+    normalizeText((entry as any)?.contentId),
+    normalizeText((entry as any)?.key),
+    normalizeText((entry as any)?.name).toLowerCase(),
+  ].filter(Boolean).join("|");
+}
+
+function mergeAttachmentLists(
+  primary: Array<(Partial<OutlookAttachment> & { key?: string })> = [],
+  fallback: Array<(Partial<OutlookAttachment> & { key?: string })> = []
+): OutlookAttachment[] {
+  const byKey = new Map<string, OutlookAttachment>();
+  for (const entry of fallback) {
+    const key = makeAttachmentIdentity(entry);
+    if (!key) continue;
+    byKey.set(key, {
+      id: normalizeText((entry as any)?.id) || undefined,
+      name: normalizeText((entry as any)?.name),
+      contentType: normalizeText((entry as any)?.contentType) || "application/octet-stream",
+      content: normalizeText((entry as any)?.content),
+      size: Number((entry as any)?.size || 0) || undefined,
+      isInline: Boolean((entry as any)?.isInline),
+      contentId: normalizeText((entry as any)?.contentId) || undefined,
+    });
+  }
+  for (const entry of primary) {
+    const key = makeAttachmentIdentity(entry);
+    if (!key) continue;
+    const existing = byKey.get(key);
+    byKey.set(key, {
+      id: normalizeText((entry as any)?.id || existing?.id) || undefined,
+      name: normalizeText((entry as any)?.name || existing?.name),
+      contentType: normalizeText((entry as any)?.contentType || existing?.contentType) || "application/octet-stream",
+      content: normalizeText((entry as any)?.content || existing?.content),
+      size: Number((entry as any)?.size || existing?.size || 0) || undefined,
+      isInline: typeof (entry as any)?.isInline === "boolean" ? Boolean((entry as any)?.isInline) : existing?.isInline,
+      contentId: normalizeText((entry as any)?.contentId || existing?.contentId) || undefined,
+    });
+  }
+  return Array.from(byKey.values()).filter((entry) => normalizeText(entry.name));
+}
+
 function summarizeReasons(email: RelatedEmailEntry): string {
   const parts: string[] = [];
   for (const reason of Array.isArray(email.relatedReasons) ? email.relatedReasons : []) {
@@ -273,6 +317,7 @@ export async function buildAiContextBundle(input: BuildAiContextBundleInput): Pr
   };
 
   const related = await getRelatedEmailContext(payload);
+  const effectiveAttachments = mergeAttachmentLists(input.attachments || [], related?.email?.attachments || []);
   const linkedRecords = dedupeLinkedRecords(input.links || []);
   const relatedEmailIds = new Set(dedupeRelatedEmails(related.emails || []).map((entry) => makeEmailIdentity(entry)));
   const currentEmailIdentity = makeEmailIdentity({
@@ -315,7 +360,10 @@ export async function buildAiContextBundle(input: BuildAiContextBundleInput): Pr
     relatedEmails,
     linkedRecordEmails,
     linkedRecords,
-    promptContext: buildContextText(input, {
+    promptContext: buildContextText({
+      ...input,
+      attachments: effectiveAttachments,
+    }, {
       groups: Array.isArray(related.groups) ? related.groups : [],
       tickets: Array.isArray(related.tickets) ? related.tickets : [],
       relatedEmails,
@@ -326,7 +374,10 @@ export async function buildAiContextBundle(input: BuildAiContextBundleInput): Pr
       excerptLength: 360,
       linkedRecordEmailLimit: 8,
     }),
-    briefingContext: buildContextText(input, {
+    briefingContext: buildContextText({
+      ...input,
+      attachments: effectiveAttachments,
+    }, {
       groups: Array.isArray(related.groups) ? related.groups : [],
       tickets: Array.isArray(related.tickets) ? related.tickets : [],
       relatedEmails,

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentContentUrl, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction } from "@/office";
 import {
   findGroupLabelCatalogEntry,
@@ -237,19 +237,20 @@ function isCurrentContextEmail(email: Partial<RelatedEmailEntry>, currentContext
   return Boolean(emailMessageId && contextMessageId && emailMessageId === contextMessageId);
 }
 
-function makeAttachmentKey(attachment: { id?: string; name?: string; contentId?: string }): string {
-  return String(attachment.id || attachment.contentId || attachment.name || "").trim();
+function makeAttachmentKey(attachment: { key?: string; id?: string; name?: string; contentId?: string }): string {
+  return String(attachment.id || attachment.contentId || attachment.key || attachment.name || "").trim();
 }
 
 function mergeAttachmentSources(
-  primary: Array<{ id?: string; name?: string; contentType?: string; content?: string; size?: number; isInline?: boolean; contentId?: string }>,
-  fallback: Array<{ id?: string; name?: string; contentType?: string; content?: string; size?: number; isInline?: boolean; contentId?: string }>
+  primary: Array<{ key?: string; id?: string; name?: string; contentType?: string; content?: string; size?: number; isInline?: boolean; contentId?: string; hasContent?: boolean }>,
+  fallback: Array<{ key?: string; id?: string; name?: string; contentType?: string; content?: string; size?: number; isInline?: boolean; contentId?: string; hasContent?: boolean }>
 ) {
-  const byKey = new Map<string, { id?: string; name?: string; contentType: string; content: string; size?: number; isInline?: boolean; contentId?: string }>();
+  const byKey = new Map<string, { key?: string; id?: string; name?: string; contentType: string; content: string; size?: number; isInline?: boolean; contentId?: string; hasContent?: boolean }>();
   for (const attachment of fallback) {
     const key = makeAttachmentKey(attachment).toLowerCase();
     if (!key) continue;
     byKey.set(key, {
+      key: attachment.key,
       id: attachment.id,
       name: String(attachment.name || "").trim(),
       contentType: String(attachment.contentType || "application/octet-stream"),
@@ -257,6 +258,7 @@ function mergeAttachmentSources(
       size: attachment.size,
       isInline: attachment.isInline,
       contentId: attachment.contentId,
+      hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
     });
   }
   for (const attachment of primary) {
@@ -265,6 +267,7 @@ function mergeAttachmentSources(
     const existing = byKey.get(key);
     byKey.set(key, {
       ...(existing || {}),
+      key: attachment.key || existing?.key,
       id: attachment.id || existing?.id,
       name: String(attachment.name || existing?.name || "").trim(),
       contentType: String(attachment.contentType || existing?.contentType || "application/octet-stream"),
@@ -272,6 +275,10 @@ function mergeAttachmentSources(
       size: attachment.size || existing?.size,
       isInline: typeof attachment.isInline === "boolean" ? attachment.isInline : existing?.isInline,
       contentId: attachment.contentId || existing?.contentId,
+      hasContent:
+        attachment.hasContent === true
+        || Boolean(String(attachment.content || "").trim())
+        || existing?.hasContent === true,
     });
   }
   return Array.from(byKey.values()).filter((attachment) => String(attachment.name || "").trim());
@@ -709,6 +716,7 @@ function StudioInner() {
   const [managedContactSearch, setManagedContactSearch] = useState("");
   const [managedEntitySearch, setManagedEntitySearch] = useState("");
   const [selectedAttachmentPreviewKey, setSelectedAttachmentPreviewKey] = useState("");
+  const [selectedAttachmentPreviewRemoteText, setSelectedAttachmentPreviewRemoteText] = useState("");
   const [managedGroupEmails, setManagedGroupEmails] = useState<RelatedEmailEntry[]>([]);
   const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
@@ -1083,6 +1091,7 @@ function StudioInner() {
     const currentSource = attachments.length
       ? attachments.map((attachment) => ({ ...attachment }))
       : (currentSeed?.attachments || []).map((attachment) => ({
+          key: attachment.key,
           id: attachment.id,
           name: attachment.name,
           contentType: String(attachment.contentType || "application/octet-stream"),
@@ -1090,8 +1099,10 @@ function StudioInner() {
           size: attachment.size,
           isInline: attachment.isInline,
           contentId: attachment.contentId,
+          hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
         }));
     const emailSource = (selectedEmail?.attachments || []).map((attachment) => ({
+      key: attachment.key,
       id: attachment.id,
       name: attachment.name,
       contentType: String(attachment.contentType || "application/octet-stream"),
@@ -1099,6 +1110,7 @@ function StudioInner() {
       size: attachment.size,
       isInline: attachment.isInline,
       contentId: attachment.contentId,
+      hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
     }));
     const source = selectedEmailIsCurrent
       ? mergeAttachmentSources(currentSource, emailSource)
@@ -1117,6 +1129,14 @@ function StudioInner() {
     () => selectedEmailAttachments.find((attachment) => makeAttachmentKey(attachment) === selectedAttachmentPreviewKey) || selectedEmailAttachments[0] || null,
     [selectedAttachmentPreviewKey, selectedEmailAttachments]
   );
+  const selectedAttachmentPreviewRemoteId = useMemo(
+    () => String(selectedAttachmentPreview?.key || selectedAttachmentPreview?.id || "").trim(),
+    [selectedAttachmentPreview?.id, selectedAttachmentPreview?.key]
+  );
+  const selectedAttachmentPreviewEmailId = useMemo(
+    () => String(selectedEmail?.id || "").trim(),
+    [selectedEmail?.id]
+  );
 
   const selectedAttachmentPreviewMode = useMemo(() => {
     const attachment = selectedAttachmentPreview;
@@ -1131,18 +1151,63 @@ function StudioInner() {
 
   const selectedAttachmentPreviewSrc = useMemo(() => {
     const attachment = selectedAttachmentPreview;
-    if (!attachment || !String(attachment.content || "").trim()) return "";
     const contentType = String(attachment.contentType || "application/octet-stream").trim() || "application/octet-stream";
+    const localContent = String(attachment?.content || "").trim();
+    if (!attachment) return "";
     if (selectedAttachmentPreviewMode === "image" || selectedAttachmentPreviewMode === "pdf") {
-      return `data:${contentType};base64,${String(attachment.content || "").trim()}`;
+      if (localContent) {
+        return `data:${contentType};base64,${localContent}`;
+      }
+      if (attachment.hasContent && selectedAttachmentPreviewEmailId && selectedAttachmentPreviewRemoteId) {
+        return getEmailAttachmentContentUrl(selectedAttachmentPreviewEmailId, selectedAttachmentPreviewRemoteId);
+      }
     }
     return "";
-  }, [selectedAttachmentPreview, selectedAttachmentPreviewMode]);
+  }, [selectedAttachmentPreview, selectedAttachmentPreviewEmailId, selectedAttachmentPreviewMode, selectedAttachmentPreviewRemoteId]);
 
   const selectedAttachmentPreviewText = useMemo(() => {
     if (selectedAttachmentPreviewMode !== "text") return "";
-    return decodeBase64Text(String(selectedAttachmentPreview?.content || "").trim());
-  }, [selectedAttachmentPreview?.content, selectedAttachmentPreviewMode]);
+    const localContent = String(selectedAttachmentPreview?.content || "").trim();
+    if (localContent) {
+      return decodeBase64Text(localContent);
+    }
+    return selectedAttachmentPreviewRemoteText;
+  }, [selectedAttachmentPreview?.content, selectedAttachmentPreviewMode, selectedAttachmentPreviewRemoteText]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const localContent = String(selectedAttachmentPreview?.content || "").trim();
+    if (
+      selectedAttachmentPreviewMode !== "text"
+      || localContent
+      || !selectedAttachmentPreview?.hasContent
+      || !selectedAttachmentPreviewEmailId
+      || !selectedAttachmentPreviewRemoteId
+    ) {
+      setSelectedAttachmentPreviewRemoteText("");
+      return () => {
+        cancelled = true;
+      };
+    }
+    getEmailAttachmentTextContent(selectedAttachmentPreviewEmailId, selectedAttachmentPreviewRemoteId)
+      .then((text) => {
+        if (cancelled) return;
+        setSelectedAttachmentPreviewRemoteText(String(text || ""));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSelectedAttachmentPreviewRemoteText("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedAttachmentPreview?.content,
+    selectedAttachmentPreview?.hasContent,
+    selectedAttachmentPreviewEmailId,
+    selectedAttachmentPreviewMode,
+    selectedAttachmentPreviewRemoteId,
+  ]);
 
   useEffect(() => {
     setAttachmentPlan((current) => {
@@ -2147,27 +2212,60 @@ function StudioInner() {
       setStatus("Escolhe primeiro um grupo principal para guardar documentos.");
       return;
     }
-    const docs = selectedEmailAttachments
-      .filter((attachment) => attachmentPlan[makeAttachmentKey(attachment)]?.save)
-      .filter((attachment) => String(attachment.content || "").trim())
-      .map((attachment) => ({
-        name: attachment.name,
-        contentType: attachment.contentType,
-        contentBase64: attachment.content,
-        size: attachment.size,
-        sourceEmailKey: makeEmailKey(selectedEmail || {}),
-        sourceItemId: currentEmailPayload.itemId,
-        sourceInternetMessageId: currentEmailPayload.internetMessageId,
-        sourceConversationId: currentEmailPayload.conversationId,
-        sourceEmailSubject: currentEmailPayload.subject,
-      }));
+    const docs = (
+      await Promise.all(
+        selectedEmailAttachments
+          .filter((attachment) => attachmentPlan[makeAttachmentKey(attachment)]?.save)
+          .map(async (attachment) => {
+            let contentBase64 = String(attachment.content || "").trim();
+            if (!contentBase64 && attachment.hasContent && selectedEmail?.id) {
+              const remoteId = String(attachment.key || attachment.id || "").trim();
+              if (remoteId) {
+                try {
+                  const remote = await getEmailAttachmentContentBase64(String(selectedEmail.id || "").trim(), remoteId);
+                  contentBase64 = String(remote.base64 || "").trim();
+                } catch {
+                  contentBase64 = "";
+                }
+              }
+            }
+            if (!contentBase64) return null;
+            return {
+              name: attachment.name,
+              contentType: attachment.contentType,
+              contentBase64,
+              size: attachment.size,
+              sourceEmailKey: makeEmailKey(selectedEmail || {}),
+              sourceItemId: currentEmailPayload.itemId,
+              sourceInternetMessageId: currentEmailPayload.internetMessageId,
+              sourceConversationId: currentEmailPayload.conversationId,
+              sourceEmailSubject: currentEmailPayload.subject,
+            };
+          })
+      )
+    ).filter(Boolean);
     if (!docs.length) {
       setStatus("Nao ha anexos com conteudo selecionados para guardar.");
       return;
     }
     setActionBusy(true);
     try {
-      await saveGroupDocuments(principalGroupId, { documents: docs });
+      const settings = await getSettings().catch(() => null);
+      const storageProvider = String(settings?.groupStorage?.provider || "cloud").trim();
+      const storageBasePath = String(settings?.groupStorage?.baseFolderPath || "").trim();
+      const safeGroupName = String(principalGroup?.name || principalGroupId || "grupo")
+        .trim()
+        .replace(/[\\/:*?"<>|]+/g, "_");
+      await saveGroupDocuments(principalGroupId, {
+        documents: docs.map((doc) => ({
+          ...doc,
+          storageProvider,
+          storageBasePath,
+          storagePathHint: safeGroupName && doc.name
+            ? `${safeGroupName}/${String(doc.name || "").trim().replace(/[\\/:*?"<>|]+/g, "_")}`
+            : undefined,
+        })),
+      });
       await refreshSelectedEmailContext();
       setStatus(`${docs.length} anexo(s) guardado(s) nos documentos do grupo principal.`);
     } catch (actionError: any) {
@@ -2422,8 +2520,11 @@ function StudioInner() {
           });
         }
 
+        const latestSettings = await getSettings().catch(() => null);
         await registerRelevantEmail({
           ...classifiedEmailPayload,
+          attachmentStorageProvider: latestSettings?.groupStorage?.provider || "cloud",
+          attachmentStorageBasePath: latestSettings?.groupStorage?.baseFolderPath || "",
         });
 
         const targetTicketId = finalTicket?.id || selectedTicketId;

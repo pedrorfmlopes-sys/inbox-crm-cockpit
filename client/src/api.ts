@@ -162,8 +162,11 @@ export type RelevantEmailPayload = {
     ticketStatusCategorize?: boolean;
     categorizedLabelNames?: string[];
   };
+  attachmentStorageProvider?: "cloud" | "local" | "onedrive" | string;
+  attachmentStorageBasePath?: string;
   membershipKind?: "principal" | "referencia" | string;
   attachments?: Array<{
+    key?: string;
     id?: string;
     name: string;
     contentType?: string;
@@ -171,6 +174,10 @@ export type RelevantEmailPayload = {
     isInline?: boolean;
     contentId?: string;
     content?: string;
+    storageProvider?: "cloud" | "local" | "onedrive" | string;
+    storageBasePath?: string;
+    storagePathHint?: string;
+    hasContent?: boolean;
   }>;
 };
 
@@ -218,6 +225,7 @@ export type GroupDocumentEntry = {
   contentType?: string;
   size?: number;
   contentBase64?: string;
+  hasContent?: boolean;
   sourceEmailKey?: string;
   sourceItemId?: string;
   sourceInternetMessageId?: string;
@@ -324,6 +332,7 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
   bodyText?: string;
   bodyHtml?: string;
   attachments?: Array<{
+    key?: string;
     id?: string;
     name: string;
     contentType?: string;
@@ -331,6 +340,10 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
     isInline?: boolean;
     contentId?: string;
     content?: string;
+    storageProvider?: "cloud" | "local" | "onedrive" | string;
+    storageBasePath?: string;
+    storagePathHint?: string;
+    hasContent?: boolean;
   }>;
 };
 
@@ -602,6 +615,7 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
     attachments: Array.isArray(entry?.attachments)
       ? entry.attachments
         .map((attachment: any) => ({
+          key: String(attachment?.key || "").trim() || undefined,
           id: String(attachment?.id || "").trim() || undefined,
           name: String(attachment?.name || "").trim(),
           contentType: String(attachment?.contentType || "").trim(),
@@ -609,6 +623,10 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
           isInline: Boolean(attachment?.isInline),
           contentId: String(attachment?.contentId || "").trim() || undefined,
           content: String(attachment?.content || "").trim(),
+          storageProvider: String(attachment?.storageProvider || "").trim() || undefined,
+          storageBasePath: String(attachment?.storageBasePath || "").trim() || undefined,
+          storagePathHint: String(attachment?.storagePathHint || "").trim() || undefined,
+          hasContent: attachment?.hasContent === true || Boolean(String(attachment?.content || "").trim()),
         }))
         .filter((attachment: any) => attachment.name)
       : [],
@@ -790,6 +808,95 @@ export function getGroupDocumentContentUrl(groupId: string, documentId: string, 
   );
   if (options?.download) url.searchParams.set("download", "1");
   return url.toString();
+}
+
+export function getEmailAttachmentContentUrl(emailId: string, attachmentKey: string, options?: { download?: boolean }): string {
+  const normalizedEmailId = encodeURIComponent(String(emailId || "").trim());
+  const normalizedAttachmentKey = encodeURIComponent(String(attachmentKey || "").trim());
+  const url = new URL(
+    `/api/links/emails/${normalizedEmailId}/attachments/${normalizedAttachmentKey}/content`,
+    window.location.origin
+  );
+  if (options?.download) url.searchParams.set("download", "1");
+  return url.toString();
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, Math.min(bytes.length, offset + chunkSize));
+    binary += String.fromCharCode(...chunk);
+  }
+  return globalThis.btoa(binary);
+}
+
+export async function getGroupDocumentContentBase64(
+  groupId: string,
+  documentId: string
+): Promise<{ base64: string; contentType: string; fileName: string }> {
+  const response = await fetch(getGroupDocumentContentUrl(groupId, documentId), {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`Nao foi possivel carregar o documento (${response.status}).`);
+  }
+  const fileName = String(
+    response.headers.get("x-file-name")
+    || response.headers.get("content-disposition")
+    || ""
+  ).trim();
+  const contentType = String(response.headers.get("content-type") || "application/octet-stream").trim();
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return {
+    base64: uint8ArrayToBase64(bytes),
+    contentType,
+    fileName,
+  };
+}
+
+export async function getGroupDocumentTextContent(groupId: string, documentId: string): Promise<string> {
+  const response = await fetch(getGroupDocumentContentUrl(groupId, documentId), {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`Nao foi possivel ler o documento (${response.status}).`);
+  }
+  return await response.text();
+}
+
+export async function getEmailAttachmentContentBase64(
+  emailId: string,
+  attachmentKey: string
+): Promise<{ base64: string; contentType: string; fileName: string }> {
+  const response = await fetch(getEmailAttachmentContentUrl(emailId, attachmentKey), {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`Nao foi possivel carregar o anexo (${response.status}).`);
+  }
+  const fileName = String(
+    response.headers.get("x-file-name")
+    || response.headers.get("content-disposition")
+    || ""
+  ).trim();
+  const contentType = String(response.headers.get("content-type") || "application/octet-stream").trim();
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return {
+    base64: uint8ArrayToBase64(bytes),
+    contentType,
+    fileName,
+  };
+}
+
+export async function getEmailAttachmentTextContent(emailId: string, attachmentKey: string): Promise<string> {
+  const response = await fetch(getEmailAttachmentContentUrl(emailId, attachmentKey), {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`Nao foi possivel ler o anexo (${response.status}).`);
+  }
+  return await response.text();
 }
 
 export async function getGroupAttachmentFlags(groupId: string): Promise<GroupAttachmentFlagEntry[]> {

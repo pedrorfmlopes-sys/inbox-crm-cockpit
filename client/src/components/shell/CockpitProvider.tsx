@@ -727,17 +727,17 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 messageDateIso: c.receivedDateTimeIso || "",
                 bodyText: b,
                 bodyHtml: bh,
+                attachmentStorageProvider: s?.groupStorage?.provider || "cloud",
+                attachmentStorageBasePath: s?.groupStorage?.baseFolderPath || "",
                 attachments: (atts || []).map((attachment) => ({
+                    key: String((attachment as any)?.key || "").trim() || undefined,
                     name: attachment.name,
                     contentType: attachment.contentType,
                     size: attachment.size,
                     id: attachment.id,
                     isInline: attachment.isInline,
                     contentId: attachment.contentId,
-                    content:
-                        attachment.isInline || String(attachment.contentType || "").trim().toLowerCase().startsWith("image/")
-                            ? String(attachment.content || "").trim()
-                            : "",
+                    content: String(attachment.content || "").trim(),
                 })),
             }).catch(() => {
                 // best-effort central registry only

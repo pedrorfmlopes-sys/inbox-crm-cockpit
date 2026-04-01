@@ -3,7 +3,7 @@ import { useCockpit } from "@/components/shell/CockpitProvider";
 import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
 import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubjectInComposeDraft, openAiSettings, addBase64AttachmentToCompose, openAiReplyTargetPicker, syncLinkCategoriesToComposeDraft, type AiReplyTargetSelection } from "@/office";
 import { getSettings } from "@/settings";
-import { getRelatedEmailContext, logLearningInteraction, type RelevantEmailPayload } from "@/api";
+import { getEmailAttachmentContentBase64, getRelatedEmailContext, logLearningInteraction, type RelevantEmailPayload } from "@/api";
 import { buildOutlookCategorySourceFromRelatedContext, mergeOutlookCategorySources, ODOO_LINKED_CATEGORY, type OutlookCategorySource } from "@/outlookCategories";
 import { buildAiContextBundle, type AiContextBundle } from "./contextBundle";
 import * as Icons from "@/ui/icons";
@@ -1062,6 +1062,47 @@ export const AiCockpit: React.FC = () => {
     const handleImportAttachments = async () => {
         try {
             setIsImporting(true);
+            const ctxFiles = files || [];
+            const persisted = await getRelatedEmailContext({
+                itemId: String(ctx?.itemId || "").trim(),
+                internetMessageId: String(ctx?.internetMessageId || "").trim(),
+                conversationId: String(ctx?.conversationId || "").trim(),
+                subject: String(ctx?.subject || "").trim(),
+                fromEmail: String(ctx?.fromEmail || "").trim(),
+                receivedAtIso: String(ctx?.receivedDateTimeIso || "").trim(),
+            }).catch(() => null);
+            const persistedEmail = persisted?.email || null;
+            const persistedAttachments = Array.isArray(persistedEmail?.attachments) ? persistedEmail.attachments : [];
+            let persistedCount = 0;
+            if (persistedEmail?.id && persistedAttachments.length) {
+                for (const attachment of persistedAttachments) {
+                    const name = String(attachment?.name || "").trim();
+                    if (!name || ctxFiles.find((f: any) => f.name === name)) continue;
+                    let content = String(attachment?.content || "").trim();
+                    if (!content && attachment?.hasContent) {
+                        const remoteId = String(attachment?.key || attachment?.id || "").trim();
+                        if (remoteId) {
+                            try {
+                                const loaded = await getEmailAttachmentContentBase64(String(persistedEmail.id || "").trim(), remoteId);
+                                content = String(loaded.base64 || "").trim();
+                            } catch {
+                                content = "";
+                            }
+                        }
+                    }
+                    if (!content) continue;
+                    addFile({
+                        name,
+                        type: String(attachment?.contentType || "application/octet-stream").trim(),
+                        content
+                    });
+                    persistedCount++;
+                }
+            }
+            if (persistedCount > 0) {
+                setMsg(`${persistedCount} anexos importados!`);
+                return;
+            }
             const { getAttachments } = await import("@/office");
             const atts = await getAttachments();
             if (atts.length === 0) {
