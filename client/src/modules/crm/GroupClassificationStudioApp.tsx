@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentContentUrl, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import * as pdfjsLib from "pdfjs-dist";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction } from "@/office";
 import {
   findGroupLabelCatalogEntry,
@@ -14,6 +15,8 @@ import { PanelState } from "@/ui/PanelState";
 import { applySkin } from "@/ui/skins";
 import * as Icons from "@/ui/icons";
 import "../../global.css";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
 type SectionId = "emails" | "classification" | "labels" | "filters" | "groups";
 type ScopeMode = "related" | "all";
@@ -186,6 +189,99 @@ function decodeBase64Text(content: string): string {
   } catch {
     return "";
   }
+}
+
+function stripDataUrlPrefix(value: string): string {
+  const raw = String(value || "").trim();
+  const separatorIndex = raw.indexOf(",");
+  if (raw.startsWith("data:") && separatorIndex >= 0) return raw.slice(separatorIndex + 1);
+  return raw;
+}
+
+function dataUrlToUint8Array(dataUrl: string): Uint8Array {
+  const base64 = stripDataUrlPrefix(dataUrl);
+  const binary = globalThis.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function StudioPdfPreview({ dataUrl, title }: { dataUrl: string; title: string }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [pageCount, setPageCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const host = hostRef.current;
+    if (!host || !dataUrl) {
+      setStatus("error");
+      return;
+    }
+
+    host.innerHTML = "";
+    setStatus("loading");
+    setPageCount(0);
+
+    (async () => {
+      try {
+        const loadingTask = pdfjsLib.getDocument({ data: dataUrlToUint8Array(dataUrl) });
+        const pdf = await loadingTask.promise;
+        if (cancelled) {
+          void loadingTask.destroy();
+          return;
+        }
+
+        const nextPageCount = Number(pdf.numPages || 0);
+        setPageCount(nextPageCount);
+
+        for (let pageNumber = 1; pageNumber <= nextPageCount; pageNumber += 1) {
+          if (cancelled) break;
+          const page = await pdf.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: 1.15 });
+          const canvas = document.createElement("canvas");
+          canvas.style.display = "block";
+          canvas.style.width = "100%";
+          canvas.style.maxWidth = `${Math.ceil(viewport.width)}px`;
+          canvas.style.height = "auto";
+          canvas.style.margin = pageNumber === nextPageCount ? "0 auto" : "0 auto 12px auto";
+          canvas.style.background = "#fff";
+          canvas.style.borderRadius = "8px";
+          canvas.style.boxShadow = "0 6px 16px rgba(15,23,42,0.08)";
+          const context = canvas.getContext("2d", { alpha: false });
+          if (!context) continue;
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          host.appendChild(canvas);
+          await page.render({ canvasContext: context, viewport }).promise;
+        }
+
+        if (!cancelled) setStatus("ready");
+      } catch (error) {
+        console.warn("[classification-studio] pdf preview failed", error);
+        if (!cancelled) setStatus("error");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (hostRef.current) hostRef.current.innerHTML = "";
+    };
+  }, [dataUrl]);
+
+  if (status === "error") {
+    return <div style={S.attachmentPreviewEmpty}>Este PDF foi detetado, mas nao foi possivel renderiza-lo dentro do add-in.</div>;
+  }
+
+  return (
+    <div style={S.attachmentPdfPreviewShell} aria-label={title}>
+      {status === "loading" ? <div style={S.attachmentPdfPreviewMeta}>A carregar PDF...</div> : null}
+      {status === "ready" && pageCount > 0 ? <div style={S.attachmentPdfPreviewMeta}>{pageCount} pagina(s)</div> : null}
+      <div ref={hostRef} style={S.attachmentPdfPreviewCanvasHost} />
+    </div>
+  );
 }
 
 function buildSnippet(email: RelatedEmailEntry): string {
@@ -735,6 +831,7 @@ function StudioInner() {
   const [managedContactSearch, setManagedContactSearch] = useState("");
   const [managedEntitySearch, setManagedEntitySearch] = useState("");
   const [selectedAttachmentPreviewKey, setSelectedAttachmentPreviewKey] = useState("");
+  const [selectedAttachmentPreviewRemoteBase64, setSelectedAttachmentPreviewRemoteBase64] = useState("");
   const [selectedAttachmentPreviewRemoteText, setSelectedAttachmentPreviewRemoteText] = useState("");
   const [managedGroupEmails, setManagedGroupEmails] = useState<RelatedEmailEntry[]>([]);
   const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
@@ -1122,12 +1219,12 @@ function StudioInner() {
   useEffect(() => {
     setSelectedAttachmentPreviewKey((current) => {
       if (current && selectedEmailAttachments.some((attachment) => makeAttachmentKey(attachment) === current)) return current;
-      return selectedEmailAttachments[0] ? makeAttachmentKey(selectedEmailAttachments[0]) : "";
+      return "";
     });
   }, [selectedEmailAttachments]);
 
   const selectedAttachmentPreview = useMemo(
-    () => selectedEmailAttachments.find((attachment) => makeAttachmentKey(attachment) === selectedAttachmentPreviewKey) || selectedEmailAttachments[0] || null,
+    () => selectedEmailAttachments.find((attachment) => makeAttachmentKey(attachment) === selectedAttachmentPreviewKey) || null,
     [selectedAttachmentPreviewKey, selectedEmailAttachments]
   );
   const selectedAttachmentPreviewRemoteId = useMemo(
@@ -1154,17 +1251,51 @@ function StudioInner() {
     const attachment = selectedAttachmentPreview;
     if (!attachment) return "";
     const contentType = String(attachment.contentType || "application/octet-stream").trim() || "application/octet-stream";
-    const localContent = String(attachment.content || "").trim();
+    const localContent = String(attachment.content || "").trim() || selectedAttachmentPreviewRemoteBase64;
     if (selectedAttachmentPreviewMode === "image" || selectedAttachmentPreviewMode === "pdf") {
       if (localContent) {
         return `data:${contentType};base64,${localContent}`;
       }
-      if (attachment.hasContent && selectedAttachmentPreviewEmailId && selectedAttachmentPreviewRemoteId) {
-        return getEmailAttachmentContentUrl(selectedAttachmentPreviewEmailId, selectedAttachmentPreviewRemoteId);
-      }
     }
     return "";
-  }, [selectedAttachmentPreview, selectedAttachmentPreviewEmailId, selectedAttachmentPreviewMode, selectedAttachmentPreviewRemoteId]);
+  }, [selectedAttachmentPreview, selectedAttachmentPreviewMode, selectedAttachmentPreviewRemoteBase64]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const localContent = String(selectedAttachmentPreview?.content || "").trim();
+    if (
+      (selectedAttachmentPreviewMode !== "image" && selectedAttachmentPreviewMode !== "pdf")
+      || localContent
+      || !selectedAttachmentPreview?.hasContent
+      || !selectedAttachmentPreviewEmailId
+      || !selectedAttachmentPreviewRemoteId
+    ) {
+      setSelectedAttachmentPreviewRemoteBase64("");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    getEmailAttachmentContentBase64(selectedAttachmentPreviewEmailId, selectedAttachmentPreviewRemoteId)
+      .then((result) => {
+        if (cancelled) return;
+        setSelectedAttachmentPreviewRemoteBase64(String(result.base64 || "").trim());
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSelectedAttachmentPreviewRemoteBase64("");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedAttachmentPreview?.content,
+    selectedAttachmentPreview?.hasContent,
+    selectedAttachmentPreviewEmailId,
+    selectedAttachmentPreviewMode,
+    selectedAttachmentPreviewRemoteId,
+  ]);
 
   const selectedAttachmentPreviewText = useMemo(() => {
     if (selectedAttachmentPreviewMode !== "text") return "";
@@ -2641,7 +2772,7 @@ function StudioInner() {
                 <div style={S.attachmentPickerBar}>
                   {selectedEmailAttachments.map((attachment) => {
                     const key = makeAttachmentKey(attachment);
-                    const active = key === makeAttachmentKey(selectedAttachmentPreview || {});
+                    const active = key === selectedAttachmentPreviewKey;
                     return (
                       <button
                         key={key}
@@ -2654,36 +2785,44 @@ function StudioInner() {
                     );
                   })}
                 </div>
-                {selectedAttachmentPreview ? (
-                  <div style={S.card}>
+                <div style={S.card}>
+                  {selectedAttachmentPreview ? (
                     <div style={S.summaryGrid}>
                       <div style={S.summaryRow}><span>Ficheiro</span><strong>{selectedAttachmentPreview.name || "--"}</strong></div>
                       <div style={S.summaryRow}><span>Tipo</span><strong>{selectedAttachmentPreview.contentType || "ficheiro"}</strong></div>
                       <div style={S.summaryRow}><span>Tamanho</span><strong>{selectedAttachmentPreview.size ? `${Math.round(Number(selectedAttachmentPreview.size || 0) / 1024)} KB` : "--"}</strong></div>
                     </div>
-                    {selectedAttachmentPreviewMode === "image" && selectedAttachmentPreviewSrc ? (
+                  ) : null}
+                  {selectedAttachmentPreviewMode === "image" ? (
+                    selectedAttachmentPreviewSrc ? (
                       <div style={S.attachmentPreviewWrap}>
-                        <img src={selectedAttachmentPreviewSrc} alt={selectedAttachmentPreview.name || "Imagem"} style={S.attachmentPreviewImage} />
+                        <img src={selectedAttachmentPreviewSrc} alt={selectedAttachmentPreview?.name || "Imagem"} style={S.attachmentPreviewImage} />
                       </div>
-                    ) : null}
-                    {selectedAttachmentPreviewMode === "pdf" && selectedAttachmentPreviewSrc ? (
-                      <iframe title={selectedAttachmentPreview.name || "PDF"} src={selectedAttachmentPreviewSrc} style={S.attachmentPreviewFrame} />
-                    ) : null}
-                    {selectedAttachmentPreviewMode === "text" ? (
-                      selectedAttachmentPreviewText ? (
-                        <pre style={S.attachmentPreviewText}>{selectedAttachmentPreviewText}</pre>
-                      ) : (
-                        <div style={S.attachmentPreviewEmpty}>Nao foi possivel ler o conteudo textual deste ficheiro.</div>
-                      )
-                    ) : null}
-                    {selectedAttachmentPreviewMode === "unsupported" ? (
-                      <div style={S.attachmentPreviewEmpty}>Preview nao disponivel para este tipo de ficheiro.</div>
-                    ) : null}
-                    {selectedAttachmentPreviewMode === "none" ? (
-                      <div style={S.attachmentPreviewEmpty}>Escolhe um anexo para ver o preview.</div>
-                    ) : null}
-                  </div>
-                ) : null}
+                    ) : (
+                      <div style={S.attachmentPreviewEmpty}>A carregar imagem...</div>
+                    )
+                  ) : null}
+                  {selectedAttachmentPreviewMode === "pdf" ? (
+                    selectedAttachmentPreviewSrc ? (
+                      <StudioPdfPreview dataUrl={selectedAttachmentPreviewSrc} title={selectedAttachmentPreview?.name || "PDF"} />
+                    ) : (
+                      <div style={S.attachmentPreviewEmpty}>A carregar PDF...</div>
+                    )
+                  ) : null}
+                  {selectedAttachmentPreviewMode === "text" ? (
+                    selectedAttachmentPreviewText ? (
+                      <pre style={S.attachmentPreviewText}>{selectedAttachmentPreviewText}</pre>
+                    ) : (
+                      <div style={S.attachmentPreviewEmpty}>Nao foi possivel ler o conteudo textual deste ficheiro.</div>
+                    )
+                  ) : null}
+                  {selectedAttachmentPreviewMode === "unsupported" ? (
+                    <div style={S.attachmentPreviewEmpty}>Preview nao disponivel para este tipo de ficheiro.</div>
+                  ) : null}
+                  {selectedAttachmentPreviewMode === "none" ? (
+                    <div style={S.attachmentPreviewEmpty}>Escolhe um anexo para ver o preview.</div>
+                  ) : null}
+                </div>
               </div>
             ) : (
               <PanelState compact tone="info" title="Sem anexos disponiveis" description="Este email nao traz anexos guardados para preview." />
@@ -3798,7 +3937,9 @@ const S: Record<string, React.CSSProperties> = {
   attachmentPickerBar: { display: "flex", flexWrap: "wrap", gap: 8 },
   attachmentPreviewWrap: { borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "#fff", padding: 12, display: "grid", justifyItems: "center" },
   attachmentPreviewImage: { display: "block", maxWidth: "100%", maxHeight: 560, borderRadius: 10, objectFit: "contain" },
-  attachmentPreviewFrame: { width: "100%", minHeight: 620, borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "#fff" },
+  attachmentPdfPreviewShell: { display: "grid", gap: 10, padding: 12, borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "#fff" },
+  attachmentPdfPreviewMeta: { fontSize: 12, color: "var(--iccc-muted)" },
+  attachmentPdfPreviewCanvasHost: { display: "grid", gap: 12, justifyItems: "center" },
   attachmentPreviewText: { margin: 0, padding: 14, borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.84)", color: "var(--iccc-text)", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'Segoe UI', sans-serif" },
   attachmentPreviewEmpty: { padding: "18px 16px", borderRadius: 14, border: "1px dashed rgba(148,163,184,0.32)", background: "rgba(255,255,255,0.7)", color: "var(--iccc-muted)", fontSize: 12 },
   attachList: { display: "grid", gap: 10 },
