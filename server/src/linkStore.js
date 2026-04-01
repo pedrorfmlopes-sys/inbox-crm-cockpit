@@ -282,9 +282,19 @@ function normalizePositiveInt(value, fallback = 1, min = 1, max = 999999) {
 
 function normalizeTicketStatus(value) {
   const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, "_");
-  return normalized === "closed" || normalized === "fechado" || normalized === "concluido"
-    ? "closed"
-    : DEFAULT_GROUP_TICKET_STATUS;
+  if (!normalized) return "";
+  if (normalized === "aberto") return "open";
+  if (normalized === "fechado") return "closed";
+  if (
+    normalized === "open"
+    || normalized === "closed"
+    || normalized === "em_analise"
+    || normalized === "em_progresso"
+    || normalized === "concluido"
+  ) {
+    return normalized;
+  }
+  return normalized;
 }
 
 function normalizeTicketPrefix(value) {

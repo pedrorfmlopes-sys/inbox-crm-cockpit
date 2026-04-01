@@ -1396,9 +1396,9 @@ async function executeCockpitHostAction(action: CockpitHostAction): Promise<bool
       dispatchOutlookCategoryContextInvalidated();
       return true;
     }
-    await syncOutlookCategorySource(action.payload || {});
+    const synced = await syncOutlookCategorySource(action.payload || {});
     dispatchOutlookCategoryContextInvalidated();
-    return true;
+    return synced;
   }
 
   return false;

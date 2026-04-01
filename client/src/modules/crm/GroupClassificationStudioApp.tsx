@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction } from "@/office";
 import { buildOutlookCategorySourceFromRelatedContext } from "@/outlookCategories";
 import {
@@ -63,6 +63,15 @@ const LABEL_STATUS_OPTIONS: Array<{ value: EmailLabelStatus; label: string }> = 
   { value: "em_analise", label: "Em analise" },
   { value: "em_progresso", label: "Em progresso" },
   { value: "concluido", label: "Concluido" },
+];
+
+const TICKET_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "Sem estado" },
+  { value: "open", label: "Aberto" },
+  { value: "em_analise", label: "Em analise" },
+  { value: "em_progresso", label: "Em progresso" },
+  { value: "concluido", label: "Concluido" },
+  { value: "closed", label: "Fechado" },
 ];
 
 const DOCUMENT_STATE_OPTIONS: Array<{ value: DocumentLifecycleState; label: string }> = [
@@ -947,6 +956,7 @@ function StudioInner() {
   const [referenceGroupIds, setReferenceGroupIds] = useState<string[]>([]);
   const [selectedSeriesId, setSelectedSeriesId] = useState("");
   const [selectedTicketId, setSelectedTicketId] = useState("");
+  const [ticketStatusDraft, setTicketStatusDraft] = useState("");
   const [ticketSearch, setTicketSearch] = useState("");
   const [ticketSearchResults, setTicketSearchResults] = useState<GroupTicketEntry[]>([]);
   const [labelInput, setLabelInput] = useState("");
@@ -2014,9 +2024,13 @@ function StudioInner() {
         .filter((entry) => entry.hasStatus),
     [referenceGroups]
   );
+  const effectiveTicketStatus = useMemo(
+    () => String(ticketStatusDraft || selectedTicket?.status || "").trim(),
+    [selectedTicket?.status, ticketStatusDraft]
+  );
   const ticketStatusLabel = useMemo(
-    () => selectedTicket?.status ? formatTicketStatusLabel(selectedTicket.status) : "",
-    [selectedTicket?.status]
+    () => effectiveTicketStatus ? formatTicketStatusLabel(effectiveTicketStatus) : "",
+    [effectiveTicketStatus]
   );
   const ticketSummary = useMemo(() => {
     if (selectedTicket?.code) return selectedTicket.code;
@@ -2091,6 +2105,19 @@ function StudioInner() {
     if (!selectedTicketId || !selectedSeriesId) return;
     setSelectedSeriesId("");
   }, [selectedTicketId, selectedSeriesId]);
+
+  useEffect(() => {
+    if (selectedTicketId) {
+      const nextStatus = String(selectedTicket?.status || "").trim();
+      setTicketStatusDraft(nextStatus);
+      return;
+    }
+    if (selectedSeriesId) {
+      setTicketStatusDraft("");
+      return;
+    }
+    setTicketStatusDraft("");
+  }, [selectedSeriesId, selectedTicketId]);
 
   useEffect(() => {
     setSelectionTouched({ principal: false, references: false, ticket: false });
@@ -2828,6 +2855,7 @@ function StudioInner() {
           || relatedTickets.find((ticket) => ticket.id === selectedTicketId)
           || null)
         : null;
+      const desiredTicketStatus = String(ticketStatusDraft || "").trim();
 
       let finalTicket: GroupTicketEntry | null = null;
       const buildTargetPayload = (targetEmail: RelatedEmailEntry): RelevantEmailPayload => {
@@ -2901,8 +2929,16 @@ function StudioInner() {
           email: baseClassifiedEmailPayload,
           membershipKind: principalGroupId ? "principal" : "referencia",
         });
+        if (desiredTicketStatus && desiredTicketStatus !== String(finalTicket?.status || "").trim()) {
+          finalTicket = await updateGroupTicket(finalTicket.id, { status: desiredTicketStatus });
+        }
         setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
         setSelectedTicketId(finalTicket.id);
+      }
+
+      if (selectedTicketId && desiredTicketStatus !== String(currentOutlookTicket?.status || "").trim()) {
+        finalTicket = await updateGroupTicket(selectedTicketId, { status: desiredTicketStatus });
+        setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
       }
 
       for (const targetEmail of effectiveTargetEmails) {
@@ -2970,7 +3006,6 @@ function StudioInner() {
       }
 
       const includesCurrentTarget = effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
-      let categorySyncApplied = false;
       if (includesCurrentTarget) {
         const currentTargetEmail = effectiveTargetEmails.find((email) => isCurrentContextEmail(email, currentContext)) || selectedEmail;
         const categoryEmail: RelatedEmailEntry | null = currentTargetEmail
@@ -3018,7 +3053,7 @@ function StudioInner() {
             ).values()
           );
           const snapshot = await getManagedOutlookCategorySnapshot(labelCatalog).catch(() => null);
-          categorySyncApplied = await requestCockpitHostAction({
+          await requestCockpitHostAction({
             type: "sync-managed-categories",
             payload: buildOutlookCategorySourceFromRelatedContext({
               email: categoryEmail,
@@ -3032,27 +3067,9 @@ function StudioInner() {
       }
 
       setSelectionTouched({ principal: false, references: false, ticket: false });
-      const refreshedContext = await refreshSelectedEmailContext();
-      if (includesCurrentTarget && !categorySyncApplied) {
-        const refreshedCurrentEmail = dedupeEmails([
-          ...(refreshedContext?.email ? [refreshedContext.email] : []),
-          ...((refreshedContext?.emails || []) as RelatedEmailEntry[]),
-        ]).find((email) => isCurrentContextEmail(email, currentContext)) || null;
-        if (refreshedCurrentEmail) {
-          const snapshot = await getManagedOutlookCategorySnapshot(labelCatalog).catch(() => null);
-          await requestCockpitHostAction({
-            type: "sync-managed-categories",
-            payload: buildOutlookCategorySourceFromRelatedContext({
-              email: refreshedCurrentEmail,
-              groups: Array.isArray(refreshedContext?.groups) ? refreshedContext.groups : [],
-              tickets: Array.isArray(refreshedContext?.tickets) ? refreshedContext.tickets : [],
-              settings: latestSettings,
-              currentOutlookLabelNames: snapshot?.labelNames || [],
-            }),
-          }).catch(() => undefined);
-        } else {
-          await requestCockpitHostAction({ type: "sync-current-item-categories" }).catch(() => undefined);
-        }
+      await refreshSelectedEmailContext();
+      if (includesCurrentTarget) {
+        await requestCockpitHostAction({ type: "sync-current-item-categories" }).catch(() => undefined);
       }
       setStatus(
         effectiveTargetEmails.length > 1
@@ -3632,13 +3649,31 @@ function StudioInner() {
                   Criar ticket
                 </button>
               </div>
+              <div style={S.grid2}>
+                <select
+                  style={S.select}
+                  value={ticketStatusDraft}
+                  onChange={(event) => {
+                    setSelectionTouched((current) => ({ ...current, ticket: true }));
+                    setTicketStatusDraft(event.target.value);
+                  }}
+                  disabled={!selectedTicketId && !selectedSeriesId}
+                >
+                  {TICKET_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value || "empty"} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <div style={S.cardMeta}>
+                  {effectiveTicketStatus ? `Estado preparado: ${ticketStatusLabel}` : "Sem estado definido neste ticket."}
+                </div>
+              </div>
               <div style={S.inlineChecks}>
                 <label style={S.check}>
                   <input
                     type="checkbox"
                     checked={classificationMetaDraft.ticketStatusEnabled}
                     onChange={(event) => updateClassificationMeta({ ticketStatusEnabled: event.target.checked })}
-                    disabled={!selectedTicket?.status}
+                    disabled={!effectiveTicketStatus}
                   />
                   <span>Estado do ticket</span>
                 </label>
@@ -3647,13 +3682,13 @@ function StudioInner() {
                     type="checkbox"
                     checked={classificationMetaDraft.ticketStatusCategorize}
                     onChange={(event) => updateClassificationMeta({ ticketStatusCategorize: event.target.checked, ticketStatusEnabled: event.target.checked ? true : classificationMetaDraft.ticketStatusEnabled })}
-                    disabled={!selectedTicket?.status || !classificationMetaDraft.ticketStatusEnabled}
+                    disabled={!effectiveTicketStatus || !classificationMetaDraft.ticketStatusEnabled}
                   />
                   <span>Estado em categoria Outlook</span>
                 </label>
               </div>
               <div style={S.cardMeta}>
-                {selectedTicket?.status ? `Estado atual: ${ticketStatusLabel}` : "Sem estado definido neste ticket."}
+                {effectiveTicketStatus ? `Estado atual: ${ticketStatusLabel}` : "Sem estado definido neste ticket."}
               </div>
             </div>
           </div>
