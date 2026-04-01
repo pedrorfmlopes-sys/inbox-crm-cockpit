@@ -283,6 +283,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [startupNoticeState, setStartupNoticeState] = useState<StartupNotice | null>(null);
     const [startupNoticeDismissed, setStartupNoticeDismissed] = useState(false);
     const [outlookCategoryRefreshTick, setOutlookCategoryRefreshTick] = useState(0);
+    const [currentOutlookCategorySourceStatus, setCurrentOutlookCategorySourceStatus] = useState<{
+        identity: string;
+        ready: boolean;
+    }>({
+        identity: "",
+        ready: false,
+    });
     const lastOutlookCategorySyncRef = useRef<{ identity: string; signature: string } | null>(null);
 
     function resetStartupPreflight() {
@@ -1079,6 +1086,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     useEffect(() => {
         const hasContextIdentity = Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
+        const currentSourceIdentity = buildOutlookCategorySyncIdentity(ctx);
         if (!hasContextIdentity) {
             const nextSource: OutlookCategorySource = {
                 principalGroupNames: [],
@@ -1095,10 +1103,18 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setCurrentOutlookCategorySource((current) => (
                 areOutlookCategorySourcesEqual(current, nextSource) ? current : nextSource
             ));
+            setCurrentOutlookCategorySourceStatus({
+                identity: "",
+                ready: false,
+            });
             lastOutlookCategorySyncRef.current = null;
             return;
         }
         let cancelled = false;
+        setCurrentOutlookCategorySourceStatus({
+            identity: currentSourceIdentity,
+            ready: false,
+        });
         const payload = {
             itemId: String(ctx.itemId || "").trim(),
             internetMessageId: String(ctx.internetMessageId || "").trim(),
@@ -1123,6 +1139,10 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 setCurrentOutlookCategorySource((current) => (
                     areOutlookCategorySourcesEqual(current, nextSource) ? current : nextSource
                 ));
+                setCurrentOutlookCategorySourceStatus({
+                    identity: currentSourceIdentity,
+                    ready: true,
+                });
             })
             .catch(() => {
                 if (!cancelled) {
@@ -1141,6 +1161,10 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     setCurrentOutlookCategorySource((current) => (
                         areOutlookCategorySourcesEqual(current, nextSource) ? current : nextSource
                     ));
+                    setCurrentOutlookCategorySourceStatus({
+                        identity: currentSourceIdentity,
+                        ready: true,
+                    });
                 }
             });
 
@@ -1155,6 +1179,14 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         });
         let cancelled = false;
         void (async () => {
+            const syncIdentity = buildOutlookCategorySyncIdentity(ctx);
+            if (!syncIdentity) return;
+            if (
+                currentOutlookCategorySourceStatus.identity !== syncIdentity
+                || currentOutlookCategorySourceStatus.ready !== true
+            ) {
+                return;
+            }
             const knownLabelNames = Array.from(new Set([
                 ...currentOutlookCategorySource.managedLabelNames,
                 ...(Array.isArray(settings?.groupLabelCatalog) ? settings.groupLabelCatalog.map((entry) => String(entry?.label || "").trim()).filter(Boolean) : []),
@@ -1170,7 +1202,6 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     ...((snapshot?.labelNames || []).map((label) => String(label || "").trim()).filter(Boolean)),
                 ],
             };
-            const syncIdentity = buildOutlookCategorySyncIdentity(ctx) || "__no-item__";
             const syncSignature = getOutlookCategoryPlanSignature(buildOutlookCategoryPlan(syncSource));
             if (
                 lastOutlookCategorySyncRef.current?.identity === syncIdentity
@@ -1191,7 +1222,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return () => {
             cancelled = true;
         };
-    }, [ctx.itemId, currentOutlookCategorySource, links.length, settings?.groupLabelCatalog]);
+    }, [ctx.conversationId, ctx.internetMessageId, ctx.itemId, currentOutlookCategorySource, currentOutlookCategorySourceStatus, links.length, settings?.groupLabelCatalog]);
 
     const setAiState = (update: Partial<AiState>) => {
         if (!ctx.conversationId) return;
