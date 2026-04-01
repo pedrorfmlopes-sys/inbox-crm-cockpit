@@ -1585,6 +1585,9 @@ async function postCockpitHostActionToOpener(action: CockpitHostAction): Promise
 }
 
 export async function requestCockpitHostAction(action: CockpitHostAction): Promise<boolean> {
+  const openerResult = await postCockpitHostActionToOpener(action).catch(() => false);
+  if (openerResult) return true;
+
   try {
     const OfficeAny = await ensureOfficeReady();
     if (typeof OfficeAny?.context?.ui?.messageParent === "function") {
@@ -1594,9 +1597,6 @@ export async function requestCockpitHostAction(action: CockpitHostAction): Promi
   } catch {
     // fall through to local execution
   }
-
-  const openerResult = await postCockpitHostActionToOpener(action).catch(() => false);
-  if (openerResult) return true;
 
   try {
     return await executeCockpitHostAction(action);

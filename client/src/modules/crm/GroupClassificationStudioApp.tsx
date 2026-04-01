@@ -2440,8 +2440,47 @@ function StudioInner() {
 
       const includesCurrentTarget = effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
       if (includesCurrentTarget) {
+        const settings = await getSettings().catch(() => null);
+        const categorySettings = settings?.groupOutlookCategories;
         await requestCockpitHostAction({
-          type: "sync-current-item-categories",
+          type: "sync-managed-categories",
+          payload: {
+            principalGroupNames: categorySettings?.enabled === true && categorySettings?.includeGroups !== false && principalGroup ? [principalGroup.name] : [],
+            referenceGroupNames: categorySettings?.enabled === true && categorySettings?.includeGroups !== false
+              ? referenceGroups.map((group) => String(group.name || "").trim()).filter(Boolean)
+              : [],
+            ticketCodes: categorySettings?.enabled === true
+              && categorySettings?.includeTickets !== false
+              && (finalTicket?.code || selectedTicket?.code)
+              ? [String(finalTicket?.code || selectedTicket?.code || "").trim()]
+              : [],
+            statuses: [],
+            groupStatuses: categorySettings?.enabled === true
+              && categorySettings?.includeStatuses !== false
+              ? [
+                  ...(classificationMetaDraft.principalStatusCategorize ? principalStatusValues : []),
+                  ...(classificationMetaDraft.referenceStatusCategorize ? referenceStatusValues : []),
+                ]
+              : [],
+            ticketStatuses: categorySettings?.enabled === true
+              && categorySettings?.includeStatuses !== false
+              && classificationMetaDraft.ticketStatusEnabled
+              && classificationMetaDraft.ticketStatusCategorize
+              && (finalTicket?.status || selectedTicket?.status)
+              ? [String(finalTicket?.status || selectedTicket?.status || "").trim()]
+              : [],
+            labelStatuses: categorySettings?.enabled === true
+              && categorySettings?.includeStatuses !== false
+              ? selectedLabelStatuses
+              : [],
+            labelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true ? categorizableLabels : [],
+            managedLabelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true
+              ? mergeLabels(
+                  mergeLabels(summaryLabels, selectedEmail?.labels || []),
+                  mergeLabels(selectedEmail?.removedInheritedLabels || [], removedInheritedLabels)
+                )
+              : [],
+          },
         }).catch(() => undefined);
       }
 
