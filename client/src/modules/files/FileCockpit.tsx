@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Icons from "../../ui/icons";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { getAttachments } from "@/office";
 import { getEmailAttachmentContentBase64, getInvoiceStudioBatchStatus, getRelatedEmailContext, uploadToInvoiceStudio } from "@/api";
 import { PanelState, type PanelStateTone } from "../../ui/PanelState";
 
@@ -136,7 +135,7 @@ export const FileCockpit: React.FC = () => {
             setStatus({
                 tone: "loading",
                 title: "A importar anexos",
-                description: "Estamos a ler os anexos persistidos do email atual e, se preciso, a fallback para o Outlook.",
+                description: "Estamos a ler os anexos persistidos do email atual no servidor.",
             });
             let imported = 0;
             const persisted = await getRelatedEmailContext({
@@ -174,24 +173,23 @@ export const FileCockpit: React.FC = () => {
                 }
             }
 
-            if (!imported) {
-                const atts = await getAttachments();
-                for (const att of atts) {
-                    addFile({
-                        name: att.name,
-                        type: att.contentType,
-                        content: att.content,
-                    });
-                    imported += 1;
-                }
-            }
             if (imported === 0) {
-                setMsg("Nenhum anexo encontrado neste email.");
-                setStatus({
-                    tone: "empty",
-                    title: "Sem anexos no email",
-                    description: "Podes importar ficheiros do computador ou selecionar outro email com anexos.",
-                });
+                const emailWasPersisted = Boolean(persistedEmail?.id);
+                if (emailWasPersisted) {
+                    setMsg("Nenhum anexo persistido encontrado neste email.");
+                    setStatus({
+                        tone: "empty",
+                        title: "Sem anexos persistidos",
+                        description: "Este email ainda nao tem anexos disponiveis na persistencia central, ou nao tem anexos para importar.",
+                    });
+                } else {
+                    setMsg("O email atual ainda nao esta pronto no servidor.");
+                    setStatus({
+                        tone: "error",
+                        title: "Email ainda nao persistido",
+                        description: "Volta a abrir este email daqui a pouco ou reabre a app para concluir a ingestao antes de importar anexos.",
+                    });
+                }
             } else {
                 setMsg(`${imported} anexos importados com sucesso.`);
                 setStatus({

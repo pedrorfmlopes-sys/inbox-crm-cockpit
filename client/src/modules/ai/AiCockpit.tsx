@@ -1103,25 +1103,10 @@ export const AiCockpit: React.FC = () => {
                 setMsg(`${persistedCount} anexos importados!`);
                 return;
             }
-            const { getAttachments } = await import("@/office");
-            const atts = await getAttachments();
-            if (atts.length === 0) {
-                setMsg("Nenhum anexo encontrado neste email.");
+            if (persistedEmail?.id) {
+                setMsg("Nenhum anexo persistido disponivel para importar.");
             } else {
-                let counts = 0;
-                for (const att of atts) {
-                    const ctxFiles = files || [];
-                    if (!ctxFiles.find((f: any) => f.name === att.name)) {
-                        addFile({
-                            name: att.name,
-                            type: att.contentType,
-                            content: att.content
-                        });
-                        counts++;
-                    }
-                }
-                if (counts > 0) setMsg(`${counts} anexos importados!`);
-                else setMsg("Anexos já estavam carregados.");
+                setMsg("O email atual ainda nao esta pronto no servidor. Reabre o email e tenta novamente.");
             }
         } catch (e: any) {
             setMsg("Erro ao importar: " + e.message);
@@ -3466,5 +3451,4 @@ export const AiCockpit: React.FC = () => {
         </div>
     );
 };
-
 

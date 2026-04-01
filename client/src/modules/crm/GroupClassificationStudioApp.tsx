@@ -426,6 +426,7 @@ function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | nu
           isInline: attachment.isInline,
           contentId: attachment.contentId,
           content: attachment.content,
+          documentState: (attachment as any).documentState,
         }))
     : [];
   return {
@@ -441,6 +442,27 @@ function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | nu
     bodyHtml: String(email.bodyHtml || "").trim() || undefined,
     attachments,
   };
+}
+
+function buildAttachmentStorageOptions(settings?: any): Pick<RelevantEmailPayload, "attachmentStorageProvider" | "attachmentStorageBasePath"> {
+  return {
+    attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
+    attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
+  };
+}
+
+async function persistRelatedEmailsToServer(emails: RelatedEmailEntry[], settings?: any): Promise<void> {
+  const storageOptions = buildAttachmentStorageOptions(settings);
+  const payloads = dedupeEmails(emails)
+    .map((email) => buildRelevantEmailPayloadFromRelatedEmail(email))
+    .filter(Boolean) as RelevantEmailPayload[];
+  if (!payloads.length) return;
+  await Promise.allSettled(
+    payloads.map((payload) => registerRelevantEmail({
+      ...payload,
+      ...storageOptions,
+    }))
+  );
 }
 
 function derivePartnerName(email: RelatedEmailEntry | null): string {
@@ -1000,13 +1022,14 @@ function StudioInner() {
           ...(related.email ? [related.email] : []),
           ...(related.emails || []),
         ]);
+        await persistRelatedEmailsToServer(contextualEmails, latestSettings);
         const mergedEmails = dedupeEmails([...contextualEmails, ...(emails || [])]);
         setAllGroups(mergedGroups);
         setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
         setTicketSeries(Array.isArray(series) ? series : []);
         setRelatedTickets(Array.isArray(related.tickets) ? related.tickets : []);
         setRelatedEmails(contextualEmails);
-        setKnownEmails(Array.isArray(emails) ? emails : []);
+        setKnownEmails(mergedEmails);
         setSelectedEmailKey((current) => {
           if (current && mergedEmails.some((email) => makeEmailKey(email) === current)) return current;
           const currentItem = mergedEmails.find((email) => {
@@ -2117,6 +2140,8 @@ function StudioInner() {
       ...(related.email ? [related.email] : []),
       ...(related.emails || []),
     ]);
+    const latestSettings = await getSettings().catch(() => null);
+    await persistRelatedEmailsToServer(contextualEmails, latestSettings);
     setAllGroups((current) => mergeGroupEntryLists(current, related.groups || []));
     setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
     setRelatedTickets((current) => mergeTicketEntryLists(related.tickets || [], current));
