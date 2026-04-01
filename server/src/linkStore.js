@@ -490,7 +490,7 @@ function dedupeEmailLinks(entries) {
     const key = makeEmailLookupKey(entry);
     if (!key) continue;
     const current = seen.get(key);
-    seen.set(key, current ? mergeEntryData(current, entry) : entry);
+    seen.set(key, current ? mergeEmailContextEntries(current, entry) : entry);
   }
   return Array.from(seen.values()).sort((a, b) =>
     String(b.messageDateIso || b.receivedAtIso || b.linkedAt || "").localeCompare(
@@ -1613,6 +1613,15 @@ function mergeEmailContextEntries(baseEmail, overlayEmail) {
     acc.push(entry);
     return acc;
   }, []);
+  const mergedRelatedReasons = [
+    ...(Array.isArray(baseEmail.relatedReasons) ? baseEmail.relatedReasons : []),
+    ...(Array.isArray(overlayEmail.relatedReasons) ? overlayEmail.relatedReasons : []),
+  ].reduce((acc, entry) => {
+    const key = JSON.stringify(entry || {});
+    if (!key || acc.some((current) => JSON.stringify(current || {}) === key)) return acc;
+    acc.push(entry);
+    return acc;
+  }, []);
 
   const businessGroups = mergedRelatedGroups.filter((entry) => entry?.kind !== "conversation");
   const principalGroup = businessGroups.find((entry) => normalizeGroupMembershipKind(entry?.relationKind) === "principal") || businessGroups[0] || null;
@@ -1621,6 +1630,7 @@ function mergeEmailContextEntries(baseEmail, overlayEmail) {
     ...baseEmail,
     ...overlayEmail,
     id: normalizeString(baseEmail.id || overlayEmail.id),
+    emailKey: normalizeString(preferredEmail.emailKey || fallbackEmail.emailKey),
     itemId: normalizeString(preferredEmail.itemId || fallbackEmail.itemId),
     internetMessageId: normalizeMessageId(preferredEmail.internetMessageId || fallbackEmail.internetMessageId),
     conversationId: normalizeString(preferredEmail.conversationId || fallbackEmail.conversationId),
@@ -1628,6 +1638,7 @@ function mergeEmailContextEntries(baseEmail, overlayEmail) {
     fromEmail: normalizeString(preferredEmail.fromEmail || fallbackEmail.fromEmail),
     fromName: normalizeString(preferredEmail.fromName || fallbackEmail.fromName),
     emailWebLink: normalizeString(preferredEmail.emailWebLink || fallbackEmail.emailWebLink),
+    linkedAt: normalizeString(preferredEmail.linkedAt || fallbackEmail.linkedAt),
     messageDateIso: normalizeString(preferredEmail.messageDateIso || fallbackEmail.messageDateIso),
     receivedAtIso: normalizeString(preferredEmail.receivedAtIso || fallbackEmail.receivedAtIso || preferredEmail.messageDateIso || fallbackEmail.messageDateIso),
     sentAtIso: normalizeString(preferredEmail.sentAtIso || fallbackEmail.sentAtIso),
@@ -1646,6 +1657,7 @@ function mergeEmailContextEntries(baseEmail, overlayEmail) {
     membershipKind: overlayEmail.membershipKind || principalGroup?.relationKind || baseEmail.membershipKind,
     relatedGroups: mergedRelatedGroups,
     relatedRecords: mergedRelatedRecords,
+    relatedReasons: mergedRelatedReasons,
   };
 }
 
@@ -2628,12 +2640,14 @@ async function getDbCustomGroupContext(input) {
     if (!rowEmailKey || currentEmailKeys.has(rowEmailKey)) continue;
 
     const email = mapDbGroupMemberRow(row);
-    const current = aggregated.get(rowEmailKey) || {
-      ...email,
-      relatedRecords: [],
-      relatedGroups: [],
-      relatedReasons: [],
-    };
+    const current = aggregated.get(rowEmailKey)
+      ? mergeEmailContextEntries(aggregated.get(rowEmailKey), email)
+      : {
+          ...email,
+          relatedRecords: [],
+          relatedGroups: [],
+          relatedReasons: [],
+        };
 
     if (!current.relatedGroups.some((entry) => entry.id === row.group_id)) {
       current.relatedGroups.push({
@@ -3706,7 +3720,10 @@ export async function getEmailAttachmentContent(emailId, attachmentKey) {
 
   const attachments = normalizeAttachments(email.attachments);
   const attachment = attachments.find((entry) =>
-    normalizeString(entry?.key) === aid || normalizeString(entry?.id) === aid
+    normalizeString(entry?.key) === aid
+    || normalizeString(entry?.id) === aid
+    || normalizeString(entry?.contentId) === aid
+    || normalizeString(entry?.name) === aid
   ) || null;
   if (!attachment) return null;
 

@@ -168,14 +168,140 @@ function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
   return String(email?.emailKey || email?.id || email?.itemId || email?.internetMessageId || `${email?.conversationId || ""}|${email?.subject || ""}`);
 }
 
-function dedupeEmails(emails: RelatedEmailEntry[]): RelatedEmailEntry[] {
+function mergeUniqueStrings(values: string[]): string[] {
   const seen = new Set<string>();
-  return emails.filter((email) => {
-    const key = makeEmailKey(email);
-    if (!key || seen.has(key)) return false;
+  const next: string[] = [];
+  for (const value of values || []) {
+    const normalized = String(value || "").trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    next.push(normalized);
+  }
+  return next;
+}
+
+function mergeUniqueBy<T>(values: T[], getKey: (value: T) => string): T[] {
+  const seen = new Set<string>();
+  const next: T[] = [];
+  for (const value of values || []) {
+    const key = String(getKey(value) || "").trim();
+    if (!key || seen.has(key)) continue;
     seen.add(key);
-    return true;
-  });
+    next.push(value);
+  }
+  return next;
+}
+
+function scoreStudioAttachment(attachment: any): number {
+  const normalized = normalizeStudioAttachment(attachment);
+  if (!normalized?.name) return 0;
+  let score = 10;
+  if (String(normalized.content || "").trim()) score += 40;
+  if (normalized.hasContent === true) score += 25;
+  if (String(normalized.key || "").trim()) score += 18;
+  if (String(normalized.id || "").trim()) score += 10;
+  if (String(normalized.contentId || "").trim()) score += 6;
+  if (String((attachment as any)?.storagePathHint || "").trim()) score += 12;
+  if (String((attachment as any)?.storageBasePath || "").trim()) score += 8;
+  return score;
+}
+
+function scoreStudioAttachmentCollection(attachments: any[]): number {
+  return (Array.isArray(attachments) ? attachments : []).reduce((total, attachment) => total + scoreStudioAttachment(attachment), 0);
+}
+
+function mergeClassificationMetaDrafts(
+  current?: ClassificationMetaDraft | null,
+  incoming?: ClassificationMetaDraft | null
+): ClassificationMetaDraft | undefined {
+  if (!current && !incoming) return undefined;
+  const fallback = normalizeClassificationMetaDraft(current);
+  const preferred = normalizeClassificationMetaDraft(incoming);
+  return {
+    ...fallback,
+    ...preferred,
+    categorizedLabelNames: mergeUniqueStrings([
+      ...(fallback.categorizedLabelNames || []),
+      ...(preferred.categorizedLabelNames || []),
+    ]),
+  };
+}
+
+function scoreRelatedEmailEntry(email: RelatedEmailEntry | null | undefined): number {
+  if (!email) return 0;
+  return Number(Boolean(String(email.emailKey || email.id || email.itemId || email.internetMessageId || "").trim())) * 40
+    + Number(Boolean(String(email.bodyText || "").trim() || String(email.bodyHtml || "").trim())) * 60
+    + Number(Boolean(String(email.status || "").trim())) * 8
+    + scoreStudioAttachmentCollection(Array.isArray(email.attachments) ? email.attachments : [])
+    + ((Array.isArray(email.labels) ? email.labels.length : 0) * 2)
+    + ((Array.isArray(email.relatedGroups) ? email.relatedGroups.length : 0) * 2)
+    + ((Array.isArray(email.relatedRecords) ? email.relatedRecords.length : 0) * 2);
+}
+
+function mergeRelatedEmailEntries(current: RelatedEmailEntry, incoming: RelatedEmailEntry): RelatedEmailEntry {
+  const preferred = scoreRelatedEmailEntry(incoming) >= scoreRelatedEmailEntry(current) ? incoming : current;
+  const fallback = preferred === incoming ? current : incoming;
+  const preferredAttachments = Array.isArray(preferred.attachments) ? preferred.attachments : [];
+  const fallbackAttachments = Array.isArray(fallback.attachments) ? fallback.attachments : [];
+  return {
+    ...fallback,
+    ...preferred,
+    emailKey: String(preferred.emailKey || fallback.emailKey || "").trim() || undefined,
+    id: String(preferred.id || fallback.id || "").trim() || undefined,
+    itemId: String(preferred.itemId || fallback.itemId || "").trim() || undefined,
+    internetMessageId: String(preferred.internetMessageId || fallback.internetMessageId || "").trim() || undefined,
+    conversationId: String(preferred.conversationId || fallback.conversationId || "").trim() || undefined,
+    subject: String(preferred.subject || fallback.subject || "").trim(),
+    fromEmail: String(preferred.fromEmail || fallback.fromEmail || "").trim(),
+    fromName: String(preferred.fromName || fallback.fromName || "").trim(),
+    receivedAtIso: String(preferred.receivedAtIso || fallback.receivedAtIso || preferred.messageDateIso || fallback.messageDateIso || "").trim() || undefined,
+    messageDateIso: String(preferred.messageDateIso || fallback.messageDateIso || preferred.receivedAtIso || fallback.receivedAtIso || "").trim() || undefined,
+    bodyText: String(preferred.bodyText || fallback.bodyText || "").trim(),
+    bodyHtml: String(preferred.bodyHtml || fallback.bodyHtml || "").trim(),
+    status: String(preferred.status || fallback.status || "").trim() || undefined,
+    labels: mergeUniqueStrings([...(fallback.labels || []), ...(preferred.labels || [])]),
+    removedInheritedLabels: mergeUniqueStrings([...(fallback.removedInheritedLabels || []), ...(preferred.removedInheritedLabels || [])]),
+    labelStates: {
+      ...(fallback.labelStates || {}),
+      ...(preferred.labelStates || {}),
+    },
+    classificationMeta: mergeClassificationMetaDrafts(fallback.classificationMeta, preferred.classificationMeta),
+    attachments: scoreStudioAttachmentCollection(preferredAttachments) >= scoreStudioAttachmentCollection(fallbackAttachments)
+      ? preferredAttachments
+      : fallbackAttachments,
+    relatedGroups: mergeUniqueBy(
+      [
+        ...(preferred.relatedGroups || []),
+        ...(fallback.relatedGroups || []),
+      ],
+      (group) => String(group?.id || "").trim()
+    ),
+    relatedRecords: mergeUniqueBy(
+      [
+        ...(preferred.relatedRecords || []),
+        ...(fallback.relatedRecords || []),
+      ],
+      (record) => `${String(record?.model || "").trim()}:${String(record?.recordId || "").trim()}`
+    ),
+    relatedReasons: mergeUniqueBy(
+      [
+        ...(preferred.relatedReasons || []),
+        ...(fallback.relatedReasons || []),
+      ],
+      (reason) => JSON.stringify(reason || {})
+    ),
+  };
+}
+
+function dedupeEmails(emails: RelatedEmailEntry[]): RelatedEmailEntry[] {
+  const seen = new Map<string, RelatedEmailEntry>();
+  for (const email of emails || []) {
+    const key = makeEmailKey(email);
+    if (!key) continue;
+    const current = seen.get(key);
+    seen.set(key, current ? mergeRelatedEmailEntries(current, email) : email);
+  }
+  return Array.from(seen.values());
 }
 
 function htmlToPlainText(html: string): string {
@@ -425,7 +551,7 @@ function isCurrentContextEmail(email: Partial<RelatedEmailEntry>, currentContext
 }
 
 function makeAttachmentKey(attachment: { key?: string; id?: string; name?: string; contentId?: string }): string {
-  return String(attachment.id || attachment.contentId || attachment.key || attachment.name || "").trim();
+  return String(attachment.key || attachment.id || attachment.contentId || attachment.name || "").trim();
 }
 
 function normalizeStudioAttachment(attachment: any) {
@@ -442,6 +568,26 @@ function normalizeStudioAttachment(attachment: any) {
     documentState: normalizeDocumentLifecycleState(attachment.documentState, "ingested"),
     hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
   };
+}
+
+function getStudioAttachmentRemoteId(attachment: any): string {
+  const normalized = normalizeStudioAttachment(attachment);
+  if (!normalized) return "";
+  return String(normalized.key || normalized.id || normalized.contentId || normalized.name || "").trim();
+}
+
+function isStudioAttachmentHydrated(attachment: any): boolean {
+  const normalized = normalizeStudioAttachment(attachment);
+  if (!normalized?.name) return false;
+  if (String(normalized.content || "").trim()) return true;
+  if (normalized.hasContent !== true) return false;
+  return Boolean(getStudioAttachmentRemoteId(normalized));
+}
+
+function hasHydratedAttachmentCollection(email: RelatedEmailEntry | null): boolean {
+  const attachments = Array.isArray(email?.attachments) ? email.attachments : [];
+  if (!attachments.length) return false;
+  return attachments.every((attachment) => isStudioAttachmentHydrated(attachment));
 }
 
 function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | null): RelevantEmailPayload | null {
@@ -1430,8 +1576,8 @@ function StudioInner() {
     [selectedAttachmentPreview]
   );
   const selectedAttachmentPreviewRemoteId = useMemo(
-    () => String(selectedAttachmentPreview?.key || selectedAttachmentPreview?.id || "").trim(),
-    [selectedAttachmentPreview?.id, selectedAttachmentPreview?.key]
+    () => getStudioAttachmentRemoteId(selectedAttachmentPreview),
+    [selectedAttachmentPreview]
   );
   const selectedAttachmentPreviewEmailId = useMemo(
     () => String(selectedEmail?.id || selectedEmail?.emailKey || "").trim(),
@@ -1735,14 +1881,15 @@ function StudioInner() {
     if (!selectedEmail || !selectedKey || loading) return;
     const hasBody = Boolean(String(selectedEmail.bodyText || "").trim() || String(selectedEmail.bodyHtml || "").trim());
     const hasAttachments = Array.isArray(selectedEmail.attachments) && selectedEmail.attachments.length > 0;
+    const hasHydratedAttachments = hasHydratedAttachmentCollection(selectedEmail);
     const hasPersistedIdentity = Boolean(String(selectedEmail.id || selectedEmail.emailKey || "").trim());
-    const needsHydration = !selectedEmailInRelatedContext || !hasPersistedIdentity || !hasBody || !hasAttachments;
+    const needsHydration = !selectedEmailInRelatedContext || !hasPersistedIdentity || !hasBody || !hasHydratedAttachments;
     if (!needsHydration) return;
     const hydrationSignature = [
       selectedKey,
       hasPersistedIdentity ? "persisted" : "seed",
       hasBody ? "body" : "no-body",
-      hasAttachments ? `att:${selectedEmail.attachments?.length || 0}` : "no-att",
+      hasAttachments ? `att:${selectedEmail.attachments?.length || 0}:${hasHydratedAttachments ? "ready" : "pending"}` : "no-att",
     ].join("|");
     if (hydratedEmailKeysRef.current.has(hydrationSignature)) return;
 
@@ -2664,7 +2811,7 @@ function StudioInner() {
             let contentBase64 = String(attachment.content || "").trim();
             const selectedEmailRemoteId = String(selectedEmail?.id || selectedEmail?.emailKey || "").trim();
             if (!contentBase64 && attachment.hasContent && selectedEmailRemoteId) {
-              const remoteId = String(attachment.key || attachment.id || "").trim();
+              const remoteId = getStudioAttachmentRemoteId(attachment);
               if (remoteId) {
                 try {
                   const remote = await getEmailAttachmentContentBase64(selectedEmailRemoteId, remoteId);
