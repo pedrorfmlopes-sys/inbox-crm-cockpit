@@ -733,6 +733,22 @@ function areStringListsEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function mergeGroupEntryLists(left: LinkGroupEntry[], right: LinkGroupEntry[]): LinkGroupEntry[] {
+  return [...left, ...right].reduce<LinkGroupEntry[]>((acc, group) => {
+    if (!group?.id || acc.some((entry) => entry.id === group.id)) return acc;
+    acc.push(group);
+    return acc;
+  }, []);
+}
+
+function mergeTicketEntryLists(left: GroupTicketEntry[], right: GroupTicketEntry[]): GroupTicketEntry[] {
+  return [...left, ...right].reduce<GroupTicketEntry[]>((acc, ticket) => {
+    if (!ticket?.id || acc.some((entry) => entry.id === ticket.id)) return acc;
+    acc.push(ticket);
+    return acc;
+  }, []);
+}
+
 function readParams(): StudioParams {
   const params = new URLSearchParams(window.location.search);
   return {
@@ -882,6 +898,7 @@ function StudioInner() {
   const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
   const [favoriteGroupIds, setFavoriteGroupIds] = useState<string[]>([]);
+  const hydratedEmailKeysRef = useRef<Set<string>>(new Set());
 
   const currentSeed = useMemo(() => readSeedEmail(params), [params]);
   const fallbackIdentity = useMemo(() => buildFallbackEmail(params), [params]);
@@ -997,9 +1014,6 @@ function StudioInner() {
           });
           return makeEmailKey(currentItem || mergedEmails[0] || {});
         });
-        setStatus(mergedEmails.length
-          ? "Janela base pronta. O email atual e os relacionados ja podem ser analisados aqui."
-          : "Ainda nao encontrámos emails relacionados. Esta janela vai usar o email atual como ponto de partida.");
         if (mergedEmails.length) {
           setStatus("Janela base pronta. O email atual e os relacionados persistidos ja podem ser analisados aqui.");
         } else if (bootstrapEmailPayload) {
@@ -1139,6 +1153,10 @@ function StudioInner() {
   const selectedEmail = useMemo(
     () => visibleEmails.find((email) => makeEmailKey(email) === selectedEmailKey) || emailPool.find((email) => makeEmailKey(email) === selectedEmailKey) || visibleEmails[0] || emailPool[0] || null,
     [emailPool, selectedEmailKey, visibleEmails]
+  );
+  const selectedEmailInRelatedContext = useMemo(
+    () => Boolean(selectedEmail && relatedEmails.some((email) => makeEmailKey(email) === makeEmailKey(selectedEmail))),
+    [relatedEmails, selectedEmail]
   );
 
   const selectedEmailIsCurrent = useMemo(() => {
@@ -1596,6 +1614,23 @@ function StudioInner() {
       content: attachment.content,
     })),
   }), [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
+
+  useEffect(() => {
+    const selectedKey = String(selectedEmailKey || "").trim();
+    if (!selectedEmail || !selectedKey) return;
+    if (hydratedEmailKeysRef.current.has(selectedKey)) return;
+
+    const hasBody = Boolean(String(selectedEmail.bodyText || "").trim() || String(selectedEmail.bodyHtml || "").trim());
+    const hasAttachments = Array.isArray(selectedEmail.attachments) && selectedEmail.attachments.length > 0;
+    const needsHydration = !selectedEmailInRelatedContext || (!hasBody && !hasAttachments);
+    if (!needsHydration) return;
+
+    hydratedEmailKeysRef.current.add(selectedKey);
+    void refreshSelectedEmailContext(currentEmailPayload).catch(() => {
+      hydratedEmailKeysRef.current.delete(selectedKey);
+    });
+  }, [currentEmailPayload, selectedEmail, selectedEmailInRelatedContext, selectedEmailKey]);
+
   const similarCases = useMemo(() => {
     if (!selectedEmail) return [];
     const selectedKey = makeEmailKey(selectedEmail);
@@ -2062,29 +2097,26 @@ function StudioInner() {
     if (!closed) window.close();
   }
 
-  async function refreshSelectedEmailContext() {
+  async function refreshSelectedEmailContext(targetEmailPayload?: RelevantEmailPayload | null) {
+    const lookup = targetEmailPayload || currentEmailPayload;
     const related = await getRelatedEmailContext({
-      conversationId: currentEmailPayload.conversationId,
-      internetMessageId: currentEmailPayload.internetMessageId,
-      itemId: currentEmailPayload.itemId,
-      subject: currentEmailPayload.subject,
-      fromEmail: currentEmailPayload.fromEmail,
-      fromName: currentEmailPayload.fromName,
-      receivedAtIso: currentEmailPayload.receivedAtIso,
+      conversationId: lookup.conversationId,
+      internetMessageId: lookup.internetMessageId,
+      itemId: lookup.itemId,
+      subject: lookup.subject,
+      fromEmail: lookup.fromEmail,
+      fromName: lookup.fromName,
+      receivedAtIso: lookup.receivedAtIso,
     });
-    const nextGroups = [...allGroups, ...(related.groups || [])].reduce<LinkGroupEntry[]>((acc, group) => {
-      if (!group?.id || acc.some((entry) => entry.id === group.id)) return acc;
-      acc.push(group);
-      return acc;
-    }, []);
     const contextualEmails = dedupeEmails([
       ...(related.email ? [related.email] : []),
       ...(related.emails || []),
     ]);
-    setAllGroups(nextGroups);
+    setAllGroups((current) => mergeGroupEntryLists(current, related.groups || []));
     setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
-    setRelatedTickets(Array.isArray(related.tickets) ? related.tickets : []);
-    setRelatedEmails(contextualEmails);
+    setRelatedTickets((current) => mergeTicketEntryLists(related.tickets || [], current));
+    setRelatedEmails((current) => dedupeEmails([...contextualEmails, ...current]));
+    setKnownEmails((current) => dedupeEmails([...contextualEmails, ...current]));
   }
 
   function toggleTargetEmailKey(emailKey: string) {
