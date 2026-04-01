@@ -324,6 +324,8 @@ export function buildOutlookCategorySourceFromRelatedContext(input: {
   const effectivePrincipalGroupNames = principalGroupNames.length || referenceGroupNames.length
     ? principalGroupNames
     : fallbackGroupNames;
+  const principalCategorize = email?.classificationMeta?.principalCategorize !== false;
+  const referenceCategorize = email?.classificationMeta?.referenceCategorize !== false;
   const { effectiveLabels, removedInheritedLabels, categorizedLabelNames, labelStatuses } = buildEffectiveLabels(
     email,
     principalGroups,
@@ -346,8 +348,8 @@ export function buildOutlookCategorySourceFromRelatedContext(input: {
       )
     : [];
   return normalizeOutlookCategorySource({
-    principalGroupNames: includeGroups ? effectivePrincipalGroupNames : [],
-    referenceGroupNames: includeGroups ? referenceGroupNames : [],
+    principalGroupNames: includeGroups && principalCategorize ? effectivePrincipalGroupNames : [],
+    referenceGroupNames: includeGroups && referenceCategorize ? referenceGroupNames : [],
     ticketCodes: includeTickets ? ticketCodes : [],
     labelNames: includeLabels ? categorizedLabelNames : [],
     managedLabelNames: [

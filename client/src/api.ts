@@ -154,8 +154,10 @@ export type RelevantEmailPayload = {
   removedInheritedLabels?: string[];
   labelStates?: Record<string, "em_analise" | "em_progresso" | "concluido" | string>;
   classificationMeta?: {
+    principalCategorize?: boolean;
     principalStatusEnabled?: boolean;
     principalStatusCategorize?: boolean;
+    referenceCategorize?: boolean;
     referenceStatusEnabled?: boolean;
     referenceStatusCategorize?: boolean;
     ticketStatusEnabled?: boolean;
@@ -317,8 +319,10 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
   removedInheritedLabels?: string[];
   labelStates?: Record<string, string>;
   classificationMeta?: {
+    principalCategorize?: boolean;
     principalStatusEnabled?: boolean;
     principalStatusCategorize?: boolean;
+    referenceCategorize?: boolean;
     referenceStatusEnabled?: boolean;
     referenceStatusCategorize?: boolean;
     ticketStatusEnabled?: boolean;
@@ -578,8 +582,10 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
     : {};
   const normalizedClassificationMeta = entry?.classificationMeta && typeof entry.classificationMeta === "object"
     ? {
+        principalCategorize: entry.classificationMeta.principalCategorize !== false,
         principalStatusEnabled: entry.classificationMeta.principalStatusEnabled === true,
         principalStatusCategorize: entry.classificationMeta.principalStatusCategorize === true,
+        referenceCategorize: entry.classificationMeta.referenceCategorize !== false,
         referenceStatusEnabled: entry.classificationMeta.referenceStatusEnabled === true,
         referenceStatusCategorize: entry.classificationMeta.referenceStatusCategorize === true,
         ticketStatusEnabled: entry.classificationMeta.ticketStatusEnabled === true,

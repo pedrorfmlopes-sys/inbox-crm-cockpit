@@ -233,8 +233,10 @@ function parseLabelStatesJson(value) {
 function normalizeEmailClassificationMeta(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const next = {
+    principalCategorize: value.principalCategorize !== false,
     principalStatusEnabled: value.principalStatusEnabled === true,
     principalStatusCategorize: value.principalStatusCategorize === true,
+    referenceCategorize: value.referenceCategorize !== false,
     referenceStatusEnabled: value.referenceStatusEnabled === true,
     referenceStatusCategorize: value.referenceStatusCategorize === true,
     ticketStatusEnabled: value.ticketStatusEnabled === true,

@@ -29,8 +29,10 @@ type ReadingSuggestionChip = { key: string; label: string; kind: "group" | "tick
 type GroupContactDraft = { key: string; name: string; email?: string; company?: string; source?: string };
 type GroupEntityDraft = { key: string; name: string; kind?: string; source?: string };
 type ClassificationMetaDraft = {
+  principalCategorize: boolean;
   principalStatusEnabled: boolean;
   principalStatusCategorize: boolean;
+  referenceCategorize: boolean;
   referenceStatusEnabled: boolean;
   referenceStatusCategorize: boolean;
   ticketStatusEnabled: boolean;
@@ -83,8 +85,10 @@ const DOCUMENT_STATE_OPTIONS: Array<{ value: DocumentLifecycleState; label: stri
 ];
 
 const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
+  principalCategorize: true,
   principalStatusEnabled: false,
   principalStatusCategorize: false,
+  referenceCategorize: true,
   referenceStatusEnabled: false,
   referenceStatusCategorize: false,
   ticketStatusEnabled: false,
@@ -152,8 +156,10 @@ function normalizeClassificationMetaDraft(
   value?: Partial<ClassificationMetaDraft> | null
 ): ClassificationMetaDraft {
   return {
+    principalCategorize: value?.principalCategorize !== false,
     principalStatusEnabled: value?.principalStatusEnabled === true,
     principalStatusCategorize: value?.principalStatusCategorize === true,
+    referenceCategorize: value?.referenceCategorize !== false,
     referenceStatusEnabled: value?.referenceStatusEnabled === true,
     referenceStatusCategorize: value?.referenceStatusCategorize === true,
     ticketStatusEnabled: value?.ticketStatusEnabled === true,
@@ -3498,6 +3504,15 @@ function StudioInner() {
                 <label style={S.check}>
                   <input
                     type="checkbox"
+                    checked={classificationMetaDraft.principalCategorize}
+                    onChange={(event) => updateClassificationMeta({ principalCategorize: event.target.checked })}
+                    disabled={!principalGroup}
+                  />
+                  <span>Grupo em categoria Outlook</span>
+                </label>
+                <label style={S.check}>
+                  <input
+                    type="checkbox"
                     checked={classificationMetaDraft.principalStatusEnabled}
                     onChange={(event) => updateClassificationMeta({ principalStatusEnabled: event.target.checked })}
                     disabled={!principalGroup?.status}
@@ -3617,6 +3632,15 @@ function StudioInner() {
                 ) : null}
               </div>
               <div style={S.inlineChecks}>
+                <label style={S.check}>
+                  <input
+                    type="checkbox"
+                    checked={classificationMetaDraft.referenceCategorize}
+                    onChange={(event) => updateClassificationMeta({ referenceCategorize: event.target.checked })}
+                    disabled={!referenceGroups.length}
+                  />
+                  <span>Referencias em categoria Outlook</span>
+                </label>
                 <label style={S.check}>
                   <input
                     type="checkbox"
