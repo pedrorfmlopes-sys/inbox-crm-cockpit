@@ -1723,15 +1723,25 @@ function StudioInner() {
   useEffect(() => {
     const selectedKey = String(selectedEmailKey || "").trim();
     if (!selectedEmail || !selectedKey || loading) return;
-    if (hydratedEmailKeysRef.current.has(selectedKey)) return;
+    const hasBody = Boolean(String(selectedEmail.bodyText || "").trim() || String(selectedEmail.bodyHtml || "").trim());
+    const hasAttachments = Array.isArray(selectedEmail.attachments) && selectedEmail.attachments.length > 0;
+    const hasPersistedIdentity = Boolean(String(selectedEmail.id || selectedEmail.emailKey || "").trim());
+    const needsHydration = !selectedEmailInRelatedContext || !hasPersistedIdentity || !hasBody || !hasAttachments;
+    if (!needsHydration) return;
+    const hydrationSignature = [
+      selectedKey,
+      hasPersistedIdentity ? "persisted" : "seed",
+      hasBody ? "body" : "no-body",
+      hasAttachments ? `att:${selectedEmail.attachments?.length || 0}` : "no-att",
+    ].join("|");
+    if (hydratedEmailKeysRef.current.has(hydrationSignature)) return;
 
-    hydratedEmailKeysRef.current.add(selectedKey);
+    hydratedEmailKeysRef.current.add(hydrationSignature);
     void refreshSelectedEmailContext(buildRelevantEmailPayloadFromRelatedEmail(selectedEmail) || currentEmailPayload)
-      .catch(() => undefined)
-      .finally(() => {
-        hydratedEmailKeysRef.current.delete(selectedKey);
+      .catch(() => {
+        hydratedEmailKeysRef.current.delete(hydrationSignature);
       });
-  }, [currentEmailPayload, loading, selectedEmail, selectedEmailKey]);
+  }, [currentEmailPayload, loading, selectedEmail, selectedEmailInRelatedContext, selectedEmailKey]);
 
   const similarCases = useMemo(() => {
     if (!selectedEmail) return [];
@@ -2064,9 +2074,13 @@ function StudioInner() {
       return;
     }
     if (!selectedEmailTicketIds.length) {
-      setSelectedTicketId("");
+      setSelectedTicketId((current) => (
+        current && availableTicketChoices.some((ticket) => ticket.id === current)
+          ? current
+          : ""
+      ));
     }
-  }, [selectedEmailTicketIds, selectionTouched.ticket]);
+  }, [availableTicketChoices, selectedEmailTicketIds, selectionTouched.ticket]);
 
   useEffect(() => {
     if (!selectedSeriesId || !selectedTicketId) return;
@@ -2218,7 +2232,16 @@ function StudioInner() {
     await persistRelatedEmailsToServer(contextualEmails, latestSettings);
     setAllGroups((current) => mergeGroupEntryLists(current, related.groups || []));
     setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
-    setRelatedTickets(Array.isArray(related.tickets) ? related.tickets : []);
+    setRelatedTickets((current) => {
+      const nextTickets = Array.isArray(related.tickets) ? related.tickets : [];
+      const preservedSelectedTicket = selectedTicketId
+        ? current.find((ticket) => ticket.id === selectedTicketId) || null
+        : null;
+      if (preservedSelectedTicket && !nextTickets.some((ticket) => ticket.id === preservedSelectedTicket.id)) {
+        return [preservedSelectedTicket, ...nextTickets];
+      }
+      return nextTickets;
+    });
     setRelatedEmails(contextualEmails);
     setKnownEmails((current) => dedupeEmails([...contextualEmails, ...current]));
     return related;
@@ -2800,6 +2823,11 @@ function StudioInner() {
       const removedInheritedLabels = inheritedLabels.filter((label) => !selectedLabels.includes(label));
       const emailOwnedSelectedLabels = selectedLabels.filter((label) => !inheritedLabels.includes(label));
       const latestSettings = await getSettings().catch(() => null);
+      const currentOutlookTicket = selectedTicketId
+        ? (availableTicketChoices.find((ticket) => ticket.id === selectedTicketId)
+          || relatedTickets.find((ticket) => ticket.id === selectedTicketId)
+          || null)
+        : null;
 
       let finalTicket: GroupTicketEntry | null = null;
       const buildTargetPayload = (targetEmail: RelatedEmailEntry): RelevantEmailPayload => {
@@ -2942,10 +2970,70 @@ function StudioInner() {
       }
 
       const includesCurrentTarget = effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
+      let categorySyncApplied = false;
+      if (includesCurrentTarget) {
+        const currentTargetEmail = effectiveTargetEmails.find((email) => isCurrentContextEmail(email, currentContext)) || selectedEmail;
+        const categoryEmail: RelatedEmailEntry | null = currentTargetEmail
+          ? {
+              ...currentTargetEmail,
+              itemId: String(currentContext.itemId || currentTargetEmail.itemId || "").trim() || undefined,
+              internetMessageId: String(currentContext.internetMessageId || currentTargetEmail.internetMessageId || "").trim() || undefined,
+              conversationId: String(currentContext.conversationId || currentTargetEmail.conversationId || "").trim() || undefined,
+              subject: String(currentTargetEmail.subject || currentContext.subject || "").trim() || undefined,
+              fromEmail: String(currentTargetEmail.fromEmail || currentContext.fromEmail || "").trim() || undefined,
+              fromName: String(currentTargetEmail.fromName || currentContext.fromName || "").trim() || undefined,
+              receivedAtIso: String(currentTargetEmail.receivedAtIso || currentTargetEmail.messageDateIso || currentContext.receivedAtIso || "").trim() || undefined,
+              messageDateIso: String(currentTargetEmail.messageDateIso || currentTargetEmail.receivedAtIso || currentContext.receivedAtIso || "").trim() || undefined,
+              status: emailLabelStatus,
+              labels: emailOwnedSelectedLabels,
+              removedInheritedLabels,
+              labelStates: selectedLabelStates,
+              classificationMeta: {
+                ...classificationMetaDraft,
+                categorizedLabelNames: categorizableLabels,
+              },
+              relatedGroups: [
+                ...(principalGroup?.id ? [{
+                  id: principalGroup.id,
+                  name: principalGroup.name,
+                  kind: principalGroup.kind,
+                  relationKind: "principal",
+                }] : []),
+                ...referenceGroups.map((group) => ({
+                  id: group.id,
+                  name: group.name,
+                  kind: group.kind,
+                  relationKind: "referencia" as const,
+                })),
+              ],
+            }
+          : null;
+        if (categoryEmail) {
+          const categoryTickets = Array.from(
+            new Map(
+              [finalTicket, currentOutlookTicket]
+                .filter(Boolean)
+                .map((ticket) => [String((ticket as GroupTicketEntry).id || "").trim(), ticket as GroupTicketEntry])
+                .filter(([id]) => Boolean(id))
+            ).values()
+          );
+          const snapshot = await getManagedOutlookCategorySnapshot(labelCatalog).catch(() => null);
+          categorySyncApplied = await requestCockpitHostAction({
+            type: "sync-managed-categories",
+            payload: buildOutlookCategorySourceFromRelatedContext({
+              email: categoryEmail,
+              groups: [principalGroup, ...referenceGroups].filter(Boolean) as LinkGroupEntry[],
+              tickets: categoryTickets,
+              settings: latestSettings,
+              currentOutlookLabelNames: snapshot?.labelNames || [],
+            }),
+          }).catch(() => false);
+        }
+      }
 
       setSelectionTouched({ principal: false, references: false, ticket: false });
       const refreshedContext = await refreshSelectedEmailContext();
-      if (includesCurrentTarget) {
+      if (includesCurrentTarget && !categorySyncApplied) {
         const refreshedCurrentEmail = dedupeEmails([
           ...(refreshedContext?.email ? [refreshedContext.email] : []),
           ...((refreshedContext?.emails || []) as RelatedEmailEntry[]),
