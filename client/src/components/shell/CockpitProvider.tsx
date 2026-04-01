@@ -1312,6 +1312,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             .then((response) => {
                 if (cancelled) return;
                 if (!doesRelatedEmailMatchContext(response?.email || null, ctx)) {
+                    lastOutlookCategorySyncRef.current = null;
                     setCurrentOutlookCategorySourceStatus({
                         identity: currentSourceIdentity,
                         ready: false,
@@ -1351,9 +1352,10 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     setCurrentOutlookCategorySource((current) => (
                         areOutlookCategorySourcesEqual(current, nextSource) ? current : nextSource
                     ));
+                    lastOutlookCategorySyncRef.current = null;
                     setCurrentOutlookCategorySourceStatus({
                         identity: currentSourceIdentity,
-                        ready: true,
+                        ready: false,
                     });
                 }
             });
@@ -1393,9 +1395,22 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 ],
             };
             const syncSignature = getOutlookCategoryPlanSignature(buildOutlookCategoryPlan(syncSource));
+            const currentSnapshotSignature = snapshot
+                ? getOutlookCategoryPlanSignature(buildOutlookCategoryPlan({
+                    ...syncSource,
+                    principalGroupNames: snapshot.principalGroupNames || [],
+                    referenceGroupNames: snapshot.referenceGroupNames || [],
+                    ticketCodes: snapshot.ticketCodes || [],
+                    labelNames: snapshot.labelNames || [],
+                    groupStatuses: snapshot.groupStatuses || [],
+                    ticketStatuses: snapshot.ticketStatuses || [],
+                    labelStatuses: snapshot.labelStatuses || [],
+                }))
+                : "";
             if (
                 lastOutlookCategorySyncRef.current?.identity === syncIdentity
                 && lastOutlookCategorySyncRef.current?.signature === syncSignature
+                && currentSnapshotSignature === syncSignature
             ) {
                 return;
             }
