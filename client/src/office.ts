@@ -61,6 +61,8 @@ const GRAPH_RUNTIME_ENABLED = false;
 
 let nestableMsalPromise: Promise<any> | null = null;
 export const OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT = "iccc-outlook-category-context-invalidated";
+const HOST_ACTION_WINDOW_MESSAGE_TYPE = "iccc-host-action-window";
+const HOST_ACTION_WINDOW_RESULT_TYPE = "iccc-host-action-window-result";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -1277,45 +1279,46 @@ type CockpitHostAction =
       payload: (LegacyManagedOutlookCategoryInput & Partial<OutlookCategorySource>);
     };
 
-async function executeCockpitHostAction(action: CockpitHostAction): Promise<void> {
+async function executeCockpitHostAction(action: CockpitHostAction): Promise<boolean> {
   if (action.type === "close") {
     try {
       if (activeDialog) activeDialog.close();
     } catch { }
     activeDialog = null;
-    return;
+    return true;
   }
 
   if (action.type === "open-email") {
     await openLinkedOutlookEmail({ itemId: action.itemId, emailWebLink: action.emailWebLink });
-    return;
+    return true;
   }
 
   if (action.type === "reply-current") {
     await displayReplyForm("", true);
-    return;
+    return true;
   }
 
   if (action.type === "forward-current") {
     await displayForwardForm("", true);
-    return;
+    return true;
   }
 
   if (action.type === "sync-current-item-categories") {
-    await syncCurrentItemOutlookCategoriesFromContext();
-    return;
+    return await syncCurrentItemOutlookCategoriesFromContext();
   }
 
   if (action.type === "sync-managed-categories") {
     if ("groupNames" in (action.payload || {}) || "statuses" in (action.payload || {})) {
       await syncManagedOutlookCategories(action.payload || {});
       dispatchOutlookCategoryContextInvalidated();
-      return;
+      return true;
     }
     await syncOutlookCategorySource(action.payload || {});
     dispatchOutlookCategoryContextInvalidated();
-    return;
+    return true;
   }
+
+  return false;
 }
 
 function tryParseCockpitHostMessage(rawMessage: any): CockpitHostAction | null {
@@ -1540,6 +1543,47 @@ export async function openAiReplyTargetPicker(params: Record<string, string> = {
   return await openCockpitView<AiReplyTargetSelection>("ai-reply-target-picker", params, { height: 84, width: 74, displayInIframe: true });
 }
 
+async function postCockpitHostActionToOpener(action: CockpitHostAction): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const openerWindow = window.opener;
+  if (!openerWindow || openerWindow === window || typeof openerWindow.postMessage !== "function") return false;
+  if (action.type === "close") return false;
+
+  const requestId = `host-action:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  return await new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      try {
+        window.removeEventListener("message", handleMessage as EventListener);
+      } catch {
+        // ignore cleanup failures
+      }
+      window.clearTimeout(timeoutId);
+      resolve(ok);
+    };
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const payload: any = event.data;
+      if (payload?.type !== HOST_ACTION_WINDOW_RESULT_TYPE) return;
+      if (String(payload?.requestId || "") !== requestId) return;
+      finish(payload?.ok === true);
+    };
+    const timeoutId = window.setTimeout(() => finish(false), 8000);
+    window.addEventListener("message", handleMessage as EventListener);
+    try {
+      openerWindow.postMessage({
+        type: HOST_ACTION_WINDOW_MESSAGE_TYPE,
+        requestId,
+        action,
+      }, window.location.origin);
+    } catch {
+      finish(false);
+    }
+  });
+}
+
 export async function requestCockpitHostAction(action: CockpitHostAction): Promise<boolean> {
   try {
     const OfficeAny = await ensureOfficeReady();
@@ -1551,13 +1595,59 @@ export async function requestCockpitHostAction(action: CockpitHostAction): Promi
     // fall through to local execution
   }
 
+  const openerResult = await postCockpitHostActionToOpener(action).catch(() => false);
+  if (openerResult) return true;
+
   try {
-    await executeCockpitHostAction(action);
-    return true;
+    return await executeCockpitHostAction(action);
   } catch {
     return false;
   }
 }
+
+type WindowHostActionMessage = {
+  type: typeof HOST_ACTION_WINDOW_MESSAGE_TYPE;
+  requestId: string;
+  action: CockpitHostAction;
+};
+
+function installCockpitWindowHostActionBridge() {
+  if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+  const host = window as typeof window & { __icccWindowHostActionBridgeInstalled?: boolean };
+  if (host.__icccWindowHostActionBridgeInstalled) return;
+  host.__icccWindowHostActionBridgeInstalled = true;
+  window.addEventListener("message", (event: MessageEvent) => {
+    if (event.origin !== window.location.origin) return;
+    const payload = event.data as WindowHostActionMessage | undefined;
+    if (payload?.type !== HOST_ACTION_WINDOW_MESSAGE_TYPE) return;
+    const sourceWindow = event.source as WindowProxy | null;
+    const requestId = String(payload?.requestId || "").trim();
+    const action = payload?.action;
+    if (!requestId || !action?.type) return;
+
+    void (async () => {
+      let ok = false;
+      try {
+        ok = action.type === "close"
+          ? false
+          : await requestCockpitHostAction(action);
+      } catch {
+        ok = false;
+      }
+      try {
+        sourceWindow?.postMessage({
+          type: HOST_ACTION_WINDOW_RESULT_TYPE,
+          requestId,
+          ok,
+        }, event.origin);
+      } catch {
+        // best effort only
+      }
+    })();
+  });
+}
+
+installCockpitWindowHostActionBridge();
 
 /**
  * Subscribe to selection change (when user clicks a different email).
