@@ -163,11 +163,22 @@ function buildContextEmailKey(ctx: OutlookMessageContext): string {
 function buildOutlookCategorySyncIdentity(ctx: OutlookMessageContext): string {
     const internetMessageId = String(ctx.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
     const itemId = String(ctx.itemId || "").trim();
-    const conversationId = String(ctx.conversationId || "").trim();
     if (internetMessageId) return `imid:${internetMessageId}`;
     if (itemId) return `item:${itemId}`;
-    if (conversationId) return `conv:${conversationId}`;
     return "";
+}
+
+function doesRelatedEmailMatchContext(email: {
+    itemId?: string;
+    internetMessageId?: string;
+} | null | undefined, ctx: OutlookMessageContext): boolean {
+    const currentItemId = String(ctx.itemId || "").trim();
+    const currentInternetMessageId = String(ctx.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+    const emailItemId = String(email?.itemId || "").trim();
+    const emailInternetMessageId = String(email?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+    if (currentItemId) return Boolean(emailItemId) && emailItemId === currentItemId;
+    if (currentInternetMessageId) return Boolean(emailInternetMessageId) && emailInternetMessageId === currentInternetMessageId;
+    return false;
 }
 
 function readPersistedConnectivitySnapshot(): ConnectivitySnapshot | null {
@@ -1085,9 +1096,9 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
 
     useEffect(() => {
-        const hasContextIdentity = Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
         const currentSourceIdentity = buildOutlookCategorySyncIdentity(ctx);
-        if (!hasContextIdentity) {
+        const hasPreciseContextIdentity = Boolean(currentSourceIdentity);
+        if (!hasPreciseContextIdentity) {
             const nextSource: OutlookCategorySource = {
                 principalGroupNames: [],
                 referenceGroupNames: [],
@@ -1128,6 +1139,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         getRelatedEmailContext(payload)
             .then((response) => {
                 if (cancelled) return;
+                if (!doesRelatedEmailMatchContext(response?.email || null, ctx)) {
+                    setCurrentOutlookCategorySourceStatus({
+                        identity: currentSourceIdentity,
+                        ready: false,
+                    });
+                    return;
+                }
                 const nextSource = buildOutlookCategorySourceFromRelatedContext({
                     email: response?.email || null,
                     groups: Array.isArray(response?.groups) ? response.groups : [],

@@ -1157,6 +1157,47 @@ function buildEmailSearchEntry(email, extra = {}) {
   };
 }
 
+function getEmailLookupMatchScore(entry, lookup) {
+  const normalizedLookup = normalizeEmailInput(lookup);
+  if (!entry || !normalizedLookup) return 0;
+
+  const entryItemId = normalizeString(entry?.itemId);
+  const entryInternetMessageId = normalizeMessageId(entry?.internetMessageId);
+  const entryConversationId = normalizeString(entry?.conversationId);
+  const entrySubject = normalizeString(entry?.subject).toLowerCase();
+  const entryFromEmail = normalizeString(entry?.fromEmail).toLowerCase();
+  const entryMessageDateIso = normalizeString(entry?.messageDateIso || entry?.receivedAtIso || entry?.sentAtIso || entry?.linkedAt);
+  const entryFingerprint = makeEmailFingerprint(entry);
+  const lookupSubject = normalizeString(normalizedLookup?.subject).toLowerCase();
+  const lookupFromEmail = normalizeString(normalizedLookup?.fromEmail).toLowerCase();
+  const lookupMessageDateIso = normalizeString(normalizedLookup?.messageDateIso || normalizedLookup?.receivedAtIso || normalizedLookup?.sentAtIso || normalizedLookup?.linkedAt);
+  const lookupFingerprint = makeEmailFingerprint(normalizedLookup);
+
+  let score = 0;
+  if (normalizedLookup.itemId && entryItemId === normalizedLookup.itemId) score += 1000;
+  if (normalizedLookup.internetMessageId && entryInternetMessageId === normalizedLookup.internetMessageId) score += 900;
+  if (lookupFingerprint && entryFingerprint && entryFingerprint === lookupFingerprint) score += 700;
+  if (normalizedLookup.conversationId && entryConversationId === normalizedLookup.conversationId) score += 80;
+  if (lookupSubject && entrySubject === lookupSubject) score += 40;
+  if (lookupFromEmail && entryFromEmail === lookupFromEmail) score += 30;
+  if (lookupMessageDateIso && entryMessageDateIso === lookupMessageDateIso) score += 20;
+  return score;
+}
+
+function sortEmailIdsByLookupScore(store, emailIds, lookup) {
+  const normalizedLookup = normalizeEmailInput(lookup);
+  return [...(Array.isArray(emailIds) ? emailIds : [])].sort((leftId, rightId) => {
+    const left = store?.emails?.[leftId];
+    const right = store?.emails?.[rightId];
+    const scoreDelta = getEmailLookupMatchScore(right, normalizedLookup) - getEmailLookupMatchScore(left, normalizedLookup);
+    if (scoreDelta) return scoreDelta;
+    const rightDate = normalizeString(right?.messageDateIso || right?.receivedAtIso || right?.updatedAt || right?.createdAt);
+    const leftDate = normalizeString(left?.messageDateIso || left?.receivedAtIso || left?.updatedAt || left?.createdAt);
+    if (rightDate !== leftDate) return rightDate.localeCompare(leftDate);
+    return normalizeString(rightId).localeCompare(normalizeString(leftId));
+  });
+}
+
 function buildRecoveredEmailSnapshot(store, emailId) {
   const existing = store.emails[emailId];
   if (existing) return existing;
@@ -2000,7 +2041,27 @@ async function getDbCustomGroupContext(input) {
   }
 
   const currentEmailKeys = new Set(membershipRows.map((row) => normalizeString(row.email_key)).filter(Boolean));
-  const primaryEmailKey = emailKey || Array.from(currentEmailKeys)[0] || "";
+  const primaryEmailKey = emailKey || Array.from(
+    new Map(
+      membershipRows
+        .map((row) => {
+          const rowEmailKey = normalizeString(row.email_key);
+          if (!rowEmailKey) return null;
+          return [rowEmailKey, mapDbGroupMemberRow(row)];
+        })
+        .filter(Boolean)
+    )
+      .entries()
+  )
+    .sort((left, right) => {
+      const scoreDelta = getEmailLookupMatchScore(right[1], normalized) - getEmailLookupMatchScore(left[1], normalized);
+      if (scoreDelta) return scoreDelta;
+      const rightDate = normalizeString(right[1]?.messageDateIso || right[1]?.receivedAtIso || right[1]?.updatedAt || right[1]?.createdAt);
+      const leftDate = normalizeString(left[1]?.messageDateIso || left[1]?.receivedAtIso || left[1]?.updatedAt || left[1]?.createdAt);
+      if (rightDate !== leftDate) return rightDate.localeCompare(leftDate);
+      return String(right[0] || "").localeCompare(String(left[0] || ""));
+    })
+    .map(([rowEmailKey]) => rowEmailKey)[0] || "";
   const primaryMembershipRows = membershipRows.filter((row) => normalizeString(row.email_key) === primaryEmailKey);
   const groups = Array.from(
     new Map(membershipRows.map((row) => [normalizeString(row.id), {
@@ -2365,9 +2426,13 @@ function getMatchedEmailIds(store, lookup) {
     return [store.indexes.fingerprints[fingerprint]];
   }
   if (normalized.conversationId) {
-    return Array.isArray(store.indexes.conversations[normalized.conversationId])
-      ? store.indexes.conversations[normalized.conversationId]
-      : [];
+    return sortEmailIdsByLookupScore(
+      store,
+      Array.isArray(store.indexes.conversations[normalized.conversationId])
+        ? store.indexes.conversations[normalized.conversationId]
+        : [],
+      normalized
+    );
   }
   return [];
 }

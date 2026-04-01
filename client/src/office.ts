@@ -68,6 +68,28 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function normalizeOutlookIdentityString(value: string | undefined): string {
+  return String(value || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+}
+
+function hasPreciseOutlookItemIdentity(context: Pick<OutlookMessageContext, "itemId" | "internetMessageId"> | null | undefined): boolean {
+  return Boolean(String(context?.itemId || "").trim() || normalizeOutlookIdentityString(context?.internetMessageId));
+}
+
+function doesResolvedEmailMatchCurrentOutlookItem(
+  email: { itemId?: string; internetMessageId?: string } | null | undefined,
+  context: Pick<OutlookMessageContext, "itemId" | "internetMessageId">
+): boolean {
+  const currentItemId = String(context?.itemId || "").trim();
+  const currentInternetMessageId = normalizeOutlookIdentityString(context?.internetMessageId);
+  const emailItemId = String(email?.itemId || "").trim();
+  const emailInternetMessageId = normalizeOutlookIdentityString(email?.internetMessageId);
+
+  if (currentItemId) return Boolean(emailItemId) && emailItemId === currentItemId;
+  if (currentInternetMessageId) return Boolean(emailInternetMessageId) && emailInternetMessageId === currentInternetMessageId;
+  return false;
+}
+
 function dispatchOutlookCategoryContextInvalidated() {
   if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
   try {
@@ -1002,12 +1024,7 @@ export async function syncCurrentItemOutlookCategoriesFromContext(
   options?: { expectedItemToken?: string }
 ): Promise<boolean> {
   const currentContext = await getSelectedMessageContext().catch(() => ({} as OutlookMessageContext));
-  const hasCurrentIdentity = Boolean(
-    String(currentContext.itemId || "").trim()
-    || String(currentContext.internetMessageId || "").trim()
-    || String(currentContext.conversationId || "").trim()
-  );
-  if (!hasCurrentIdentity) return false;
+  if (!hasPreciseOutlookItemIdentity(currentContext)) return false;
 
   const expectedItemToken = String(options?.expectedItemToken || "").trim() || await getCurrentItemToken().catch(() => "");
   const payload = {
@@ -1025,6 +1042,15 @@ export async function syncCurrentItemOutlookCategoriesFromContext(
     getRelatedEmailContext(payload).catch(() => null),
     getLinks(payload.conversationId, payload.internetMessageId, payload.itemId).catch(() => []),
   ]);
+  if (!doesResolvedEmailMatchCurrentOutlookItem(related?.email || null, currentContext)) {
+    clientLog.warn("[office] syncCurrentItemOutlookCategoriesFromContext skipped because related context resolved to a different email", {
+      currentItemId: String(currentContext.itemId || "").trim(),
+      currentInternetMessageId: normalizeOutlookIdentityString(currentContext.internetMessageId),
+      resolvedItemId: String(related?.email?.itemId || "").trim(),
+      resolvedInternetMessageId: normalizeOutlookIdentityString(related?.email?.internetMessageId),
+    });
+    return false;
+  }
   const knownLabelNames = collectKnownOutlookCategoryLabelNames({
     settings,
     email: related?.email || null,
