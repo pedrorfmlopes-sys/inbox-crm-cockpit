@@ -177,6 +177,7 @@ export type RelevantEmailPayload = {
     storageProvider?: "cloud" | "local" | "onedrive" | string;
     storageBasePath?: string;
     storagePathHint?: string;
+    documentState?: "ingested" | "processed" | "accepted" | "rejected" | "reread_requested" | string;
     hasContent?: boolean;
   }>;
 };
@@ -226,6 +227,7 @@ export type GroupDocumentEntry = {
   size?: number;
   contentBase64?: string;
   hasContent?: boolean;
+  documentState?: "ingested" | "processed" | "accepted" | "rejected" | "reread_requested" | string;
   sourceEmailKey?: string;
   sourceItemId?: string;
   sourceInternetMessageId?: string;
@@ -343,6 +345,7 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
     storageProvider?: "cloud" | "local" | "onedrive" | string;
     storageBasePath?: string;
     storagePathHint?: string;
+    documentState?: "ingested" | "processed" | "accepted" | "rejected" | "reread_requested" | string;
     hasContent?: boolean;
   }>;
 };

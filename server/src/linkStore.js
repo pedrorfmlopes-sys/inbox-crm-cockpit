@@ -24,6 +24,9 @@ const DEFAULT_GROUP_MEMBERSHIP_KIND = "principal";
 const DEFAULT_GROUP_TICKET_STATUS = "open";
 const DEFAULT_GROUP_TICKET_YEAR_MODE = "none";
 const DEFAULT_GROUP_TICKET_SEPARATOR = "-";
+const DEFAULT_EMAIL_ATTACHMENT_STATE = "ingested";
+const DEFAULT_GROUP_DOCUMENT_STATE = "accepted";
+const DOCUMENT_LIFECYCLE_STATES = new Set(["ingested", "processed", "accepted", "rejected", "reread_requested"]);
 
 const db = createOptionalPgStore("linkStore");
 let customGroupDbInitPromise = null;
@@ -103,6 +106,12 @@ function normalizeGroupStatus(value) {
     return "em_progresso";
   }
   return "em_analise";
+}
+
+function normalizeDocumentState(value, fallback = DEFAULT_EMAIL_ATTACHMENT_STATE) {
+  const normalized = normalizeString(value).toLowerCase();
+  if (DOCUMENT_LIFECYCLE_STATES.has(normalized)) return normalized;
+  return fallback;
 }
 
 function normalizeSearchToken(value) {
@@ -570,6 +579,10 @@ function normalizeEmailAttachmentInput(input = {}, current = {}) {
     storageProvider,
     storageBasePath: normalizeString(input?.storageBasePath ?? current?.storageBasePath),
     storagePathHint: normalizeString(input?.storagePathHint ?? current?.storagePathHint).replace(/\\/g, "/"),
+    documentState: normalizeDocumentState(
+      input?.documentState ?? current?.documentState,
+      current?.documentState ? normalizeDocumentState(current.documentState, DEFAULT_EMAIL_ATTACHMENT_STATE) : DEFAULT_EMAIL_ATTACHMENT_STATE
+    ),
     hasContent:
       typeof input?.hasContent === "boolean"
         ? input.hasContent
@@ -587,6 +600,12 @@ function emailAttachmentHasStoredContent(input = {}) {
   if (attachment.content) return true;
   if (!isFileBackedDocumentProvider(attachment.storageProvider)) return false;
   return Boolean(attachment.storageBasePath || attachment.storagePathHint);
+}
+
+function shouldPreserveRejectedAttachment(existing, incoming) {
+  const existingAttachment = normalizeEmailAttachmentInput(existing);
+  const incomingAttachment = normalizeEmailAttachmentInput(incoming, existingAttachment);
+  return existingAttachment.documentState === "rejected" && incomingAttachment.documentState !== "reread_requested";
 }
 
 function findExistingEmailAttachment(existingAttachments, attachment) {
@@ -869,6 +888,19 @@ function persistEmailAttachmentsForProvider(email, attachments, options = {}) {
     : [];
   return normalizeAttachments(attachments, { existingAttachments }).map((attachment) => {
     const existing = findExistingEmailAttachment(existingAttachments, attachment);
+    if (existing && shouldPreserveRejectedAttachment(existing, attachment)) {
+      return normalizeEmailAttachmentInput({
+        ...existing,
+        ...attachment,
+        key: existing.key || attachment.key,
+        storageProvider: existing.storageProvider,
+        storageBasePath: existing.storageBasePath,
+        storagePathHint: existing.storagePathHint,
+        content: "",
+        hasContent: emailAttachmentHasStoredContent(existing),
+        documentState: existing.documentState,
+      }, existing);
+    }
     if (!attachment.content && existing && emailAttachmentHasStoredContent(existing)) {
       return normalizeEmailAttachmentInput({
         ...attachment,
@@ -961,6 +993,7 @@ function normalizeGroupDocumentInput(input = {}) {
     storageProvider,
     storageBasePath: normalizeString(input?.storageBasePath),
     storagePathHint: normalizeString(input?.storagePathHint).replace(/\\/g, "/"),
+    documentState: normalizeDocumentState(input?.documentState, DEFAULT_GROUP_DOCUMENT_STATE),
     hasContent:
       typeof input?.hasContent === "boolean"
         ? input.hasContent
@@ -1822,6 +1855,7 @@ function mapDbGroupDocumentRow(row) {
     storageProvider: row.storage_provider,
     storageBasePath: row.storage_base_path,
     storagePathHint: row.storage_path_hint,
+    documentState: row.document_state,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -2109,9 +2143,9 @@ async function upsertDbGroupDocument(groupId, input) {
 
   await db.query(
     `INSERT INTO crm_custom_group_documents
-      (id, group_id, name, content_type, size_bytes, content_base64, source_email_key, source_item_id, source_internet_message_id, source_conversation_id, source_email_subject, storage_provider, storage_base_path, storage_path_hint, created_at, updated_at)
+      (id, group_id, name, content_type, size_bytes, content_base64, source_email_key, source_item_id, source_internet_message_id, source_conversation_id, source_email_subject, storage_provider, storage_base_path, storage_path_hint, document_state, created_at, updated_at)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
      ON CONFLICT (id) DO UPDATE SET
       group_id = EXCLUDED.group_id,
       name = EXCLUDED.name,
@@ -2126,6 +2160,7 @@ async function upsertDbGroupDocument(groupId, input) {
       storage_provider = EXCLUDED.storage_provider,
       storage_base_path = EXCLUDED.storage_base_path,
       storage_path_hint = EXCLUDED.storage_path_hint,
+      document_state = EXCLUDED.document_state,
       updated_at = EXCLUDED.updated_at`,
     [
       doc.id,
@@ -2142,6 +2177,7 @@ async function upsertDbGroupDocument(groupId, input) {
       doc.storageProvider,
       doc.storageBasePath,
       doc.storagePathHint,
+      doc.documentState,
       doc.createdAt,
       doc.updatedAt,
     ]
@@ -2694,9 +2730,15 @@ async function ensureCustomGroupDb() {
         storage_provider TEXT DEFAULT '',
         storage_base_path TEXT DEFAULT '',
         storage_path_hint TEXT DEFAULT '',
+        document_state TEXT NOT NULL DEFAULT 'accepted',
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    await db.query(`
+      ALTER TABLE crm_custom_group_documents
+      ADD COLUMN IF NOT EXISTS document_state TEXT NOT NULL DEFAULT 'accepted';
     `);
 
     await db.query(`CREATE INDEX IF NOT EXISTS idx_crm_custom_group_documents_group_id ON crm_custom_group_documents (group_id);`);

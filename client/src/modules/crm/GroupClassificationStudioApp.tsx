@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { CockpitProvider, useCockpit } from "@/components/shell/CockpitProvider";
 import * as pdfjsLib from "pdfjs-dist";
 import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction } from "@/office";
@@ -839,7 +838,6 @@ function buildFallbackEmail(params: StudioParams): RelatedEmailEntry | null {
 }
 
 function StudioInner() {
-  const { ctx } = useCockpit();
   const params = useMemo(() => readParams(), []);
   const [section, setSection] = useState<SectionId>("emails");
   const [scopeMode, setScopeMode] = useState<ScopeMode>("related");
@@ -903,14 +901,21 @@ function StudioInner() {
   const currentSeed = useMemo(() => readSeedEmail(params), [params]);
   const fallbackIdentity = useMemo(() => buildFallbackEmail(params), [params]);
   const currentContext = useMemo(() => ({
-    conversationId: String(ctx.conversationId || params.conversationId || "").trim(),
-    internetMessageId: String(ctx.internetMessageId || params.internetMessageId || "").trim(),
-    itemId: String(ctx.itemId || params.itemId || "").trim(),
-    subject: String(ctx.subject || params.subject || "").trim(),
-    fromEmail: String(ctx.fromEmail || params.fromEmail || "").trim(),
-    fromName: String(ctx.fromName || params.fromName || "").trim(),
-    receivedAtIso: String(ctx.receivedDateTimeIso || params.receivedAtIso || "").trim(),
-  }), [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, params]);
+    conversationId: String(params.conversationId || currentSeed?.conversationId || fallbackIdentity?.conversationId || "").trim(),
+    internetMessageId: String(params.internetMessageId || currentSeed?.internetMessageId || fallbackIdentity?.internetMessageId || "").trim(),
+    itemId: String(params.itemId || currentSeed?.itemId || fallbackIdentity?.itemId || "").trim(),
+    subject: String(params.subject || currentSeed?.subject || fallbackIdentity?.subject || "").trim(),
+    fromEmail: String(params.fromEmail || currentSeed?.fromEmail || fallbackIdentity?.fromEmail || "").trim(),
+    fromName: String(params.fromName || currentSeed?.fromName || fallbackIdentity?.fromName || "").trim(),
+    receivedAtIso: String(
+      params.receivedAtIso ||
+      currentSeed?.receivedAtIso ||
+      currentSeed?.messageDateIso ||
+      fallbackIdentity?.receivedAtIso ||
+      fallbackIdentity?.messageDateIso ||
+      ""
+    ).trim(),
+  }), [currentSeed, fallbackIdentity, params]);
   const bootstrapEmailPayload = useMemo<RelevantEmailPayload | null>(() => {
     const base = currentSeed || fallbackIdentity;
     if (!base) return null;
@@ -2653,17 +2658,15 @@ function StudioInner() {
       let finalTicket: GroupTicketEntry | null = null;
       const buildTargetPayload = (targetEmail: RelatedEmailEntry): RelevantEmailPayload => {
         const targetIsCurrent = isCurrentContextEmail(targetEmail, currentContext);
-        const targetAttachments = targetIsCurrent
-          ? attachments.map((attachment) => ({ ...attachment }))
-          : (targetEmail.attachments || []).map((attachment) => ({
-              id: attachment.id,
-              name: attachment.name,
-              contentType: String(attachment.contentType || "application/octet-stream"),
-              content: String(attachment.content || ""),
-              size: attachment.size,
-              isInline: attachment.isInline,
-              contentId: attachment.contentId,
-            }));
+        const targetAttachments = (targetEmail.attachments || []).map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          contentType: String(attachment.contentType || "application/octet-stream"),
+          content: String(attachment.content || ""),
+          size: attachment.size,
+          isInline: attachment.isInline,
+          contentId: attachment.contentId,
+        }));
         return {
           itemId: String(targetEmail?.itemId || (targetIsCurrent ? currentContext.itemId : "") || "").trim() || undefined,
           internetMessageId: String(targetEmail?.internetMessageId || (targetIsCurrent ? currentContext.internetMessageId : "") || "").trim() || undefined,
@@ -3947,7 +3950,7 @@ function StudioInner() {
 }
 
 export default function GroupClassificationStudioApp(): JSX.Element {
-  return <CockpitProvider><StudioInner /></CockpitProvider>;
+  return <StudioInner />;
 }
 
 const S: Record<string, React.CSSProperties> = {
