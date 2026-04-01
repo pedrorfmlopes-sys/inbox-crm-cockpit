@@ -40,6 +40,16 @@ export interface ConnectivityCheckResult {
     failures: string[];
 }
 
+export type EmailIngestionTone = "red" | "orange" | "green";
+
+export interface EmailIngestionStatus {
+    identity: string;
+    tone: EmailIngestionTone;
+    detail: string;
+    progress: number;
+    isRunning: boolean;
+}
+
 interface GeminiStatusDetails {
     requested?: string;
     sanitized?: string;
@@ -110,6 +120,7 @@ export interface CockpitContextType {
     settingsSection: SettingsPanelSection;
     setSettingsSection: (section: SettingsPanelSection) => void;
     openSettingsSection: (section: SettingsPanelSection) => void;
+    emailIngestionStatus: EmailIngestionStatus;
 }
 
 // Export the context so it can be checked or used elsewhere if needed (rare)
@@ -128,6 +139,13 @@ const WARM_BOOT_MAX_AGE_MS = 10 * 60 * 1000;
 const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
 const LINKS_CACHE_MESSAGE_PREFIX = "iccc_links_cache_msg_v1:";
 const LINKS_CACHE_ITEM_PREFIX = "iccc_links_cache_item_v1:";
+const INITIAL_EMAIL_INGESTION_STATUS: EmailIngestionStatus = {
+    identity: "",
+    tone: "red",
+    detail: "Nenhum email persistido ainda.",
+    progress: 100,
+    isRunning: false,
+};
 const STARTUP_CHECK_BLUEPRINT: Array<{ id: StartupCheckId; label: string; detail: string }> = [
     { id: "settings", label: "Definições", detail: "A carregar preferências e sessão guardada..." },
     { id: "session", label: "Odoo", detail: "A validar ligação e sessão Odoo..." },
@@ -301,7 +319,14 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         identity: "",
         ready: false,
     });
+    const [emailIngestionStatus, setEmailIngestionStatus] = useState<EmailIngestionStatus>(INITIAL_EMAIL_INGESTION_STATUS);
+    const emailIngestionStatusRef = useRef<EmailIngestionStatus>(INITIAL_EMAIL_INGESTION_STATUS);
     const lastOutlookCategorySyncRef = useRef<{ identity: string; signature: string } | null>(null);
+
+    function commitEmailIngestionStatus(next: EmailIngestionStatus) {
+        emailIngestionStatusRef.current = next;
+        setEmailIngestionStatus(next);
+    }
 
     function resetStartupPreflight() {
         setStartupChecks(createStartupChecks());
@@ -667,9 +692,52 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 itemToken: "",
             }));
             const c: OutlookMessageContext = stableSelection.context || {};
+            const ingestionIdentity = buildContextEmailKey(c);
+            const currentIngestion = emailIngestionStatusRef.current;
+            const isNewIngestion = ingestionIdentity !== currentIngestion.identity;
+            if (ingestionIdentity) {
+                if (isNewIngestion) {
+                    commitEmailIngestionStatus({
+                        identity: ingestionIdentity,
+                        tone: "green",
+                        detail: "A preparar a leitura do email atual.",
+                        progress: 8,
+                        isRunning: true,
+                    });
+                } else if (currentIngestion.isRunning) {
+                    commitEmailIngestionStatus({
+                        ...currentIngestion,
+                        tone: "green",
+                        detail: "A preparar a leitura do email atual.",
+                        progress: Math.max(currentIngestion.progress, 8),
+                        isRunning: true,
+                    });
+                } else if (currentIngestion.tone !== "green") {
+                    commitEmailIngestionStatus({
+                        ...currentIngestion,
+                        tone: "green",
+                        detail: "A retomar a leitura do email atual.",
+                        progress: Math.max(currentIngestion.progress, 8),
+                        isRunning: true,
+                    });
+                }
+            }
             const hasPreciseContextIdentity = Boolean(String(c.itemId || "").trim() || String(c.internetMessageId || "").trim());
             if (!hasPreciseContextIdentity) {
                 retryForIdentityStabilization = true;
+            }
+            if (ingestionIdentity) {
+                const nextIngestion = emailIngestionStatusRef.current;
+                if (nextIngestion.identity === ingestionIdentity && nextIngestion.isRunning) {
+                    commitEmailIngestionStatus({
+                        ...nextIngestion,
+                        detail: hasPreciseContextIdentity
+                            ? "Identidade confirmada. A ler corpo e anexos."
+                            : "A identidade do email ainda nao esta estavel.",
+                        progress: Math.max(nextIngestion.progress, hasPreciseContextIdentity ? 22 : 16),
+                        isRunning: true,
+                    });
+                }
             }
             const emailLoadLabels = ["body-text", "body-html", "attachments"] as const;
             const emailLoadResults = hasPreciseContextIdentity
@@ -694,8 +762,31 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setBodyText(b);
             setBodyHtml(bh);
             setAttachments(atts || []);
+            if (!hasPreciseContextIdentity) {
+                commitEmailIngestionStatus({
+                    identity: ingestionIdentity,
+                    tone: "red",
+                    detail: "A identidade do email ainda nao esta estavel. Nada foi enviado para a base de dados.",
+                    progress: 100,
+                    isRunning: false,
+                });
+            }
             if (emailLoadFailures.length) {
                 clientLog("warn", "[Cockpit] partial email bootstrap load", { failures: emailLoadFailures });
+            }
+            if (hasPreciseContextIdentity && ingestionIdentity) {
+                const nextIngestion = emailIngestionStatusRef.current;
+                if (nextIngestion.identity === ingestionIdentity && nextIngestion.isRunning) {
+                    commitEmailIngestionStatus({
+                        ...nextIngestion,
+                        tone: emailLoadFailures.length ? "orange" : "green",
+                        detail: emailLoadFailures.length
+                            ? "Leitura do email com falhas parciais. A continuar a gravacao."
+                            : "Corpo e anexos lidos. A gravar o email na base de dados.",
+                        progress: Math.max(nextIngestion.progress, 62),
+                        isRunning: true,
+                    });
+                }
             }
             if (reason === "init") {
                 const hasEmailContext = Boolean(c.itemId || c.internetMessageId || c.conversationId || c.subject);
@@ -738,32 +829,86 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 setLinks([]);
                 return;
             }
-            void registerRelevantEmail({
-                itemId: c.itemId || "",
-                internetMessageId: c.internetMessageId || "",
-                conversationId: c.conversationId || "",
-                subject: c.subject || "",
-                fromEmail: c.fromEmail || "",
-                fromName: c.fromName || "",
-                receivedAtIso: c.receivedDateTimeIso || "",
-                messageDateIso: c.receivedDateTimeIso || "",
-                bodyText: b,
-                bodyHtml: bh,
-                attachmentStorageProvider: s?.groupStorage?.provider || "cloud",
-                attachmentStorageBasePath: s?.groupStorage?.baseFolderPath || "",
-                attachments: (atts || []).map((attachment) => ({
-                    key: String((attachment as any)?.key || "").trim() || undefined,
-                    name: attachment.name,
-                    contentType: attachment.contentType,
-                    size: attachment.size,
-                    id: attachment.id,
-                    isInline: attachment.isInline,
-                    contentId: attachment.contentId,
-                    content: String(attachment.content || "").trim(),
-                })),
-            }).catch(() => {
-                // best-effort central registry only
-            });
+            if (ingestionIdentity) {
+                const nextIngestion = emailIngestionStatusRef.current;
+                if (nextIngestion.identity === ingestionIdentity) {
+                    commitEmailIngestionStatus({
+                        ...nextIngestion,
+                        tone: nextIngestion.tone === "red" ? "orange" : nextIngestion.tone,
+                        detail: "A gravar o email atual e os anexos na base de dados.",
+                        progress: Math.max(nextIngestion.progress, 84),
+                        isRunning: true,
+                    });
+                }
+            }
+            let emailRegistryOk = false;
+            try {
+                await registerRelevantEmail({
+                    itemId: c.itemId || "",
+                    internetMessageId: c.internetMessageId || "",
+                    conversationId: c.conversationId || "",
+                    subject: c.subject || "",
+                    fromEmail: c.fromEmail || "",
+                    fromName: c.fromName || "",
+                    receivedAtIso: c.receivedDateTimeIso || "",
+                    messageDateIso: c.receivedDateTimeIso || "",
+                    bodyText: b,
+                    bodyHtml: bh,
+                    attachmentStorageProvider: s?.groupStorage?.provider || "cloud",
+                    attachmentStorageBasePath: s?.groupStorage?.baseFolderPath || "",
+                    attachments: (atts || []).map((attachment) => ({
+                        key: String((attachment as any)?.key || "").trim() || undefined,
+                        name: attachment.name,
+                        contentType: attachment.contentType,
+                        size: attachment.size,
+                        id: attachment.id,
+                        isInline: attachment.isInline,
+                        contentId: attachment.contentId,
+                        content: String(attachment.content || "").trim(),
+                    })),
+                });
+                emailRegistryOk = true;
+            } catch (error) {
+                clientLog("warn", "[Cockpit] email registry failed", error);
+            }
+            if (reqId !== ctxLoadSeqRef.current) return;
+
+            const attachmentCount = Array.isArray(atts) ? atts.length : 0;
+            const attachmentLoadFailed = emailLoadFailures.includes("attachments");
+            const bodyLoadFailed = emailLoadFailures.includes("body-text") || emailLoadFailures.includes("body-html");
+            if (!emailRegistryOk) {
+                commitEmailIngestionStatus({
+                    identity: ingestionIdentity,
+                    tone: "red",
+                    detail: "Falhou o envio do email atual para a base de dados.",
+                    progress: 100,
+                    isRunning: false,
+                });
+            } else if (emailLoadFailures.length) {
+                const partialBits = [
+                    bodyLoadFailed ? "corpo parcial" : "",
+                    attachmentLoadFailed ? `anexos parciais (${attachmentCount})` : "",
+                ].filter(Boolean).join(" · ");
+                commitEmailIngestionStatus({
+                    identity: ingestionIdentity,
+                    tone: "orange",
+                    detail: partialBits
+                        ? `Email enviado com dados parciais: ${partialBits}.`
+                        : "Email enviado com dados parciais.",
+                    progress: 100,
+                    isRunning: false,
+                });
+            } else {
+                commitEmailIngestionStatus({
+                    identity: ingestionIdentity,
+                    tone: "green",
+                    detail: attachmentCount > 0
+                        ? `Email e ${attachmentCount} anexo(s) enviados para a base de dados.`
+                        : "Email enviado para a base de dados.",
+                    progress: 100,
+                    isRunning: false,
+                });
+            }
 
             if (c.conversationId) {
                 setAiCache(prev => {
@@ -1345,6 +1490,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             settingsSection,
             setSettingsSection,
             openSettingsSection,
+            emailIngestionStatus,
         }}>
             {children}
         </CockpitContext.Provider>

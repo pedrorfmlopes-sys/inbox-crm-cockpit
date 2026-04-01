@@ -3,10 +3,26 @@ import { useCockpit } from "@/components/shell/CockpitProvider";
 
 export const GlobalHeader: React.FC = () => {
     const [isExpanded, setIsExpanded] = useState(false);
-    const { ctx, logout } = useCockpit();
+    const { ctx, logout, emailIngestionStatus } = useCockpit();
+    const progressColor = emailIngestionStatus.tone === "green"
+        ? "#2f9e44"
+        : emailIngestionStatus.tone === "orange"
+            ? "#f08c00"
+            : "#c92a2a";
+    const progressWidth = `${Math.max(0, Math.min(100, Number(emailIngestionStatus.progress || 0)))}%`;
 
     return (
-        <div style={S.header}>
+        <div style={S.header} title={emailIngestionStatus.detail}>
+            <div style={S.ingestionTrack}>
+                <div
+                    style={{
+                        ...S.ingestionFill,
+                        width: progressWidth,
+                        background: progressColor,
+                        boxShadow: `0 0 0.5px ${progressColor}, 0 0 6px ${progressColor}22`,
+                    }}
+                />
+            </div>
             <div style={S.topRow}>
                 <div style={S.subjectBlock}>
                     <div style={S.label}>Assunto</div>
@@ -50,6 +66,23 @@ const S: Record<string, React.CSSProperties> = {
         boxShadow: "var(--iccc-shadow)",
         backdropFilter: "var(--iccc-glass-blur)",
         WebkitBackdropFilter: "var(--iccc-glass-blur)",
+        position: "relative",
+        overflow: "hidden",
+    },
+    ingestionTrack: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        height: "3px",
+        background: "rgba(15, 23, 42, 0.08)",
+        pointerEvents: "none",
+    },
+    ingestionFill: {
+        height: "100%",
+        width: "0%",
+        transition: "width 180ms linear, background-color 180ms ease, box-shadow 180ms ease",
+        pointerEvents: "none",
     },
     topRow: {
         display: "flex",
