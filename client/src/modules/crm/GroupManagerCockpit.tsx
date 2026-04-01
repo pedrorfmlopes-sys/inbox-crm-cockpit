@@ -7,6 +7,7 @@ import {
   deleteLinkGroup,
   deleteGroupTicketSeries,
   detectGroupTicketsForEmail,
+  getEmailAttachmentContentBase64,
   getRelatedEmailContext,
   getGroupEmails,
   listLinkGroups,
@@ -176,6 +177,10 @@ function parseLabels(value: string | string[] | undefined): string[] {
     labels.push(label);
   }
   return labels.sort((a, b) => a.localeCompare(b, "pt-PT"));
+}
+
+function isRejectedAttachmentState(value: string | undefined): boolean {
+  return String(value || "").trim().toLowerCase() === "rejected";
 }
 
 function stripEmailPayloadAttachmentContent<T extends { attachments?: RelevantEmailPayload["attachments"] }>(payload: T): T {
@@ -644,6 +649,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   const [quickLinkTicketLoading, setQuickLinkTicketLoading] = useState(false);
   const [quickLinkPrimaryQuery, setQuickLinkPrimaryQuery] = useState("");
   const [quickLinkSecondaryQuery, setQuickLinkSecondaryQuery] = useState("");
+  const [persistedCurrentEmail, setPersistedCurrentEmail] = useState<RelatedEmailEntry | null>(null);
 
   const selectedGroup = useMemo(
     () => groups.find((group) => group.id === selectedGroupId) || null,
@@ -654,7 +660,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     [selectedTicketSeriesId, ticketSeries]
   );
 
-  const currentEmailPayload = useMemo(
+  const currentEmailBootstrapPayload = useMemo(
     () => ({
       itemId: String(ctx.itemId || "").trim(),
       internetMessageId: String(ctx.internetMessageId || "").trim(),
@@ -673,10 +679,47 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
         size: attachment.size,
         isInline: attachment.isInline,
         contentId: attachment.contentId,
+        content: String(attachment.content || "").trim(),
+        hasContent: Boolean(String(attachment.content || "").trim()),
       })),
     }),
     [attachments, bodyHtml, bodyText, ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject]
   );
+
+  const currentEmailBootstrapLinkPayload = useMemo(
+    () => stripEmailPayloadAttachmentContent(currentEmailBootstrapPayload),
+    [currentEmailBootstrapPayload]
+  );
+
+  const currentEmailPayload = useMemo<RelevantEmailPayload>(() => {
+    if (!persistedCurrentEmail) return currentEmailBootstrapPayload;
+    return {
+      itemId: String(persistedCurrentEmail.itemId || currentEmailBootstrapPayload.itemId || "").trim(),
+      internetMessageId: String(persistedCurrentEmail.internetMessageId || currentEmailBootstrapPayload.internetMessageId || "").trim(),
+      conversationId: String(persistedCurrentEmail.conversationId || currentEmailBootstrapPayload.conversationId || "").trim(),
+      subject: String(persistedCurrentEmail.subject || currentEmailBootstrapPayload.subject || "").trim(),
+      fromEmail: String(persistedCurrentEmail.fromEmail || currentEmailBootstrapPayload.fromEmail || "").trim(),
+      fromName: String(persistedCurrentEmail.fromName || currentEmailBootstrapPayload.fromName || "").trim(),
+      receivedAtIso: String(persistedCurrentEmail.messageDateIso || persistedCurrentEmail.receivedAtIso || currentEmailBootstrapPayload.receivedAtIso || "").trim(),
+      messageDateIso: String(persistedCurrentEmail.messageDateIso || persistedCurrentEmail.receivedAtIso || currentEmailBootstrapPayload.messageDateIso || "").trim(),
+      bodyText: String(persistedCurrentEmail.bodyText || currentEmailBootstrapPayload.bodyText || "").trim(),
+      bodyHtml: String(persistedCurrentEmail.bodyHtml || currentEmailBootstrapPayload.bodyHtml || "").trim(),
+      attachments: Array.isArray(persistedCurrentEmail.attachments)
+        ? persistedCurrentEmail.attachments.map((attachment) => ({
+            key: attachment.key,
+            id: attachment.id,
+            name: attachment.name,
+            contentType: attachment.contentType,
+            size: attachment.size,
+            isInline: attachment.isInline,
+            contentId: attachment.contentId,
+            content: String(attachment.content || "").trim(),
+            documentState: attachment.documentState,
+            hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+          }))
+        : [],
+    };
+  }, [currentEmailBootstrapPayload, persistedCurrentEmail]);
 
   const currentEmailLinkPayload = useMemo(() => stripEmailPayloadAttachmentContent(currentEmailPayload), [currentEmailPayload]);
   const currentEmailKey = useMemo(() => makeEmailKey(currentEmailLinkPayload), [currentEmailLinkPayload]);
@@ -686,10 +729,12 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   const ticketUi = settings?.groupTicketUi;
   const currentSavableAttachments = useMemo(
     () =>
-      (attachments || [])
-        .filter((attachment) => String(attachment.name || "").trim() && String(attachment.content || "").trim())
+      (currentEmailPayload.attachments || [])
+        .filter((attachment) => String(attachment.name || "").trim())
+        .filter((attachment) => !isRejectedAttachmentState(attachment.documentState))
+        .filter((attachment) => attachment.hasContent === true || Boolean(String(attachment.content || "").trim()))
         .filter((attachment) => !(settings?.groupStorage.ignoreInlineAttachments && attachment.isInline)),
-    [attachments, settings?.groupStorage.ignoreInlineAttachments]
+    [currentEmailPayload.attachments, settings?.groupStorage.ignoreInlineAttachments]
   );
   const selectedCurrentAttachments = useMemo(() => {
     const selectedSet = new Set(selectedCurrentAttachmentKeys);
@@ -704,15 +749,87 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   }, [standaloneSettings, view]);
 
   useEffect(() => {
+    setPersistedCurrentEmail(null);
+  }, [currentEmailKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hasIdentity = Boolean(
+      currentEmailBootstrapLinkPayload.itemId
+      || currentEmailBootstrapLinkPayload.internetMessageId
+      || currentEmailBootstrapLinkPayload.conversationId
+      || currentEmailBootstrapLinkPayload.subject
+    );
+    if (!hasIdentity) {
+      setPersistedCurrentEmail(null);
+      return;
+    }
+
+    const resolveCurrentEmailFromContext = async () => {
+      const loadRelated = async () =>
+        getRelatedEmailContext(currentEmailBootstrapLinkPayload).catch(() => null as Awaited<ReturnType<typeof getRelatedEmailContext>> | null);
+
+      const pickBestEmail = (context: Awaited<ReturnType<typeof getRelatedEmailContext>> | null): RelatedEmailEntry | null => {
+        const rows = [
+          context?.email,
+          ...((context?.emails || []).filter(Boolean) as RelatedEmailEntry[]),
+        ].filter(Boolean) as RelatedEmailEntry[];
+        return rows.find((email) => makeEmailKey(email) === currentEmailKey || isCurrentContextEmail(email, ctx)) || null;
+      };
+
+      let related = await loadRelated();
+      let email = pickBestEmail(related);
+      const needsRegistration = !email || (
+        Array.isArray(currentEmailBootstrapPayload.attachments)
+        && currentEmailBootstrapPayload.attachments.length > 0
+        && !(Array.isArray(email?.attachments) && email.attachments.length > 0)
+      );
+
+      if (needsRegistration) {
+        await registerRelevantEmail({
+          ...currentEmailBootstrapPayload,
+          attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
+          attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
+        }).catch(() => null);
+        related = await loadRelated();
+        email = pickBestEmail(related);
+      }
+
+      if (!cancelled) {
+        setPersistedCurrentEmail(email || null);
+      }
+    };
+
+    void resolveCurrentEmailFromContext();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    ctx.conversationId,
+    ctx.internetMessageId,
+    ctx.itemId,
+    currentEmailBootstrapLinkPayload.conversationId,
+    currentEmailBootstrapLinkPayload.internetMessageId,
+    currentEmailBootstrapLinkPayload.itemId,
+    currentEmailBootstrapLinkPayload.subject,
+    currentEmailBootstrapPayload,
+    currentEmailKey,
+    settings?.groupStorage?.baseFolderPath,
+    settings?.groupStorage?.provider,
+  ]);
+
+  useEffect(() => {
     setSelectedCurrentAttachmentKeys(currentSavableAttachments.map((attachment) => makeAttachmentSelectionKey(attachment)));
   }, [currentEmailKey, currentSavableAttachments]);
 
   async function handleOpenClassificationStudio() {
     const studioSeedPayload = {
       ...currentEmailLinkPayload,
-      bodyText: String(bodyText || "").trim(),
-      bodyHtml: String(bodyHtml || "").trim(),
-      attachments: (attachments || []).map((attachment) => ({
+      bodyText: String(currentEmailPayload.bodyText || "").trim(),
+      bodyHtml: String(currentEmailPayload.bodyHtml || "").trim(),
+      attachments: (currentEmailPayload.attachments || []).map((attachment) => ({
+        key: attachment.key,
         id: attachment.id,
         name: attachment.name,
         contentType: attachment.contentType,
@@ -720,6 +837,8 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
         isInline: attachment.isInline,
         contentId: attachment.contentId,
         content: String(attachment.content || "").trim(),
+        documentState: attachment.documentState,
+        hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
       })),
     };
     const params: Record<string, string> = {};
@@ -1668,11 +1787,26 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     try {
       const storageProvider = String(settings?.groupStorage.provider || "cloud").trim();
       const storageBasePath = String(settings?.groupStorage.baseFolderPath || "").trim();
-      const docs = selectedCurrentAttachments.map((attachment) => ({
+      const docs = [];
+      for (const attachment of selectedCurrentAttachments) {
+        let contentBase64 = String(attachment.content || "").trim();
+        if (!contentBase64 && persistedCurrentEmail?.id && attachment.hasContent) {
+          const attachmentId = String(attachment.key || attachment.id || "").trim();
+          if (attachmentId) {
+            try {
+              const loaded = await getEmailAttachmentContentBase64(String(persistedCurrentEmail.id || "").trim(), attachmentId);
+              contentBase64 = String(loaded.base64 || "").trim();
+            } catch {
+              contentBase64 = "";
+            }
+          }
+        }
+        if (!contentBase64) continue;
+        docs.push({
         id: `doc_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${attachment.id || attachment.name}`}`,
         name: attachment.name,
         contentType: attachment.contentType,
-        contentBase64: attachment.content,
+        contentBase64,
         size: attachment.size,
         sourceEmailKey: currentEmailKey,
         sourceItemId: String(ctx.itemId || "").trim(),
@@ -1681,7 +1815,12 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
         sourceEmailSubject: String(ctx.subject || "").trim(),
         storageProvider,
         storageBasePath,
-      }));
+        });
+      }
+      if (!docs.length) {
+        setMsg("Nenhum anexo persistido ficou com conteudo disponivel para guardar.");
+        return;
+      }
       const batches = splitDocumentsIntoBatches(docs);
       for (const batch of batches) {
         await saveGroupDocuments(selectedGroup.id, { documents: batch });

@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
 import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
 import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubjectInComposeDraft, openAiSettings, addBase64AttachmentToCompose, openAiReplyTargetPicker, syncLinkCategoriesToComposeDraft, type AiReplyTargetSelection } from "@/office";
 import { getSettings } from "@/settings";
-import { getEmailAttachmentContentBase64, getRelatedEmailContext, logLearningInteraction, type RelevantEmailPayload } from "@/api";
+import { getEmailAttachmentContentBase64, getRelatedEmailContext, logLearningInteraction, registerRelevantEmail, type RelevantEmailPayload, type RelatedEmailEntry } from "@/api";
 import { buildOutlookCategorySourceFromRelatedContext, mergeOutlookCategorySources, ODOO_LINKED_CATEGORY, type OutlookCategorySource } from "@/outlookCategories";
 import { buildAiContextBundle, type AiContextBundle } from "./contextBundle";
 import * as Icons from "@/ui/icons";
@@ -34,6 +34,8 @@ type FileUsageState = {
     analyze: boolean;
     forward: boolean;
 };
+
+type PersistedEmailAttachment = NonNullable<RelatedEmailEntry["attachments"]>[number];
 
 function getEmailKey(ctx: any) {
     return ctx.conversationId || ctx.internetMessageId || "global";
@@ -81,6 +83,10 @@ function escapeHtml(value: string): string {
         .replace(/>/g, "&gt;")
         .replace(/\"/g, "&quot;")
         .replace(/'/g, "&#39;");
+}
+
+function isRejectedAttachmentState(value: string | undefined): boolean {
+    return String(value || "").trim().toLowerCase() === "rejected";
 }
 
 function looksLikeHtml(value: string): boolean {
@@ -311,7 +317,7 @@ function parseExtractedTasks(rawValue: unknown): Array<{ title: string; dueDate?
 
 export const AiCockpit: React.FC = () => {
     const isDevRuntime = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-    const { ctx, bodyText, bodyHtml, links, attachments, setMsg, aiState, setAiState, files, addFile, removeFile, clearFiles, settings } = useCockpit() as any;
+    const { ctx, bodyText, bodyHtml, links, attachments: liveAttachments, setMsg, aiState, setAiState, files, addFile, removeFile, clearFiles, settings } = useCockpit() as any;
     const aiManualOnly = settings?.aiManualOnly !== false;
 
     // Local state for immediate typing feel
@@ -361,6 +367,7 @@ export const AiCockpit: React.FC = () => {
     const [selectedCustomToneId, setSelectedCustomToneId] = useState<string>("");
     const [replyTargetEmail, setReplyTargetEmail] = useState<AiReplyTargetSelection | null>(null);
     const [fileUsage, setFileUsage] = useState<Record<string, FileUsageState>>({});
+    const [persistedCurrentEmail, setPersistedCurrentEmail] = useState<RelatedEmailEntry | null>(null);
 
     // Responsive UI Scale
     const paneRef = useRef<HTMLDivElement>(null);
@@ -414,6 +421,113 @@ export const AiCockpit: React.FC = () => {
         setFileUsage({});
     }, [emailKey]);
 
+    const currentEmailBootstrapPayload = useMemo<RelevantEmailPayload>(() => ({
+        itemId: String(ctx?.itemId || "").trim(),
+        internetMessageId: String(ctx?.internetMessageId || "").trim(),
+        conversationId: String(ctx?.conversationId || "").trim(),
+        subject: String(ctx?.subject || "").trim(),
+        fromEmail: String(ctx?.fromEmail || "").trim(),
+        fromName: String(ctx?.fromName || "").trim(),
+        receivedAtIso: String(ctx?.receivedDateTimeIso || "").trim(),
+        messageDateIso: String(ctx?.receivedDateTimeIso || "").trim(),
+        bodyText: String(bodyText || "").trim(),
+        bodyHtml: String(bodyHtml || "").trim(),
+        attachments: (liveAttachments || []).map((attachment: any) => ({
+            key: attachment?.key,
+            id: attachment?.id,
+            name: String(attachment?.name || "").trim(),
+            contentType: String(attachment?.contentType || "application/octet-stream").trim(),
+            size: Number(attachment?.size || 0) || undefined,
+            isInline: Boolean(attachment?.isInline),
+            contentId: String(attachment?.contentId || "").trim() || undefined,
+            content: String(attachment?.content || "").trim(),
+            hasContent: Boolean(String(attachment?.content || "").trim()),
+        })).filter((attachment: any) => attachment.name),
+    }), [bodyHtml, bodyText, ctx?.conversationId, ctx?.fromEmail, ctx?.fromName, ctx?.internetMessageId, ctx?.itemId, ctx?.receivedDateTimeIso, ctx?.subject, liveAttachments]);
+
+    const currentEmailBootstrapLinkPayload = useMemo<RelevantEmailPayload>(() => ({
+        ...currentEmailBootstrapPayload,
+        attachments: (currentEmailBootstrapPayload.attachments || []).map(({ content: _content, ...attachment }) => attachment),
+    }), [currentEmailBootstrapPayload]);
+
+    const persistedEmailAttachments = useMemo<PersistedEmailAttachment[]>(
+        () => Array.isArray(persistedCurrentEmail?.attachments)
+            ? persistedCurrentEmail.attachments.filter((attachment) => String(attachment?.name || "").trim() && !isRejectedAttachmentState(attachment?.documentState))
+            : [],
+        [persistedCurrentEmail]
+    );
+
+    const effectiveBodyText = String(persistedCurrentEmail?.bodyText || bodyText || "").trim();
+    const effectiveBodyHtml = String(persistedCurrentEmail?.bodyHtml || bodyHtml || "").trim();
+
+    useEffect(() => {
+        setPersistedCurrentEmail(null);
+    }, [emailKey]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const hasIdentity = Boolean(
+            currentEmailBootstrapLinkPayload.itemId
+            || currentEmailBootstrapLinkPayload.internetMessageId
+            || currentEmailBootstrapLinkPayload.conversationId
+            || currentEmailBootstrapLinkPayload.subject
+        );
+        if (!hasIdentity) {
+            setPersistedCurrentEmail(null);
+            return;
+        }
+
+        const loadPersistedEmail = async () => {
+            const loadRelated = async () =>
+                getRelatedEmailContext(currentEmailBootstrapLinkPayload).catch(() => null as Awaited<ReturnType<typeof getRelatedEmailContext>> | null);
+
+            const pickBestEmail = (context: Awaited<ReturnType<typeof getRelatedEmailContext>> | null): RelatedEmailEntry | null => {
+                const rows = [
+                    context?.email,
+                    ...((context?.emails || []).filter(Boolean) as RelatedEmailEntry[]),
+                ].filter(Boolean) as RelatedEmailEntry[];
+                return rows.find((email) => isSameStoredEmailTarget(ctx, email as any)) || rows[0] || null;
+            };
+
+            let related = await loadRelated();
+            let email = pickBestEmail(related);
+            const needsRegistration = !email || (
+                Array.isArray(currentEmailBootstrapPayload.attachments)
+                && currentEmailBootstrapPayload.attachments.length > 0
+                && !(Array.isArray(email?.attachments) && email.attachments.length > 0)
+            );
+
+            if (needsRegistration) {
+                await registerRelevantEmail({
+                    ...currentEmailBootstrapPayload,
+                    attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
+                    attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
+                }).catch(() => null);
+                related = await loadRelated();
+                email = pickBestEmail(related);
+            }
+
+            if (!cancelled) {
+                setPersistedCurrentEmail(email || null);
+            }
+        };
+
+        void loadPersistedEmail();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        currentEmailBootstrapLinkPayload.conversationId,
+        currentEmailBootstrapLinkPayload.internetMessageId,
+        currentEmailBootstrapLinkPayload.itemId,
+        currentEmailBootstrapLinkPayload.subject,
+        currentEmailBootstrapPayload,
+        ctx,
+        settings?.groupStorage?.baseFolderPath,
+        settings?.groupStorage?.provider,
+    ]);
+
     useEffect(() => {
         const nextUsage: Record<string, FileUsageState> = {};
         for (const file of files || []) {
@@ -423,7 +537,7 @@ export const AiCockpit: React.FC = () => {
         }
         setFileUsage((prev) => {
             const merged: Record<string, FileUsageState> = {};
-            for (const att of attachments || []) {
+            for (const att of persistedEmailAttachments || []) {
                 const name = String(att?.name || "").trim();
                 if (!name) continue;
                 merged[name] = prev[name] || nextUsage[name] || { analyze: false, forward: false };
@@ -433,18 +547,18 @@ export const AiCockpit: React.FC = () => {
             }
             return merged;
         });
-    }, [attachments, files]);
+    }, [files, persistedEmailAttachments]);
 
     const selectedAction: AiAction = aiState.action === "forward" ? "forward" : "reply";
 
     useEffect(() => {
-        if (!Array.isArray(attachments) || attachments.length === 0) return;
+        if (!Array.isArray(persistedEmailAttachments) || persistedEmailAttachments.length === 0) return;
         const shouldPrimeForward = selectedAction === "forward" && !Object.values(fileUsage || {}).some((flags) => flags?.forward);
         let changed = false;
 
         setFileUsage((prev) => {
             const next: Record<string, FileUsageState> = { ...(prev || {}) };
-            for (const attachment of attachments) {
+            for (const attachment of persistedEmailAttachments) {
                 const name = String(attachment?.name || "").trim();
                 if (!name) continue;
 
@@ -463,10 +577,101 @@ export const AiCockpit: React.FC = () => {
             }
             return changed ? next : prev;
         });
-    }, [attachments, selectedAction]);
+    }, [persistedEmailAttachments, selectedAction]);
 
     function hasEmailIdentity() {
         return Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
+    }
+
+    async function resolvePersistedAttachmentContent(attachment: PersistedEmailAttachment | null | undefined): Promise<string> {
+        const localContent = String(attachment?.content || "").trim();
+        if (localContent) return localContent;
+        const emailId = String(persistedCurrentEmail?.id || "").trim();
+        const attachmentId = String(attachment?.key || attachment?.id || "").trim();
+        if (!emailId || !attachmentId || attachment?.hasContent !== true) return "";
+        try {
+            const loaded = await getEmailAttachmentContentBase64(emailId, attachmentId);
+            const content = String(loaded?.base64 || "").trim();
+            if (content) {
+                setPersistedCurrentEmail((current) => {
+                    if (!current || String(current.id || "").trim() !== emailId || !Array.isArray(current.attachments)) return current;
+                    return {
+                        ...current,
+                        attachments: current.attachments.map((entry) => {
+                            const entryId = String(entry?.key || entry?.id || "").trim();
+                            if (entryId !== attachmentId) return entry;
+                            return {
+                                ...entry,
+                                content,
+                                hasContent: true,
+                            };
+                        }),
+                    };
+                });
+            }
+            return content;
+        } catch {
+            return "";
+        }
+    }
+
+    async function resolveSelectedAnalyzeFiles(): Promise<Array<{ name: string; type: string; content: string }>> {
+        const selectedNames = new Set(
+            Object.entries(fileUsage || {})
+                .filter(([, flags]) => flags?.analyze)
+                .map(([name]) => String(name || "").trim())
+                .filter(Boolean)
+        );
+        const results: Array<{ name: string; type: string; content: string }> = [];
+        const handled = new Set<string>();
+
+        for (const attachment of persistedEmailAttachments) {
+            const name = String(attachment?.name || "").trim();
+            if (!name || !selectedNames.has(name)) continue;
+            const content = await resolvePersistedAttachmentContent(attachment);
+            if (!content) continue;
+            results.push({
+                name,
+                type: String(attachment?.contentType || "application/octet-stream").trim() || "application/octet-stream",
+                content,
+            });
+            handled.add(name);
+        }
+
+        for (const file of files || []) {
+            const name = String(file?.name || "").trim();
+            const content = String(file?.content || "").trim();
+            if (!name || !content || handled.has(name) || !selectedNames.has(name)) continue;
+            results.push({
+                name,
+                type: String(file?.type || "application/octet-stream").trim() || "application/octet-stream",
+                content,
+            });
+        }
+
+        return results;
+    }
+
+    async function resolveSelectedForwardFiles(): Promise<Array<{ name: string; type: string; content: string }>> {
+        const selectedNames = new Set(
+            Object.entries(fileUsage || {})
+                .filter(([, flags]) => flags?.forward)
+                .map(([name]) => String(name || "").trim())
+                .filter(Boolean)
+        );
+        const results: Array<{ name: string; type: string; content: string }> = [];
+        for (const attachment of persistedEmailAttachments) {
+            const name = String(attachment?.name || "").trim();
+            if (!name || !selectedNames.has(name)) continue;
+            const content = await resolvePersistedAttachmentContent(attachment);
+            if (!content) continue;
+            results.push({
+                name,
+                type: String(attachment?.contentType || "application/octet-stream").trim() || "application/octet-stream",
+                content,
+            });
+        }
+        return results;
     }
 
     async function ensureContextBundle(force = false): Promise<AiContextBundle | null> {
@@ -484,10 +689,10 @@ export const AiCockpit: React.FC = () => {
 
         const promise = buildAiContextBundle({
             ctx,
-            bodyText,
-            bodyHtml,
+            bodyText: effectiveBodyText,
+            bodyHtml: effectiveBodyHtml,
             links: Array.isArray(links) ? links : [],
-            attachments: Array.isArray(attachments) ? attachments : [],
+            attachments: Array.isArray(persistedEmailAttachments) ? persistedEmailAttachments as any : [],
         })
             .then((bundle) => {
                 contextBundleCacheRef.current.set(emailKey, bundle);
@@ -513,9 +718,9 @@ export const AiCockpit: React.FC = () => {
 
         void handleFetchBriefing(false);
         void handleFetchIntents(false);
-        if (bodyText) void handleExtractContacts(false);
-        if ((bodyText || "").length >= 50) void handleExtractTasksReview();
-    }, [aiManualOnly, emailKey, ctx.conversationId, ctx.isCompose, bodyText]);
+        if (effectiveBodyText) void handleExtractContacts(false);
+        if ((effectiveBodyText || "").length >= 50) void handleExtractTasksReview();
+    }, [aiManualOnly, emailKey, ctx.conversationId, ctx.isCompose, effectiveBodyText]);
 
     useEffect(() => {
         if (!settings) return;
@@ -537,24 +742,24 @@ export const AiCockpit: React.FC = () => {
 
     const baseTone = aiState.tone || settings?.tone || "neutro";
     const currentCustomTone = (settings?.aiCustomTones || []).find((entry: any) => entry.id === selectedCustomToneId) || null;
-    const selectedAnalyzeFiles = (attachments || [])
-        .filter((entry) => fileUsage[String(entry?.name || "").trim()]?.analyze)
+    const selectedAnalyzeFiles = (files || [])
+        .filter((entry: any) => fileUsage[String(entry?.name || "").trim()]?.analyze)
         .map((entry) => ({
             name: entry.name,
-            type: entry.contentType,
+            type: entry.type || entry.contentType,
             content: entry.content || "",
         }))
         .filter((entry) => entry.name && entry.content);
-    const selectedForwardFiles = (attachments || [])
+    const selectedForwardFiles = (persistedEmailAttachments || [])
         .filter((entry) => fileUsage[String(entry?.name || "").trim()]?.forward)
         .map((entry) => ({
             name: entry.name,
             type: entry.contentType,
             content: entry.content || "",
         }))
-        .filter((entry) => entry.name && entry.content);
-    const availableAttachmentCount = (attachments || [])
-        .filter((entry) => String(entry?.name || "").trim() && String(entry?.content || "").trim())
+        .filter((entry) => entry.name && (entry.content || entry.hasContent));
+    const availableAttachmentCount = (persistedEmailAttachments || [])
+        .filter((entry) => String(entry?.name || "").trim() && (String(entry?.content || "").trim() || entry?.hasContent))
         .length;
 
     function setGenerationAction(nextAction: "reply" | "forward") {
@@ -585,17 +790,29 @@ export const AiCockpit: React.FC = () => {
     function syncAttachmentSelection(name: string, nextFlags: FileUsageState) {
         const fileName = String(name || "").trim();
         if (!fileName) return;
-        const sourceAttachment = (attachments || []).find((entry) => String(entry?.name || "").trim() === fileName);
+        const sourceAttachment = (persistedEmailAttachments || []).find((entry) => String(entry?.name || "").trim() === fileName);
         if (!sourceAttachment) return;
 
         const shouldKeep = Boolean(nextFlags.analyze || nextFlags.forward);
         const exists = (files || []).some((entry: any) => String(entry?.name || "").trim() === fileName);
         if (shouldKeep && !exists) {
-            addFile({
-                name: sourceAttachment.name,
-                type: sourceAttachment.contentType,
-                content: sourceAttachment.content || "",
-            });
+            const immediateContent = String(sourceAttachment.content || "").trim();
+            if (immediateContent) {
+                addFile({
+                    name: sourceAttachment.name,
+                    type: sourceAttachment.contentType,
+                    content: immediateContent,
+                });
+            } else {
+                void resolvePersistedAttachmentContent(sourceAttachment).then((content) => {
+                    if (!content) return;
+                    addFile({
+                        name: sourceAttachment.name,
+                        type: sourceAttachment.contentType,
+                        content,
+                    });
+                });
+            }
         }
         if (!shouldKeep && exists) {
             removeFile(fileName);
@@ -614,13 +831,13 @@ export const AiCockpit: React.FC = () => {
     }
 
     async function handleExtractTasksReview() {
-        const effectiveBodyText = String(bodyText || "").trim() || htmlToPlainText(bodyHtml || "");
+        const effectiveBodyTextForTasks = effectiveBodyText || htmlToPlainText(effectiveBodyHtml || "");
         if (!ctx.conversationId || ctx.isCompose || isExtractingTasks) return;
-        if (!effectiveBodyText) {
+        if (!effectiveBodyTextForTasks) {
             setMsg("O corpo deste email ainda não ficou disponível no Outlook. Tenta novamente dentro de 1-2 segundos.");
             return;
         }
-        if (effectiveBodyText.length < 50) {
+        if (effectiveBodyTextForTasks.length < 50) {
             setMsg("O email e demasiado curto para detetar tarefas com confianca.");
             return;
         }
@@ -637,7 +854,7 @@ export const AiCockpit: React.FC = () => {
                     from: ctx.fromEmail || "",
                     to: (ctx.toRecipients || []).map((r: any) => r.email),
                     cc: (ctx.ccRecipients || []).map((r: any) => r.email),
-                    bodyText: effectiveBodyText,
+                    bodyText: effectiveBodyTextForTasks,
                 } as any
             });
             if (!res.ok) {
@@ -673,7 +890,7 @@ export const AiCockpit: React.FC = () => {
         try {
             const nextSettings = await getSettings();
             const bundle = await ensureContextBundle(false);
-            const effectiveBodyText = String(bodyText || "").trim() || htmlToPlainText(bodyHtml || "");
+            const effectiveBodyTextForIntents = effectiveBodyText || htmlToPlainText(effectiveBodyHtml || "");
             const res = await aiGenerate({
                 action: "intent_proposals",
                 mode: "fast",
@@ -684,7 +901,7 @@ export const AiCockpit: React.FC = () => {
                     from: ctx.fromEmail || "",
                     to: (ctx.toRecipients || []).map((r: any) => r.email),
                     cc: (ctx.ccRecipients || []).map((r: any) => r.email),
-                    bodyText: effectiveBodyText,
+                    bodyText: effectiveBodyTextForIntents,
                     bodyScope: nextSettings.bodyScope || "main"
                 },
                 briefing: briefing,
@@ -716,8 +933,8 @@ export const AiCockpit: React.FC = () => {
             setIsFetchingBriefing(true);
             const { aiGenerateBriefing } = await import("@/api");
             const bundle = await ensureContextBundle(true);
-            const effectiveBodyText = String(bodyText || "").trim() || htmlToPlainText(bodyHtml || "");
-            const briefingContext = bundle?.briefingContext || effectiveBodyText;
+            const effectiveBodyTextForBriefing = effectiveBodyText || htmlToPlainText(effectiveBodyHtml || "");
+            const briefingContext = bundle?.briefingContext || effectiveBodyTextForBriefing;
             const briefingCacheKey = bundle?.cacheKey
                 ? `${ctx.conversationId || emailKey}|${bundle.cacheKey}`
                 : (ctx.conversationId || emailKey);
@@ -745,7 +962,7 @@ export const AiCockpit: React.FC = () => {
                 locale: (aiState.locale || "auto") as any,
                 tone: "neutro",
                 email: {
-                    bodyText,
+                    bodyText: effectiveBodyText,
                     subject: "",
                     from: "",
                     to: [],
@@ -1072,7 +1289,9 @@ export const AiCockpit: React.FC = () => {
                 receivedAtIso: String(ctx?.receivedDateTimeIso || "").trim(),
             }).catch(() => null);
             const persistedEmail = persisted?.email || null;
-            const persistedAttachments = Array.isArray(persistedEmail?.attachments) ? persistedEmail.attachments : [];
+            const persistedAttachments = Array.isArray(persistedEmail?.attachments)
+                ? persistedEmail.attachments.filter((attachment: any) => !isRejectedAttachmentState(attachment?.documentState))
+                : [];
             let persistedCount = 0;
             if (persistedEmail?.id && persistedAttachments.length) {
                 for (const attachment of persistedAttachments) {
@@ -1186,7 +1405,8 @@ export const AiCockpit: React.FC = () => {
         try {
             const settings = await getSettings();
             const bundle = await ensureContextBundle(true);
-            const effectiveBodyText = String(bodyText || "").trim() || htmlToPlainText(bodyHtml || "");
+            const analyzeFiles = await resolveSelectedAnalyzeFiles();
+            const effectiveBodyTextForGeneration = effectiveBodyText || htmlToPlainText(effectiveBodyHtml || "");
             const knowledge = [...(settings.aiKnowledge || [])];
             if (currentCustomTone?.instructions) {
                 knowledge.push(`[TOM PERSONALIZADO ATIVO] ${String(currentCustomTone.instructions).trim()}`);
@@ -1197,7 +1417,7 @@ export const AiCockpit: React.FC = () => {
                 tone: baseTone,
                 locale: effectiveLocale,
                 inputText: finalPrompt,
-                files: selectedAnalyzeFiles,
+                files: analyzeFiles,
                 briefing: briefing, // Pass the thread summary for isolation
                 contextBundle: bundle?.promptContext || "",
                 email: {
@@ -1205,7 +1425,7 @@ export const AiCockpit: React.FC = () => {
                     from: ctx.fromEmail || "",
                     to: (ctx.toRecipients || []).map((r: any) => r.email),
                     cc: (ctx.ccRecipients || []).map((r: any) => r.email),
-                    bodyText: effectiveBodyText,
+                    bodyText: effectiveBodyTextForGeneration,
                     bodyScope: settings.bodyScope || "main"
                 },
                 persona: {
@@ -1289,6 +1509,7 @@ export const AiCockpit: React.FC = () => {
             const isCompose = await isComposeMode();
             const includeTicketCodeInSubject = settings?.groupTicketUi?.includeTicketCodeInSubject !== false;
             const finalDraftSubject = buildTicketEmailSubject(draftSubject, draftTicketCode, includeTicketCodeInSubject);
+            const forwardFiles = await resolveSelectedForwardFiles();
             console.log("[AiCockpit] isComposeMode:", isCompose);
             setDebugLog(`Modo Edição: ${isCompose}`);
 
@@ -1343,7 +1564,7 @@ export const AiCockpit: React.FC = () => {
             };
 
             if (effectiveAction === "forward") {
-                if (selectedForwardFiles.length > 0 && (!replyTargetEmail || isCurrentReplyTarget)) {
+                if (forwardFiles.length > 0 && (!replyTargetEmail || isCurrentReplyTarget)) {
                     await displayForwardForm(output, true);
                     if (finalDraftSubject) {
                         try {
@@ -1354,10 +1575,10 @@ export const AiCockpit: React.FC = () => {
                         }
                     }
                     queueDraftCategorySync();
-                    const usedAllOriginals = selectedForwardFiles.length === availableAttachmentCount;
+                    const usedAllOriginals = forwardFiles.length === availableAttachmentCount;
                     setMsg(
                         usedAllOriginals
-                            ? `Reencaminhamento aberto com ${selectedForwardFiles.length} anexo(s) original(is).`
+                            ? `Reencaminhamento aberto com ${forwardFiles.length} anexo(s) original(is).`
                             : "Reencaminhamento aberto com os anexos originais do email. Remove manualmente os que não quiseres enviar."
                     );
                     setTimeout(() => setMsg(""), 4000);
@@ -1373,13 +1594,13 @@ export const AiCockpit: React.FC = () => {
                     isHtml: true,
                 });
                 queueDraftCategorySync();
-                if (selectedForwardFiles.length) {
+                if (forwardFiles.length) {
                     try {
                         await new Promise((resolve) => setTimeout(resolve, 900));
-                        for (const attachment of selectedForwardFiles) {
+                        for (const attachment of forwardFiles) {
                             await addBase64AttachmentToCompose(attachment.name, attachment.content);
                         }
-                        setMsg(`${selectedForwardFiles.length} anexo(s) adicionados ao rascunho.`);
+                        setMsg(`${forwardFiles.length} anexo(s) adicionados ao rascunho.`);
                     } catch (attachError) {
                         console.warn("[AiCockpit] Could not attach selected forward files automatically:", attachError);
                         setMsg("Draft de reencaminhamento aberto. O Outlook pode exigir validação manual dos anexos nesta ação.");
@@ -1401,13 +1622,13 @@ export const AiCockpit: React.FC = () => {
                         isHtml: true,
                     });
                     queueDraftCategorySync();
-                    if (selectedForwardFiles.length) {
+                    if (forwardFiles.length) {
                         try {
                             await new Promise((resolve) => setTimeout(resolve, 900));
-                            for (const attachment of selectedForwardFiles) {
+                            for (const attachment of forwardFiles) {
                                 await addBase64AttachmentToCompose(attachment.name, attachment.content);
                             }
-                            setMsg(`${selectedForwardFiles.length} anexo(s) adicionados ao rascunho de resposta.`);
+                            setMsg(`${forwardFiles.length} anexo(s) adicionados ao rascunho de resposta.`);
                         } catch (attachError) {
                             console.warn("[AiCockpit] Could not attach selected reply files automatically:", attachError);
                             setMsg("Rascunho criado para o email selecionado. O Outlook pode exigir validacao manual dos anexos.");
@@ -2098,7 +2319,7 @@ export const AiCockpit: React.FC = () => {
             .map((entry: any) => ({ kind: "alias" as const, id: entry.id, label: entry.name, value: entry.email }))),
     ];
 
-    const filteredAttachments = (attachments || [])
+    const filteredAttachments = (persistedEmailAttachments || [])
         .filter((entry) => {
             const name = String(entry?.name || "").trim().toLowerCase();
             return !fileSearch || name.includes(fileSearch.toLowerCase());
@@ -2289,7 +2510,7 @@ export const AiCockpit: React.FC = () => {
                                 type="button"
                                 style={{ ...S.actionBtn, fontSize: "10px" }}
                                 onClick={() => {
-                                    for (const attachment of attachments || []) {
+                                    for (const attachment of persistedEmailAttachments || []) {
                                         setAttachmentUsage(String(attachment?.name || ""), { analyze: true });
                                     }
                                 }}
@@ -2692,7 +2913,7 @@ export const AiCockpit: React.FC = () => {
                     >
                         Forward
                     </button>
-                    {(attachments || []).length > 0 ? (
+                    {persistedEmailAttachments.length > 0 ? (
                         <div style={{ marginLeft: "auto", fontSize: "9px", color: "#64748b" }}>
                             {selectedAnalyzeFiles.length} analisar / {selectedForwardFiles.length} reenviar
                         </div>
@@ -2732,11 +2953,11 @@ export const AiCockpit: React.FC = () => {
                         )}
                     </div>
                 ) : null}
-                {(attachments || []).length > 0 && (
+                {persistedEmailAttachments.length > 0 && (
                     <div style={{ display: "flex", alignItems: "center", gap: "4px", marginBottom: "6px", padding: "2px 6px", background: "rgba(59, 130, 246, 0.05)", borderRadius: "4px", width: "fit-content" }}>
                         <Icons.Files size={10} color="var(--iccc-pill-active-bg)" />
                         <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--iccc-pill-active-bg)" }}>
-                            {(attachments || []).length} {(attachments || []).length === 1 ? "anexo disponivel" : "anexos disponiveis"}
+                            {persistedEmailAttachments.length} {persistedEmailAttachments.length === 1 ? "anexo disponivel" : "anexos disponiveis"}
                         </span>
                     </div>
                 )}

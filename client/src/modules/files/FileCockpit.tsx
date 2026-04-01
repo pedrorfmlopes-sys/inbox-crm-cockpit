@@ -19,6 +19,10 @@ function isPdfLike(file: { name?: string; type?: string }): boolean {
     return mime.includes("pdf") || name.endsWith(".pdf");
 }
 
+function isRejectedAttachmentState(value: string | undefined): boolean {
+    return String(value || "").trim().toLowerCase() === "rejected";
+}
+
 export const FileCockpit: React.FC = () => {
     const {
         files,
@@ -148,7 +152,9 @@ export const FileCockpit: React.FC = () => {
             }).catch(() => null);
 
             const persistedEmail = persisted?.email || null;
-            const persistedAttachments = Array.isArray(persistedEmail?.attachments) ? persistedEmail.attachments : [];
+            const persistedAttachments = Array.isArray(persistedEmail?.attachments)
+                ? persistedEmail.attachments.filter((attachment: any) => !isRejectedAttachmentState(attachment?.documentState))
+                : [];
             if (persistedEmail?.id && persistedAttachments.length) {
                 for (const attachment of persistedAttachments) {
                     let content = String(attachment?.content || "").trim();

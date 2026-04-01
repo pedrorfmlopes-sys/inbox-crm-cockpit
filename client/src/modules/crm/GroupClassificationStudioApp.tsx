@@ -21,6 +21,7 @@ type SectionId = "emails" | "classification" | "labels" | "filters" | "groups";
 type ScopeMode = "related" | "all";
 type ApplyScopeMode = "current" | "selected" | "principal_group";
 type EmailLabelStatus = GroupLabelStatus;
+type DocumentLifecycleState = "ingested" | "processed" | "accepted" | "rejected" | "reread_requested";
 type ClassificationFocus = "principal" | "references" | "labels" | "ticket" | "summary";
 type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
 type ReadingSuggestionChip = { key: string; label: string; kind: "group" | "ticket" | "label"; value: string };
@@ -61,6 +62,14 @@ const LABEL_STATUS_OPTIONS: Array<{ value: EmailLabelStatus; label: string }> = 
   { value: "em_analise", label: "Em analise" },
   { value: "em_progresso", label: "Em progresso" },
   { value: "concluido", label: "Concluido" },
+];
+
+const DOCUMENT_STATE_OPTIONS: Array<{ value: DocumentLifecycleState; label: string }> = [
+  { value: "ingested", label: "Recebido" },
+  { value: "processed", label: "Processado" },
+  { value: "accepted", label: "Aceite" },
+  { value: "rejected", label: "Rejeitado" },
+  { value: "reread_requested", label: "Reler" },
 ];
 
 const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
@@ -108,6 +117,25 @@ function formatTicketStatusLabel(value: string | undefined): string {
   if (normalized === "open") return "Aberto";
   if (normalized === "closed") return "Fechado";
   return formatGroupStatusLabel(value);
+}
+
+function normalizeDocumentLifecycleState(value: string | undefined, fallback: DocumentLifecycleState = "ingested"): DocumentLifecycleState {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "processed" || normalized === "accepted" || normalized === "rejected" || normalized === "reread_requested") {
+    return normalized;
+  }
+  if (normalized === "ingested") return "ingested";
+  return fallback;
+}
+
+function formatDocumentLifecycleState(value: string | undefined): string {
+  const normalized = normalizeDocumentLifecycleState(value);
+  const match = DOCUMENT_STATE_OPTIONS.find((entry) => entry.value === normalized);
+  return match?.label || "Recebido";
+}
+
+function isRejectedDocumentLifecycleState(value: string | undefined): boolean {
+  return normalizeDocumentLifecycleState(value) === "rejected";
 }
 
 function normalizeClassificationMetaDraft(
@@ -401,6 +429,7 @@ function normalizeStudioAttachment(attachment: any) {
     size: attachment.size,
     isInline: attachment.isInline,
     contentId: String(attachment.contentId || "").trim() || undefined,
+    documentState: normalizeDocumentLifecycleState(attachment.documentState, "ingested"),
     hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
   };
 }
@@ -472,6 +501,31 @@ function derivePartnerName(email: RelatedEmailEntry | null): string {
   const domain = fromEmail.includes("@") ? fromEmail.split("@")[1] : "";
   const base = domain.split(".")[0] || "";
   return base ? base.charAt(0).toUpperCase() + base.slice(1) : "";
+}
+
+function updateAttachmentStateOnEmail(
+  email: RelatedEmailEntry | null,
+  attachmentKey: string,
+  nextState: DocumentLifecycleState
+): RelatedEmailEntry | null {
+  if (!email) return email;
+  const targetKey = String(attachmentKey || "").trim();
+  if (!targetKey || !Array.isArray(email.attachments)) return email;
+  let changed = false;
+  const nextAttachments = email.attachments.map((attachment) => {
+    const currentKey = makeAttachmentKey(attachment || {});
+    if (currentKey !== targetKey) return attachment;
+    changed = true;
+    return {
+      ...attachment,
+      documentState: nextState,
+    };
+  });
+  if (!changed) return email;
+  return {
+    ...email,
+    attachments: nextAttachments,
+  };
 }
 
 function detectCaseType(text: string): string {
@@ -1340,6 +1394,10 @@ function StudioInner() {
       .filter(Boolean)
       .filter((attachment) => String(attachment.name || "").trim());
   }, [selectedEmail?.attachments]);
+  const activeSelectedEmailAttachments = useMemo(
+    () => selectedEmailAttachments.filter((attachment) => !isRejectedDocumentLifecycleState((attachment as any)?.documentState)),
+    [selectedEmailAttachments]
+  );
 
   useEffect(() => {
     setSelectedAttachmentPreviewKey((current) => {
@@ -1351,6 +1409,10 @@ function StudioInner() {
   const selectedAttachmentPreview = useMemo(
     () => selectedEmailAttachments.find((attachment) => makeAttachmentKey(attachment) === selectedAttachmentPreviewKey) || null,
     [selectedAttachmentPreviewKey, selectedEmailAttachments]
+  );
+  const selectedAttachmentDocumentState = useMemo(
+    () => normalizeDocumentLifecycleState((selectedAttachmentPreview as any)?.documentState, "ingested"),
+    [selectedAttachmentPreview]
   );
   const selectedAttachmentPreviewRemoteId = useMemo(
     () => String(selectedAttachmentPreview?.key || selectedAttachmentPreview?.id || "").trim(),
@@ -1474,7 +1536,11 @@ function StudioInner() {
         if (!key || next[key]) continue;
         const contentType = String(attachment.contentType || "").toLowerCase();
         const isDocument = /pdf|image|excel|spreadsheet|word|officedocument|text|csv/.test(contentType) || /\.(pdf|png|jpe?g|xlsx?|docx?|csv|txt)$/i.test(String(attachment.name || ""));
-        next[key] = { analyze: isDocument, save: false, forward: false };
+        next[key] = {
+          analyze: isRejectedDocumentLifecycleState((attachment as any)?.documentState) ? false : isDocument,
+          save: false,
+          forward: false,
+        };
       }
       return next;
     });
@@ -1482,7 +1548,7 @@ function StudioInner() {
 
   useEffect(() => {
     let cancelled = false;
-    const extractableFiles = selectedEmailAttachments
+    const extractableFiles = activeSelectedEmailAttachments
       .map((attachment) => ({
         key: makeAttachmentKey(attachment),
         name: String(attachment.name || "").trim(),
@@ -1519,11 +1585,11 @@ function StudioInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedEmailAttachments]);
+  }, [activeSelectedEmailAttachments]);
 
   const detectionText = useMemo(() => {
-    const attachmentNames = selectedEmailAttachments.map((attachment) => attachment.name).join(" ");
-    const attachmentTexts = selectedEmailAttachments
+    const attachmentNames = activeSelectedEmailAttachments.map((attachment) => attachment.name).join(" ");
+    const attachmentTexts = activeSelectedEmailAttachments
       .map((attachment) => attachmentTextMap[makeAttachmentKey(attachment)] || "")
       .filter(Boolean)
       .join("\n\n");
@@ -1536,7 +1602,7 @@ function StudioInner() {
       attachmentNames,
       attachmentTexts,
     ].filter(Boolean).join(" ");
-  }, [attachmentTextMap, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.subject, selectedEmailAttachments]);
+  }, [activeSelectedEmailAttachments, attachmentTextMap, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.subject]);
 
   const detectedCaseType = useMemo(() => detectCaseType(detectionText), [detectionText]);
   const detectedReferences = useMemo(() => detectReferencesFocused(detectionText), [detectionText]);
@@ -1549,8 +1615,8 @@ function StudioInner() {
     : detectedReferences;
   const articleReferences = detectedReferenceBuckets.articles;
   const analyzedAttachmentNames = useMemo(
-    () => selectedEmailAttachments.filter((attachment) => Boolean(attachmentTextMap[makeAttachmentKey(attachment)])).map((attachment) => String(attachment.name || "").trim()).filter(Boolean),
-    [attachmentTextMap, selectedEmailAttachments]
+    () => activeSelectedEmailAttachments.filter((attachment) => Boolean(attachmentTextMap[makeAttachmentKey(attachment)])).map((attachment) => String(attachment.name || "").trim()).filter(Boolean),
+    [activeSelectedEmailAttachments, attachmentTextMap]
   );
   const suggestedExistingGroups = useMemo(() => splitSuggestionsFocused(allGroups, detectionText, documentReferences), [allGroups, detectionText, documentReferences]);
   const suggestedExistingTickets = useMemo(
@@ -1640,6 +1706,7 @@ function StudioInner() {
       isInline: attachment.isInline,
       contentId: attachment.contentId,
       content: attachment.content,
+      documentState: (attachment as any).documentState,
     })),
   }), [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
 
@@ -2479,6 +2546,49 @@ function StudioInner() {
     }));
   }
 
+  async function handleSetSelectedAttachmentDocumentState(nextState: DocumentLifecycleState) {
+    if (!selectedEmail || !selectedAttachmentPreview) {
+      setStatus("Escolhe primeiro um anexo para atualizar o estado documental.");
+      return;
+    }
+    const attachmentKey = makeAttachmentKey(selectedAttachmentPreview);
+    if (!attachmentKey) {
+      setStatus("Nao foi possivel identificar o anexo selecionado.");
+      return;
+    }
+    const updatedEmail = updateAttachmentStateOnEmail(selectedEmail, attachmentKey, nextState);
+    if (!updatedEmail) {
+      setStatus("Nao foi possivel atualizar o estado documental deste anexo.");
+      return;
+    }
+    setActionBusy(true);
+    try {
+      setRelatedEmails((current) => current.map((email) => makeEmailKey(email) === makeEmailKey(updatedEmail) ? updatedEmail : email));
+      setKnownEmails((current) => current.map((email) => makeEmailKey(email) === makeEmailKey(updatedEmail) ? updatedEmail : email));
+      setAttachmentPlan((current) => ({
+        ...current,
+        [attachmentKey]: {
+          analyze: nextState === "rejected" ? false : (current[attachmentKey]?.analyze ?? false),
+          save: nextState === "rejected" ? false : (current[attachmentKey]?.save ?? false),
+          forward: current[attachmentKey]?.forward ?? false,
+        },
+      }));
+      const latestSettings = await getSettings().catch(() => null);
+      const payload = buildRelevantEmailPayloadFromRelatedEmail(updatedEmail);
+      if (payload) {
+        await registerRelevantEmail({
+          ...payload,
+          ...buildAttachmentStorageOptions(latestSettings),
+        });
+      }
+      setStatus(`Estado documental de "${selectedAttachmentPreview.name}" atualizado para ${formatDocumentLifecycleState(nextState)}.`);
+    } catch (actionError: any) {
+      setStatus(actionError?.message || "Nao foi possivel atualizar o estado documental do anexo.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   async function handleSaveSelectedAttachments() {
     if (!principalGroupId) {
       setStatus("Escolhe primeiro um grupo principal para guardar documentos.");
@@ -2507,6 +2617,7 @@ function StudioInner() {
               contentType: attachment.contentType,
               contentBase64,
               size: attachment.size,
+              documentState: normalizeDocumentLifecycleState((attachment as any)?.documentState, "accepted"),
               sourceEmailKey: makeEmailKey(selectedEmail || {}),
               sourceItemId: currentEmailPayload.itemId,
               sourceInternetMessageId: currentEmailPayload.internetMessageId,
@@ -2675,10 +2786,6 @@ function StudioInner() {
       const emailLabelStatus = selectedLabelStatuses[0] || "";
       const removedInheritedLabels = inheritedLabels.filter((label) => !selectedLabels.includes(label));
       const emailOwnedSelectedLabels = selectedLabels.filter((label) => !inheritedLabels.includes(label));
-      const principalStatusValues = classificationMetaDraft.principalStatusEnabled && principalGroup?.status ? [principalGroup.status] : [];
-      const referenceStatusValues = classificationMetaDraft.referenceStatusEnabled
-        ? Array.from(new Set(referenceGroups.map((group) => String(group.status || "").trim()).filter(Boolean)))
-        : [];
 
       let finalTicket: GroupTicketEntry | null = null;
       const buildTargetPayload = (targetEmail: RelatedEmailEntry): RelevantEmailPayload => {
@@ -2691,6 +2798,7 @@ function StudioInner() {
           size: attachment.size,
           isInline: attachment.isInline,
           contentId: attachment.contentId,
+          documentState: normalizeDocumentLifecycleState((attachment as any)?.documentState, "ingested"),
         }));
         return {
           itemId: String(targetEmail?.itemId || (targetIsCurrent ? currentContext.itemId : "") || "").trim() || undefined,
@@ -2711,6 +2819,7 @@ function StudioInner() {
             isInline: attachment.isInline,
             contentId: attachment.contentId,
             content: attachment.content,
+            documentState: (attachment as any).documentState,
           })),
         };
       };
@@ -2810,53 +2919,12 @@ function StudioInner() {
       }
 
       const includesCurrentTarget = effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
-      if (includesCurrentTarget) {
-        const settings = await getSettings().catch(() => null);
-        const categorySettings = settings?.groupOutlookCategories;
-        await requestCockpitHostAction({
-          type: "sync-managed-categories",
-          payload: {
-            principalGroupNames: categorySettings?.enabled === true && categorySettings?.includeGroups !== false && principalGroup ? [principalGroup.name] : [],
-            referenceGroupNames: categorySettings?.enabled === true && categorySettings?.includeGroups !== false
-              ? referenceGroups.map((group) => String(group.name || "").trim()).filter(Boolean)
-              : [],
-            ticketCodes: categorySettings?.enabled === true
-              && categorySettings?.includeTickets !== false
-              && (finalTicket?.code || selectedTicket?.code)
-              ? [String(finalTicket?.code || selectedTicket?.code || "").trim()]
-              : [],
-            statuses: [],
-            groupStatuses: categorySettings?.enabled === true
-              && categorySettings?.includeStatuses !== false
-              ? [
-                  ...(classificationMetaDraft.principalStatusCategorize ? principalStatusValues : []),
-                  ...(classificationMetaDraft.referenceStatusCategorize ? referenceStatusValues : []),
-                ]
-              : [],
-            ticketStatuses: categorySettings?.enabled === true
-              && categorySettings?.includeStatuses !== false
-              && classificationMetaDraft.ticketStatusEnabled
-              && classificationMetaDraft.ticketStatusCategorize
-              && (finalTicket?.status || selectedTicket?.status)
-              ? [String(finalTicket?.status || selectedTicket?.status || "").trim()]
-              : [],
-            labelStatuses: categorySettings?.enabled === true
-              && categorySettings?.includeStatuses !== false
-              ? selectedLabelStatuses
-              : [],
-            labelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true ? categorizableLabels : [],
-            managedLabelNames: categorySettings?.enabled === true && categorySettings?.includeLabels === true
-              ? mergeLabels(
-                  mergeLabels(summaryLabels, selectedEmail?.labels || []),
-                  mergeLabels(selectedEmail?.removedInheritedLabels || [], removedInheritedLabels)
-                )
-              : [],
-          },
-        }).catch(() => undefined);
-      }
 
       setSelectionTouched({ principal: false, references: false, ticket: false });
       await refreshSelectedEmailContext();
+      if (includesCurrentTarget) {
+        await requestCockpitHostAction({ type: "sync-current-item-categories" }).catch(() => undefined);
+      }
       setStatus(
         effectiveTargetEmails.length > 1
           ? `Classificacao aplicada a ${effectiveTargetEmails.length} emails.`
@@ -2925,11 +2993,26 @@ function StudioInner() {
                 </div>
                 <div style={S.card}>
                   {selectedAttachmentPreview ? (
-                    <div style={S.summaryGrid}>
-                      <div style={S.summaryRow}><span>Ficheiro</span><strong>{selectedAttachmentPreview.name || "--"}</strong></div>
-                      <div style={S.summaryRow}><span>Tipo</span><strong>{selectedAttachmentPreview.contentType || "ficheiro"}</strong></div>
-                      <div style={S.summaryRow}><span>Tamanho</span><strong>{selectedAttachmentPreview.size ? `${Math.round(Number(selectedAttachmentPreview.size || 0) / 1024)} KB` : "--"}</strong></div>
-                    </div>
+                    <>
+                      <div style={S.summaryGrid}>
+                        <div style={S.summaryRow}><span>Ficheiro</span><strong>{selectedAttachmentPreview.name || "--"}</strong></div>
+                        <div style={S.summaryRow}><span>Tipo</span><strong>{selectedAttachmentPreview.contentType || "ficheiro"}</strong></div>
+                        <div style={S.summaryRow}><span>Tamanho</span><strong>{selectedAttachmentPreview.size ? `${Math.round(Number(selectedAttachmentPreview.size || 0) / 1024)} KB` : "--"}</strong></div>
+                        <div style={S.summaryRow}><span>Estado documental</span><strong>{formatDocumentLifecycleState(selectedAttachmentDocumentState)}</strong></div>
+                      </div>
+                      <label style={S.field}>
+                        <span style={S.label}>Atualizar estado deste anexo</span>
+                        <select
+                          style={S.select}
+                          value={selectedAttachmentDocumentState}
+                          onChange={(event) => void handleSetSelectedAttachmentDocumentState(event.target.value as DocumentLifecycleState)}
+                          disabled={actionBusy}
+                        >
+                          {DOCUMENT_STATE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                      </label>
+                      <div style={S.cardMeta}>Se marcares como rejeitado, este anexo deixa de entrar automaticamente em leituras futuras.</div>
+                    </>
                   ) : null}
                   {selectedAttachmentPreviewMode === "image" ? (
                     selectedAttachmentPreviewSrc ? (

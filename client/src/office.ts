@@ -823,6 +823,52 @@ async function getCurrentMessageAsEmlBase64(): Promise<string> {
   }
 }
 
+export async function waitForStableSelectedMessageContext(options?: {
+  maxAttempts?: number;
+  delayMs?: number;
+  requirePreciseIdentity?: boolean;
+}): Promise<{ context: OutlookMessageContext; itemToken: string }> {
+  const maxAttempts = Math.max(1, Number(options?.maxAttempts) || 4);
+  const delayMs = Math.max(40, Number(options?.delayMs) || 120);
+  const requirePreciseIdentity = options?.requirePreciseIdentity !== false;
+  let lastContext: OutlookMessageContext = {};
+  let lastItemToken = "";
+  let lastIdentity = "";
+  let stableHits = 0;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const context = await getSelectedMessageContext().catch(() => ({} as OutlookMessageContext));
+    const itemToken = await getCurrentItemToken().catch(() => "");
+    const identity = [
+      String(context.itemId || "").trim(),
+      normalizeOutlookIdentityString(context.internetMessageId),
+      String(context.conversationId || "").trim(),
+    ].filter(Boolean).join("|");
+    lastContext = context;
+    lastItemToken = itemToken;
+
+    if (identity && identity === lastIdentity) stableHits += 1;
+    else stableHits = identity ? 1 : 0;
+    if (identity) lastIdentity = identity;
+
+    const hasPreciseIdentity = hasPreciseOutlookItemIdentity(context);
+    if ((!requirePreciseIdentity || hasPreciseIdentity) && stableHits >= 2) {
+      return {
+        context,
+        itemToken: itemToken || identity,
+      };
+    }
+    if (attempt < maxAttempts - 1) {
+      await sleep(delayMs);
+    }
+  }
+
+  return {
+    context: lastContext,
+    itemToken: lastItemToken || lastIdentity,
+  };
+}
+
 async function getAttachmentsViaEmlForCurrentItem(): Promise<OutlookAttachment[]> {
   try {
     const emlBase64 = await getCurrentMessageAsEmlBase64();
@@ -1023,10 +1069,18 @@ export async function syncOutlookCategorySource(
 export async function syncCurrentItemOutlookCategoriesFromContext(
   options?: { expectedItemToken?: string }
 ): Promise<boolean> {
-  const currentContext = await getSelectedMessageContext().catch(() => ({} as OutlookMessageContext));
+  const stableSelection = await waitForStableSelectedMessageContext({
+    maxAttempts: 4,
+    delayMs: 120,
+    requirePreciseIdentity: true,
+  }).catch(() => ({
+    context: {} as OutlookMessageContext,
+    itemToken: "",
+  }));
+  const currentContext = stableSelection.context;
   if (!hasPreciseOutlookItemIdentity(currentContext)) return false;
 
-  const expectedItemToken = String(options?.expectedItemToken || "").trim() || await getCurrentItemToken().catch(() => "");
+  const expectedItemToken = String(options?.expectedItemToken || "").trim() || stableSelection.itemToken || await getCurrentItemToken().catch(() => "");
   const payload = {
     itemId: String(currentContext.itemId || "").trim() || undefined,
     internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
@@ -1164,10 +1218,6 @@ export async function getManagedOutlookCategorySnapshot(knownLabelNames?: string
       .map((name) => name.startsWith(LEGACY_LABEL_CATEGORY_PREFIX) ? name.slice(LEGACY_LABEL_CATEGORY_PREFIX.length).trim() : String(name || "").trim())
       .filter(Boolean),
   };
-}
-
-export async function syncManualGroupCategories(groupNames: string[]): Promise<void> {
-  await syncManagedOutlookCategories({ principalGroupNames: groupNames });
 }
 
 export async function syncLinkCategoriesToComposeDraft(

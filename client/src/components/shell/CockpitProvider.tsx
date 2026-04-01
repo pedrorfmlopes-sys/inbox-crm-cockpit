@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, syncOdooLinkedNotification, syncOutlookCategorySource, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, syncOdooLinkedNotification, syncOutlookCategorySource, waitForStableSelectedMessageContext, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -538,6 +538,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const reqId = ++ctxLoadSeqRef.current;
         const startupIssues: Array<{ detail: string; severity: "warning" | "error" }> = [];
         let startupNoticeHandled = false;
+        let retryForIdentityStabilization = false;
         const noteStartupIssue = (detail: string, severity: "warning" | "error" = "warning") => {
             startupIssues.push({ detail, severity });
         };
@@ -657,17 +658,30 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     detail: "A ler o email atual e os anexos disponíveis...",
                 });
             }
-            const emailLoadLabels = ["context", "body-text", "body-html", "attachments"] as const;
-            const emailLoadResults = await Promise.allSettled([
-                getSelectedMessageContext(),
-                getEmailBodyText(),
-                getEmailBodyHtml(),
-                import("@/office").then((m) => m.getAttachments()),
-            ]);
-            const c: OutlookMessageContext = emailLoadResults[0].status === "fulfilled" ? emailLoadResults[0].value : {};
-            const b = emailLoadResults[1].status === "fulfilled" ? emailLoadResults[1].value : "";
-            const bh = emailLoadResults[2].status === "fulfilled" ? emailLoadResults[2].value : "";
-            const atts: OutlookAttachment[] = emailLoadResults[3].status === "fulfilled" ? emailLoadResults[3].value : [];
+            const stableSelection = await waitForStableSelectedMessageContext({
+                maxAttempts: 4,
+                delayMs: 120,
+                requirePreciseIdentity: true,
+            }).catch(() => ({
+                context: {} as OutlookMessageContext,
+                itemToken: "",
+            }));
+            const c: OutlookMessageContext = stableSelection.context || {};
+            const hasPreciseContextIdentity = Boolean(String(c.itemId || "").trim() || String(c.internetMessageId || "").trim());
+            if (!hasPreciseContextIdentity) {
+                retryForIdentityStabilization = true;
+            }
+            const emailLoadLabels = ["body-text", "body-html", "attachments"] as const;
+            const emailLoadResults = hasPreciseContextIdentity
+                ? await Promise.allSettled([
+                    getEmailBodyText(),
+                    getEmailBodyHtml(),
+                    import("@/office").then((m) => m.getAttachments()),
+                ])
+                : [];
+            const b = emailLoadResults[0]?.status === "fulfilled" ? emailLoadResults[0].value : "";
+            const bh = emailLoadResults[1]?.status === "fulfilled" ? emailLoadResults[1].value : "";
+            const atts: OutlookAttachment[] = emailLoadResults[2]?.status === "fulfilled" ? emailLoadResults[2].value : [];
             const emailLoadFailures = emailLoadResults.flatMap((result, index) => (
                 result.status === "rejected" ? [emailLoadLabels[index]] : []
             ));
@@ -675,8 +689,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (reqId !== ctxLoadSeqRef.current) return;
 
             // Update token tracker to avoid redundant polls
-            const freshTok = await getCurrentItemToken();
-            lastItemTokenRef.current = freshTok;
+            lastItemTokenRef.current = stableSelection.itemToken || await getCurrentItemToken().catch(() => "");
             setCtx(c);
             setBodyText(b);
             setBodyHtml(bh);
@@ -686,12 +699,17 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
             if (reason === "init") {
                 const hasEmailContext = Boolean(c.itemId || c.internetMessageId || c.conversationId || c.subject);
-                if (hasEmailContext && !emailLoadFailures.length) {
+                if (hasEmailContext && hasPreciseContextIdentity && !emailLoadFailures.length) {
                     updateStartupCheck("email", {
                         status: "success",
                         detail: c.subject
                             ? `Email pronto: ${c.subject}`
                             : "Contexto do email atual carregado.",
+                    });
+                } else if (!hasPreciseContextIdentity) {
+                    updateStartupCheck("email", {
+                        status: "warning",
+                        detail: "O Outlook ainda esta a estabilizar a identidade do email aberto. Vamos revalidar antes de continuar.",
                     });
                 } else if (hasEmailContext) {
                     updateStartupCheck("email", {
@@ -715,6 +733,10 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     status: "running",
                     detail: "A sincronizar ligações persistidas e cache local...",
                 });
+            }
+            if (!hasPreciseContextIdentity) {
+                setLinks([]);
+                return;
             }
             void registerRelevantEmail({
                 itemId: c.itemId || "",
@@ -870,6 +892,11 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     warmStartupRef.current = false;
                 }
                 setIsLoading(false);
+            }
+            if (retryForIdentityStabilization && reqId === ctxLoadSeqRef.current) {
+                window.setTimeout(() => {
+                    void loadContextAndLinks("identity-stabilize");
+                }, 250);
             }
         }
     }
