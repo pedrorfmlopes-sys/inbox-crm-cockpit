@@ -3525,7 +3525,28 @@ export async function getEmailAttachmentContent(emailId, attachmentKey) {
   if (!eid || !aid) return null;
 
   const store = readState();
-  const email = store.emails?.[eid];
+  let email = store.emails?.[eid] || null;
+  if (!email) {
+    email = Object.values(store.emails || {}).find((entry) => makePersistentEmailKey(entry) === eid) || null;
+  }
+  if (!email && db.isEnabled()) {
+    await ensureCustomGroupDb();
+    const normalizedInternetMessageId = normalizeMessageId(eid);
+    const result = await db.query(
+      `SELECT m.*
+         FROM crm_custom_group_members m
+        WHERE m.email_key = $1
+           OR m.item_id = $1
+           OR LOWER(REGEXP_REPLACE(COALESCE(m.internet_message_id, ''), '[<>[:space:]]', '', 'g')) = $2
+        ORDER BY COALESCE(m.updated_at, m.created_at) DESC
+        LIMIT 1`,
+      [eid, normalizedInternetMessageId]
+    );
+    const row = result?.rows?.[0] || null;
+    if (row) {
+      email = mapDbGroupMemberRow(row);
+    }
+  }
   if (!email) return null;
 
   const attachments = normalizeAttachments(email.attachments);

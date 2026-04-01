@@ -172,13 +172,17 @@ function escapeHtml(value: string): string {
 }
 
 function sanitizeEmailPreviewHtml(html: string): string {
-  const raw = String(html || "").trim();
+  const raw = String(html || "")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<\?xml[\s\S]*?\?>/gi, " ")
+    .replace(/<\/?(xml|o:[^>\s]+|v:[^>\s]+)[^>]*>/gi, " ")
+    .trim();
   if (!raw) return "";
 
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(raw, "text/html");
-    doc.querySelectorAll("script, noscript, iframe, object, embed, form, link[rel='stylesheet']").forEach((node) => node.remove());
+    doc.querySelectorAll("script, noscript, iframe, object, embed, form, link[rel='stylesheet'], meta[http-equiv], base, svg").forEach((node) => node.remove());
     doc.querySelectorAll<HTMLElement>("*").forEach((element) => {
       Array.from(element.attributes).forEach((attribute) => {
         const name = String(attribute.name || "").toLowerCase();
@@ -202,11 +206,16 @@ function sanitizeEmailPreviewHtml(html: string): string {
         }
       });
     });
-    return String(doc.body?.innerHTML || "").trim();
+    return String(doc.body?.innerHTML || "")
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .trim();
   } catch {
     return raw
+      .replace(/<!--[\s\S]*?-->/g, " ")
       .replace(/<script[\s\S]*?<\/script>/gi, "")
       .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
+      .replace(/<svg[\s\S]*?<\/svg>/gi, "")
       .replace(/\s(on\w+)=(".*?"|'.*?'|[^\s>]+)/gi, "")
       .replace(/\s(style)=(".*?url\s*\(.*?\).*?"|'.*?url\s*\(.*?\).*?'|[^\s>]+)/gi, "")
       .replace(/\s(src|href|poster|background|data)=("cid:[^"]*"|'cid:[^']*'|cid:[^\s>]+)/gi, "");
