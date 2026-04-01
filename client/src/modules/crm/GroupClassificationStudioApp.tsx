@@ -2974,8 +2974,6 @@ function StudioInner() {
     try {
       const rows = await searchGroupTickets({
         q: String(ticketSearch || "").trim() || undefined,
-        groupId: principalGroupId || undefined,
-        email: currentEmailPayload,
         limit: 20,
       });
       setTicketSearchResults(rows);
@@ -3169,9 +3167,10 @@ function StudioInner() {
         }
       }
 
-      const includesCurrentTarget = effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
+      const includesCurrentTarget = selectedEmailIsCurrent || effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
       if (includesCurrentTarget) {
-        const currentTargetEmail = effectiveTargetEmails.find((email) => isCurrentContextEmail(email, currentContext)) || selectedEmail;
+        const currentTargetEmail = effectiveTargetEmails.find((email) => isCurrentContextEmail(email, currentContext))
+          || (selectedEmailIsCurrent ? selectedEmail : null);
         const categoryEmail: RelatedEmailEntry | null = currentTargetEmail
           ? {
               ...currentTargetEmail,
@@ -3231,8 +3230,28 @@ function StudioInner() {
       }
 
       setSelectionTouched({ principal: false, references: false, ticket: false });
-      await refreshSelectedEmailContext();
+      const refreshedContext = await refreshSelectedEmailContext();
       if (includesCurrentTarget) {
+        const refreshedCategoryEmailCandidates = dedupeEmails([
+          ...(refreshedContext?.email ? [refreshedContext.email] : []),
+          ...(Array.isArray(refreshedContext?.emails) ? refreshedContext.emails : []),
+          ...(selectedEmailIsCurrent && selectedEmail ? [selectedEmail] : []),
+        ]);
+        const refreshedCategoryEmail = refreshedCategoryEmailCandidates.find((email) => isCurrentContextEmail(email, currentContext))
+          || (selectedEmailIsCurrent ? selectedEmail : null);
+        if (refreshedCategoryEmail) {
+          const refreshedSnapshot = await getManagedOutlookCategorySnapshot(labelCatalog).catch(() => null);
+          await requestCockpitHostAction({
+            type: "sync-managed-categories",
+            payload: buildOutlookCategorySourceFromRelatedContext({
+              email: refreshedCategoryEmail,
+              groups: Array.isArray(refreshedContext?.groups) ? refreshedContext.groups : [principalGroup, ...referenceGroups].filter(Boolean) as LinkGroupEntry[],
+              tickets: Array.isArray(refreshedContext?.tickets) ? refreshedContext.tickets : [finalTicket, currentOutlookTicket].filter(Boolean) as GroupTicketEntry[],
+              settings: latestSettings,
+              currentOutlookLabelNames: refreshedSnapshot?.labelNames || [],
+            }),
+          }).catch(() => false);
+        }
         await requestCockpitHostAction({ type: "sync-current-item-categories" }).catch(() => undefined);
       }
       setStatus(
