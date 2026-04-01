@@ -1529,10 +1529,62 @@ function buildCurrentEmailContextEntry(store, emailId) {
   });
 }
 
+function compareIsoLikeValues(left, right) {
+  const leftValue = normalizeString(left);
+  const rightValue = normalizeString(right);
+  if (!leftValue && !rightValue) return 0;
+  if (!leftValue) return -1;
+  if (!rightValue) return 1;
+  return leftValue.localeCompare(rightValue);
+}
+
+function getEmailContextFreshness(entry) {
+  return normalizeString(
+    entry?.updatedAt
+    || entry?.createdAt
+    || entry?.messageDateIso
+    || entry?.receivedAtIso
+    || entry?.sentAtIso
+  );
+}
+
+function scoreEmailAttachmentCollection(attachments) {
+  const list = normalizeAttachments(attachments);
+  if (!list.length) return 0;
+  return list.reduce((score, attachment) => {
+    const hasContent = emailAttachmentHasStoredContent(attachment);
+    const hasStorage = Boolean(
+      normalizeDocumentStorageProvider(attachment?.storageProvider)
+      && normalizeString(attachment?.storagePathHint)
+    );
+    return score
+      + 10
+      + (hasContent ? 25 : 0)
+      + (hasStorage ? 10 : 0)
+      + (normalizeString(attachment?.documentState) === "accepted" ? 2 : 0);
+  }, 0);
+}
+
+function choosePreferredEmailAttachments(primaryEmail, fallbackEmail) {
+  const primaryAttachments = normalizeAttachments(primaryEmail?.attachments);
+  const fallbackAttachments = normalizeAttachments(fallbackEmail?.attachments);
+  if (!primaryAttachments.length) return fallbackAttachments;
+  if (!fallbackAttachments.length) return primaryAttachments;
+  return scoreEmailAttachmentCollection(primaryAttachments) >= scoreEmailAttachmentCollection(fallbackAttachments)
+    ? primaryAttachments
+    : fallbackAttachments;
+}
+
 function mergeEmailContextEntries(baseEmail, overlayEmail) {
   if (!baseEmail) return overlayEmail || null;
   if (!overlayEmail) return baseEmail;
 
+  const overlayIsNewer = compareIsoLikeValues(
+    getEmailContextFreshness(overlayEmail),
+    getEmailContextFreshness(baseEmail)
+  ) > 0;
+  const preferredEmail = overlayIsNewer ? overlayEmail : baseEmail;
+  const fallbackEmail = overlayIsNewer ? baseEmail : overlayEmail;
   const mergedRelatedGroups = [
     ...(Array.isArray(baseEmail.relatedGroups) ? baseEmail.relatedGroups : []),
     ...(Array.isArray(overlayEmail.relatedGroups) ? overlayEmail.relatedGroups : []),
@@ -1558,6 +1610,27 @@ function mergeEmailContextEntries(baseEmail, overlayEmail) {
   return {
     ...baseEmail,
     ...overlayEmail,
+    id: normalizeString(baseEmail.id || overlayEmail.id),
+    itemId: normalizeString(preferredEmail.itemId || fallbackEmail.itemId),
+    internetMessageId: normalizeMessageId(preferredEmail.internetMessageId || fallbackEmail.internetMessageId),
+    conversationId: normalizeString(preferredEmail.conversationId || fallbackEmail.conversationId),
+    subject: normalizeString(preferredEmail.subject || fallbackEmail.subject),
+    fromEmail: normalizeString(preferredEmail.fromEmail || fallbackEmail.fromEmail),
+    fromName: normalizeString(preferredEmail.fromName || fallbackEmail.fromName),
+    emailWebLink: normalizeString(preferredEmail.emailWebLink || fallbackEmail.emailWebLink),
+    messageDateIso: normalizeString(preferredEmail.messageDateIso || fallbackEmail.messageDateIso),
+    receivedAtIso: normalizeString(preferredEmail.receivedAtIso || fallbackEmail.receivedAtIso || preferredEmail.messageDateIso || fallbackEmail.messageDateIso),
+    sentAtIso: normalizeString(preferredEmail.sentAtIso || fallbackEmail.sentAtIso),
+    bodyText: normalizeString(preferredEmail.bodyText || fallbackEmail.bodyText),
+    bodyHtml: normalizeString(preferredEmail.bodyHtml || fallbackEmail.bodyHtml),
+    status: normalizeString(preferredEmail.status),
+    labels: normalizeGroupLabels(preferredEmail.labels),
+    removedInheritedLabels: normalizeGroupLabels(preferredEmail.removedInheritedLabels),
+    labelStates: normalizeEmailLabelStates(preferredEmail.labelStates),
+    classificationMeta: normalizeEmailClassificationMeta(preferredEmail.classificationMeta),
+    createdAt: normalizeString(baseEmail.createdAt || overlayEmail.createdAt),
+    updatedAt: normalizeString(preferredEmail.updatedAt || fallbackEmail.updatedAt),
+    attachments: choosePreferredEmailAttachments(preferredEmail, fallbackEmail),
     groupId: overlayEmail.groupId || principalGroup?.id || baseEmail.groupId || "",
     groupName: overlayEmail.groupName || principalGroup?.name || baseEmail.groupName || "",
     membershipKind: overlayEmail.membershipKind || principalGroup?.relationKind || baseEmail.membershipKind,
@@ -2974,9 +3047,39 @@ function writeStateWithEmail(store, email) {
   writeCacheStore(store);
 }
 
+async function syncDbCustomGroupMembershipsForEmail(store, email) {
+  if (!db.isEnabled()) return;
+  const emailId = normalizeString(email?.id) || resolveEmailId(store, email);
+  if (!emailId) return;
+
+  const memberships = listEmailGroupMemberships(store, emailId)
+    .map((entry) => ({
+      groupId: normalizeString(entry.groupId),
+      kind: normalizeGroupMembershipKind(entry.kind),
+      group: store?.groups?.[normalizeString(entry.groupId)],
+    }))
+    .filter((entry) => entry.groupId && entry.group?.kind === CUSTOM_GROUP_KIND);
+
+  for (const membership of memberships) {
+    await upsertDbCustomGroup(membership.group);
+    await upsertDbCustomGroupMember(membership.groupId, email, membership.kind);
+  }
+}
+
 export async function registerRelevantEmail(input) {
   const store = readState();
   const email = upsertEmail(store, input);
+  if (hasDurablePersistence() && !db.isEnabled()) {
+    throw durablePersistenceError("registar o email");
+  }
+  if (db.isEnabled()) {
+    try {
+      await ensureCustomGroupDb();
+      await syncDbCustomGroupMembershipsForEmail(store, email);
+    } catch (error) {
+      throw durablePersistenceError("registar o email", error);
+    }
+  }
   writeStateWithEmail(store, email);
   return buildEmailListEntry(email, {
     groups: (store.emailGroups[email.id] || []).map((groupId) => store.groups[groupId]).filter(Boolean),
