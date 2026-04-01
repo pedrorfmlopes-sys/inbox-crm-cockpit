@@ -171,10 +171,55 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function sanitizeEmailPreviewHtml(html: string): string {
+  const raw = String(html || "").trim();
+  if (!raw) return "";
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(raw, "text/html");
+    doc.querySelectorAll("script, noscript, iframe, object, embed, form, link[rel='stylesheet']").forEach((node) => node.remove());
+    doc.querySelectorAll<HTMLElement>("*").forEach((element) => {
+      Array.from(element.attributes).forEach((attribute) => {
+        const name = String(attribute.name || "").toLowerCase();
+        const value = String(attribute.value || "").trim();
+        if (!name) return;
+        if (name.startsWith("on")) {
+          element.removeAttribute(attribute.name);
+          return;
+        }
+        if (name === "style" && /url\s*\(/i.test(value)) {
+          element.removeAttribute(attribute.name);
+          return;
+        }
+        if (!["src", "href", "poster", "background", "data"].includes(name)) return;
+        if (/^(cid|javascript|vbscript|file|ms-appx|about):/i.test(value)) {
+          if (element.tagName === "IMG") {
+            const fallbackLabel = element.getAttribute("alt") || element.getAttribute("title") || "Imagem inline indisponivel neste preview.";
+            element.setAttribute("alt", fallbackLabel);
+          }
+          element.removeAttribute(attribute.name);
+        }
+      });
+    });
+    return String(doc.body?.innerHTML || "").trim();
+  } catch {
+    return raw
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
+      .replace(/\s(on\w+)=(".*?"|'.*?'|[^\s>]+)/gi, "")
+      .replace(/\s(style)=(".*?url\s*\(.*?\).*?"|'.*?url\s*\(.*?\).*?'|[^\s>]+)/gi, "")
+      .replace(/\s(src|href|poster|background|data)=("cid:[^"]*"|'cid:[^']*'|cid:[^\s>]+)/gi, "");
+  }
+}
+
 function buildEmailPreviewHtml(email: RelatedEmailEntry | null): string {
   const html = String(email?.bodyHtml || "").trim();
   if (html) {
-    return `<!doctype html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;background:#fff;color:#172b4d;font:14px/1.5 'Segoe UI',sans-serif}body{padding:18px}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin-left:0;padding-left:12px;border-left:3px solid #dbeafe;color:#475569}pre{white-space:pre-wrap;word-break:break-word}</style></head><body>${html}</body></html>`;
+    const sanitizedHtml = sanitizeEmailPreviewHtml(html);
+    if (sanitizedHtml) {
+      return `<!doctype html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;background:#fff;color:#172b4d;font:14px/1.5 'Segoe UI',sans-serif}body{padding:18px}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin-left:0;padding-left:12px;border-left:3px solid #dbeafe;color:#475569}pre{white-space:pre-wrap;word-break:break-word}</style></head><body>${sanitizedHtml}</body></html>`;
+    }
   }
   const text = String(email?.bodyText || "").trim();
   if (!text) return "";
