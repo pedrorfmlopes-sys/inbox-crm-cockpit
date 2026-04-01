@@ -1096,7 +1096,14 @@ export async function syncCurrentItemOutlookCategoriesFromContext(
     getRelatedEmailContext(payload).catch(() => null),
     getLinks(payload.conversationId, payload.internetMessageId, payload.itemId).catch(() => []),
   ]);
-  if (!doesResolvedEmailMatchCurrentOutlookItem(related?.email || null, currentContext)) {
+  const resolvedEmailCandidates = [
+    related?.email || null,
+    ...(Array.isArray(related?.emails) ? related.emails : []),
+  ].filter(Boolean);
+  const resolvedCurrentEmail = resolvedEmailCandidates.find((email) =>
+    doesResolvedEmailMatchCurrentOutlookItem(email, currentContext)
+  ) || null;
+  if (!resolvedCurrentEmail) {
     clientLog.warn("[office] syncCurrentItemOutlookCategoriesFromContext skipped because related context resolved to a different email", {
       currentItemId: String(currentContext.itemId || "").trim(),
       currentInternetMessageId: normalizeOutlookIdentityString(currentContext.internetMessageId),
@@ -1107,13 +1114,13 @@ export async function syncCurrentItemOutlookCategoriesFromContext(
   }
   const knownLabelNames = collectKnownOutlookCategoryLabelNames({
     settings,
-    email: related?.email || null,
+    email: resolvedCurrentEmail,
     groups: Array.isArray(related?.groups) ? related.groups : [],
     tickets: Array.isArray(related?.tickets) ? related.tickets : [],
   });
   const snapshot = await getManagedOutlookCategorySnapshot(knownLabelNames).catch(() => null);
   const applied = await syncOutlookCategorySource(buildOutlookCategorySourceFromRelatedContext({
-    email: related?.email || null,
+    email: resolvedCurrentEmail,
     groups: Array.isArray(related?.groups) ? related.groups : [],
     tickets: Array.isArray(related?.tickets) ? related.tickets : [],
     settings,

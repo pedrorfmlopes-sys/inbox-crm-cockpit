@@ -629,6 +629,7 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
           storageProvider: String(attachment?.storageProvider || "").trim() || undefined,
           storageBasePath: String(attachment?.storageBasePath || "").trim() || undefined,
           storagePathHint: String(attachment?.storagePathHint || "").trim() || undefined,
+          documentState: String(attachment?.documentState || "").trim() || undefined,
           hasContent: attachment?.hasContent === true || Boolean(String(attachment?.content || "").trim()),
         }))
         .filter((attachment: any) => attachment.name)

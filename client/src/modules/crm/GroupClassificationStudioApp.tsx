@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { getManagedOutlookCategorySnapshot, requestCockpitHostAction } from "@/office";
+import { buildOutlookCategorySourceFromRelatedContext } from "@/outlookCategories";
 import {
   findGroupLabelCatalogEntry,
   getGroupLabelCatalogLabels,
@@ -254,12 +255,12 @@ function buildEmailPreviewHtml(email: RelatedEmailEntry | null): string {
   if (html) {
     const sanitizedHtml = sanitizeEmailPreviewHtml(html);
     if (sanitizedHtml) {
-      return `<!doctype html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;background:#fff;color:#172b4d;font:14px/1.5 'Segoe UI',sans-serif}body{padding:18px}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin-left:0;padding-left:12px;border-left:3px solid #dbeafe;color:#475569}pre{white-space:pre-wrap;word-break:break-word}</style></head><body>${sanitizedHtml}</body></html>`;
+      return `<div style="padding:18px;color:#172b4d;font:14px/1.5 'Segoe UI',sans-serif;word-break:break-word">${sanitizedHtml}</div>`;
     }
   }
   const text = String(email?.bodyText || "").trim();
   if (!text) return "";
-  return `<!doctype html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;background:#fff;color:#172b4d;font:14px/1.55 'Segoe UI',sans-serif}body{padding:18px}pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit}</style></head><body><pre>${escapeHtml(text)}</pre></body></html>`;
+  return `<pre style="margin:0;padding:18px;color:#172b4d;background:#fff;font:14px/1.55 'Segoe UI',sans-serif;white-space:pre-wrap;word-break:break-word">${escapeHtml(text)}</pre>`;
 }
 
 function decodeBase64Text(content: string): string {
@@ -455,7 +456,11 @@ function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | nu
           isInline: attachment.isInline,
           contentId: attachment.contentId,
           content: attachment.content,
+          storageProvider: (attachment as any).storageProvider,
+          storageBasePath: (attachment as any).storageBasePath,
+          storagePathHint: (attachment as any).storagePathHint,
           documentState: (attachment as any).documentState,
+          hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
         }))
     : [];
   return {
@@ -1419,8 +1424,8 @@ function StudioInner() {
     [selectedAttachmentPreview?.id, selectedAttachmentPreview?.key]
   );
   const selectedAttachmentPreviewEmailId = useMemo(
-    () => String(selectedEmail?.id || "").trim(),
-    [selectedEmail?.id]
+    () => String(selectedEmail?.id || selectedEmail?.emailKey || "").trim(),
+    [selectedEmail?.emailKey, selectedEmail?.id]
   );
 
   const selectedAttachmentPreviewMode = useMemo(() => {
@@ -1699,6 +1704,7 @@ function StudioInner() {
     bodyText: String(selectedEmail?.bodyText || "").trim() || undefined,
     bodyHtml: String(selectedEmail?.bodyHtml || "").trim() || undefined,
     attachments: selectedEmailAttachments.map((attachment) => ({
+      key: attachment.key,
       id: attachment.id,
       name: attachment.name,
       contentType: attachment.contentType,
@@ -1706,25 +1712,26 @@ function StudioInner() {
       isInline: attachment.isInline,
       contentId: attachment.contentId,
       content: attachment.content,
+      storageProvider: (attachment as any).storageProvider,
+      storageBasePath: (attachment as any).storageBasePath,
+      storagePathHint: (attachment as any).storagePathHint,
       documentState: (attachment as any).documentState,
+      hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
     })),
   }), [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
 
   useEffect(() => {
     const selectedKey = String(selectedEmailKey || "").trim();
-    if (!selectedEmail || !selectedKey) return;
+    if (!selectedEmail || !selectedKey || loading) return;
     if (hydratedEmailKeysRef.current.has(selectedKey)) return;
 
-    const hasBody = Boolean(String(selectedEmail.bodyText || "").trim() || String(selectedEmail.bodyHtml || "").trim());
-    const hasAttachments = Array.isArray(selectedEmail.attachments) && selectedEmail.attachments.length > 0;
-    const needsHydration = !selectedEmailInRelatedContext || (!hasBody && !hasAttachments);
-    if (!needsHydration) return;
-
     hydratedEmailKeysRef.current.add(selectedKey);
-    void refreshSelectedEmailContext(currentEmailPayload).catch(() => {
-      hydratedEmailKeysRef.current.delete(selectedKey);
-    });
-  }, [currentEmailPayload, selectedEmail, selectedEmailInRelatedContext, selectedEmailKey]);
+    void refreshSelectedEmailContext(buildRelevantEmailPayloadFromRelatedEmail(selectedEmail) || currentEmailPayload)
+      .catch(() => undefined)
+      .finally(() => {
+        hydratedEmailKeysRef.current.delete(selectedKey);
+      });
+  }, [currentEmailPayload, loading, selectedEmail, selectedEmailKey]);
 
   const similarCases = useMemo(() => {
     if (!selectedEmail) return [];
@@ -2211,9 +2218,10 @@ function StudioInner() {
     await persistRelatedEmailsToServer(contextualEmails, latestSettings);
     setAllGroups((current) => mergeGroupEntryLists(current, related.groups || []));
     setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
-    setRelatedTickets((current) => mergeTicketEntryLists(related.tickets || [], current));
-    setRelatedEmails((current) => dedupeEmails([...contextualEmails, ...current]));
+    setRelatedTickets(Array.isArray(related.tickets) ? related.tickets : []);
+    setRelatedEmails(contextualEmails);
     setKnownEmails((current) => dedupeEmails([...contextualEmails, ...current]));
+    return related;
   }
 
   function toggleTargetEmailKey(emailKey: string) {
@@ -2526,6 +2534,10 @@ function StudioInner() {
         membershipKind: principalGroupId ? "principal" : "referencia",
       });
       setRelatedTickets((current) => [ticket, ...current.filter((entry) => entry.id !== ticket.id)]);
+      setSelectionTouched((current) => ({ ...current, ticket: true }));
+      setSelectedSeriesId("");
+      setSelectedTicketId(ticket.id);
+      await refreshSelectedEmailContext();
       setStatus(`Ticket ${ticket.code} criado e ligado ao email atual.`);
     } catch (actionError: any) {
       setStatus(actionError?.message || "Nao foi possivel criar o ticket.");
@@ -2600,11 +2612,12 @@ function StudioInner() {
           .filter((attachment) => attachmentPlan[makeAttachmentKey(attachment)]?.save)
           .map(async (attachment) => {
             let contentBase64 = String(attachment.content || "").trim();
-            if (!contentBase64 && attachment.hasContent && selectedEmail?.id) {
+            const selectedEmailRemoteId = String(selectedEmail?.id || selectedEmail?.emailKey || "").trim();
+            if (!contentBase64 && attachment.hasContent && selectedEmailRemoteId) {
               const remoteId = String(attachment.key || attachment.id || "").trim();
               if (remoteId) {
                 try {
-                  const remote = await getEmailAttachmentContentBase64(String(selectedEmail.id || "").trim(), remoteId);
+                  const remote = await getEmailAttachmentContentBase64(selectedEmailRemoteId, remoteId);
                   contentBase64 = String(remote.base64 || "").trim();
                 } catch {
                   contentBase64 = "";
@@ -2786,11 +2799,13 @@ function StudioInner() {
       const emailLabelStatus = selectedLabelStatuses[0] || "";
       const removedInheritedLabels = inheritedLabels.filter((label) => !selectedLabels.includes(label));
       const emailOwnedSelectedLabels = selectedLabels.filter((label) => !inheritedLabels.includes(label));
+      const latestSettings = await getSettings().catch(() => null);
 
       let finalTicket: GroupTicketEntry | null = null;
       const buildTargetPayload = (targetEmail: RelatedEmailEntry): RelevantEmailPayload => {
         const targetIsCurrent = isCurrentContextEmail(targetEmail, currentContext);
         const targetAttachments = (targetEmail.attachments || []).map((attachment) => ({
+          key: attachment.key,
           id: attachment.id,
           name: attachment.name,
           contentType: String(attachment.contentType || "application/octet-stream"),
@@ -2798,7 +2813,11 @@ function StudioInner() {
           size: attachment.size,
           isInline: attachment.isInline,
           contentId: attachment.contentId,
+          storageProvider: (attachment as any).storageProvider,
+          storageBasePath: (attachment as any).storageBasePath,
+          storagePathHint: (attachment as any).storagePathHint,
           documentState: normalizeDocumentLifecycleState((attachment as any)?.documentState, "ingested"),
+          hasContent: (attachment as any)?.hasContent === true || Boolean(String(attachment.content || "").trim()),
         }));
         return {
           itemId: String(targetEmail?.itemId || (targetIsCurrent ? currentContext.itemId : "") || "").trim() || undefined,
@@ -2812,6 +2831,7 @@ function StudioInner() {
           bodyText: String(targetEmail?.bodyText || "").trim() || undefined,
           bodyHtml: String(targetEmail?.bodyHtml || "").trim() || undefined,
           attachments: targetAttachments.map((attachment) => ({
+            key: attachment.key,
             id: attachment.id,
             name: attachment.name,
             contentType: attachment.contentType,
@@ -2819,7 +2839,11 @@ function StudioInner() {
             isInline: attachment.isInline,
             contentId: attachment.contentId,
             content: attachment.content,
+            storageProvider: (attachment as any).storageProvider,
+            storageBasePath: (attachment as any).storageBasePath,
+            storagePathHint: (attachment as any).storagePathHint,
             documentState: (attachment as any).documentState,
+            hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
           })),
         };
       };
@@ -2899,7 +2923,6 @@ function StudioInner() {
           });
         }
 
-        const latestSettings = await getSettings().catch(() => null);
         await registerRelevantEmail({
           ...classifiedEmailPayload,
           attachmentStorageProvider: latestSettings?.groupStorage?.provider || "cloud",
@@ -2921,9 +2944,27 @@ function StudioInner() {
       const includesCurrentTarget = effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
 
       setSelectionTouched({ principal: false, references: false, ticket: false });
-      await refreshSelectedEmailContext();
+      const refreshedContext = await refreshSelectedEmailContext();
       if (includesCurrentTarget) {
-        await requestCockpitHostAction({ type: "sync-current-item-categories" }).catch(() => undefined);
+        const refreshedCurrentEmail = dedupeEmails([
+          ...(refreshedContext?.email ? [refreshedContext.email] : []),
+          ...((refreshedContext?.emails || []) as RelatedEmailEntry[]),
+        ]).find((email) => isCurrentContextEmail(email, currentContext)) || null;
+        if (refreshedCurrentEmail) {
+          const snapshot = await getManagedOutlookCategorySnapshot(labelCatalog).catch(() => null);
+          await requestCockpitHostAction({
+            type: "sync-managed-categories",
+            payload: buildOutlookCategorySourceFromRelatedContext({
+              email: refreshedCurrentEmail,
+              groups: Array.isArray(refreshedContext?.groups) ? refreshedContext.groups : [],
+              tickets: Array.isArray(refreshedContext?.tickets) ? refreshedContext.tickets : [],
+              settings: latestSettings,
+              currentOutlookLabelNames: snapshot?.labelNames || [],
+            }),
+          }).catch(() => undefined);
+        } else {
+          await requestCockpitHostAction({ type: "sync-current-item-categories" }).catch(() => undefined);
+        }
       }
       setStatus(
         effectiveTargetEmails.length > 1
@@ -2963,7 +3004,7 @@ function StudioInner() {
               <span>{formatDate(selectedEmail.messageDateIso || selectedEmail.receivedAtIso) || "--"}</span>
               <span>{Array.isArray(selectedEmail.attachments) ? `${selectedEmail.attachments.length} anexo(s)` : "Sem anexos"}</span>
             </div>
-            {previewHtml ? <iframe title={selectedEmail.subject || "Preview"} srcDoc={previewHtml} style={S.preview} sandbox="" /> : <PanelState compact tone="info" title="Preview indisponivel" description="Este email ainda nao tem corpo guardado suficiente para preview." />}
+            {previewHtml ? <div style={S.previewHtml} dangerouslySetInnerHTML={{ __html: previewHtml }} /> : <PanelState compact tone="info" title="Preview indisponivel" description="Este email ainda nao tem corpo guardado suficiente para preview." />}
           </div>
 
           <div style={S.card}>
@@ -4142,6 +4183,7 @@ const S: Record<string, React.CSSProperties> = {
   searchResultBtnOn: { width: "100%", borderRadius: 10, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 700, padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, cursor: "pointer", textAlign: "left" },
   resultMiniMeta: { fontSize: 10, fontWeight: 700, color: "inherit", opacity: 0.85 },
   preview: { width: "100%", minHeight: 520, borderRadius: 14, overflow: "hidden", border: "1px solid rgba(148,163,184,0.24)", background: "#fff" },
+  previewHtml: { width: "100%", minHeight: 520, maxHeight: 720, overflow: "auto", borderRadius: 14, border: "1px solid rgba(148,163,184,0.24)", background: "#fff" },
   grid2: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 },
   grid2Wide: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 },
   field: { display: "grid", gap: 6 },
