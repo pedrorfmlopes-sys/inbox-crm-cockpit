@@ -473,15 +473,29 @@ function dedupeRecordLinks(entries) {
 }
 
 function makeEmailLookupKey(entry) {
-  return normalizeString(entry?.itemId)
-    || normalizeMessageId(entry?.internetMessageId)
-    || makeEmailFingerprint(entry)
-    || normalizeString(entry?.conversationId)
-    || [
-      normalizeString(entry?.subject).toLowerCase(),
-      normalizeString(entry?.fromEmail).toLowerCase(),
-      normalizeString(entry?.messageDateIso || entry?.receivedAtIso || entry?.linkedAt),
-    ].join("|");
+  const emailKey = normalizeString(entry?.emailKey);
+  if (emailKey) return emailKey;
+
+  const entryId = normalizeString(entry?.id);
+  if (entryId) return entryId;
+
+  const itemId = normalizeString(entry?.itemId);
+  if (itemId) return itemId;
+
+  const internetMessageId = normalizeMessageId(entry?.internetMessageId);
+  if (internetMessageId) return internetMessageId;
+
+  const fingerprint = makeEmailFingerprint(entry);
+  if (fingerprint) return fingerprint;
+
+  const conversationId = normalizeString(entry?.conversationId);
+  const subject = normalizeString(entry?.subject).toLowerCase();
+  const fromEmail = normalizeString(entry?.fromEmail).toLowerCase();
+  const messageDateIso = normalizeString(entry?.messageDateIso || entry?.receivedAtIso || entry?.sentAtIso || entry?.linkedAt);
+  const scopedConversationKey = [conversationId, subject, fromEmail, messageDateIso].filter(Boolean).join("|");
+  if (scopedConversationKey) return scopedConversationKey;
+
+  return [subject, fromEmail, messageDateIso].filter(Boolean).join("|");
 }
 
 function dedupeEmailLinks(entries) {

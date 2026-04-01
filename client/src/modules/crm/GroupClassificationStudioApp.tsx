@@ -165,7 +165,18 @@ function normalizeClassificationMetaDraft(
 }
 
 function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
-  return String(email?.emailKey || email?.id || email?.itemId || email?.internetMessageId || `${email?.conversationId || ""}|${email?.subject || ""}`);
+  return String(
+    email?.emailKey
+    || email?.id
+    || email?.itemId
+    || email?.internetMessageId
+    || [
+      String(email?.conversationId || "").trim(),
+      String(email?.subject || "").trim().toLowerCase(),
+      String(email?.fromEmail || "").trim().toLowerCase(),
+      String(email?.messageDateIso || email?.receivedAtIso || "").trim(),
+    ].filter(Boolean).join("|")
+  );
 }
 
 function mergeUniqueStrings(values: string[]): string[] {
