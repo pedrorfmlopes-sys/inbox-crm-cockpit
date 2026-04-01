@@ -406,51 +406,42 @@ function normalizeStudioAttachment(attachment: any) {
   };
 }
 
-function mergeAttachmentSources(
-  primary: Array<{ key?: string; id?: string; name?: string; contentType?: string; content?: string; size?: number; isInline?: boolean; contentId?: string; hasContent?: boolean }>,
-  fallback: Array<{ key?: string; id?: string; name?: string; contentType?: string; content?: string; size?: number; isInline?: boolean; contentId?: string; hasContent?: boolean }>
-) {
-  const byKey = new Map<string, { key?: string; id?: string; name?: string; contentType: string; content: string; size?: number; isInline?: boolean; contentId?: string; hasContent?: boolean }>();
-  for (const rawAttachment of fallback) {
-    const attachment = normalizeStudioAttachment(rawAttachment);
-    if (!attachment) continue;
-    const key = makeAttachmentKey(attachment).toLowerCase();
-    if (!key) continue;
-    byKey.set(key, {
-      key: attachment.key,
-      id: attachment.id,
-      name: String(attachment.name || "").trim(),
-      contentType: String(attachment.contentType || "application/octet-stream"),
-      content: String(attachment.content || ""),
-      size: attachment.size,
-      isInline: attachment.isInline,
-      contentId: attachment.contentId,
-      hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
-    });
-  }
-  for (const rawAttachment of primary) {
-    const attachment = normalizeStudioAttachment(rawAttachment);
-    if (!attachment) continue;
-    const key = makeAttachmentKey(attachment).toLowerCase();
-    if (!key) continue;
-    const existing = byKey.get(key);
-    byKey.set(key, {
-      ...(existing || {}),
-      key: attachment.key || existing?.key,
-      id: attachment.id || existing?.id,
-      name: String(attachment.name || existing?.name || "").trim(),
-      contentType: String(attachment.contentType || existing?.contentType || "application/octet-stream"),
-      content: String(attachment.content || existing?.content || ""),
-      size: attachment.size || existing?.size,
-      isInline: typeof attachment.isInline === "boolean" ? attachment.isInline : existing?.isInline,
-      contentId: attachment.contentId || existing?.contentId,
-      hasContent:
-        attachment.hasContent === true
-        || Boolean(String(attachment.content || "").trim())
-        || existing?.hasContent === true,
-    });
-  }
-  return Array.from(byKey.values()).filter((attachment) => String(attachment.name || "").trim());
+function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | null): RelevantEmailPayload | null {
+  if (!email) return null;
+  const itemId = String(email.itemId || "").trim();
+  const internetMessageId = String(email.internetMessageId || "").trim();
+  const conversationId = String(email.conversationId || "").trim();
+  const subject = String(email.subject || "").trim();
+  const fromEmail = String(email.fromEmail || "").trim();
+  if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
+  const attachments = Array.isArray(email.attachments)
+    ? email.attachments
+        .map((attachment) => normalizeStudioAttachment(attachment))
+        .filter(Boolean)
+        .map((attachment) => ({
+          key: attachment.key,
+          id: attachment.id,
+          name: attachment.name,
+          contentType: attachment.contentType,
+          size: attachment.size,
+          isInline: attachment.isInline,
+          contentId: attachment.contentId,
+          content: attachment.content,
+        }))
+    : [];
+  return {
+    itemId: itemId || undefined,
+    internetMessageId: internetMessageId || undefined,
+    conversationId: conversationId || undefined,
+    subject: subject || undefined,
+    fromEmail: fromEmail || undefined,
+    fromName: String(email.fromName || "").trim() || undefined,
+    receivedAtIso: String(email.receivedAtIso || email.messageDateIso || "").trim() || undefined,
+    messageDateIso: String(email.messageDateIso || email.receivedAtIso || "").trim() || undefined,
+    bodyText: String(email.bodyText || "").trim() || undefined,
+    bodyHtml: String(email.bodyHtml || "").trim() || undefined,
+    attachments,
+  };
 }
 
 function derivePartnerName(email: RelatedEmailEntry | null): string {
@@ -832,7 +823,7 @@ function buildFallbackEmail(params: StudioParams): RelatedEmailEntry | null {
 }
 
 function StudioInner() {
-  const { ctx, attachments } = useCockpit();
+  const { ctx } = useCockpit();
   const params = useMemo(() => readParams(), []);
   const [section, setSection] = useState<SectionId>("emails");
   const [scopeMode, setScopeMode] = useState<ScopeMode>("related");
@@ -892,7 +883,8 @@ function StudioInner() {
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
   const [favoriteGroupIds, setFavoriteGroupIds] = useState<string[]>([]);
 
-  const currentSeed = useMemo(() => readSeedEmail(params) || buildFallbackEmail(params), [params]);
+  const currentSeed = useMemo(() => readSeedEmail(params), [params]);
+  const fallbackIdentity = useMemo(() => buildFallbackEmail(params), [params]);
   const currentContext = useMemo(() => ({
     conversationId: String(ctx.conversationId || params.conversationId || "").trim(),
     internetMessageId: String(ctx.internetMessageId || params.internetMessageId || "").trim(),
@@ -902,6 +894,31 @@ function StudioInner() {
     fromName: String(ctx.fromName || params.fromName || "").trim(),
     receivedAtIso: String(ctx.receivedDateTimeIso || params.receivedAtIso || "").trim(),
   }), [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, params]);
+  const bootstrapEmailPayload = useMemo<RelevantEmailPayload | null>(() => {
+    const base = currentSeed || fallbackIdentity;
+    if (!base) return null;
+    return buildRelevantEmailPayloadFromRelatedEmail({
+      ...base,
+      itemId: String(currentContext.itemId || base.itemId || "").trim() || undefined,
+      internetMessageId: String(currentContext.internetMessageId || base.internetMessageId || "").trim() || undefined,
+      conversationId: String(currentContext.conversationId || base.conversationId || "").trim() || undefined,
+      subject: String(currentContext.subject || base.subject || "").trim() || undefined,
+      fromEmail: String(currentContext.fromEmail || base.fromEmail || "").trim() || undefined,
+      fromName: String(currentContext.fromName || base.fromName || "").trim() || undefined,
+      receivedAtIso: String(currentContext.receivedAtIso || base.receivedAtIso || base.messageDateIso || "").trim() || undefined,
+      messageDateIso: String(base.messageDateIso || currentContext.receivedAtIso || base.receivedAtIso || "").trim() || undefined,
+    });
+  }, [
+    currentContext.conversationId,
+    currentContext.fromEmail,
+    currentContext.fromName,
+    currentContext.internetMessageId,
+    currentContext.itemId,
+    currentContext.receivedAtIso,
+    currentContext.subject,
+    currentSeed,
+    fallbackIdentity,
+  ]);
 
   useEffect(() => {
     void (async () => {
@@ -928,6 +945,14 @@ function StudioInner() {
       setLoading(true);
       setError("");
       try {
+        const latestSettings = await getSettings().catch(() => null);
+        if (bootstrapEmailPayload) {
+          await registerRelevantEmail({
+            ...bootstrapEmailPayload,
+            attachmentStorageProvider: latestSettings?.groupStorage?.provider || "cloud",
+            attachmentStorageBasePath: latestSettings?.groupStorage?.baseFolderPath || "",
+          }).catch(() => null);
+        }
         const payload = {
           conversationId: currentContext.conversationId,
           internetMessageId: currentContext.internetMessageId,
@@ -952,7 +977,6 @@ function StudioInner() {
         const contextualEmails = dedupeEmails([
           ...(related.email ? [related.email] : []),
           ...(related.emails || []),
-          ...(currentSeed ? [currentSeed] : []),
         ]);
         const mergedEmails = dedupeEmails([...contextualEmails, ...(emails || [])]);
         setAllGroups(mergedGroups);
@@ -976,6 +1000,13 @@ function StudioInner() {
         setStatus(mergedEmails.length
           ? "Janela base pronta. O email atual e os relacionados ja podem ser analisados aqui."
           : "Ainda nao encontrámos emails relacionados. Esta janela vai usar o email atual como ponto de partida.");
+        if (mergedEmails.length) {
+          setStatus("Janela base pronta. O email atual e os relacionados persistidos ja podem ser analisados aqui.");
+        } else if (bootstrapEmailPayload) {
+          setStatus("O email atual foi enviado para o servidor, mas ainda nao existem relacionados persistidos para mostrar.");
+        } else {
+          setStatus("Ainda nao encontrámos um email persistido para este caso.");
+        }
       } catch (fetchError: any) {
         if (!cancelled) setError(String(fetchError?.message || fetchError || "Falha a preparar o studio de classificacao."));
       } finally {
@@ -983,7 +1014,7 @@ function StudioInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, currentSeed]);
+  }, [bootstrapEmailPayload, currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject]);
 
   const groupMap = useMemo(() => new Map(allGroups.map((group) => [group.id, group])), [allGroups]);
   const businessGroups = useMemo(
@@ -1258,17 +1289,11 @@ function StudioInner() {
   }, [relatedTickets, ticketSearchResults]);
 
   const selectedEmailAttachments = useMemo(() => {
-    const currentSource = attachments.length
-      ? attachments.map((attachment) => normalizeStudioAttachment(attachment)).filter(Boolean)
-      : (currentSeed?.attachments || []).map((attachment) => normalizeStudioAttachment(attachment)).filter(Boolean);
-    const emailSource = (selectedEmail?.attachments || [])
+    return (selectedEmail?.attachments || [])
       .map((attachment) => normalizeStudioAttachment(attachment))
-      .filter(Boolean);
-    const source = selectedEmailIsCurrent
-      ? mergeAttachmentSources(currentSource, emailSource)
-      : emailSource;
-    return source.filter((attachment) => String(attachment.name || "").trim());
-  }, [attachments, currentSeed?.attachments, selectedEmail?.attachments, selectedEmailIsCurrent]);
+      .filter(Boolean)
+      .filter((attachment) => String(attachment.name || "").trim());
+  }, [selectedEmail?.attachments]);
 
   useEffect(() => {
     setSelectedAttachmentPreviewKey((current) => {
@@ -2055,7 +2080,6 @@ function StudioInner() {
     const contextualEmails = dedupeEmails([
       ...(related.email ? [related.email] : []),
       ...(related.emails || []),
-      ...(currentSeed ? [currentSeed] : []),
     ]);
     setAllGroups(nextGroups);
     setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
