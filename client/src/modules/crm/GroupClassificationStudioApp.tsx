@@ -241,12 +241,29 @@ function makeAttachmentKey(attachment: { key?: string; id?: string; name?: strin
   return String(attachment.id || attachment.contentId || attachment.key || attachment.name || "").trim();
 }
 
+function normalizeStudioAttachment(attachment: any) {
+  if (!attachment || typeof attachment !== "object") return null;
+  return {
+    key: String(attachment.key || "").trim() || undefined,
+    id: String(attachment.id || "").trim() || undefined,
+    name: String(attachment.name || "").trim(),
+    contentType: String(attachment.contentType || "application/octet-stream"),
+    content: String(attachment.content || ""),
+    size: attachment.size,
+    isInline: attachment.isInline,
+    contentId: String(attachment.contentId || "").trim() || undefined,
+    hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+  };
+}
+
 function mergeAttachmentSources(
   primary: Array<{ key?: string; id?: string; name?: string; contentType?: string; content?: string; size?: number; isInline?: boolean; contentId?: string; hasContent?: boolean }>,
   fallback: Array<{ key?: string; id?: string; name?: string; contentType?: string; content?: string; size?: number; isInline?: boolean; contentId?: string; hasContent?: boolean }>
 ) {
   const byKey = new Map<string, { key?: string; id?: string; name?: string; contentType: string; content: string; size?: number; isInline?: boolean; contentId?: string; hasContent?: boolean }>();
-  for (const attachment of fallback) {
+  for (const rawAttachment of fallback) {
+    const attachment = normalizeStudioAttachment(rawAttachment);
+    if (!attachment) continue;
     const key = makeAttachmentKey(attachment).toLowerCase();
     if (!key) continue;
     byKey.set(key, {
@@ -261,7 +278,9 @@ function mergeAttachmentSources(
       hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
     });
   }
-  for (const attachment of primary) {
+  for (const rawAttachment of primary) {
+    const attachment = normalizeStudioAttachment(rawAttachment);
+    if (!attachment) continue;
     const key = makeAttachmentKey(attachment).toLowerCase();
     if (!key) continue;
     const existing = byKey.get(key);
@@ -1089,29 +1108,11 @@ function StudioInner() {
 
   const selectedEmailAttachments = useMemo(() => {
     const currentSource = attachments.length
-      ? attachments.map((attachment) => ({ ...attachment }))
-      : (currentSeed?.attachments || []).map((attachment) => ({
-          key: attachment.key,
-          id: attachment.id,
-          name: attachment.name,
-          contentType: String(attachment.contentType || "application/octet-stream"),
-          content: String(attachment.content || ""),
-          size: attachment.size,
-          isInline: attachment.isInline,
-          contentId: attachment.contentId,
-          hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
-        }));
-    const emailSource = (selectedEmail?.attachments || []).map((attachment) => ({
-      key: attachment.key,
-      id: attachment.id,
-      name: attachment.name,
-      contentType: String(attachment.contentType || "application/octet-stream"),
-      content: String(attachment.content || ""),
-      size: attachment.size,
-      isInline: attachment.isInline,
-      contentId: attachment.contentId,
-      hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
-    }));
+      ? attachments.map((attachment) => normalizeStudioAttachment(attachment)).filter(Boolean)
+      : (currentSeed?.attachments || []).map((attachment) => normalizeStudioAttachment(attachment)).filter(Boolean);
+    const emailSource = (selectedEmail?.attachments || [])
+      .map((attachment) => normalizeStudioAttachment(attachment))
+      .filter(Boolean);
     const source = selectedEmailIsCurrent
       ? mergeAttachmentSources(currentSource, emailSource)
       : emailSource;
@@ -1151,9 +1152,9 @@ function StudioInner() {
 
   const selectedAttachmentPreviewSrc = useMemo(() => {
     const attachment = selectedAttachmentPreview;
-    const contentType = String(attachment.contentType || "application/octet-stream").trim() || "application/octet-stream";
-    const localContent = String(attachment?.content || "").trim();
     if (!attachment) return "";
+    const contentType = String(attachment.contentType || "application/octet-stream").trim() || "application/octet-stream";
+    const localContent = String(attachment.content || "").trim();
     if (selectedAttachmentPreviewMode === "image" || selectedAttachmentPreviewMode === "pdf") {
       if (localContent) {
         return `data:${contentType};base64,${localContent}`;
