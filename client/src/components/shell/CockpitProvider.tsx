@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, syncOdooLinkedNotification, syncOutlookCategorySource, waitForStableSelectedMessageContext, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY, readPendingOutlookCategorySyncRequest, syncCurrentItemOutlookCategoriesFromContext, syncOdooLinkedNotification, syncOutlookCategorySource, waitForStableSelectedMessageContext, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -322,6 +322,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [emailIngestionStatus, setEmailIngestionStatus] = useState<EmailIngestionStatus>(INITIAL_EMAIL_INGESTION_STATUS);
     const emailIngestionStatusRef = useRef<EmailIngestionStatus>(INITIAL_EMAIL_INGESTION_STATUS);
     const lastOutlookCategorySyncRef = useRef<{ identity: string; signature: string } | null>(null);
+    const processedOutlookCategorySyncRequestRef = useRef("");
+    const [outlookCategorySyncRequestTick, setOutlookCategorySyncRequestTick] = useState(0);
 
     function commitEmailIngestionStatus(next: EmailIngestionStatus) {
         emailIngestionStatusRef.current = next;
@@ -418,6 +420,56 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         window.addEventListener(OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, handleOutlookCategoryContextInvalidated as EventListener);
         return () => window.removeEventListener(OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, handleOutlookCategoryContextInvalidated as EventListener);
     }, []);
+
+    useEffect(() => {
+        const notify = () => setOutlookCategorySyncRequestTick((current) => current + 1);
+        const handleStorage = (event: StorageEvent) => {
+            if (event.key && event.key !== OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY) return;
+            notify();
+        };
+        window.addEventListener("storage", handleStorage as EventListener);
+        window.addEventListener(OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT, notify as EventListener);
+        return () => {
+            window.removeEventListener("storage", handleStorage as EventListener);
+            window.removeEventListener(OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT, notify as EventListener);
+        };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        void (async () => {
+            const pendingRequest = readPendingOutlookCategorySyncRequest();
+            if (!pendingRequest?.requestId) return;
+            if (processedOutlookCategorySyncRequestRef.current === pendingRequest.requestId) return;
+            if (pendingRequest.target && !doesRelatedEmailMatchContext(pendingRequest.target, ctx)) return;
+
+            processedOutlookCategorySyncRequestRef.current = pendingRequest.requestId;
+            const expectedItemToken = await getCurrentItemToken().catch(() => "");
+            if (cancelled) return;
+
+            try {
+                if (pendingRequest.mode === "source" && pendingRequest.source) {
+                    const applied = await syncOutlookCategorySource(pendingRequest.source, { expectedItemToken }).catch(() => false);
+                    if (!cancelled && applied) {
+                        lastOutlookCategorySyncRef.current = null;
+                        setOutlookCategoryRefreshTick((current) => current + 1);
+                    }
+                    return;
+                }
+
+                const applied = await syncCurrentItemOutlookCategoriesFromContext({ expectedItemToken }).catch(() => false);
+                if (!cancelled && applied) {
+                    lastOutlookCategorySyncRef.current = null;
+                    setOutlookCategoryRefreshTick((current) => current + 1);
+                }
+            } catch (error) {
+                clientLog.warn("[Cockpit] pending outlook category sync request failed", error);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [ctx.internetMessageId, ctx.itemId, outlookCategorySyncRequestTick]);
 
     useEffect(() => {
         setApiSessionToken(settings?.odooSessionToken || null);

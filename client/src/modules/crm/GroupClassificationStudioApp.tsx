@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
-import { getManagedOutlookCategorySnapshot, requestCockpitHostAction } from "@/office";
+import { enqueueOutlookCategorySyncRequest, getManagedOutlookCategorySnapshot, requestCockpitHostAction } from "@/office";
 import { buildOutlookCategorySourceFromRelatedContext } from "@/outlookCategories";
 import {
   findGroupLabelCatalogEntry,
@@ -3191,6 +3191,11 @@ function StudioInner() {
       if (includesCurrentTarget) {
         const currentTargetEmail = effectiveTargetEmails.find((email) => isCurrentContextEmail(email, currentContext))
           || (selectedEmailIsCurrent ? selectedEmail : null);
+        const currentTargetIdentity = {
+          itemId: String(currentContext.itemId || "").trim() || undefined,
+          internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
+          conversationId: String(currentContext.conversationId || "").trim() || undefined,
+        };
         const categoryEmail: RelatedEmailEntry | null = currentTargetEmail
           ? {
               ...currentTargetEmail,
@@ -3236,15 +3241,21 @@ function StudioInner() {
             ).values()
           );
           const snapshot = await getManagedOutlookCategorySnapshot(labelCatalog).catch(() => null);
+          const categorySource = buildOutlookCategorySourceFromRelatedContext({
+            email: categoryEmail,
+            groups: [principalGroup, ...referenceGroups].filter(Boolean) as LinkGroupEntry[],
+            tickets: categoryTickets,
+            settings: latestSettings,
+            currentOutlookLabelNames: snapshot?.labelNames || [],
+          });
+          enqueueOutlookCategorySyncRequest({
+            mode: "source",
+            target: currentTargetIdentity,
+            source: categorySource,
+          });
           await requestCockpitHostAction({
             type: "sync-managed-categories",
-            payload: buildOutlookCategorySourceFromRelatedContext({
-              email: categoryEmail,
-              groups: [principalGroup, ...referenceGroups].filter(Boolean) as LinkGroupEntry[],
-              tickets: categoryTickets,
-              settings: latestSettings,
-              currentOutlookLabelNames: snapshot?.labelNames || [],
-            }),
+            payload: categorySource,
           }).catch(() => false);
         }
       }
@@ -3261,17 +3272,35 @@ function StudioInner() {
           || (selectedEmailIsCurrent ? selectedEmail : null);
         if (refreshedCategoryEmail) {
           const refreshedSnapshot = await getManagedOutlookCategorySnapshot(labelCatalog).catch(() => null);
+          const refreshedCategorySource = buildOutlookCategorySourceFromRelatedContext({
+            email: refreshedCategoryEmail,
+            groups: Array.isArray(refreshedContext?.groups) ? refreshedContext.groups : [principalGroup, ...referenceGroups].filter(Boolean) as LinkGroupEntry[],
+            tickets: Array.isArray(refreshedContext?.tickets) ? refreshedContext.tickets : [finalTicket, currentOutlookTicket].filter(Boolean) as GroupTicketEntry[],
+            settings: latestSettings,
+            currentOutlookLabelNames: refreshedSnapshot?.labelNames || [],
+          });
+          enqueueOutlookCategorySyncRequest({
+            mode: "source",
+            target: {
+              itemId: String(currentContext.itemId || "").trim() || undefined,
+              internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
+              conversationId: String(currentContext.conversationId || "").trim() || undefined,
+            },
+            source: refreshedCategorySource,
+          });
           await requestCockpitHostAction({
             type: "sync-managed-categories",
-            payload: buildOutlookCategorySourceFromRelatedContext({
-              email: refreshedCategoryEmail,
-              groups: Array.isArray(refreshedContext?.groups) ? refreshedContext.groups : [principalGroup, ...referenceGroups].filter(Boolean) as LinkGroupEntry[],
-              tickets: Array.isArray(refreshedContext?.tickets) ? refreshedContext.tickets : [finalTicket, currentOutlookTicket].filter(Boolean) as GroupTicketEntry[],
-              settings: latestSettings,
-              currentOutlookLabelNames: refreshedSnapshot?.labelNames || [],
-            }),
+            payload: refreshedCategorySource,
           }).catch(() => false);
         }
+        enqueueOutlookCategorySyncRequest({
+          mode: "current-item-context",
+          target: {
+            itemId: String(currentContext.itemId || "").trim() || undefined,
+            internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
+            conversationId: String(currentContext.conversationId || "").trim() || undefined,
+          },
+        });
         await requestCockpitHostAction({ type: "sync-current-item-categories" }).catch(() => undefined);
       }
       setStatus(

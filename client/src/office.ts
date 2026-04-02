@@ -61,8 +61,22 @@ const GRAPH_RUNTIME_ENABLED = false;
 
 let nestableMsalPromise: Promise<any> | null = null;
 export const OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT = "iccc-outlook-category-context-invalidated";
+export const OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT = "iccc-outlook-category-sync-request";
+export const OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY = "iccc-outlook-category-sync-request-v1";
 const HOST_ACTION_WINDOW_MESSAGE_TYPE = "iccc-host-action-window";
 const HOST_ACTION_WINDOW_RESULT_TYPE = "iccc-host-action-window-result";
+
+export type OutlookCategorySyncRequest = {
+  requestId: string;
+  createdAtIso: string;
+  mode: "source" | "current-item-context";
+  target?: {
+    itemId?: string;
+    internetMessageId?: string;
+    conversationId?: string;
+  };
+  source?: Partial<OutlookCategorySource> | null;
+};
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -96,6 +110,66 @@ function dispatchOutlookCategoryContextInvalidated() {
     window.dispatchEvent(new CustomEvent(OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT));
   } catch {
     // best effort only
+  }
+}
+
+export function readPendingOutlookCategorySyncRequest(): OutlookCategorySyncRequest | null {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const requestId = String(parsed.requestId || "").trim();
+    const mode = parsed.mode === "source" ? "source" : parsed.mode === "current-item-context" ? "current-item-context" : "";
+    if (!requestId || !mode) return null;
+    return {
+      requestId,
+      createdAtIso: String(parsed.createdAtIso || "").trim() || new Date().toISOString(),
+      mode,
+      target: parsed.target && typeof parsed.target === "object"
+        ? {
+            itemId: String(parsed.target.itemId || "").trim() || undefined,
+            internetMessageId: String(parsed.target.internetMessageId || "").trim() || undefined,
+            conversationId: String(parsed.target.conversationId || "").trim() || undefined,
+          }
+        : undefined,
+      source: parsed.source && typeof parsed.source === "object"
+        ? parsed.source as Partial<OutlookCategorySource>
+        : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function enqueueOutlookCategorySyncRequest(input: {
+  mode: "source" | "current-item-context";
+  target?: { itemId?: string; internetMessageId?: string; conversationId?: string };
+  source?: Partial<OutlookCategorySource> | null;
+}): OutlookCategorySyncRequest | null {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  try {
+    const request: OutlookCategorySyncRequest = {
+      requestId: `outlook-category-sync:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      createdAtIso: new Date().toISOString(),
+      mode: input.mode,
+      target: input.target ? {
+        itemId: String(input.target.itemId || "").trim() || undefined,
+        internetMessageId: String(input.target.internetMessageId || "").trim() || undefined,
+        conversationId: String(input.target.conversationId || "").trim() || undefined,
+      } : undefined,
+      source: input.mode === "source" ? (input.source || {}) : undefined,
+    };
+    window.localStorage.setItem(OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY, JSON.stringify(request));
+    try {
+      window.dispatchEvent(new CustomEvent(OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT, { detail: request }));
+    } catch {
+      // best effort only
+    }
+    return request;
+  } catch {
+    return null;
   }
 }
 
