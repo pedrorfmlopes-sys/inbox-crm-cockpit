@@ -15,8 +15,11 @@ import {
   ODOO_LINKED_CATEGORY,
   buildOutlookCategoryPlan,
   buildOutlookCategorySourceFromLegacyInput,
+  getOutlookCategoryPlanSignature,
+  getOutlookCategorySourceSignature,
   isManagedCategoryFamilyName,
   isReservedOutlookCategoryName,
+  normalizeOutlookCategorySource,
   normalizeUniqueCategoryValues,
   type LegacyManagedOutlookCategoryInput,
   type OutlookCategoryPlan,
@@ -63,20 +66,73 @@ let nestableMsalPromise: Promise<any> | null = null;
 export const OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT = "iccc-outlook-category-context-invalidated";
 export const OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT = "iccc-outlook-category-sync-request";
 export const OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY = "iccc-outlook-category-sync-request-v1";
+export const OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY = "iccc-outlook-category-sync-debug-v1";
 const HOST_ACTION_WINDOW_MESSAGE_TYPE = "iccc-host-action-window";
 const HOST_ACTION_WINDOW_RESULT_TYPE = "iccc-host-action-window-result";
+
+export type OutlookCategorySyncTarget = {
+  itemId?: string;
+  internetMessageId?: string;
+  conversationId?: string;
+};
 
 export type OutlookCategorySyncRequest = {
   requestId: string;
   createdAtIso: string;
+  reason?: string;
   mode: "source" | "current-item-context";
-  target?: {
-    itemId?: string;
-    internetMessageId?: string;
-    conversationId?: string;
-  };
+  target?: OutlookCategorySyncTarget;
   source?: Partial<OutlookCategorySource> | null;
 };
+
+type OutlookCategorySyncMode = "source" | "current-item-context";
+type OutlookCategorySyncOutcome =
+  | "executed"
+  | "duplicate"
+  | "equivalent"
+  | "stale"
+  | "item-mismatch"
+  | "no-identity"
+  | "failed";
+
+type OutlookCategorySyncWriterRequest = {
+  requestId: string;
+  requestedAtMs: number;
+  reason: string;
+  mode: OutlookCategorySyncMode;
+  target?: OutlookCategorySyncTarget;
+  source?: Partial<OutlookCategorySource> | null;
+  expectedItemToken?: string;
+  manageClassificationFamilies?: boolean;
+};
+
+type PreparedOutlookCategorySyncWriterRequest = OutlookCategorySyncWriterRequest & {
+  itemIdentity: string;
+  expectedItemToken: string;
+  source: OutlookCategorySource;
+  sourceSignature: string;
+  plan: OutlookCategoryPlan;
+  planSignature: string;
+};
+
+type OutlookCategoryWriterFreshness = {
+  requestedAtMs: number;
+  order: number;
+  requestId: string;
+};
+
+type OutlookCategoryWriterState = {
+  tail: Promise<OutlookCategorySyncOutcome>;
+  latestFreshness: OutlookCategoryWriterFreshness | null;
+  lastAppliedPlanSignature: string;
+  lastAppliedSourceSignature: string;
+  recentRequestIds: string[];
+};
+
+const OUTLOOK_CATEGORY_SYNC_PREFIX = "[outlook-category-sync]";
+const OUTLOOK_CATEGORY_WRITER_RECENT_REQUEST_LIMIT = 12;
+const outlookCategoryWriterStateByItem = new Map<string, OutlookCategoryWriterState>();
+let outlookCategoryWriterOrder = 0;
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -104,6 +160,124 @@ function doesResolvedEmailMatchCurrentOutlookItem(
   return false;
 }
 
+function isOutlookCategorySyncDebugEnabled(): boolean {
+  try {
+    return Boolean((import.meta as any)?.env?.DEV)
+      || window.localStorage?.getItem(OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function logOutlookCategorySync(level: "debug" | "info" | "warn" | "error", event: string, data?: any) {
+  if (!isOutlookCategorySyncDebugEnabled()) return;
+  const message = `${OUTLOOK_CATEGORY_SYNC_PREFIX} ${event}`;
+  if (level === "warn") {
+    clientLog.warn(message, data);
+    return;
+  }
+  if (level === "error") {
+    clientLog.error(message, data);
+    return;
+  }
+  if (level === "info") {
+    clientLog.log(message, data);
+    return;
+  }
+  clientLog.debug(message, data);
+}
+
+function createOutlookCategorySyncRequestId(reason: string): string {
+  const normalizedReason = String(reason || "sync").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-") || "sync";
+  return `outlook-category-sync:${normalizedReason}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
+
+function normalizeOutlookCategorySyncTarget(target?: OutlookCategorySyncTarget | null): OutlookCategorySyncTarget | undefined {
+  if (!target) return undefined;
+  const itemId = String(target.itemId || "").trim() || undefined;
+  const internetMessageId = String(target.internetMessageId || "").trim() || undefined;
+  const conversationId = String(target.conversationId || "").trim() || undefined;
+  if (!itemId && !internetMessageId && !conversationId) return undefined;
+  return { itemId, internetMessageId, conversationId };
+}
+
+function buildOutlookCategoryWriterItemIdentity(target?: OutlookCategorySyncTarget | null): string {
+  const normalized = normalizeOutlookCategorySyncTarget(target);
+  const itemId = String(normalized?.itemId || "").trim();
+  const internetMessageId = normalizeOutlookIdentityString(normalized?.internetMessageId);
+  const conversationId = String(normalized?.conversationId || "").trim();
+  if (itemId) return `item:${itemId}`;
+  if (internetMessageId) return `internet:${internetMessageId}`;
+  if (conversationId) return `conversation:${conversationId}`;
+  return "";
+}
+
+function doesOutlookCategorySyncTargetMatchContext(
+  target: OutlookCategorySyncTarget | null | undefined,
+  context: Pick<OutlookMessageContext, "itemId" | "internetMessageId" | "conversationId">
+): boolean {
+  const normalizedTarget = normalizeOutlookCategorySyncTarget(target);
+  if (!normalizedTarget) return true;
+
+  const targetItemId = String(normalizedTarget.itemId || "").trim();
+  const targetInternetMessageId = normalizeOutlookIdentityString(normalizedTarget.internetMessageId);
+  const targetConversationId = String(normalizedTarget.conversationId || "").trim();
+
+  const currentItemId = String(context.itemId || "").trim();
+  const currentInternetMessageId = normalizeOutlookIdentityString(context.internetMessageId);
+  const currentConversationId = String(context.conversationId || "").trim();
+
+  if (targetItemId) return Boolean(currentItemId) && targetItemId === currentItemId;
+  if (targetInternetMessageId) return Boolean(currentInternetMessageId) && targetInternetMessageId === currentInternetMessageId;
+  if (targetConversationId) return Boolean(currentConversationId) && targetConversationId === currentConversationId;
+  return true;
+}
+
+function getOutlookCategoryValueSignature(values: readonly string[]): string {
+  return JSON.stringify(
+    normalizeUniqueCategoryValues(values).sort((left, right) =>
+      String(left || "").trim().toLowerCase().localeCompare(String(right || "").trim().toLowerCase(), "pt")
+    )
+  );
+}
+
+function compareOutlookCategoryWriterFreshness(
+  left: OutlookCategoryWriterFreshness | null | undefined,
+  right: OutlookCategoryWriterFreshness | null | undefined
+): number {
+  if (!left && !right) return 0;
+  if (!left) return -1;
+  if (!right) return 1;
+  if (left.requestedAtMs !== right.requestedAtMs) return left.requestedAtMs - right.requestedAtMs;
+  return left.order - right.order;
+}
+
+function getOutlookCategoryWriterState(itemIdentity: string): OutlookCategoryWriterState {
+  const existing = outlookCategoryWriterStateByItem.get(itemIdentity);
+  if (existing) return existing;
+  const created: OutlookCategoryWriterState = {
+    tail: Promise.resolve("executed"),
+    latestFreshness: null,
+    lastAppliedPlanSignature: "",
+    lastAppliedSourceSignature: "",
+    recentRequestIds: [],
+  };
+  outlookCategoryWriterStateByItem.set(itemIdentity, created);
+  return created;
+}
+
+function rememberOutlookCategoryWriterRequestId(state: OutlookCategoryWriterState, requestId: string) {
+  const normalized = String(requestId || "").trim();
+  if (!normalized) return;
+  state.recentRequestIds = [normalized, ...state.recentRequestIds.filter((entry) => entry !== normalized)]
+    .slice(0, OUTLOOK_CATEGORY_WRITER_RECENT_REQUEST_LIMIT);
+}
+
+function hasSeenOutlookCategoryWriterRequestId(state: OutlookCategoryWriterState, requestId: string): boolean {
+  const normalized = String(requestId || "").trim();
+  return Boolean(normalized) && state.recentRequestIds.includes(normalized);
+}
+
 function dispatchOutlookCategoryContextInvalidated() {
   if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
   try {
@@ -126,6 +300,7 @@ export function readPendingOutlookCategorySyncRequest(): OutlookCategorySyncRequ
     return {
       requestId,
       createdAtIso: String(parsed.createdAtIso || "").trim() || new Date().toISOString(),
+      reason: String(parsed.reason || "").trim() || undefined,
       mode,
       target: parsed.target && typeof parsed.target === "object"
         ? {
@@ -144,15 +319,21 @@ export function readPendingOutlookCategorySyncRequest(): OutlookCategorySyncRequ
 }
 
 export function enqueueOutlookCategorySyncRequest(input: {
+  requestId?: string;
+  createdAtIso?: string;
+  reason?: string;
   mode: "source" | "current-item-context";
   target?: { itemId?: string; internetMessageId?: string; conversationId?: string };
   source?: Partial<OutlookCategorySource> | null;
 }): OutlookCategorySyncRequest | null {
   if (typeof window === "undefined" || !window.localStorage) return null;
   try {
+    const requestId = String(input.requestId || "").trim() || createOutlookCategorySyncRequestId(input.reason || input.mode);
+    const createdAtIso = String(input.createdAtIso || "").trim() || new Date().toISOString();
     const request: OutlookCategorySyncRequest = {
-      requestId: `outlook-category-sync:${Date.now()}:${Math.random().toString(36).slice(2)}`,
-      createdAtIso: new Date().toISOString(),
+      requestId,
+      createdAtIso,
+      reason: String(input.reason || "").trim() || undefined,
       mode: input.mode,
       target: input.target ? {
         itemId: String(input.target.itemId || "").trim() || undefined,
@@ -1092,11 +1273,42 @@ function getCurrentManagedCategoryNames(currentCategories: string[], plan: Outlo
   });
 }
 
-export async function applyOutlookCategoryPlan(
+async function doesCurrentItemMatchOutlookCategoryPlan(
   plan: OutlookCategoryPlan,
   options?: { expectedItemToken?: string }
 ): Promise<boolean> {
+  if (!(await hasExpectedCurrentItemToken(String(options?.expectedItemToken || "").trim()))) return false;
+  const currentCategories = await getCurrentItemCategoryNames();
+  const currentManagedCategories = getCurrentManagedCategoryNames(currentCategories, plan);
+  return getOutlookCategoryValueSignature(currentManagedCategories)
+    === getOutlookCategoryValueSignature(plan.desiredCategories);
+}
+
+export async function applyOutlookCategoryPlan(
+  plan: OutlookCategoryPlan,
+  options?: {
+    expectedItemToken?: string;
+    isExecutionCurrent?: () => boolean;
+    syncMeta?: {
+      requestId: string;
+      reason: string;
+      mode: OutlookCategorySyncMode;
+      itemIdentity: string;
+      sourceSignature: string;
+      planSignature: string;
+      requestedAtMs: number;
+      target?: OutlookCategorySyncTarget;
+    };
+  }
+): Promise<boolean> {
   const expectedItemToken = String(options?.expectedItemToken || "").trim();
+  const syncMeta = options?.syncMeta;
+  const isExecutionCurrent = options?.isExecutionCurrent;
+
+  if (isExecutionCurrent && !isExecutionCurrent()) {
+    logOutlookCategorySync("debug", "writer-skip-stale-before-read", syncMeta);
+    return false;
+  }
   if (!(await hasExpectedCurrentItemToken(expectedItemToken))) return false;
 
   const currentCategories = await getCurrentItemCategoryNames();
@@ -1106,43 +1318,67 @@ export async function applyOutlookCategoryPlan(
   const toAdd = desiredCategories.filter((name) => !currentCategories.includes(name));
   const toRemove = Array.from(new Set(currentManagedCategories.filter((name) => !desiredCategorySet.has(name))));
 
+  logOutlookCategorySync("debug", "writer-plan-diff", {
+    ...syncMeta,
+    currentCategories,
+    currentManagedCategories,
+    desiredCategories,
+    toAdd,
+    toRemove,
+  });
+
+  if (!toAdd.length && !toRemove.length) {
+    logOutlookCategorySync("info", "writer-noop", {
+      ...syncMeta,
+      currentCategories,
+      desiredCategories,
+    });
+    return true;
+  }
+
   for (const categoryName of desiredCategories) {
     await ensureMasterCategory(categoryName);
   }
 
+  if (isExecutionCurrent && !isExecutionCurrent()) {
+    logOutlookCategorySync("debug", "writer-skip-stale-after-prepare", syncMeta);
+    return false;
+  }
   if (!(await hasExpectedCurrentItemToken(expectedItemToken))) {
     clientLog.warn("[office] applyOutlookCategoryPlan aborted after category preparation because the item changed", {
       expectedItemToken,
     });
+    logOutlookCategorySync("warn", "writer-skip-item-mismatch-after-prepare", syncMeta);
     return false;
   }
 
   await addCategoriesToCurrentItem(toAdd);
 
+  if (isExecutionCurrent && !isExecutionCurrent()) {
+    logOutlookCategorySync("debug", "writer-skip-stale-after-add", syncMeta);
+    return false;
+  }
   if (!(await hasExpectedCurrentItemToken(expectedItemToken))) {
     clientLog.warn("[office] applyOutlookCategoryPlan skipped removals because the item changed", {
       expectedItemToken,
     });
+    logOutlookCategorySync("warn", "writer-skip-item-mismatch-before-remove", syncMeta);
     return false;
   }
 
   await removeCategoriesFromCurrentItem(toRemove);
+  logOutlookCategorySync("info", "writer-applied", {
+    ...syncMeta,
+    desiredCategories,
+    toAdd,
+    toRemove,
+  });
   return true;
 }
 
-export async function syncOutlookCategorySource(
-  source: Partial<OutlookCategorySource> | null | undefined,
-  options?: { expectedItemToken?: string; manageClassificationFamilies?: boolean }
-): Promise<boolean> {
-  return await applyOutlookCategoryPlan(
-    buildOutlookCategoryPlan(source, { manageClassificationFamilies: options?.manageClassificationFamilies }),
-    { expectedItemToken: options?.expectedItemToken }
-  );
-}
-
-export async function syncCurrentItemOutlookCategoriesFromContext(
-  options?: { expectedItemToken?: string }
-): Promise<boolean> {
+async function prepareCurrentItemOutlookCategorySyncWriterRequest(
+  request: OutlookCategorySyncWriterRequest
+): Promise<PreparedOutlookCategorySyncWriterRequest | { outcome: OutlookCategorySyncOutcome; itemIdentity: string }> {
   const stableSelection = await waitForStableSelectedMessageContext({
     maxAttempts: 4,
     delayMs: 120,
@@ -1152,9 +1388,21 @@ export async function syncCurrentItemOutlookCategoriesFromContext(
     itemToken: "",
   }));
   const currentContext = stableSelection.context;
-  if (!hasPreciseOutlookItemIdentity(currentContext)) return false;
+  if (!hasPreciseOutlookItemIdentity(currentContext)) {
+    return {
+      outcome: "no-identity",
+      itemIdentity: buildOutlookCategoryWriterItemIdentity(request.target),
+    };
+  }
 
-  const expectedItemToken = String(options?.expectedItemToken || "").trim() || stableSelection.itemToken || await getCurrentItemToken().catch(() => "");
+  if (!doesOutlookCategorySyncTargetMatchContext(request.target, currentContext)) {
+    return {
+      outcome: "item-mismatch",
+      itemIdentity: buildOutlookCategoryWriterItemIdentity(request.target) || buildOutlookCategoryWriterItemIdentity(currentContext),
+    };
+  }
+
+  const expectedItemToken = String(request.expectedItemToken || "").trim() || stableSelection.itemToken || await getCurrentItemToken().catch(() => "");
   const payload = {
     itemId: String(currentContext.itemId || "").trim() || undefined,
     internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
@@ -1184,7 +1432,10 @@ export async function syncCurrentItemOutlookCategoriesFromContext(
       resolvedItemId: String(related?.email?.itemId || "").trim(),
       resolvedInternetMessageId: normalizeOutlookIdentityString(related?.email?.internetMessageId),
     });
-    return false;
+    return {
+      outcome: "item-mismatch",
+      itemIdentity: buildOutlookCategoryWriterItemIdentity(currentContext),
+    };
   }
   const knownLabelNames = collectKnownOutlookCategoryLabelNames({
     settings,
@@ -1193,7 +1444,7 @@ export async function syncCurrentItemOutlookCategoriesFromContext(
     tickets: Array.isArray(related?.tickets) ? related.tickets : [],
   });
   const snapshot = await getManagedOutlookCategorySnapshot(knownLabelNames).catch(() => null);
-  const applied = await syncOutlookCategorySource(buildOutlookCategorySourceFromRelatedContext({
+  const source = buildOutlookCategorySourceFromRelatedContext({
     email: resolvedCurrentEmail,
     groups: Array.isArray(related?.groups) ? related.groups : [],
     tickets: Array.isArray(related?.tickets) ? related.tickets : [],
@@ -1201,11 +1452,232 @@ export async function syncCurrentItemOutlookCategoriesFromContext(
     currentOutlookLabelNames: snapshot?.labelNames || [],
     specialCategories: Array.isArray(links) && links.length ? [ODOO_LINKED_CATEGORY] : [],
     managedSpecialCategories: [ODOO_LINKED_CATEGORY],
-  }), {
-    expectedItemToken,
   });
-  if (applied) dispatchOutlookCategoryContextInvalidated();
-  return applied;
+  const normalizedSource = normalizeOutlookCategorySource(source);
+  const plan = buildOutlookCategoryPlan(normalizedSource, {
+    manageClassificationFamilies: request.manageClassificationFamilies,
+  });
+  return {
+    ...request,
+    target: normalizeOutlookCategorySyncTarget(payload),
+    itemIdentity: buildOutlookCategoryWriterItemIdentity(payload),
+    expectedItemToken,
+    source: normalizedSource,
+    sourceSignature: getOutlookCategorySourceSignature(normalizedSource),
+    plan,
+    planSignature: getOutlookCategoryPlanSignature(plan),
+  };
+}
+
+async function prepareSourceOutlookCategorySyncWriterRequest(
+  request: OutlookCategorySyncWriterRequest
+): Promise<PreparedOutlookCategorySyncWriterRequest | { outcome: OutlookCategorySyncOutcome; itemIdentity: string }> {
+  const stableSelection = await waitForStableSelectedMessageContext({
+    maxAttempts: 4,
+    delayMs: 120,
+    requirePreciseIdentity: false,
+  }).catch(() => ({
+    context: {} as OutlookMessageContext,
+    itemToken: "",
+  }));
+  const normalizedTarget = normalizeOutlookCategorySyncTarget(request.target) || normalizeOutlookCategorySyncTarget(stableSelection.context);
+  const fallbackTokenIdentity = String(stableSelection.itemToken || request.expectedItemToken || "").trim();
+  const itemIdentity = buildOutlookCategoryWriterItemIdentity(normalizedTarget)
+    || (fallbackTokenIdentity ? `token:${fallbackTokenIdentity}` : "");
+  if (!itemIdentity) {
+    return {
+      outcome: "no-identity",
+      itemIdentity: "",
+    };
+  }
+
+  if (normalizedTarget && !doesOutlookCategorySyncTargetMatchContext(normalizedTarget, stableSelection.context)) {
+    return {
+      outcome: "item-mismatch",
+      itemIdentity,
+    };
+  }
+
+  const source = normalizeOutlookCategorySource(request.source);
+  const plan = buildOutlookCategoryPlan(source, {
+    manageClassificationFamilies: request.manageClassificationFamilies,
+  });
+  return {
+    ...request,
+    target: normalizedTarget,
+    itemIdentity,
+    expectedItemToken: String(request.expectedItemToken || "").trim() || stableSelection.itemToken || await getCurrentItemToken().catch(() => ""),
+    source,
+    sourceSignature: getOutlookCategorySourceSignature(source),
+    plan,
+    planSignature: getOutlookCategoryPlanSignature(plan),
+  };
+}
+
+async function prepareOutlookCategorySyncWriterRequest(
+  request: OutlookCategorySyncWriterRequest
+): Promise<PreparedOutlookCategorySyncWriterRequest | { outcome: OutlookCategorySyncOutcome; itemIdentity: string }> {
+  if (request.mode === "current-item-context") {
+    return await prepareCurrentItemOutlookCategorySyncWriterRequest(request);
+  }
+  return await prepareSourceOutlookCategorySyncWriterRequest(request);
+}
+
+function isSuccessfulOutlookCategorySyncOutcome(outcome: OutlookCategorySyncOutcome): boolean {
+  return outcome === "executed" || outcome === "duplicate" || outcome === "equivalent";
+}
+
+async function runOutlookCategoryWriterRequest(
+  request: OutlookCategorySyncWriterRequest
+): Promise<OutlookCategorySyncOutcome> {
+  const prepared = await prepareOutlookCategorySyncWriterRequest(request);
+  if ("outcome" in prepared) {
+    logOutlookCategorySync(prepared.outcome === "failed" ? "warn" : "debug", "request-short-circuited", {
+      requestId: request.requestId,
+      reason: request.reason,
+      mode: request.mode,
+      target: request.target,
+      itemIdentity: prepared.itemIdentity,
+      outcome: prepared.outcome,
+    });
+    return prepared.outcome;
+  }
+
+  const state = getOutlookCategoryWriterState(prepared.itemIdentity);
+  const freshness: OutlookCategoryWriterFreshness = {
+    requestedAtMs: prepared.requestedAtMs,
+    order: ++outlookCategoryWriterOrder,
+    requestId: prepared.requestId,
+  };
+  if (compareOutlookCategoryWriterFreshness(freshness, state.latestFreshness) >= 0) {
+    state.latestFreshness = freshness;
+  }
+
+  logOutlookCategorySync("debug", "request-enqueued", {
+    requestId: prepared.requestId,
+    reason: prepared.reason,
+    mode: prepared.mode,
+    itemIdentity: prepared.itemIdentity,
+    target: prepared.target,
+    sourceSignature: prepared.sourceSignature,
+    planSignature: prepared.planSignature,
+    requestedAtMs: prepared.requestedAtMs,
+    freshness,
+    latestFreshness: state.latestFreshness,
+  });
+
+  const run = async (): Promise<OutlookCategorySyncOutcome> => {
+    const syncMeta = {
+      requestId: prepared.requestId,
+      reason: prepared.reason,
+      mode: prepared.mode,
+      itemIdentity: prepared.itemIdentity,
+      sourceSignature: prepared.sourceSignature,
+      planSignature: prepared.planSignature,
+      requestedAtMs: prepared.requestedAtMs,
+      target: prepared.target,
+    };
+    const isExecutionCurrent = () => compareOutlookCategoryWriterFreshness(freshness, state.latestFreshness) >= 0;
+
+    logOutlookCategorySync("debug", "request-dequeued", {
+      ...syncMeta,
+      latestFreshness: state.latestFreshness,
+    });
+
+    if (hasSeenOutlookCategoryWriterRequestId(state, prepared.requestId)) {
+      logOutlookCategorySync("info", "request-ignored-duplicate", syncMeta);
+      return "duplicate";
+    }
+
+    if (!isExecutionCurrent()) {
+      logOutlookCategorySync("info", "request-ignored-stale", syncMeta);
+      rememberOutlookCategoryWriterRequestId(state, prepared.requestId);
+      return "stale";
+    }
+
+    if (
+      state.lastAppliedPlanSignature === prepared.planSignature
+      && state.lastAppliedSourceSignature === prepared.sourceSignature
+      && await doesCurrentItemMatchOutlookCategoryPlan(prepared.plan, { expectedItemToken: prepared.expectedItemToken })
+    ) {
+      logOutlookCategorySync("info", "request-ignored-equivalent", syncMeta);
+      rememberOutlookCategoryWriterRequestId(state, prepared.requestId);
+      return "equivalent";
+    }
+
+    const applied = await applyOutlookCategoryPlan(prepared.plan, {
+      expectedItemToken: prepared.expectedItemToken,
+      isExecutionCurrent,
+      syncMeta,
+    });
+    rememberOutlookCategoryWriterRequestId(state, prepared.requestId);
+    if (!applied) {
+      const outcome: OutlookCategorySyncOutcome = isExecutionCurrent() ? "failed" : "stale";
+      logOutlookCategorySync(outcome === "failed" ? "warn" : "info", "request-finished-without-apply", {
+        ...syncMeta,
+        outcome,
+      });
+      return outcome;
+    }
+
+    state.lastAppliedPlanSignature = prepared.planSignature;
+    state.lastAppliedSourceSignature = prepared.sourceSignature;
+    dispatchOutlookCategoryContextInvalidated();
+    logOutlookCategorySync("info", "request-executed", syncMeta);
+    return "executed";
+  };
+
+  const resultPromise = state.tail.catch(() => "failed" as OutlookCategorySyncOutcome).then(run);
+  state.tail = resultPromise;
+  return await resultPromise;
+}
+
+export async function syncOutlookCategorySource(
+  source: Partial<OutlookCategorySource> | null | undefined,
+  options?: {
+    expectedItemToken?: string;
+    manageClassificationFamilies?: boolean;
+    requestId?: string;
+    requestedAtIso?: string;
+    reason?: string;
+    target?: OutlookCategorySyncTarget;
+  }
+): Promise<boolean> {
+  const requestId = String(options?.requestId || "").trim() || createOutlookCategorySyncRequestId(options?.reason || "source");
+  const requestedAtMs = Date.parse(String(options?.requestedAtIso || "").trim()) || Date.now();
+  const outcome = await runOutlookCategoryWriterRequest({
+    requestId,
+    requestedAtMs,
+    reason: String(options?.reason || "source-sync"),
+    mode: "source",
+    target: options?.target,
+    source,
+    expectedItemToken: options?.expectedItemToken,
+    manageClassificationFamilies: options?.manageClassificationFamilies,
+  });
+  return isSuccessfulOutlookCategorySyncOutcome(outcome);
+}
+
+export async function syncCurrentItemOutlookCategoriesFromContext(
+  options?: {
+    expectedItemToken?: string;
+    requestId?: string;
+    requestedAtIso?: string;
+    reason?: string;
+    target?: OutlookCategorySyncTarget;
+  }
+): Promise<boolean> {
+  const requestId = String(options?.requestId || "").trim() || createOutlookCategorySyncRequestId(options?.reason || "current-item-context");
+  const requestedAtMs = Date.parse(String(options?.requestedAtIso || "").trim()) || Date.now();
+  const outcome = await runOutlookCategoryWriterRequest({
+    requestId,
+    requestedAtMs,
+    reason: String(options?.reason || "current-item-context"),
+    mode: "current-item-context",
+    target: options?.target,
+    expectedItemToken: options?.expectedItemToken,
+  });
+  return isSuccessfulOutlookCategorySyncOutcome(outcome);
 }
 
 export async function syncOdooLinkedCategory(hasLinks: boolean): Promise<void> {
@@ -1214,12 +1686,17 @@ export async function syncOdooLinkedCategory(hasLinks: boolean): Promise<void> {
       specialCategories: hasLinks ? [ODOO_LINKED_CATEGORY] : [],
       managedSpecialCategories: [ODOO_LINKED_CATEGORY],
     },
-    { manageClassificationFamilies: false }
+    {
+      manageClassificationFamilies: false,
+      reason: "odoo-linked",
+    }
   );
 }
 
 export async function syncManagedOutlookCategories(input: LegacyManagedOutlookCategoryInput): Promise<void> {
-  await syncOutlookCategorySource(buildOutlookCategorySourceFromLegacyInput(input));
+  await syncOutlookCategorySource(buildOutlookCategorySourceFromLegacyInput(input), {
+    reason: "legacy-managed-categories",
+  });
 }
 
 export async function getManagedOutlookCategorySnapshot(): Promise<{
@@ -1326,7 +1803,7 @@ export async function syncLinkCategoriesToComposeDraft(
     || source.specialCategories.length
     || source.managedSpecialCategories.length
   );
-  const hasOdooLinks = input?.hasOdooLinks === true;
+  const hasOdooLinks = (input as { hasOdooLinks?: boolean } | null | undefined)?.hasOdooLinks === true;
 
   if (!hasManagedCategories && !hasOdooLinks) return;
 
@@ -1430,10 +1907,20 @@ type CockpitHostAction =
   | { type: "open-email"; itemId?: string; emailWebLink?: string }
   | { type: "reply-current" }
   | { type: "forward-current" }
-  | { type: "sync-current-item-categories" }
+  | {
+      type: "sync-current-item-categories";
+      requestId?: string;
+      requestedAtIso?: string;
+      reason?: string;
+      target?: OutlookCategorySyncTarget;
+    }
   | {
       type: "sync-managed-categories";
       payload: (LegacyManagedOutlookCategoryInput & Partial<OutlookCategorySource>);
+      requestId?: string;
+      requestedAtIso?: string;
+      reason?: string;
+      target?: OutlookCategorySyncTarget;
     };
 
 async function executeCockpitHostAction(action: CockpitHostAction): Promise<boolean> {
@@ -1461,17 +1948,25 @@ async function executeCockpitHostAction(action: CockpitHostAction): Promise<bool
   }
 
   if (action.type === "sync-current-item-categories") {
-    return await syncCurrentItemOutlookCategoriesFromContext();
+    return await syncCurrentItemOutlookCategoriesFromContext({
+      requestId: action.requestId,
+      requestedAtIso: action.requestedAtIso,
+      reason: action.reason || "host-action-current-item-context",
+      target: action.target,
+    });
   }
 
   if (action.type === "sync-managed-categories") {
     if ("groupNames" in (action.payload || {}) || "statuses" in (action.payload || {})) {
       await syncManagedOutlookCategories(action.payload || {});
-      dispatchOutlookCategoryContextInvalidated();
       return true;
     }
-    const synced = await syncOutlookCategorySource(action.payload || {});
-    dispatchOutlookCategoryContextInvalidated();
+    const synced = await syncOutlookCategorySource(action.payload || {}, {
+      requestId: action.requestId,
+      requestedAtIso: action.requestedAtIso,
+      reason: action.reason || "host-action-source",
+      target: action.target,
+    });
     return synced;
   }
 

@@ -449,7 +449,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             try {
                 if (pendingRequest.mode === "source" && pendingRequest.source) {
-                    const applied = await syncOutlookCategorySource(pendingRequest.source, { expectedItemToken }).catch(() => false);
+                    const applied = await syncOutlookCategorySource(pendingRequest.source, {
+                        expectedItemToken,
+                        requestId: pendingRequest.requestId,
+                        requestedAtIso: pendingRequest.createdAtIso,
+                        reason: pendingRequest.reason || "taskpane-fallback-source",
+                        target: pendingRequest.target,
+                    }).catch(() => false);
                     if (!cancelled && applied) {
                         lastOutlookCategorySyncRef.current = null;
                         setOutlookCategoryRefreshTick((current) => current + 1);
@@ -457,7 +463,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     return;
                 }
 
-                const applied = await syncCurrentItemOutlookCategoriesFromContext({ expectedItemToken }).catch(() => false);
+                const applied = await syncCurrentItemOutlookCategoriesFromContext({
+                    expectedItemToken,
+                    requestId: pendingRequest.requestId,
+                    requestedAtIso: pendingRequest.createdAtIso,
+                    reason: pendingRequest.reason || "taskpane-fallback-current-item-context",
+                    target: pendingRequest.target,
+                }).catch(() => false);
                 if (!cancelled && applied) {
                     lastOutlookCategorySyncRef.current = null;
                     setOutlookCategoryRefreshTick((current) => current + 1);
@@ -1468,6 +1480,12 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
             const applied = await syncOutlookCategorySource(syncSource, {
                 expectedItemToken,
+                reason: "provider-reconcile",
+                target: {
+                    itemId: String(ctx.itemId || "").trim() || undefined,
+                    internetMessageId: String(ctx.internetMessageId || "").trim() || undefined,
+                    conversationId: String(ctx.conversationId || "").trim() || undefined,
+                },
             }).catch(() => false);
             if (!cancelled && applied) {
                 lastOutlookCategorySyncRef.current = {
