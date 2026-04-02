@@ -668,7 +668,7 @@ function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | nu
     messageDateIso: String(email.messageDateIso || email.receivedAtIso || "").trim() || undefined,
     bodyText: String(email.bodyText || "").trim() || undefined,
     bodyHtml: String(email.bodyHtml || "").trim() || undefined,
-    attachments,
+    ...(attachments.length ? { attachments } : {}),
   };
 }
 

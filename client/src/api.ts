@@ -166,6 +166,7 @@ export type RelevantEmailPayload = {
   };
   attachmentStorageProvider?: "cloud" | "local" | "onedrive" | string;
   attachmentStorageBasePath?: string;
+  replaceAttachments?: boolean;
   membershipKind?: "principal" | "referencia" | string;
   attachments?: Array<{
     key?: string;

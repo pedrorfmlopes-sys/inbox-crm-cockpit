@@ -1312,10 +1312,14 @@ function upsertEmail(store, input) {
     next.messageDateIso = next.receivedAtIso || next.sentAtIso || next.linkedAt || now;
   }
   if (!next.receivedAtIso) next.receivedAtIso = next.messageDateIso;
-  if (Array.isArray(input?.attachments)) {
+  const normalizedAttachments = Array.isArray(normalized.attachments) ? normalized.attachments : [];
+  const shouldReplaceAttachments = input?.replaceAttachments === true;
+  const shouldPersistAttachments = Array.isArray(input?.attachments)
+    && (normalizedAttachments.length > 0 || shouldReplaceAttachments);
+  if (shouldPersistAttachments) {
     next.attachments = persistEmailAttachmentsForProvider(
       { ...next, id: emailId },
-      normalized.attachments,
+      normalizedAttachments,
       {
         existingAttachments: current.attachments,
         storageProvider: input?.attachmentStorageProvider,
