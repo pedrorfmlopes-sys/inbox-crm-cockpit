@@ -67,8 +67,14 @@ export const OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT = "iccc-outlook-category
 export const OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT = "iccc-outlook-category-sync-request";
 export const OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY = "iccc-outlook-category-sync-request-v1";
 export const OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY = "iccc-outlook-category-sync-debug-v1";
+export const OUTLOOK_CATEGORY_OPERATION_DEBUG_STORAGE_KEY = "iccc-outlook-category-op-debug-v1";
+export const OUTLOOK_CATEGORY_SYNC_RESULT_EVENT = "iccc-outlook-category-sync-result";
+export const OUTLOOK_CATEGORY_SYNC_RESULT_STORAGE_KEY = "iccc-outlook-category-sync-result-v1";
 const HOST_ACTION_WINDOW_MESSAGE_TYPE = "iccc-host-action-window";
 const HOST_ACTION_WINDOW_RESULT_TYPE = "iccc-host-action-window-result";
+const OUTLOOK_CATEGORY_OPERATION_STORAGE_PREFIX = "iccc-outlook-category-op-v1:";
+const OUTLOOK_CATEGORY_OPERATION_ACTIVE_PREFIX = "iccc-outlook-category-op-active-v1:";
+const OUTLOOK_CATEGORY_OPERATION_DEFAULT_LEASE_MS = 45_000;
 
 export type OutlookCategorySyncTarget = {
   itemId?: string;
@@ -80,23 +86,80 @@ export type OutlookCategorySyncRequest = {
   requestId: string;
   createdAtIso: string;
   reason?: string;
+  operationId?: string;
   mode: "source" | "current-item-context";
   target?: OutlookCategorySyncTarget;
   source?: Partial<OutlookCategorySource> | null;
 };
 
 type OutlookCategorySyncMode = "source" | "current-item-context";
-type OutlookCategorySyncOutcome =
-  | "executed"
-  | "duplicate"
-  | "equivalent"
-  | "stale"
+export type OutlookCategoryWriterResult =
+  | "success"
+  | "failed"
   | "item-mismatch"
-  | "no-identity"
-  | "failed";
+  | "stale"
+  | "duplicate"
+  | "cancelled"
+  | "timeout";
+
+export type OutlookCategoryOperationPhase =
+  | "opening"
+  | "saving"
+  | "refreshing"
+  | "rehydrating"
+  | "planning"
+  | "writingOutlook"
+  | "verifying"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type OutlookCategoryOperationStatus =
+  | "active"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "timeout";
+
+export type OutlookCategoryOperationRecord = {
+  operationId: string;
+  itemIdentity: string;
+  target?: OutlookCategorySyncTarget;
+  owner: string;
+  startedAtIso: string;
+  startedAtMs: number;
+  lastUpdatedAtIso: string;
+  phase: OutlookCategoryOperationPhase;
+  status: OutlookCategoryOperationStatus;
+  result?: OutlookCategoryWriterResult;
+  requestId?: string;
+  expectedItemToken?: string;
+  leaseExpiresAtMs: number;
+};
+
+export type OutlookCategorySyncResult = {
+  requestId: string;
+  operationId?: string;
+  reason: string;
+  mode: OutlookCategorySyncMode;
+  itemIdentity: string;
+  target?: OutlookCategorySyncTarget;
+  sourceSignature?: string;
+  planSignature?: string;
+  result: OutlookCategoryWriterResult;
+  detail?: string;
+  finishedAtIso: string;
+};
+
+type OutlookCategoryWriterShortCircuit = {
+  result: OutlookCategoryWriterResult;
+  itemIdentity: string;
+  detail?: string;
+};
 
 type OutlookCategorySyncWriterRequest = {
   requestId: string;
+  operationId?: string;
   requestedAtMs: number;
   reason: string;
   mode: OutlookCategorySyncMode;
@@ -122,7 +185,7 @@ type OutlookCategoryWriterFreshness = {
 };
 
 type OutlookCategoryWriterState = {
-  tail: Promise<OutlookCategorySyncOutcome>;
+  tail: Promise<OutlookCategorySyncResult>;
   latestFreshness: OutlookCategoryWriterFreshness | null;
   lastAppliedPlanSignature: string;
   lastAppliedSourceSignature: string;
@@ -169,9 +232,36 @@ function isOutlookCategorySyncDebugEnabled(): boolean {
   }
 }
 
+function isOutlookCategoryOperationDebugEnabled(): boolean {
+  try {
+    return isOutlookCategorySyncDebugEnabled()
+      || window.localStorage?.getItem(OUTLOOK_CATEGORY_OPERATION_DEBUG_STORAGE_KEY) === "1";
+  } catch {
+    return isOutlookCategorySyncDebugEnabled();
+  }
+}
+
 function logOutlookCategorySync(level: "debug" | "info" | "warn" | "error", event: string, data?: any) {
   if (!isOutlookCategorySyncDebugEnabled()) return;
   const message = `${OUTLOOK_CATEGORY_SYNC_PREFIX} ${event}`;
+  if (level === "warn") {
+    clientLog.warn(message, data);
+    return;
+  }
+  if (level === "error") {
+    clientLog.error(message, data);
+    return;
+  }
+  if (level === "info") {
+    clientLog.log(message, data);
+    return;
+  }
+  clientLog.debug(message, data);
+}
+
+function logOutlookCategoryOperation(level: "debug" | "info" | "warn" | "error", event: string, data?: any) {
+  if (!isOutlookCategoryOperationDebugEnabled()) return;
+  const message = `[outlook-category-op] ${event}`;
   if (level === "warn") {
     clientLog.warn(message, data);
     return;
@@ -210,6 +300,327 @@ function buildOutlookCategoryWriterItemIdentity(target?: OutlookCategorySyncTarg
   if (internetMessageId) return `internet:${internetMessageId}`;
   if (conversationId) return `conversation:${conversationId}`;
   return "";
+}
+
+function buildOutlookCategoryOperationItemIdentity(input?: {
+  target?: OutlookCategorySyncTarget | null;
+  expectedItemToken?: string;
+}): string {
+  const identity = buildOutlookCategoryWriterItemIdentity(input?.target);
+  if (identity) return identity;
+  const expectedItemToken = String(input?.expectedItemToken || "").trim();
+  return expectedItemToken ? `token:${expectedItemToken}` : "";
+}
+
+function getOutlookCategoryOperationStorageKey(operationId: string): string {
+  return `${OUTLOOK_CATEGORY_OPERATION_STORAGE_PREFIX}${String(operationId || "").trim()}`;
+}
+
+function getOutlookCategoryOperationActiveStorageKey(itemIdentity: string): string {
+  return `${OUTLOOK_CATEGORY_OPERATION_ACTIVE_PREFIX}${String(itemIdentity || "").trim()}`;
+}
+
+function cloneOutlookCategoryOperationRecord(record: OutlookCategoryOperationRecord | null | undefined): OutlookCategoryOperationRecord | null {
+  if (!record) return null;
+  return {
+    ...record,
+    target: record.target ? { ...record.target } : undefined,
+  };
+}
+
+function readOutlookCategoryOperationRecord(operationId: string): OutlookCategoryOperationRecord | null {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  const normalizedOperationId = String(operationId || "").trim();
+  if (!normalizedOperationId) return null;
+  try {
+    const raw = window.localStorage.getItem(getOutlookCategoryOperationStorageKey(normalizedOperationId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const itemIdentity = String(parsed.itemIdentity || "").trim();
+    if (!itemIdentity) return null;
+    return {
+      operationId: normalizedOperationId,
+      itemIdentity,
+      target: normalizeOutlookCategorySyncTarget(parsed.target),
+      owner: String(parsed.owner || "").trim() || "unknown",
+      startedAtIso: String(parsed.startedAtIso || "").trim() || new Date().toISOString(),
+      startedAtMs: Number(parsed.startedAtMs || 0) || Date.now(),
+      lastUpdatedAtIso: String(parsed.lastUpdatedAtIso || "").trim() || new Date().toISOString(),
+      phase: parsed.phase as OutlookCategoryOperationPhase || "opening",
+      status: parsed.status as OutlookCategoryOperationStatus || "active",
+      result: parsed.result as OutlookCategoryWriterResult | undefined,
+      requestId: String(parsed.requestId || "").trim() || undefined,
+      expectedItemToken: String(parsed.expectedItemToken || "").trim() || undefined,
+      leaseExpiresAtMs: Number(parsed.leaseExpiresAtMs || 0) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistOutlookCategoryOperationRecord(record: OutlookCategoryOperationRecord) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(
+      getOutlookCategoryOperationStorageKey(record.operationId),
+      JSON.stringify(record)
+    );
+  } catch {
+    // best effort
+  }
+}
+
+function clearOutlookCategoryOperationActiveLock(itemIdentity: string, operationId?: string) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  const normalizedItemIdentity = String(itemIdentity || "").trim();
+  if (!normalizedItemIdentity) return;
+  try {
+    const activeKey = getOutlookCategoryOperationActiveStorageKey(normalizedItemIdentity);
+    const currentOperationId = String(window.localStorage.getItem(activeKey) || "").trim();
+    if (!operationId || !currentOperationId || currentOperationId === String(operationId || "").trim()) {
+      window.localStorage.removeItem(activeKey);
+    }
+  } catch {
+    // best effort
+  }
+}
+
+function isOutlookCategoryOperationExpired(record: OutlookCategoryOperationRecord | null | undefined): boolean {
+  if (!record) return true;
+  return record.status !== "active" || Number(record.leaseExpiresAtMs || 0) <= Date.now();
+}
+
+function readActiveOutlookCategoryOperationByItemIdentity(itemIdentity: string): OutlookCategoryOperationRecord | null {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  const normalizedItemIdentity = String(itemIdentity || "").trim();
+  if (!normalizedItemIdentity) return null;
+  try {
+    const activeOperationId = String(window.localStorage.getItem(getOutlookCategoryOperationActiveStorageKey(normalizedItemIdentity)) || "").trim();
+    if (!activeOperationId) return null;
+    const record = readOutlookCategoryOperationRecord(activeOperationId);
+    if (!record || record.itemIdentity !== normalizedItemIdentity || isOutlookCategoryOperationExpired(record)) {
+      clearOutlookCategoryOperationActiveLock(normalizedItemIdentity, activeOperationId);
+      return null;
+    }
+    return record;
+  } catch {
+    return null;
+  }
+}
+
+function touchOutlookCategoryOperationRecord(
+  record: OutlookCategoryOperationRecord,
+  patch?: Partial<OutlookCategoryOperationRecord> & { leaseMs?: number }
+): OutlookCategoryOperationRecord {
+  const leaseMs = Math.max(5_000, Number(patch?.leaseMs || 0) || OUTLOOK_CATEGORY_OPERATION_DEFAULT_LEASE_MS);
+  const next: OutlookCategoryOperationRecord = {
+    ...record,
+    ...patch,
+    target: patch?.target ? normalizeOutlookCategorySyncTarget(patch.target) : record.target,
+    lastUpdatedAtIso: new Date().toISOString(),
+    leaseExpiresAtMs: Date.now() + leaseMs,
+  };
+  persistOutlookCategoryOperationRecord(next);
+  return next;
+}
+
+export function beginOutlookCategoryOperation(input: {
+  owner: string;
+  target?: OutlookCategorySyncTarget | null;
+  expectedItemToken?: string;
+  operationId?: string;
+  leaseMs?: number;
+}): { ok: true; operation: OutlookCategoryOperationRecord } | { ok: false; reason: "locked" | "no-identity"; activeOperation?: OutlookCategoryOperationRecord | null } {
+  const itemIdentity = buildOutlookCategoryOperationItemIdentity({
+    target: input.target,
+    expectedItemToken: input.expectedItemToken,
+  });
+  if (!itemIdentity) {
+    logOutlookCategoryOperation("warn", "begin-failed-no-identity", {
+      owner: input.owner,
+      target: input.target,
+    });
+    return { ok: false, reason: "no-identity" };
+  }
+
+  const activeOperation = readActiveOutlookCategoryOperationByItemIdentity(itemIdentity);
+  if (activeOperation) {
+    logOutlookCategoryOperation("warn", "begin-failed-locked", {
+      owner: input.owner,
+      itemIdentity,
+      activeOperationId: activeOperation.operationId,
+      activePhase: activeOperation.phase,
+    });
+    return {
+      ok: false,
+      reason: "locked",
+      activeOperation,
+    };
+  }
+
+  const operationId = String(input.operationId || "").trim()
+    || `outlook-category-op:${String(input.owner || "operation").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  const leaseMs = Math.max(5_000, Number(input.leaseMs || 0) || OUTLOOK_CATEGORY_OPERATION_DEFAULT_LEASE_MS);
+  const nowIso = new Date().toISOString();
+  const record: OutlookCategoryOperationRecord = {
+    operationId,
+    itemIdentity,
+    target: normalizeOutlookCategorySyncTarget(input.target),
+    owner: String(input.owner || "").trim() || "unknown",
+    startedAtIso: nowIso,
+    startedAtMs: Date.now(),
+    lastUpdatedAtIso: nowIso,
+    phase: "opening",
+    status: "active",
+    expectedItemToken: String(input.expectedItemToken || "").trim() || undefined,
+    leaseExpiresAtMs: Date.now() + leaseMs,
+  };
+  persistOutlookCategoryOperationRecord(record);
+  try {
+    window.localStorage?.setItem(getOutlookCategoryOperationActiveStorageKey(itemIdentity), operationId);
+  } catch {
+    // best effort
+  }
+  logOutlookCategoryOperation("info", "lock-acquired", {
+    operationId,
+    owner: record.owner,
+    itemIdentity,
+    phase: record.phase,
+  });
+  return { ok: true, operation: cloneOutlookCategoryOperationRecord(record)! };
+}
+
+export function getActiveOutlookCategoryOperation(target?: OutlookCategorySyncTarget | null, expectedItemToken?: string): OutlookCategoryOperationRecord | null {
+  const itemIdentity = buildOutlookCategoryOperationItemIdentity({ target, expectedItemToken });
+  return cloneOutlookCategoryOperationRecord(readActiveOutlookCategoryOperationByItemIdentity(itemIdentity));
+}
+
+export function setOutlookCategoryOperationPhase(
+  operationId: string,
+  phase: OutlookCategoryOperationPhase,
+  patch?: Partial<OutlookCategoryOperationRecord> & { leaseMs?: number }
+): OutlookCategoryOperationRecord | null {
+  const record = readOutlookCategoryOperationRecord(operationId);
+  if (!record || record.status !== "active") return null;
+  const next = touchOutlookCategoryOperationRecord(record, {
+    ...patch,
+    phase,
+  });
+  logOutlookCategoryOperation("debug", "phase", {
+    operationId,
+    itemIdentity: next.itemIdentity,
+    phase,
+    requestId: next.requestId,
+  });
+  return cloneOutlookCategoryOperationRecord(next);
+}
+
+export function completeOutlookCategoryOperation(
+  operationId: string,
+  input: {
+    result: OutlookCategoryWriterResult;
+    requestId?: string;
+    phase?: Extract<OutlookCategoryOperationPhase, "completed" | "failed" | "cancelled">;
+    detail?: string;
+  }
+): OutlookCategoryOperationRecord | null {
+  const record = readOutlookCategoryOperationRecord(operationId);
+  if (!record) return null;
+  const result = input.result;
+  const status: OutlookCategoryOperationStatus =
+    result === "success" || result === "duplicate"
+      ? "completed"
+      : result === "cancelled"
+        ? "cancelled"
+        : result === "timeout"
+          ? "timeout"
+          : "failed";
+  const phase = input.phase
+    || (status === "completed" ? "completed" : status === "cancelled" ? "cancelled" : "failed");
+  const next = touchOutlookCategoryOperationRecord(record, {
+    phase,
+    status,
+    result,
+    requestId: String(input.requestId || record.requestId || "").trim() || undefined,
+    leaseMs: OUTLOOK_CATEGORY_OPERATION_DEFAULT_LEASE_MS,
+  });
+  clearOutlookCategoryOperationActiveLock(next.itemIdentity, next.operationId);
+  logOutlookCategoryOperation(status === "completed" ? "info" : "warn", "lock-released", {
+    operationId,
+    itemIdentity: next.itemIdentity,
+    phase,
+    status,
+    result,
+    detail: input.detail,
+  });
+  return cloneOutlookCategoryOperationRecord(next);
+}
+
+function publishOutlookCategorySyncResult(result: OutlookCategorySyncResult) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(OUTLOOK_CATEGORY_SYNC_RESULT_STORAGE_KEY, JSON.stringify(result));
+    window.dispatchEvent(new CustomEvent(OUTLOOK_CATEGORY_SYNC_RESULT_EVENT, { detail: result }));
+  } catch {
+    // best effort
+  }
+}
+
+function readOutlookCategorySyncResult(requestId: string): OutlookCategorySyncResult | null {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(OUTLOOK_CATEGORY_SYNC_RESULT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (String(parsed.requestId || "").trim() !== String(requestId || "").trim()) return null;
+    return parsed as OutlookCategorySyncResult;
+  } catch {
+    return null;
+  }
+}
+
+export async function waitForOutlookCategorySyncResult(
+  requestId: string,
+  options?: { timeoutMs?: number }
+): Promise<OutlookCategorySyncResult | null> {
+  const normalizedRequestId = String(requestId || "").trim();
+  if (!normalizedRequestId) return null;
+  const immediate = readOutlookCategorySyncResult(normalizedRequestId);
+  if (immediate) return immediate;
+  const timeoutMs = Math.max(1_000, Number(options?.timeoutMs || 0) || 15_000);
+  return await new Promise<OutlookCategorySyncResult | null>((resolve) => {
+    let finished = false;
+    const finish = (value: OutlookCategorySyncResult | null) => {
+      if (finished) return;
+      finished = true;
+      try {
+        window.removeEventListener("storage", handleStorage as EventListener);
+        window.removeEventListener(OUTLOOK_CATEGORY_SYNC_RESULT_EVENT, handleEvent as EventListener);
+      } catch {
+        // ignore
+      }
+      window.clearTimeout(timerId);
+      resolve(value);
+    };
+    const maybeResolve = (candidate: OutlookCategorySyncResult | null | undefined) => {
+      if (!candidate) return;
+      if (String(candidate.requestId || "").trim() !== normalizedRequestId) return;
+      finish(candidate);
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && event.key !== OUTLOOK_CATEGORY_SYNC_RESULT_STORAGE_KEY) return;
+      maybeResolve(readOutlookCategorySyncResult(normalizedRequestId));
+    };
+    const handleEvent = (event: Event) => {
+      const detail = (event as CustomEvent<OutlookCategorySyncResult>).detail;
+      maybeResolve(detail || null);
+    };
+    const timerId = window.setTimeout(() => finish(null), timeoutMs);
+    window.addEventListener("storage", handleStorage as EventListener);
+    window.addEventListener(OUTLOOK_CATEGORY_SYNC_RESULT_EVENT, handleEvent as EventListener);
+  });
 }
 
 function doesOutlookCategorySyncTargetMatchContext(
@@ -256,7 +667,14 @@ function getOutlookCategoryWriterState(itemIdentity: string): OutlookCategoryWri
   const existing = outlookCategoryWriterStateByItem.get(itemIdentity);
   if (existing) return existing;
   const created: OutlookCategoryWriterState = {
-    tail: Promise.resolve("executed"),
+    tail: Promise.resolve({
+      requestId: "__bootstrap__",
+      reason: "bootstrap",
+      mode: "source" as OutlookCategorySyncMode,
+      itemIdentity,
+      result: "success" as OutlookCategoryWriterResult,
+      finishedAtIso: new Date().toISOString(),
+    }),
     latestFreshness: null,
     lastAppliedPlanSignature: "",
     lastAppliedSourceSignature: "",
@@ -301,6 +719,7 @@ export function readPendingOutlookCategorySyncRequest(): OutlookCategorySyncRequ
       requestId,
       createdAtIso: String(parsed.createdAtIso || "").trim() || new Date().toISOString(),
       reason: String(parsed.reason || "").trim() || undefined,
+      operationId: String(parsed.operationId || "").trim() || undefined,
       mode,
       target: parsed.target && typeof parsed.target === "object"
         ? {
@@ -322,6 +741,7 @@ export function enqueueOutlookCategorySyncRequest(input: {
   requestId?: string;
   createdAtIso?: string;
   reason?: string;
+  operationId?: string;
   mode: "source" | "current-item-context";
   target?: { itemId?: string; internetMessageId?: string; conversationId?: string };
   source?: Partial<OutlookCategorySource> | null;
@@ -334,6 +754,7 @@ export function enqueueOutlookCategorySyncRequest(input: {
       requestId,
       createdAtIso,
       reason: String(input.reason || "").trim() || undefined,
+      operationId: String(input.operationId || "").trim() || undefined,
       mode: input.mode,
       target: input.target ? {
         itemId: String(input.target.itemId || "").trim() || undefined,
@@ -1376,9 +1797,35 @@ export async function applyOutlookCategoryPlan(
   return true;
 }
 
+function createOutlookCategorySyncResult(
+  request: OutlookCategorySyncWriterRequest,
+  input: {
+    itemIdentity: string;
+    result: OutlookCategoryWriterResult;
+    detail?: string;
+    target?: OutlookCategorySyncTarget;
+    sourceSignature?: string;
+    planSignature?: string;
+  }
+): OutlookCategorySyncResult {
+  return {
+    requestId: request.requestId,
+    operationId: String(request.operationId || "").trim() || undefined,
+    reason: request.reason,
+    mode: request.mode,
+    itemIdentity: input.itemIdentity,
+    target: input.target,
+    sourceSignature: input.sourceSignature,
+    planSignature: input.planSignature,
+    result: input.result,
+    detail: input.detail,
+    finishedAtIso: new Date().toISOString(),
+  };
+}
+
 async function prepareCurrentItemOutlookCategorySyncWriterRequest(
   request: OutlookCategorySyncWriterRequest
-): Promise<PreparedOutlookCategorySyncWriterRequest | { outcome: OutlookCategorySyncOutcome; itemIdentity: string }> {
+): Promise<PreparedOutlookCategorySyncWriterRequest | OutlookCategoryWriterShortCircuit> {
   const stableSelection = await waitForStableSelectedMessageContext({
     maxAttempts: 4,
     delayMs: 120,
@@ -1390,14 +1837,15 @@ async function prepareCurrentItemOutlookCategorySyncWriterRequest(
   const currentContext = stableSelection.context;
   if (!hasPreciseOutlookItemIdentity(currentContext)) {
     return {
-      outcome: "no-identity",
+      result: "failed",
       itemIdentity: buildOutlookCategoryWriterItemIdentity(request.target),
+      detail: "no-identity",
     };
   }
 
   if (!doesOutlookCategorySyncTargetMatchContext(request.target, currentContext)) {
     return {
-      outcome: "item-mismatch",
+      result: "item-mismatch",
       itemIdentity: buildOutlookCategoryWriterItemIdentity(request.target) || buildOutlookCategoryWriterItemIdentity(currentContext),
     };
   }
@@ -1433,7 +1881,7 @@ async function prepareCurrentItemOutlookCategorySyncWriterRequest(
       resolvedInternetMessageId: normalizeOutlookIdentityString(related?.email?.internetMessageId),
     });
     return {
-      outcome: "item-mismatch",
+      result: "item-mismatch",
       itemIdentity: buildOutlookCategoryWriterItemIdentity(currentContext),
     };
   }
@@ -1471,7 +1919,7 @@ async function prepareCurrentItemOutlookCategorySyncWriterRequest(
 
 async function prepareSourceOutlookCategorySyncWriterRequest(
   request: OutlookCategorySyncWriterRequest
-): Promise<PreparedOutlookCategorySyncWriterRequest | { outcome: OutlookCategorySyncOutcome; itemIdentity: string }> {
+): Promise<PreparedOutlookCategorySyncWriterRequest | OutlookCategoryWriterShortCircuit> {
   const stableSelection = await waitForStableSelectedMessageContext({
     maxAttempts: 4,
     delayMs: 120,
@@ -1486,14 +1934,15 @@ async function prepareSourceOutlookCategorySyncWriterRequest(
     || (fallbackTokenIdentity ? `token:${fallbackTokenIdentity}` : "");
   if (!itemIdentity) {
     return {
-      outcome: "no-identity",
+      result: "failed",
       itemIdentity: "",
+      detail: "no-identity",
     };
   }
 
   if (normalizedTarget && !doesOutlookCategorySyncTargetMatchContext(normalizedTarget, stableSelection.context)) {
     return {
-      outcome: "item-mismatch",
+      result: "item-mismatch",
       itemIdentity,
     };
   }
@@ -1516,34 +1965,85 @@ async function prepareSourceOutlookCategorySyncWriterRequest(
 
 async function prepareOutlookCategorySyncWriterRequest(
   request: OutlookCategorySyncWriterRequest
-): Promise<PreparedOutlookCategorySyncWriterRequest | { outcome: OutlookCategorySyncOutcome; itemIdentity: string }> {
+): Promise<PreparedOutlookCategorySyncWriterRequest | OutlookCategoryWriterShortCircuit> {
   if (request.mode === "current-item-context") {
     return await prepareCurrentItemOutlookCategorySyncWriterRequest(request);
   }
   return await prepareSourceOutlookCategorySyncWriterRequest(request);
 }
 
-function isSuccessfulOutlookCategorySyncOutcome(outcome: OutlookCategorySyncOutcome): boolean {
-  return outcome === "executed" || outcome === "duplicate" || outcome === "equivalent";
+function isSuccessfulOutlookCategoryWriterResult(result: OutlookCategoryWriterResult): boolean {
+  return result === "success" || result === "duplicate";
 }
 
 async function runOutlookCategoryWriterRequest(
   request: OutlookCategorySyncWriterRequest
-): Promise<OutlookCategorySyncOutcome> {
+): Promise<OutlookCategorySyncResult> {
   const prepared = await prepareOutlookCategorySyncWriterRequest(request);
-  if ("outcome" in prepared) {
-    logOutlookCategorySync(prepared.outcome === "failed" ? "warn" : "debug", "request-short-circuited", {
+  if ("result" in prepared) {
+    const shortCircuitResult = createOutlookCategorySyncResult(request, {
+      itemIdentity: prepared.itemIdentity,
+      result: prepared.result,
+      detail: prepared.detail,
+      target: request.target,
+    });
+    publishOutlookCategorySyncResult(shortCircuitResult);
+    logOutlookCategorySync(prepared.result === "failed" ? "warn" : "debug", "request-short-circuited", {
       requestId: request.requestId,
+      operationId: request.operationId,
       reason: request.reason,
       mode: request.mode,
       target: request.target,
       itemIdentity: prepared.itemIdentity,
-      outcome: prepared.outcome,
+      result: prepared.result,
+      detail: prepared.detail,
     });
-    return prepared.outcome;
+    return shortCircuitResult;
   }
 
   const state = getOutlookCategoryWriterState(prepared.itemIdentity);
+  const activeOperation = readActiveOutlookCategoryOperationByItemIdentity(prepared.itemIdentity);
+  if (activeOperation) {
+    if (!prepared.operationId || activeOperation.operationId !== prepared.operationId) {
+      const blockedResult = createOutlookCategorySyncResult(request, {
+        itemIdentity: prepared.itemIdentity,
+        result: "cancelled",
+        detail: "blocked-by-active-operation",
+        target: prepared.target,
+        sourceSignature: prepared.sourceSignature,
+        planSignature: prepared.planSignature,
+      });
+      publishOutlookCategorySyncResult(blockedResult);
+      logOutlookCategorySync("info", "request-blocked-by-operation", {
+        requestId: prepared.requestId,
+        operationId: prepared.operationId,
+        activeOperationId: activeOperation.operationId,
+        reason: prepared.reason,
+        mode: prepared.mode,
+        itemIdentity: prepared.itemIdentity,
+      });
+      return blockedResult;
+    }
+  } else if (prepared.operationId) {
+    const missingOperationResult = createOutlookCategorySyncResult(request, {
+      itemIdentity: prepared.itemIdentity,
+      result: "cancelled",
+      detail: "operation-not-active",
+      target: prepared.target,
+      sourceSignature: prepared.sourceSignature,
+      planSignature: prepared.planSignature,
+    });
+    publishOutlookCategorySyncResult(missingOperationResult);
+    logOutlookCategorySync("warn", "request-cancelled-missing-operation", {
+      requestId: prepared.requestId,
+      operationId: prepared.operationId,
+      reason: prepared.reason,
+      mode: prepared.mode,
+      itemIdentity: prepared.itemIdentity,
+    });
+    return missingOperationResult;
+  }
+
   const freshness: OutlookCategoryWriterFreshness = {
     requestedAtMs: prepared.requestedAtMs,
     order: ++outlookCategoryWriterOrder,
@@ -1566,9 +2066,10 @@ async function runOutlookCategoryWriterRequest(
     latestFreshness: state.latestFreshness,
   });
 
-  const run = async (): Promise<OutlookCategorySyncOutcome> => {
+  const run = async (): Promise<OutlookCategorySyncResult> => {
     const syncMeta = {
       requestId: prepared.requestId,
+      operationId: prepared.operationId,
       reason: prepared.reason,
       mode: prepared.mode,
       itemIdentity: prepared.itemIdentity,
@@ -1585,14 +2086,31 @@ async function runOutlookCategoryWriterRequest(
     });
 
     if (hasSeenOutlookCategoryWriterRequestId(state, prepared.requestId)) {
+      const duplicateResult = createOutlookCategorySyncResult(request, {
+        itemIdentity: prepared.itemIdentity,
+        result: "duplicate",
+        detail: "request-id",
+        target: prepared.target,
+        sourceSignature: prepared.sourceSignature,
+        planSignature: prepared.planSignature,
+      });
+      publishOutlookCategorySyncResult(duplicateResult);
       logOutlookCategorySync("info", "request-ignored-duplicate", syncMeta);
-      return "duplicate";
+      return duplicateResult;
     }
 
     if (!isExecutionCurrent()) {
+      const staleResult = createOutlookCategorySyncResult(request, {
+        itemIdentity: prepared.itemIdentity,
+        result: "stale",
+        target: prepared.target,
+        sourceSignature: prepared.sourceSignature,
+        planSignature: prepared.planSignature,
+      });
+      publishOutlookCategorySyncResult(staleResult);
       logOutlookCategorySync("info", "request-ignored-stale", syncMeta);
       rememberOutlookCategoryWriterRequestId(state, prepared.requestId);
-      return "stale";
+      return staleResult;
     }
 
     if (
@@ -1600,9 +2118,18 @@ async function runOutlookCategoryWriterRequest(
       && state.lastAppliedSourceSignature === prepared.sourceSignature
       && await doesCurrentItemMatchOutlookCategoryPlan(prepared.plan, { expectedItemToken: prepared.expectedItemToken })
     ) {
+      const equivalentResult = createOutlookCategorySyncResult(request, {
+        itemIdentity: prepared.itemIdentity,
+        result: "duplicate",
+        detail: "equivalent",
+        target: prepared.target,
+        sourceSignature: prepared.sourceSignature,
+        planSignature: prepared.planSignature,
+      });
+      publishOutlookCategorySyncResult(equivalentResult);
       logOutlookCategorySync("info", "request-ignored-equivalent", syncMeta);
       rememberOutlookCategoryWriterRequestId(state, prepared.requestId);
-      return "equivalent";
+      return equivalentResult;
     }
 
     const applied = await applyOutlookCategoryPlan(prepared.plan, {
@@ -1612,41 +2139,64 @@ async function runOutlookCategoryWriterRequest(
     });
     rememberOutlookCategoryWriterRequestId(state, prepared.requestId);
     if (!applied) {
-      const outcome: OutlookCategorySyncOutcome = isExecutionCurrent() ? "failed" : "stale";
-      logOutlookCategorySync(outcome === "failed" ? "warn" : "info", "request-finished-without-apply", {
-        ...syncMeta,
-        outcome,
+      const failedResult = createOutlookCategorySyncResult(request, {
+        itemIdentity: prepared.itemIdentity,
+        result: isExecutionCurrent() ? "failed" : "stale",
+        target: prepared.target,
+        sourceSignature: prepared.sourceSignature,
+        planSignature: prepared.planSignature,
       });
-      return outcome;
+      publishOutlookCategorySyncResult(failedResult);
+      logOutlookCategorySync(failedResult.result === "failed" ? "warn" : "info", "request-finished-without-apply", {
+        ...syncMeta,
+        result: failedResult.result,
+      });
+      return failedResult;
     }
 
     state.lastAppliedPlanSignature = prepared.planSignature;
     state.lastAppliedSourceSignature = prepared.sourceSignature;
     dispatchOutlookCategoryContextInvalidated();
+    const successResult = createOutlookCategorySyncResult(request, {
+      itemIdentity: prepared.itemIdentity,
+      result: "success",
+      target: prepared.target,
+      sourceSignature: prepared.sourceSignature,
+      planSignature: prepared.planSignature,
+    });
+    publishOutlookCategorySyncResult(successResult);
     logOutlookCategorySync("info", "request-executed", syncMeta);
-    return "executed";
+    return successResult;
   };
 
-  const resultPromise = state.tail.catch(() => "failed" as OutlookCategorySyncOutcome).then(run);
+  const resultPromise = state.tail.catch(() => createOutlookCategorySyncResult(request, {
+    itemIdentity: prepared.itemIdentity,
+    result: "failed",
+    target: prepared.target,
+    sourceSignature: prepared.sourceSignature,
+    planSignature: prepared.planSignature,
+  })).then(run);
   state.tail = resultPromise;
   return await resultPromise;
 }
 
-export async function syncOutlookCategorySource(
+export async function executeOutlookCategorySourceSync(
   source: Partial<OutlookCategorySource> | null | undefined,
   options?: {
     expectedItemToken?: string;
     manageClassificationFamilies?: boolean;
     requestId?: string;
+    operationId?: string;
     requestedAtIso?: string;
     reason?: string;
     target?: OutlookCategorySyncTarget;
   }
-): Promise<boolean> {
+): Promise<OutlookCategorySyncResult> {
   const requestId = String(options?.requestId || "").trim() || createOutlookCategorySyncRequestId(options?.reason || "source");
   const requestedAtMs = Date.parse(String(options?.requestedAtIso || "").trim()) || Date.now();
-  const outcome = await runOutlookCategoryWriterRequest({
+  return await runOutlookCategoryWriterRequest({
     requestId,
+    operationId: String(options?.operationId || "").trim() || undefined,
     requestedAtMs,
     reason: String(options?.reason || "source-sync"),
     mode: "source",
@@ -1655,29 +2205,59 @@ export async function syncOutlookCategorySource(
     expectedItemToken: options?.expectedItemToken,
     manageClassificationFamilies: options?.manageClassificationFamilies,
   });
-  return isSuccessfulOutlookCategorySyncOutcome(outcome);
 }
 
-export async function syncCurrentItemOutlookCategoriesFromContext(
+export async function executeCurrentItemOutlookCategorySync(
   options?: {
     expectedItemToken?: string;
     requestId?: string;
+    operationId?: string;
     requestedAtIso?: string;
     reason?: string;
     target?: OutlookCategorySyncTarget;
   }
-): Promise<boolean> {
+): Promise<OutlookCategorySyncResult> {
   const requestId = String(options?.requestId || "").trim() || createOutlookCategorySyncRequestId(options?.reason || "current-item-context");
   const requestedAtMs = Date.parse(String(options?.requestedAtIso || "").trim()) || Date.now();
-  const outcome = await runOutlookCategoryWriterRequest({
+  return await runOutlookCategoryWriterRequest({
     requestId,
+    operationId: String(options?.operationId || "").trim() || undefined,
     requestedAtMs,
     reason: String(options?.reason || "current-item-context"),
     mode: "current-item-context",
     target: options?.target,
     expectedItemToken: options?.expectedItemToken,
   });
-  return isSuccessfulOutlookCategorySyncOutcome(outcome);
+}
+
+export async function syncOutlookCategorySource(
+  source: Partial<OutlookCategorySource> | null | undefined,
+  options?: {
+    expectedItemToken?: string;
+    manageClassificationFamilies?: boolean;
+    requestId?: string;
+    operationId?: string;
+    requestedAtIso?: string;
+    reason?: string;
+    target?: OutlookCategorySyncTarget;
+  }
+): Promise<boolean> {
+  const result = await executeOutlookCategorySourceSync(source, options);
+  return isSuccessfulOutlookCategoryWriterResult(result.result);
+}
+
+export async function syncCurrentItemOutlookCategoriesFromContext(
+  options?: {
+    expectedItemToken?: string;
+    requestId?: string;
+    operationId?: string;
+    requestedAtIso?: string;
+    reason?: string;
+    target?: OutlookCategorySyncTarget;
+  }
+): Promise<boolean> {
+  const result = await executeCurrentItemOutlookCategorySync(options);
+  return isSuccessfulOutlookCategoryWriterResult(result.result);
 }
 
 export async function syncOdooLinkedCategory(hasLinks: boolean): Promise<void> {
@@ -1910,6 +2490,7 @@ type CockpitHostAction =
   | {
       type: "sync-current-item-categories";
       requestId?: string;
+      operationId?: string;
       requestedAtIso?: string;
       reason?: string;
       target?: OutlookCategorySyncTarget;
@@ -1918,6 +2499,7 @@ type CockpitHostAction =
       type: "sync-managed-categories";
       payload: (LegacyManagedOutlookCategoryInput & Partial<OutlookCategorySource>);
       requestId?: string;
+      operationId?: string;
       requestedAtIso?: string;
       reason?: string;
       target?: OutlookCategorySyncTarget;
@@ -1950,6 +2532,7 @@ async function executeCockpitHostAction(action: CockpitHostAction): Promise<bool
   if (action.type === "sync-current-item-categories") {
     return await syncCurrentItemOutlookCategoriesFromContext({
       requestId: action.requestId,
+      operationId: action.operationId,
       requestedAtIso: action.requestedAtIso,
       reason: action.reason || "host-action-current-item-context",
       target: action.target,
@@ -1963,6 +2546,7 @@ async function executeCockpitHostAction(action: CockpitHostAction): Promise<bool
     }
     const synced = await syncOutlookCategorySource(action.payload || {}, {
       requestId: action.requestId,
+      operationId: action.operationId,
       requestedAtIso: action.requestedAtIso,
       reason: action.reason || "host-action-source",
       target: action.target,
@@ -1991,6 +2575,39 @@ function buildCockpitViewUrl(view: string, params: Record<string, string>) {
   url.searchParams.set("view", view);
   Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, v));
   return url;
+}
+
+function isCockpitHostSyncAction(action: CockpitHostAction): boolean {
+  return action.type === "sync-current-item-categories" || action.type === "sync-managed-categories";
+}
+
+function enqueueCockpitHostSyncFallback(action: CockpitHostAction): boolean {
+  if (action.type === "sync-current-item-categories") {
+    enqueueOutlookCategorySyncRequest({
+      requestId: String(action.requestId || "").trim() || createOutlookCategorySyncRequestId(action.reason || "host-sync-current-item-fallback"),
+      operationId: String(action.operationId || "").trim() || undefined,
+      createdAtIso: String(action.requestedAtIso || "").trim() || new Date().toISOString(),
+      reason: action.reason || "host-sync-current-item-fallback",
+      mode: "current-item-context",
+      target: action.target,
+    });
+    return true;
+  }
+
+  if (action.type === "sync-managed-categories") {
+    enqueueOutlookCategorySyncRequest({
+      requestId: String(action.requestId || "").trim() || createOutlookCategorySyncRequestId(action.reason || "host-sync-source-fallback"),
+      operationId: String(action.operationId || "").trim() || undefined,
+      createdAtIso: String(action.requestedAtIso || "").trim() || new Date().toISOString(),
+      reason: action.reason || "host-sync-source-fallback",
+      mode: "source",
+      target: action.target,
+      source: action.payload || {},
+    });
+    return true;
+  }
+
+  return false;
 }
 
 function tryOpenStandaloneWindow(url: URL, name: string, features: string): boolean {
@@ -2237,17 +2854,26 @@ async function postCockpitHostActionToOpener(action: CockpitHostAction): Promise
 }
 
 export async function requestCockpitHostAction(action: CockpitHostAction): Promise<boolean> {
+  const isSyncAction = isCockpitHostSyncAction(action);
+  const hasOpenerBridge = typeof window !== "undefined"
+    && Boolean(window.opener && window.opener !== window && typeof window.opener.postMessage === "function");
   const openerResult = await postCockpitHostActionToOpener(action).catch(() => false);
   if (openerResult) return true;
 
+  let hasMessageParentBridge = false;
   try {
     const OfficeAny = await ensureOfficeReady();
-    if (typeof OfficeAny?.context?.ui?.messageParent === "function") {
+    hasMessageParentBridge = typeof OfficeAny?.context?.ui?.messageParent === "function";
+    if (hasMessageParentBridge) {
       OfficeAny.context.ui.messageParent(JSON.stringify({ type: "host-action", action }));
       return true;
     }
   } catch {
-    // fall through to local execution
+    // fall through
+  }
+
+  if (isSyncAction && (hasOpenerBridge || hasMessageParentBridge)) {
+    return enqueueCockpitHostSyncFallback(action);
   }
 
   try {

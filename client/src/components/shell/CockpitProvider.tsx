@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
-import { getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY, readPendingOutlookCategorySyncRequest, syncCurrentItemOutlookCategoriesFromContext, syncOdooLinkedNotification, syncOutlookCategorySource, waitForStableSelectedMessageContext, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { executeCurrentItemOutlookCategorySync, executeOutlookCategorySourceSync, getActiveOutlookCategoryOperation, getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY, readPendingOutlookCategorySyncRequest, syncOdooLinkedNotification, waitForStableSelectedMessageContext, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -443,34 +443,46 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (processedOutlookCategorySyncRequestRef.current === pendingRequest.requestId) return;
             if (pendingRequest.target && !doesRelatedEmailMatchContext(pendingRequest.target, ctx)) return;
 
-            processedOutlookCategorySyncRequestRef.current = pendingRequest.requestId;
             const expectedItemToken = await getCurrentItemToken().catch(() => "");
             if (cancelled) return;
 
             try {
+                const shouldConsumeRequestResult = (result: { result: string }) =>
+                    result.result !== "item-mismatch" && result.result !== "timeout";
+
                 if (pendingRequest.mode === "source" && pendingRequest.source) {
-                    const applied = await syncOutlookCategorySource(pendingRequest.source, {
+                    const result = await executeOutlookCategorySourceSync(pendingRequest.source, {
                         expectedItemToken,
                         requestId: pendingRequest.requestId,
+                        operationId: pendingRequest.operationId,
                         requestedAtIso: pendingRequest.createdAtIso,
                         reason: pendingRequest.reason || "taskpane-fallback-source",
                         target: pendingRequest.target,
-                    }).catch(() => false);
-                    if (!cancelled && applied) {
+                    }).catch(() => null);
+                    if (cancelled || !result) return;
+                    if (shouldConsumeRequestResult(result)) {
+                        processedOutlookCategorySyncRequestRef.current = pendingRequest.requestId;
+                    }
+                    if (result.result === "success" || result.result === "duplicate") {
                         lastOutlookCategorySyncRef.current = null;
                         setOutlookCategoryRefreshTick((current) => current + 1);
                     }
                     return;
                 }
 
-                const applied = await syncCurrentItemOutlookCategoriesFromContext({
+                const result = await executeCurrentItemOutlookCategorySync({
                     expectedItemToken,
                     requestId: pendingRequest.requestId,
+                    operationId: pendingRequest.operationId,
                     requestedAtIso: pendingRequest.createdAtIso,
                     reason: pendingRequest.reason || "taskpane-fallback-current-item-context",
                     target: pendingRequest.target,
-                }).catch(() => false);
-                if (!cancelled && applied) {
+                }).catch(() => null);
+                if (cancelled || !result) return;
+                if (shouldConsumeRequestResult(result)) {
+                    processedOutlookCategorySyncRequestRef.current = pendingRequest.requestId;
+                }
+                if (result.result === "success" || result.result === "duplicate") {
                     lastOutlookCategorySyncRef.current = null;
                     setOutlookCategoryRefreshTick((current) => current + 1);
                 }
@@ -1478,7 +1490,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             ) {
                 return;
             }
-            const applied = await syncOutlookCategorySource(syncSource, {
+            const activeOperation = getActiveOutlookCategoryOperation({
+                itemId: String(ctx.itemId || "").trim() || undefined,
+                internetMessageId: String(ctx.internetMessageId || "").trim() || undefined,
+                conversationId: String(ctx.conversationId || "").trim() || undefined,
+            }, expectedItemToken);
+            if (activeOperation) return;
+            const result = await executeOutlookCategorySourceSync(syncSource, {
                 expectedItemToken,
                 reason: "provider-reconcile",
                 target: {
@@ -1486,8 +1504,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     internetMessageId: String(ctx.internetMessageId || "").trim() || undefined,
                     conversationId: String(ctx.conversationId || "").trim() || undefined,
                 },
-            }).catch(() => false);
-            if (!cancelled && applied) {
+            }).catch(() => null);
+            if (!cancelled && (result?.result === "success" || result?.result === "duplicate")) {
                 lastOutlookCategorySyncRef.current = {
                     identity: syncIdentity,
                     signature: syncSignature,

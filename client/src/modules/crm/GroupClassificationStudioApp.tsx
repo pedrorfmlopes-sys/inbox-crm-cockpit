@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { clientLog } from "@/logger";
-import { enqueueOutlookCategorySyncRequest, getManagedOutlookCategorySnapshot, OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY, requestCockpitHostAction } from "@/office";
+import { beginOutlookCategoryOperation, completeOutlookCategoryOperation, enqueueOutlookCategorySyncRequest, getManagedOutlookCategorySnapshot, OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY, requestCockpitHostAction, setOutlookCategoryOperationPhase, waitForOutlookCategorySyncResult } from "@/office";
 import { buildOutlookCategoryPlan, buildOutlookCategorySourceFromRelatedContext, getOutlookCategoryPlanSignature, getOutlookCategorySourceSignature } from "@/outlookCategories";
 import {
   findGroupLabelCatalogEntry,
@@ -3019,8 +3019,11 @@ function StudioInner() {
     }
   }
 
-  async function handleApplyClassification() {
+async function handleApplyClassification() {
     setActionBusy(true);
+    let activeCategoryOperationId = "";
+    let activeCategoryRequestId = "";
+    let categoryOperationClosed = false;
     try {
       const targetEmails = dedupeEmails(
         (
@@ -3037,6 +3040,30 @@ function StudioInner() {
       if (!effectiveTargetEmails.length) {
         setStatus("Nao existe nenhum email alvo para atualizar.");
         return;
+      }
+      const includesCurrentTarget = selectedEmailIsCurrent || effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
+      const currentTargetIdentity = includesCurrentTarget
+        ? {
+            itemId: String(currentContext.itemId || "").trim() || undefined,
+            internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
+            conversationId: String(currentContext.conversationId || "").trim() || undefined,
+          }
+        : null;
+      if (currentTargetIdentity) {
+        const openedOperation = beginOutlookCategoryOperation({
+          owner: "classification",
+          target: currentTargetIdentity,
+        });
+        if (!openedOperation.ok) {
+          setStatus(
+            openedOperation.reason === "locked"
+              ? "Ja existe outra classificacao em curso para este email. Aguarda um momento."
+              : "Nao foi possivel identificar o email atual para confirmar a classificacao."
+          );
+          return;
+        }
+        activeCategoryOperationId = openedOperation.operation.operationId;
+        setOutlookCategoryOperationPhase(activeCategoryOperationId, "saving");
       }
 
       const principalGroup = principalGroupId ? groupMap.get(principalGroupId) || null : null;
@@ -3201,17 +3228,10 @@ function StudioInner() {
         }
       }
 
-      const includesCurrentTarget = selectedEmailIsCurrent || effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
-      let currentTargetIdentity: { itemId?: string; internetMessageId?: string; conversationId?: string } | null = null;
       let fallbackCurrentCategoryEmail: RelatedEmailEntry | null = null;
-      if (includesCurrentTarget) {
+      if (currentTargetIdentity) {
         const currentTargetEmail = effectiveTargetEmails.find((email) => isCurrentContextEmail(email, currentContext))
           || (selectedEmailIsCurrent ? selectedEmail : null);
-        currentTargetIdentity = {
-          itemId: String(currentContext.itemId || "").trim() || undefined,
-          internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
-          conversationId: String(currentContext.conversationId || "").trim() || undefined,
-        };
         fallbackCurrentCategoryEmail = currentTargetEmail
           ? {
               ...currentTargetEmail,
@@ -3250,8 +3270,14 @@ function StudioInner() {
       }
 
       setSelectionTouched({ principal: false, references: false, ticket: false });
+      if (activeCategoryOperationId) {
+        setOutlookCategoryOperationPhase(activeCategoryOperationId, "refreshing");
+      }
       const refreshedContext = await refreshSelectedEmailContext();
       if (includesCurrentTarget && currentTargetIdentity) {
+        if (activeCategoryOperationId) {
+          setOutlookCategoryOperationPhase(activeCategoryOperationId, "rehydrating");
+        }
         const refreshedCategoryEmailCandidates = dedupeEmails([
           ...(refreshedContext?.email ? [refreshedContext.email] : []),
           ...(Array.isArray(refreshedContext?.emails) ? refreshedContext.emails : []),
@@ -3260,6 +3286,9 @@ function StudioInner() {
         const refreshedCategoryEmail = refreshedCategoryEmailCandidates.find((email) => isCurrentContextEmail(email, currentContext))
           || fallbackCurrentCategoryEmail;
         if (refreshedCategoryEmail) {
+          if (activeCategoryOperationId) {
+            setOutlookCategoryOperationPhase(activeCategoryOperationId, "planning");
+          }
           const refreshedSnapshot = await getManagedOutlookCategorySnapshot(labelCatalog).catch(() => null);
           const refreshedCategorySource = buildOutlookCategorySourceFromRelatedContext({
             email: refreshedCategoryEmail,
@@ -3271,8 +3300,10 @@ function StudioInner() {
           const categoryRequestId = `classification-final:${Date.now()}:${Math.random().toString(36).slice(2)}`;
           const categoryRequestedAtIso = new Date().toISOString();
           const categoryPlan = buildOutlookCategoryPlan(refreshedCategorySource);
+          activeCategoryRequestId = categoryRequestId;
           logClassificationOutlookCategorySync("final-request", {
             requestId: categoryRequestId,
+            operationId: activeCategoryOperationId || undefined,
             target: currentTargetIdentity,
             sourceSignature: getOutlookCategorySourceSignature(refreshedCategorySource),
             planSignature: getOutlookCategoryPlanSignature(categoryPlan),
@@ -3280,20 +3311,67 @@ function StudioInner() {
           });
           enqueueOutlookCategorySyncRequest({
             requestId: categoryRequestId,
+            operationId: activeCategoryOperationId || undefined,
             createdAtIso: categoryRequestedAtIso,
             reason: "classification-final",
             mode: "source",
             target: currentTargetIdentity,
             source: refreshedCategorySource,
           });
-          await requestCockpitHostAction({
+          if (activeCategoryOperationId) {
+            setOutlookCategoryOperationPhase(activeCategoryOperationId, "writingOutlook", {
+              requestId: categoryRequestId,
+            });
+          }
+          const writerSubmitted = await requestCockpitHostAction({
             type: "sync-managed-categories",
             payload: refreshedCategorySource,
             requestId: categoryRequestId,
+            operationId: activeCategoryOperationId || undefined,
             requestedAtIso: categoryRequestedAtIso,
             reason: "classification-final",
             target: currentTargetIdentity,
           }).catch(() => false);
+          if (!writerSubmitted) {
+            throw new Error("A classificacao foi guardada, mas nao foi possivel submeter a projecao Outlook.");
+          }
+          if (activeCategoryOperationId) {
+            setOutlookCategoryOperationPhase(activeCategoryOperationId, "verifying", {
+              requestId: categoryRequestId,
+            });
+          }
+          const writerResult = await waitForOutlookCategorySyncResult(categoryRequestId, {
+            timeoutMs: 20_000,
+          });
+          if (!writerResult) {
+            if (activeCategoryOperationId) {
+              completeOutlookCategoryOperation(activeCategoryOperationId, {
+                result: "timeout",
+                requestId: categoryRequestId,
+                detail: "writer-timeout",
+              });
+              categoryOperationClosed = true;
+            }
+            throw new Error("A classificacao foi guardada, mas o Outlook nao confirmou a aplicacao das categorias a tempo.");
+          }
+          if (activeCategoryOperationId) {
+            completeOutlookCategoryOperation(activeCategoryOperationId, {
+              result: writerResult.result,
+              requestId: categoryRequestId,
+              detail: writerResult.detail,
+            });
+            categoryOperationClosed = true;
+          }
+          if (writerResult.result !== "success" && writerResult.result !== "duplicate") {
+            throw new Error("A classificacao foi guardada, mas o Outlook nao confirmou a aplicacao das categorias.");
+          }
+        } else if (activeCategoryOperationId) {
+          completeOutlookCategoryOperation(activeCategoryOperationId, {
+            result: "failed",
+            detail: "missing-refreshed-email",
+          });
+          categoryOperationClosed = true;
+          throw new Error("A classificacao foi guardada, mas nao foi possivel rehidratar o email final para projetar as categorias.");
         }
       }
       setStatus(
@@ -3302,6 +3380,13 @@ function StudioInner() {
           : "Classificacao aplicada ao email selecionado."
       );
     } catch (actionError: any) {
+      if (activeCategoryOperationId && !categoryOperationClosed) {
+        completeOutlookCategoryOperation(activeCategoryOperationId, {
+          result: "failed",
+          requestId: activeCategoryRequestId || undefined,
+          detail: String(actionError?.message || "").trim() || undefined,
+        });
+      }
       setStatus(actionError?.message || "Nao foi possivel aplicar a classificacao.");
     } finally {
       setActionBusy(false);
