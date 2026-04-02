@@ -171,11 +171,19 @@ function normalizeClassificationMetaDraft(
 }
 
 function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
+  const emailKey = String(email?.emailKey || "").trim();
+  const emailId = String(email?.id || "").trim();
+  const itemId = String(email?.itemId || "").trim();
+  const internetMessageId = String(email?.internetMessageId || "").trim().replace(/[<>\s]/g, "").toLowerCase();
+  const isSynthetic = (value: string) => /^email_[0-9a-f-]+$/i.test(value);
+
   return String(
-    email?.emailKey
-    || email?.id
-    || email?.itemId
-    || email?.internetMessageId
+    itemId
+    || internetMessageId
+    || (emailKey && !isSynthetic(emailKey) ? emailKey : "")
+    || (emailId && !isSynthetic(emailId) ? emailId : "")
+    || emailKey
+    || emailId
     || [
       String(email?.conversationId || "").trim(),
       String(email?.subject || "").trim().toLowerCase(),
@@ -1145,6 +1153,7 @@ function StudioInner() {
   const [managedEntitySearch, setManagedEntitySearch] = useState("");
   const [selectedAttachmentPreviewKey, setSelectedAttachmentPreviewKey] = useState("");
   const [selectedAttachmentPreviewRemoteBase64, setSelectedAttachmentPreviewRemoteBase64] = useState("");
+  const [selectedAttachmentPreviewRemoteStatus, setSelectedAttachmentPreviewRemoteStatus] = useState<"idle" | "loading" | "ready" | "missing">("idle");
   const [selectedAttachmentPreviewRemoteText, setSelectedAttachmentPreviewRemoteText] = useState("");
   const [managedGroupEmails, setManagedGroupEmails] = useState<RelatedEmailEntry[]>([]);
   const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
@@ -1636,19 +1645,30 @@ function StudioInner() {
       || !selectedAttachmentPreviewRemoteId
     ) {
       setSelectedAttachmentPreviewRemoteBase64("");
+      setSelectedAttachmentPreviewRemoteStatus(
+        localContent
+          ? "ready"
+          : selectedAttachmentPreview && selectedAttachmentPreviewMode !== "none" && selectedAttachmentPreview?.hasContent !== true
+            ? "missing"
+            : "idle"
+      );
       return () => {
         cancelled = true;
       };
     }
 
+    setSelectedAttachmentPreviewRemoteStatus("loading");
     getEmailAttachmentContentBase64(selectedAttachmentPreviewEmailId, selectedAttachmentPreviewRemoteId)
       .then((result) => {
         if (cancelled) return;
-        setSelectedAttachmentPreviewRemoteBase64(String(result.base64 || "").trim());
+        const base64 = String(result.base64 || "").trim();
+        setSelectedAttachmentPreviewRemoteBase64(base64);
+        setSelectedAttachmentPreviewRemoteStatus(base64 ? "ready" : "missing");
       })
       .catch(() => {
         if (cancelled) return;
         setSelectedAttachmentPreviewRemoteBase64("");
+        setSelectedAttachmentPreviewRemoteStatus("missing");
       });
 
     return () => {
@@ -3349,14 +3369,26 @@ function StudioInner() {
                         <img src={selectedAttachmentPreviewSrc} alt={selectedAttachmentPreview?.name || "Imagem"} style={S.attachmentPreviewImage} />
                       </div>
                     ) : (
-                      <div style={S.attachmentPreviewEmpty}>A carregar imagem...</div>
+                      <div style={S.attachmentPreviewEmpty}>
+                        {selectedAttachmentPreviewRemoteStatus === "loading"
+                          ? "A carregar imagem..."
+                          : selectedAttachmentPreview?.hasContent
+                            ? "Nao foi possivel carregar o conteudo persistido desta imagem."
+                            : "Esta imagem ainda nao foi persistida com conteudo."}
+                      </div>
                     )
                   ) : null}
                   {selectedAttachmentPreviewMode === "pdf" ? (
                     selectedAttachmentPreviewSrc ? (
                       <StudioPdfPreview dataUrl={selectedAttachmentPreviewSrc} title={selectedAttachmentPreview?.name || "PDF"} />
                     ) : (
-                      <div style={S.attachmentPreviewEmpty}>A carregar PDF...</div>
+                      <div style={S.attachmentPreviewEmpty}>
+                        {selectedAttachmentPreviewRemoteStatus === "loading"
+                          ? "A carregar PDF..."
+                          : selectedAttachmentPreview?.hasContent
+                            ? "Nao foi possivel carregar o conteudo persistido deste PDF."
+                            : "Este PDF ainda nao foi persistido com conteudo."}
+                      </div>
                     )
                   ) : null}
                   {selectedAttachmentPreviewMode === "text" ? (

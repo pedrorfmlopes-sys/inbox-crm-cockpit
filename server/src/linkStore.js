@@ -500,10 +500,43 @@ function makeEmailLookupKey(entry) {
   return [subject, fromEmail, messageDateIso].filter(Boolean).join("|");
 }
 
+function isSyntheticPersistentEmailKey(value) {
+  return /^email_[0-9a-f-]+$/i.test(normalizeString(value));
+}
+
+function makeEmailDedupeKey(entry) {
+  const itemId = normalizeString(entry?.itemId);
+  if (itemId) return `item:${itemId}`;
+
+  const internetMessageId = normalizeMessageId(entry?.internetMessageId);
+  if (internetMessageId) return `imid:${internetMessageId}`;
+
+  const emailKey = normalizeString(entry?.emailKey);
+  if (emailKey && !isSyntheticPersistentEmailKey(emailKey)) return `emailKey:${emailKey}`;
+
+  const entryId = normalizeString(entry?.id);
+  if (entryId && !isSyntheticPersistentEmailKey(entryId)) return `id:${entryId}`;
+
+  const fingerprint = makeEmailFingerprint(entry);
+  if (fingerprint) return `fingerprint:${fingerprint}`;
+
+  const conversationId = normalizeString(entry?.conversationId);
+  const subject = normalizeString(entry?.subject).toLowerCase();
+  const fromEmail = normalizeString(entry?.fromEmail).toLowerCase();
+  const messageDateIso = normalizeString(entry?.messageDateIso || entry?.receivedAtIso || entry?.sentAtIso || entry?.linkedAt);
+  const scopedConversationKey = [conversationId, subject, fromEmail, messageDateIso].filter(Boolean).join("|");
+  if (scopedConversationKey) return `scoped:${scopedConversationKey}`;
+
+  if (emailKey) return `emailKey:${emailKey}`;
+  if (entryId) return `id:${entryId}`;
+
+  return [subject, fromEmail, messageDateIso].filter(Boolean).join("|");
+}
+
 function dedupeEmailLinks(entries) {
   const seen = new Map();
   for (const entry of entries || []) {
-    const key = makeEmailLookupKey(entry);
+    const key = makeEmailDedupeKey(entry);
     if (!key) continue;
     const current = seen.get(key);
     seen.set(key, current ? mergeEmailContextEntries(current, entry) : entry);
