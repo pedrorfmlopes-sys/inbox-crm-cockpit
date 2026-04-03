@@ -225,6 +225,24 @@ function isStudioAttachmentHiddenInQuickDocs(
   return isLikelyDecorativeAttachment(attachment);
 }
 
+function formatQuickDocumentMeta(
+  attachment: ReturnType<typeof normalizeStudioAttachment>
+): string {
+  if (!attachment) return "";
+  const name = String(attachment.name || "").trim();
+  const ext = name.includes(".") ? name.split(".").pop() || "" : "";
+  const kind = inferStudioAttachmentKind(attachment);
+  let typeLabel = "";
+  if (kind === "pdf") typeLabel = "PDF";
+  else if (kind === "office") typeLabel = (ext || "office").toUpperCase();
+  else if (kind === "image") typeLabel = (ext || "imagem").toUpperCase();
+  else if (kind === "text") typeLabel = "Texto";
+  else typeLabel = (ext || "ficheiro").toUpperCase();
+  const size = Number(attachment.size || 0) || 0;
+  const sizeLabel = size > 0 ? `${Math.max(1, Math.round(size / 1024))} KB` : "";
+  return [typeLabel, sizeLabel].filter(Boolean).join(" · ");
+}
+
 function normalizeClassificationMetaDraft(
   value?: Partial<ClassificationMetaDraft> | null
 ): ClassificationMetaDraft {
@@ -4911,18 +4929,12 @@ function StudioInner() {
     );
   }
 
-  const topCardsGridStyle = classificationEditorActive
-    ? { ...S.topCardsGrid, gridTemplateColumns: "minmax(220px,0.9fr) minmax(120px,0.38fr) minmax(460px,2.22fr)" }
-    : S.topCardsGrid;
-  const quickDocumentsCardStyle = classificationEditorActive
-    ? { ...S.topCard, opacity: 0.94, transform: "scale(0.985)" }
-    : S.topCard;
-  const classificationCardStyle = classificationEditorActive
-    ? { ...S.topCardWide, border: "1px solid rgba(37,99,235,0.18)", boxShadow: "0 16px 34px rgba(37,99,235,0.08)" }
-    : S.topCardWide;
-  const previewShellStyle = classificationEditorActive
-    ? { ...S.previewShellLarge, ...S.previewShellFocus }
-    : S.previewShellLarge;
+  const dashboardStyle = classificationEditorActive ? S.dashboardFocus : S.dashboard;
+  const topCardsGridStyle = classificationEditorActive ? S.topCardsGridFocus : S.topCardsGrid;
+  const emailsCardStyle = classificationEditorActive ? S.focusEmailsCard : S.topCard;
+  const quickDocumentsCardStyle = classificationEditorActive ? S.focusQuickDocumentsCard : S.topCard;
+  const classificationCardStyle = classificationEditorActive ? S.focusClassificationCard : S.topCardWide;
+  const previewShellStyle = classificationEditorActive ? S.focusPreviewShell : S.previewShellLarge;
 
   return (
     <div style={S.root}>
@@ -4958,10 +4970,10 @@ function StudioInner() {
 
       {status ? <div style={S.notice}>{status}</div> : null}
 
-      <div style={S.dashboard}>
+      <div style={dashboardStyle}>
         <div style={topCardsGridStyle}>
 
-          <section style={quickDocumentsCardStyle}>
+          <section style={emailsCardStyle}>
             <div style={S.sectionHeaderCompact}>
               <div>
                 <div style={S.sectionTitle}>Emails</div>
@@ -4997,7 +5009,7 @@ function StudioInner() {
             </div>
           </section>
 
-          <section style={S.topCard}>
+          <section style={quickDocumentsCardStyle}>
             <div style={S.sectionHeaderCompact}>
               <div>
                 <div style={S.sectionTitle}>Documentos rapidos</div>
@@ -5045,9 +5057,7 @@ function StudioInner() {
                       >
                         <div style={S.quickDocMain}>
                           <span style={S.quickDocTitle}>{attachment.name || "Anexo"}</span>
-                          <span style={S.quickDocMeta}>
-                            {[attachment.contentType || "ficheiro", attachment.size ? `${Math.round(Number(attachment.size || 0) / 1024)} KB` : ""].filter(Boolean).join(" · ")}
-                          </span>
+                          <span style={S.quickDocMeta}>{formatQuickDocumentMeta(attachment)}</span>
                         </div>
                         <div style={S.quickDocActions}>
                           {hidden ? <span style={S.quickDocHint}>oculto</span> : null}
@@ -5060,7 +5070,7 @@ function StudioInner() {
                             }}
                             disabled={actionBusy}
                           >
-                            {hidden ? "Manter visivel" : "Ocultar"}
+                            {hidden ? "Mostrar" : "Ocultar"}
                           </button>
                         </div>
                       </div>
@@ -5247,8 +5257,13 @@ const S: Record<string, React.CSSProperties> = {
   notice: { padding: "7px 9px", borderRadius: 10, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 10.5, lineHeight: 1.35 },
   dashboard: { minHeight: 0, display: "grid", gridTemplateRows: "minmax(0,0.84fr) minmax(0,1.46fr)", gap: 8, overflow: "hidden" },
   topCardsGrid: { minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1.04fr) minmax(0,0.88fr) minmax(0,1.16fr)", gap: 8, transition: "grid-template-columns 180ms ease" },
+  dashboardFocus: { minHeight: 0, display: "grid", gridTemplateColumns: "minmax(240px,0.98fr) minmax(210px,0.76fr) minmax(520px,1.86fr)", gridTemplateRows: "minmax(0,1fr) minmax(0,0.88fr)", gap: 8, overflow: "hidden" },
+  topCardsGridFocus: { display: "contents" },
   topCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.9)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 6, overflow: "hidden", transition: "transform 180ms ease, width 180ms ease, box-shadow 180ms ease" },
   topCardWide: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.9)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", transition: "transform 180ms ease, width 180ms ease, box-shadow 180ms ease" },
+  focusEmailsCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 6, overflow: "hidden", gridColumn: "1", gridRow: "1" },
+  focusQuickDocumentsCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.88)", boxShadow: "0 6px 18px rgba(15,23,42,0.025)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", gridColumn: "2", gridRow: "1" },
+  focusClassificationCard: { minHeight: 0, borderRadius: 14, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(255,255,255,0.97)", boxShadow: "0 18px 36px rgba(37,99,235,0.08)", padding: 10, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 8, overflow: "hidden", gridColumn: "3", gridRow: "1 / span 2" },
   topCardScroll: { minHeight: 0, display: "grid", gap: 5, overflowY: "auto", paddingRight: 1 },
   sectionHeaderCompact: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
   sectionTitle: { fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(15,23,42,0.82)" },
@@ -5306,8 +5321,8 @@ const S: Record<string, React.CSSProperties> = {
   classificationEditorShell: { minHeight: 0, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 8, overflow: "hidden" },
   classificationEditorHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" },
   classificationEditorBody: { minHeight: 0, overflow: "auto", paddingRight: 2 },
-  previewShellLarge: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", transition: "width 180ms ease, max-width 180ms ease, transform 180ms ease" },
-  previewShellFocus: { width: "58%", maxWidth: "58%", minWidth: 0, justifySelf: "start" },
+  previewShellLarge: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", transition: "width 180ms ease, max-width 180ms ease, transform 180ms ease, grid-column 180ms ease" },
+  focusPreviewShell: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", gridColumn: "1 / span 2", gridRow: "2", width: "100%", maxWidth: "100%", minWidth: 0, justifySelf: "stretch" },
   previewToolbar: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", paddingBottom: 1, borderBottom: "1px solid rgba(148,163,184,0.1)" },
   previewTab: { height: 24, padding: "0 9px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
   previewTabOn: { height: 24, padding: "0 9px", borderRadius: 999, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(219,234,254,0.9)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
