@@ -22,6 +22,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 type SectionId = "emails" | "classification" | "labels" | "filters" | "groups";
 type ScopeMode = "related" | "all";
 type ApplyScopeMode = "current" | "selected" | "principal_group";
+type PreviewMode = "email" | "document" | "reply" | "forward";
+type ClassificationLayoutMode = "normal" | "advanced";
 type EmailLabelStatus = GroupLabelStatus;
 type DocumentLifecycleState = "ingested" | "processed" | "accepted" | "rejected" | "reread_requested";
 type ClassificationFocus = "principal" | "references" | "labels" | "ticket" | "summary";
@@ -1007,6 +1009,25 @@ function areStringListsEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function formatChipValue(value: string | undefined, fallback = "Sem dados"): string {
+  return String(value || "").trim() || fallback;
+}
+
+function emailMatchesCurrentContext(email: Partial<RelatedEmailEntry>, ctx: StudioParams | null): boolean {
+  if (!ctx) return false;
+  const currentItemId = String(ctx.itemId || "").trim();
+  const emailItemId = String(email.itemId || "").trim();
+  if (currentItemId && emailItemId && currentItemId === emailItemId) return true;
+  const currentMessageId = String(ctx.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+  const emailMessageId = String(email.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
+  if (currentMessageId && emailMessageId && currentMessageId === emailMessageId) return true;
+  const currentConversationId = String(ctx.conversationId || "").trim();
+  const emailConversationId = String(email.conversationId || "").trim();
+  const currentSubject = String(ctx.subject || "").trim().toLowerCase();
+  const emailSubject = String(email.subject || "").trim().toLowerCase();
+  return Boolean(currentConversationId && emailConversationId && currentConversationId === emailConversationId && currentSubject && currentSubject === emailSubject);
+}
+
 function mergeGroupEntryLists(left: LinkGroupEntry[], right: LinkGroupEntry[]): LinkGroupEntry[] {
   return [...left, ...right].reduce<LinkGroupEntry[]>((acc, group) => {
     if (!group?.id || acc.some((entry) => entry.id === group.id)) return acc;
@@ -1115,6 +1136,8 @@ function buildFallbackEmail(params: StudioParams): RelatedEmailEntry | null {
 function StudioInner() {
   const params = useMemo(() => readParams(), []);
   const [section, setSection] = useState<SectionId>("emails");
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("email");
+  const [classificationLayoutMode, setClassificationLayoutMode] = useState<ClassificationLayoutMode>("normal");
   const [scopeMode, setScopeMode] = useState<ScopeMode>("related");
   const [applyScopeMode, setApplyScopeMode] = useState<ApplyScopeMode>("current");
   const [loading, setLoading] = useState(true);
@@ -1525,6 +1548,11 @@ function StudioInner() {
     });
   }, [emailPool, selectedEmailKey]);
 
+  useEffect(() => {
+    if (!selectedEmailKey) return;
+    setPreviewMode("email");
+  }, [selectedEmailKey]);
+
   const previewHtml = useMemo(() => buildEmailPreviewHtml(selectedEmail), [selectedEmail]);
   const labelCatalog = useMemo(() => {
     const values = new Set<string>();
@@ -1592,7 +1620,7 @@ function StudioInner() {
   const selectedEmailAttachments = useMemo(() => {
     return (selectedEmail?.attachments || [])
       .map((attachment) => normalizeStudioAttachment(attachment))
-      .filter(Boolean)
+      .filter((attachment): attachment is NonNullable<typeof attachment> => Boolean(attachment))
       .filter((attachment) => String(attachment.name || "").trim());
   }, [selectedEmail?.attachments]);
   const activeSelectedEmailAttachments = useMemo(
@@ -2067,6 +2095,147 @@ function StudioInner() {
     () => (managedGroupId ? manageableGroups.find((group) => group.id === managedGroupId) || null : null),
     [manageableGroups, managedGroupId]
   );
+  const caseTitle = useMemo(
+    () => principalGroup?.name || selectedManagedGroup?.name || currentCaseBusinessGroups[0]?.name || "Caso sem grupo",
+    [currentCaseBusinessGroups, principalGroup?.name, selectedManagedGroup?.name]
+  );
+  const caseClient = useMemo(
+    () => formatChipValue(
+      principalGroup?.contacts?.[0]?.company
+        || principalGroup?.contacts?.[0]?.name
+        || selectedManagedGroup?.contacts?.[0]?.company
+        || selectedManagedGroup?.contacts?.[0]?.name
+        || selectedEmail?.fromName
+        || selectedEmail?.fromEmail,
+      "Sem cliente"
+    ),
+    [
+      principalGroup?.contacts,
+      selectedManagedGroup?.contacts,
+      selectedEmail?.fromEmail,
+      selectedEmail?.fromName,
+    ]
+  );
+  const caseBrand = useMemo(
+    () => formatChipValue(principalGroup?.entities?.[0]?.name || selectedManagedGroup?.entities?.[0]?.name, "Sem marca"),
+    [principalGroup?.entities, selectedManagedGroup?.entities]
+  );
+  const caseState = useMemo(
+    () => formatGroupStatusLabel(principalGroup?.status || selectedManagedGroup?.status || ""),
+    [principalGroup?.status, selectedManagedGroup?.status]
+  );
+  const canApplyClassification = useMemo(
+    () => Boolean(
+      principalGroupId
+      || referenceGroupIds.length
+      || selectedTicketId
+      || selectedSeriesId
+      || selectedEmailGroups.length
+      || selectedEmailTicketIds.length
+      || selectedLabels.length
+      || (selectedEmail?.labels || []).length
+      || String(selectedEmail?.status || "").trim()
+    ),
+    [
+      principalGroupId,
+      referenceGroupIds.length,
+      selectedTicketId,
+      selectedSeriesId,
+      selectedEmailGroups.length,
+      selectedEmailTicketIds.length,
+      selectedLabels.length,
+      selectedEmail?.labels,
+      selectedEmail?.status,
+    ]
+  );
+  const classificationEditorActive = section !== "emails";
+  const classificationCardTitle = useMemo(() => {
+    if (section === "classification") {
+      if (classificationFocus === "principal") return "Grupo principal";
+      if (classificationFocus === "references") return "Referencias";
+      if (classificationFocus === "labels") return "Etiquetas";
+      if (classificationFocus === "ticket") return "Ticket";
+      return "Resumo";
+    }
+    if (section === "labels") return "Etiquetas";
+    if (section === "filters") return "Filtros";
+    if (section === "groups") return "Grupos";
+    return "Classificacao";
+  }, [classificationFocus, section]);
+  const classificationSummaryTiles = useMemo(
+    () => {
+      const ticketCodes = relatedTickets.map((ticket) => String(ticket.code || "").trim()).filter(Boolean);
+      const ticketSeriesPrefix = selectedSeriesId ? ticketSeries.find((entry) => entry.id === selectedSeriesId)?.prefix || "" : "";
+      const ticketValue = selectedTicket?.code
+        || (ticketCodes.length ? ticketCodes.join(", ") : "")
+        || (selectedSeriesId ? (ticketSeriesPrefix ? `${ticketSeriesPrefix} (novo)` : "Novo ticket") : "")
+        || "--";
+      const principalStatusValue = principalGroup?.status ? formatGroupStatusLabel(principalGroup.status) : "";
+      const ticketStatusValue = effectiveTicketStatus ? formatTicketStatusLabel(effectiveTicketStatus) : "";
+      const referenceSummaryValue = referenceGroups.length ? referenceGroups.map((group) => group.name || group.id).join(", ") : "--";
+      return [
+        {
+          key: "principal" as const,
+          title: "Grupo principal",
+          value: principalGroup?.name || "Sem grupo principal",
+          description: classificationMetaDraft.principalStatusEnabled ? principalStatusValue || "Sem estado ativo" : "Sem estado ativo",
+          onClick: () => {
+            setSection("classification");
+            setClassificationFocus("principal");
+          },
+        },
+        {
+          key: "labels" as const,
+          title: "Etiquetas",
+          value: selectedLabels.length ? selectedLabels.join(", ") : "Sem etiquetas",
+          description: selectedLabels.length ? `${selectedLabels.length} atribuida(s)` : "Sem atribuicoes estruturadas",
+          onClick: () => {
+            setSection("labels");
+            setClassificationFocus("labels");
+          },
+        },
+        {
+          key: "ticket" as const,
+          title: "Ticket",
+          value: ticketValue,
+          description: classificationMetaDraft.ticketStatusEnabled ? ticketStatusValue || "Sem estado ativo" : "Sem seguimento ligado",
+          onClick: () => {
+            setSection("classification");
+            setClassificationFocus("ticket");
+          },
+        },
+        {
+          key: "references" as const,
+          title: "Referencias",
+          value: referenceSummaryValue,
+          description: referenceGroups.length ? `${referenceGroups.length} referencia(s)` : "Disponivel no modo avancado",
+          onClick: () => {
+            setSection("classification");
+            setClassificationFocus("references");
+          },
+        },
+      ];
+    },
+    [
+      classificationMetaDraft.principalStatusEnabled,
+      classificationMetaDraft.ticketStatusEnabled,
+      principalGroup?.name,
+      principalGroup?.status,
+      referenceGroups.length,
+      selectedLabels,
+      selectedSeriesId,
+      selectedTicket?.status,
+      selectedTicket?.code,
+      ticketStatusDraft,
+      ticketSeries,
+      relatedTickets,
+    ]
+  );
+  const classificationAdvancedTiles = useMemo(
+    () => MENU.filter((item) => item.id === "filters" || item.id === "groups"),
+    []
+  );
+  const previewHasDocument = Boolean(selectedAttachmentPreview);
 
   const managedGroupContactCandidates = useMemo(() => {
     const caseEmails = dedupeEmails([
@@ -3019,7 +3188,7 @@ function StudioInner() {
     }
   }
 
-async function handleApplyClassification() {
+  async function handleApplyClassification() {
     setActionBusy(true);
     let activeCategoryOperationId = "";
     let activeCategoryRequestId = "";
@@ -3391,6 +3560,35 @@ async function handleApplyClassification() {
     } finally {
       setActionBusy(false);
     }
+  }
+
+  function handleOpenQuickAttachment(attachment: ReturnType<typeof normalizeStudioAttachment>) {
+    const key = makeAttachmentKey(attachment);
+    if (!key) return;
+    setSelectedAttachmentPreviewKey(key);
+    setPreviewMode("document");
+  }
+
+  async function handlePreviewReply() {
+    if (!selectedEmail) return;
+    if (emailMatchesCurrentContext(selectedEmail, currentContext)) {
+      const handled = await requestCockpitHostAction({ type: "reply-current" });
+      setStatus(handled ? "Formulario de resposta aberto para o email atual." : "Nao foi possivel abrir a resposta.");
+      return;
+    }
+    const opened = await requestCockpitHostAction({ type: "open-email", itemId: selectedEmail.itemId, emailWebLink: selectedEmail.emailWebLink });
+    setStatus(opened ? "Email aberto no Outlook. Usa Responder no Outlook para continuar." : "Este email ainda nao tem abertura direta para responder.");
+  }
+
+  async function handlePreviewForward() {
+    if (!selectedEmail) return;
+    if (emailMatchesCurrentContext(selectedEmail, currentContext)) {
+      const handled = await requestCockpitHostAction({ type: "forward-current" });
+      setStatus(handled ? "Formulario de reencaminhamento aberto para o email atual." : "Nao foi possivel abrir o reencaminhamento.");
+      return;
+    }
+    const opened = await requestCockpitHostAction({ type: "open-email", itemId: selectedEmail.itemId, emailWebLink: selectedEmail.emailWebLink });
+    setStatus(opened ? "Email aberto no Outlook. Usa Reencaminhar no Outlook para continuar." : "Este email ainda nao tem abertura direta para reencaminhar.");
   }
 
   function renderWorkspace() {
@@ -4497,12 +4695,28 @@ async function handleApplyClassification() {
   return (
     <div style={S.root}>
       <div style={S.header}>
-        <div>
+        <div style={S.headerMain}>
           <div style={S.kicker}>Gestor de Grupos</div>
           <div style={S.mainTitle}>Studio de classificacao</div>
           <div style={S.mainMeta}>Janela nova e isolada para desenhar a futura atribuicao completa de grupos, tickets, etiquetas e filtros.</div>
+          <div style={S.caseTitleRow}>
+            <div style={S.caseTitle}>{caseTitle}</div>
+            <div style={S.caseChips}>
+              <span style={S.caseChip}>Cliente: {caseClient}</span>
+              <span style={S.caseChip}>Marca: {caseBrand}</span>
+              <span style={S.caseChip}>Estado: {caseState}</span>
+            </div>
+          </div>
         </div>
-        <button type="button" style={S.secondaryBtn} onClick={handleClose}>Fechar</button>
+        <div style={S.headerActions}>
+          <button type="button" style={S.secondaryBtn} onClick={() => setSection("groups")} disabled={!manageableGroups.length}>Renomear</button>
+          <button type="button" style={S.secondaryBtn} onClick={() => setStatus("Fluxo de fundir preparado para a fase seguinte.")} disabled={!manageableGroups.length}>Fundir</button>
+          <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || !canApplyClassification}>
+            <Icons.Save size={12} />
+            Guardar
+          </button>
+          <button type="button" style={S.secondaryBtn} onClick={handleClose}>Fechar</button>
+        </div>
       </div>
 
       <div style={S.context}>
@@ -4512,50 +4726,238 @@ async function handleApplyClassification() {
 
       {status ? <div style={S.notice}>{status}</div> : null}
 
-      <div style={S.shell}>
-        <aside style={S.sidebar}>
-          {MENU.map((item) => (
-            <button key={item.id} type="button" style={section === item.id ? S.menuOn : S.menu} onClick={() => setSection(item.id)}>
-              <span>{item.icon}</span>
-              <span style={{ display: "grid", gap: 2, textAlign: "left" }}><strong>{item.label}</strong><small>{item.help}</small></span>
-            </button>
-          ))}
-        </aside>
+      <div style={S.dashboard}>
+        <div style={S.topCardsGrid}>
 
-        <section style={S.listCol}>
-          <div style={S.colTitle}>Emails</div>
-          <div style={S.emailTools}>
-            <span style={S.cardMeta}>Selecionados: {selectedTargetCount}</span>
-            <div style={S.inline}>
+          <section style={S.topCard}>
+            <div style={S.sectionHeaderCompact}>
+              <div>
+                <div style={S.sectionTitle}>Emails</div>
+                <div style={S.sectionSubtitle}>Exploracao do caso</div>
+              </div>
+              <span style={S.cardMeta}>Selecionados: {selectedTargetCount}</span>
+            </div>
+            <div style={S.emailTools}>
               <button type="button" style={S.linkBtn} onClick={selectAllVisibleEmails}>Todos visiveis</button>
               <button type="button" style={S.linkBtn} onClick={clearSelectedTargets}>Limpar</button>
             </div>
-          </div>
-          <input style={S.input} value={emailSearch} onChange={(event) => setEmailSearch(event.target.value)} placeholder="Pesquisar por assunto, remetente ou texto..." />
-          <div style={S.listBody}>
-            {loading ? <PanelState compact tone="loading" title="A carregar emails" description="A preparar a lista desta nova janela." /> : null}
-            {!loading && !visibleEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Ajusta os filtros ou muda a fonte da lista." /> : null}
-            {!loading && visibleEmails.map((email) => (
-              <button key={makeEmailKey(email)} type="button" style={makeEmailKey(email) === makeEmailKey(selectedEmail || {}) ? S.emailOn : S.email} onClick={() => setSelectedEmailKey(makeEmailKey(email))}>
-                <div style={S.emailTop}>
-                  <label style={S.emailPick} onClick={(event) => event.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={selectedTargetEmailKeys.includes(makeEmailKey(email))}
-                      onChange={() => toggleTargetEmailKey(makeEmailKey(email))}
-                    />
-                    <strong>{email.subject || "(sem assunto)"}</strong>
-                  </label>
-                  {Array.isArray(email.attachments) && email.attachments.length ? <span style={S.counter}>{email.attachments.length}</span> : null}
-                </div>
-                <div style={S.emailMeta}>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</div>
-                <div style={S.emailSnippet}>{buildSnippet(email) || "Sem preview curto disponivel."}</div>
-              </button>
-            ))}
-          </div>
-        </section>
+            <input style={S.input} value={emailSearch} onChange={(event) => setEmailSearch(event.target.value)} placeholder="Pesquisar por assunto, remetente ou texto..." />
+            <div style={S.topCardScroll}>
+              {loading ? <PanelState compact tone="loading" title="A carregar emails" description="A preparar a lista desta nova janela." /> : null}
+              {!loading && !visibleEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Ajusta os filtros ou muda a fonte da lista." /> : null}
+              {!loading && visibleEmails.map((email) => (
+                <button key={makeEmailKey(email)} type="button" style={makeEmailKey(email) === makeEmailKey(selectedEmail || {}) ? S.emailOn : S.email} onClick={() => setSelectedEmailKey(makeEmailKey(email))}>
+                  <div style={S.emailTop}>
+                    <label style={S.emailPick} onClick={(event) => event.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedTargetEmailKeys.includes(makeEmailKey(email))}
+                        onChange={() => toggleTargetEmailKey(makeEmailKey(email))}
+                      />
+                      <strong>{email.subject || "(sem assunto)"}</strong>
+                    </label>
+                    {Array.isArray(email.attachments) && email.attachments.length ? <span style={S.counter}>{email.attachments.length}</span> : null}
+                  </div>
+                  <div style={S.emailMeta}>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</div>
+                  <div style={S.emailSnippet}>{buildSnippet(email) || "Sem preview curto disponivel."}</div>
+                </button>
+              ))}
+            </div>
+          </section>
 
-        <main style={S.workCol}>{renderWorkspace()}</main>
+          <section style={S.topCard}>
+            <div style={S.sectionHeaderCompact}>
+              <div>
+                <div style={S.sectionTitle}>Documentos rapidos</div>
+                <div style={S.sectionSubtitle}>Do email selecionado</div>
+              </div>
+            </div>
+            <div style={S.topCardScroll}>
+              {!selectedEmailAttachments.length ? (
+                <PanelState compact tone="info" title="Sem documentos rapidos" description="Este email ainda nao tem anexos persistidos para abrir aqui." />
+              ) : (
+                <div style={S.quickDocList}>
+                  {selectedEmailAttachments.map((attachment) => {
+                    const key = makeAttachmentKey(attachment);
+                    const active = key === selectedAttachmentPreviewKey && previewMode === "document";
+                    return (
+                      <div key={key} style={active ? S.quickDocRowOn : S.quickDocRow}>
+                        <div style={S.quickDocMain}>
+                          <strong>{attachment.name || "Anexo"}</strong>
+                          <span style={S.cardMeta}>
+                            {[attachment.contentType || "ficheiro", attachment.size ? `${Math.round(Number(attachment.size || 0) / 1024)} KB` : ""].filter(Boolean).join(" · ")}
+                          </span>
+                        </div>
+                        <button type="button" style={S.inlineActionBtn} onClick={() => handleOpenQuickAttachment(attachment)}>Abrir</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section style={S.topCardWide}>
+            <div style={S.sectionHeaderCompact}>
+              <div>
+                <div style={S.sectionTitle}>Classificacao</div>
+                <div style={S.sectionSubtitle}>Compacta e contextual</div>
+              </div>
+              <div style={S.segmentedControl}>
+                <button type="button" style={classificationLayoutMode === "normal" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("normal")}>Normal</button>
+                <button type="button" style={classificationLayoutMode === "advanced" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("advanced")}>Avancado</button>
+              </div>
+            </div>
+            {!classificationEditorActive ? (
+              <div style={S.classificationSummary}>
+                {classificationSummaryTiles
+                  .filter((item) => classificationLayoutMode === "advanced" || item.key !== "references")
+                  .map((item) => (
+                    <button key={item.key} type="button" style={S.classificationTile} onClick={item.onClick}>
+                      <span style={S.classificationTileLabel}>{item.title}</span>
+                      <strong style={S.classificationTileValue}>{item.value}</strong>
+                      <span style={S.classificationTileMeta}>{item.description}</span>
+                    </button>
+                  ))}
+                {classificationLayoutMode === "normal" ? (
+                  <div style={S.advancedHintBox}>
+                    <span style={S.advancedHintChip}>Referencias e opcoes adicionais aparecem no modo avancado.</span>
+                  </div>
+                ) : null}
+                {classificationLayoutMode === "advanced" ? (
+                  <div style={S.classificationExtraGrid}>
+                    {classificationAdvancedTiles.map((item) => (
+                      <button key={item.id} type="button" style={S.classificationTileMuted} onClick={() => setSection(item.id)}>
+                        <span style={S.classificationTileLabel}>{item.label}</span>
+                        <strong style={S.classificationTileValue}>{item.help}</strong>
+                        <span style={S.classificationTileMeta}>Abrir editor contextual</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <div style={S.classificationFooter}>
+                  <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || !canApplyClassification}>
+                    <Icons.Save size={12} />
+                    Gravar / atualizar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={S.classificationEditorShell}>
+                <div style={S.classificationEditorHeader}>
+                  <button
+                    type="button"
+                    style={S.secondaryBtn}
+                    onClick={() => {
+                      setSection("emails");
+                      setClassificationFocus("summary");
+                    }}
+                  >
+                    Voltar
+                  </button>
+                  <div>
+                    <div style={S.cardTitle}>{classificationCardTitle}</div>
+                    <div style={S.cardMeta}>Editor contextual dentro do card Classificacao.</div>
+                  </div>
+                </div>
+                <div style={S.classificationEditorBody}>{renderWorkspace()}</div>
+              </div>
+            )}
+          </section>
+        </div>
+
+        <section style={S.previewShellLarge}>
+            <div style={S.previewToolbar}>
+              <button type="button" style={previewMode === "email" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("email")} disabled={!previewHtml}>Email</button>
+              <button type="button" style={previewMode === "document" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("document")} disabled={!previewHasDocument}>Documento</button>
+              <button type="button" style={previewMode === "reply" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("reply")} disabled={!selectedEmail}>Responder</button>
+              <button type="button" style={previewMode === "forward" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("forward")} disabled={!selectedEmail}>Reencaminhar</button>
+            </div>
+            <div style={S.previewBody}>
+              {previewMode === "email" ? (
+                previewHtml ? (
+                  <div style={S.previewHtml} dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                ) : (
+                  <PanelState compact tone="info" title="Preview indisponivel" description="Este email ainda nao tem corpo guardado suficiente para preview." />
+                )
+              ) : null}
+              {previewMode === "document" ? (
+                selectedAttachmentPreview ? (
+                  <div style={S.stack}>
+                    <div style={S.summaryGrid}>
+                      <div style={S.summaryRow}><span>Ficheiro</span><strong>{selectedAttachmentPreview.name || "--"}</strong></div>
+                      <div style={S.summaryRow}><span>Tipo</span><strong>{selectedAttachmentPreview.contentType || "ficheiro"}</strong></div>
+                      <div style={S.summaryRow}><span>Tamanho</span><strong>{selectedAttachmentPreview.size ? `${Math.round(Number(selectedAttachmentPreview.size || 0) / 1024)} KB` : "--"}</strong></div>
+                      <div style={S.summaryRow}><span>Estado documental</span><strong>{formatDocumentLifecycleState(selectedAttachmentDocumentState)}</strong></div>
+                    </div>
+                    {selectedAttachmentPreviewMode === "image" ? (
+                      selectedAttachmentPreviewSrc ? (
+                        <div style={S.attachmentPreviewWrap}>
+                          <img src={selectedAttachmentPreviewSrc} alt={selectedAttachmentPreview?.name || "Imagem"} style={S.attachmentPreviewImage} />
+                        </div>
+                      ) : (
+                        <div style={S.attachmentPreviewEmpty}>
+                          {selectedAttachmentPreviewRemoteStatus === "loading"
+                            ? "A carregar imagem..."
+                            : selectedAttachmentPreview?.hasContent
+                              ? "Nao foi possivel carregar o conteudo persistido desta imagem."
+                              : "Esta imagem ainda nao foi persistida com conteudo."}
+                        </div>
+                      )
+                    ) : null}
+                    {selectedAttachmentPreviewMode === "pdf" ? (
+                      selectedAttachmentPreviewSrc ? (
+                        <StudioPdfPreview dataUrl={selectedAttachmentPreviewSrc} title={selectedAttachmentPreview?.name || "PDF"} />
+                      ) : (
+                        <div style={S.attachmentPreviewEmpty}>
+                          {selectedAttachmentPreviewRemoteStatus === "loading"
+                            ? "A carregar PDF..."
+                            : selectedAttachmentPreview?.hasContent
+                              ? "Nao foi possivel carregar o conteudo persistido deste PDF."
+                              : "Este PDF ainda nao foi persistido com conteudo."}
+                        </div>
+                      )
+                    ) : null}
+                    {selectedAttachmentPreviewMode === "text" ? (
+                      selectedAttachmentPreviewText ? (
+                        <pre style={S.attachmentPreviewText}>{selectedAttachmentPreviewText}</pre>
+                      ) : (
+                        <div style={S.attachmentPreviewEmpty}>Nao foi possivel ler o conteudo textual deste ficheiro.</div>
+                      )
+                    ) : null}
+                    {selectedAttachmentPreviewMode === "unsupported" ? (
+                      <div style={S.attachmentPreviewEmpty}>Preview nao disponivel para este tipo de ficheiro.</div>
+                    ) : null}
+                    {selectedAttachmentPreviewMode === "none" ? (
+                      <div style={S.attachmentPreviewEmpty}>Escolhe um anexo para ver o preview.</div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe primeiro um documento rapido para abrir o preview." />
+                )
+              ) : null}
+              {previewMode === "reply" ? (
+                <div style={S.previewPlaceholder}>
+                  <div style={S.cardTitle}>Responder</div>
+                  <div style={S.cardMeta}>Estrutura pronta para editor, IA e selecao de anexos numa fase seguinte.</div>
+                  <button type="button" style={S.primaryBtn} onClick={() => void handlePreviewReply()} disabled={!selectedEmail}>
+                    <Icons.MessageSquare size={12} />
+                    Abrir resposta
+                  </button>
+                </div>
+              ) : null}
+              {previewMode === "forward" ? (
+                <div style={S.previewPlaceholder}>
+                  <div style={S.cardTitle}>Reencaminhar</div>
+                  <div style={S.cardMeta}>Estrutura pronta para editor, IA e composicao de envio numa fase seguinte.</div>
+                  <button type="button" style={S.primaryBtn} onClick={() => void handlePreviewForward()} disabled={!selectedEmail}>
+                    <Icons.ExternalLink size={12} />
+                    Abrir reencaminhamento
+                  </button>
+                </div>
+              ) : null}
+            </div>
+        </section>
       </div>
     </div>
   );
@@ -4568,9 +4970,15 @@ export default function GroupClassificationStudioApp(): JSX.Element {
 const S: Record<string, React.CSSProperties> = {
   root: { height: "100vh", boxSizing: "border-box", padding: 18, display: "grid", gridTemplateRows: "auto auto auto auto minmax(0,1fr)", gap: 12, background: "var(--iccc-bg)", color: "var(--iccc-text)", fontFamily: "var(--iccc-font)", overflow: "hidden" },
   header: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "14px 16px", borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)" },
+  headerMain: { display: "grid", gap: 8, minWidth: 0 },
+  headerActions: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" },
   kicker: { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--iccc-muted)" },
   mainTitle: { fontSize: 24, fontWeight: 800, color: "var(--iccc-text)" },
   mainMeta: { fontSize: 13, lineHeight: 1.45, color: "var(--iccc-muted)", maxWidth: 820 },
+  caseTitleRow: { display: "grid", gap: 8 },
+  caseTitle: { fontSize: 18, fontWeight: 800, color: "var(--iccc-text)" },
+  caseChips: { display: "flex", gap: 8, flexWrap: "wrap" },
+  caseChip: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(15,23,42,0.05)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 700 },
   primaryBtn: { height: 36, padding: "0 14px", borderRadius: 12, border: "1px solid rgba(37,99,235,0.2)", background: "linear-gradient(180deg,#3b82f6 0%, #2563eb 100%)", color: "#fff", fontSize: 12, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", boxShadow: "0 8px 18px rgba(37,99,235,0.25)" },
   secondaryBtn: { height: 34, padding: "0 12px", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)", fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" },
   context: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 14px", borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.8)" },
@@ -4578,6 +4986,14 @@ const S: Record<string, React.CSSProperties> = {
   badges: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" },
   badge: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(30,64,175,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
   notice: { padding: "10px 12px", borderRadius: 12, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 12, lineHeight: 1.45 },
+  dashboard: { minHeight: 0, display: "grid", gridTemplateRows: "minmax(0,0.9fr) minmax(0,1.35fr)", gap: 12, overflow: "hidden" },
+  topCardsGrid: { minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1.05fr) minmax(0,0.9fr) minmax(0,1.15fr)", gap: 12 },
+  topCard: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
+  topCardWide: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
+  topCardScroll: { minHeight: 0, display: "grid", gap: 8, overflowY: "auto", paddingRight: 2 },
+  sectionHeaderCompact: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  sectionTitle: { fontSize: 16, fontWeight: 800, color: "var(--iccc-text)" },
+  sectionSubtitle: { fontSize: 11, color: "var(--iccc-muted)" },
   shell: { minHeight: 0, display: "grid", gridTemplateColumns: "220px 320px minmax(0,1fr)", gap: 12 },
   sidebar: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gap: 8, alignContent: "start", overflowY: "auto" },
   menu: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(255,255,255,0.78)", padding: "10px 12px", display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", gap: 10, cursor: "pointer" },
@@ -4596,10 +5012,37 @@ const S: Record<string, React.CSSProperties> = {
   emailMeta: { fontSize: 11, color: "var(--iccc-muted)" },
   emailSnippet: { fontSize: 12, lineHeight: 1.45, color: "var(--iccc-text-soft, #334155)" },
   counter: { minWidth: 22, height: 22, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 700 },
+  quickDocList: { display: "grid", gap: 8 },
+  quickDocRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 10, alignItems: "center", borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", padding: "10px 12px" },
+  quickDocRowOn: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 10, alignItems: "center", borderRadius: 14, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", padding: "10px 12px" },
+  quickDocMain: { display: "grid", gap: 4, minWidth: 0 },
+  inlineActionBtn: { height: 32, padding: "0 12px", borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 700, cursor: "pointer" },
   workCol: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, overflow: "hidden" },
   stack: { height: "100%", minHeight: 0, display: "grid", gap: 10, alignContent: "start", overflowY: "auto", paddingRight: 2 },
   card: { borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.74)", padding: 12, display: "grid", gap: 10 },
   cardSticky: { position: "sticky", top: 0, zIndex: 4, borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.97)", padding: 12, display: "grid", gap: 10, boxShadow: "0 8px 24px rgba(15,23,42,0.06)" },
+  segmentedControl: { display: "inline-flex", alignItems: "center", borderRadius: 12, border: "1px solid rgba(37,99,235,0.24)", overflow: "hidden", background: "rgba(239,246,255,0.75)" },
+  segmentBtn: { height: 30, padding: "0 12px", border: "none", background: "transparent", color: "#475569", fontSize: 11, fontWeight: 700, cursor: "pointer" },
+  segmentBtnActive: { height: 30, padding: "0 12px", border: "none", background: "rgba(37,99,235,0.16)", color: "#1d4ed8", fontSize: 11, fontWeight: 800, cursor: "pointer" },
+  classificationSummary: { minHeight: 0, display: "grid", gap: 10, alignContent: "start", overflowY: "auto", paddingRight: 2 },
+  classificationTile: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", padding: "12px 14px", display: "grid", gap: 4, cursor: "pointer" },
+  classificationTileMuted: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(191,219,254,0.8)", background: "rgba(239,246,255,0.7)", padding: "12px 14px", display: "grid", gap: 4, cursor: "pointer" },
+  classificationTileLabel: { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--iccc-muted)" },
+  classificationTileValue: { fontSize: 13, fontWeight: 800, color: "var(--iccc-text)" },
+  classificationTileMeta: { fontSize: 11, lineHeight: 1.4, color: "var(--iccc-muted)" },
+  advancedHintBox: { display: "flex", flexWrap: "wrap", gap: 8 },
+  advancedHintChip: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(239,246,255,0.8)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
+  classificationExtraGrid: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
+  classificationFooter: { display: "flex", justifyContent: "flex-start", paddingTop: 4 },
+  classificationEditorShell: { minHeight: 0, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
+  classificationEditorHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
+  classificationEditorBody: { minHeight: 0, overflow: "auto", paddingRight: 2 },
+  previewShellLarge: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
+  previewToolbar: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", paddingBottom: 4, borderBottom: "1px solid rgba(148,163,184,0.14)" },
+  previewTab: { height: 32, padding: "0 12px", borderRadius: 10, border: "1px solid rgba(148,163,184,0.24)", background: "rgba(255,255,255,0.86)", color: "var(--iccc-text)", fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  previewTabOn: { height: 32, padding: "0 12px", borderRadius: 10, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 800, cursor: "pointer" },
+  previewBody: { minHeight: 0, overflow: "auto", paddingRight: 2, display: "grid", gap: 12, alignContent: "start" },
+  previewPlaceholder: { minHeight: 420, borderRadius: 16, border: "1px dashed rgba(148,163,184,0.32)", background: "rgba(255,255,255,0.72)", display: "grid", alignContent: "center", justifyItems: "start", gap: 10, padding: 24 },
   sectionCard: { borderRadius: 16, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", overflow: "hidden", display: "grid" },
   classificationSectionCard: { borderRadius: 16, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", overflow: "hidden", display: "grid", scrollMarginTop: 168 },
   sectionHead: { width: "100%", border: "none", borderBottom: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.58)", color: "var(--iccc-text)", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, cursor: "pointer" },
@@ -4681,3 +5124,4 @@ const S: Record<string, React.CSSProperties> = {
   summaryActionBar: { position: "sticky", bottom: -12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", paddingTop: 12, paddingBottom: 4, background: "linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.96) 16%, rgba(255,255,255,0.98) 100%)" },
   note: { padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(191,219,254,0.8)", background: "#eff6ff", color: "#1d4ed8", fontSize: 13, lineHeight: 1.5 },
 };
+
