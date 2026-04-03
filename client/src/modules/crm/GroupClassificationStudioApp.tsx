@@ -204,13 +204,16 @@ function isLikelyDecorativeAttachment(
   const type = normalizeStudioAttachmentMimeType(attachment.contentType, attachment.name);
   const name = String(attachment.name || "").trim().toLowerCase();
   const size = Number(attachment.size || 0) || 0;
+  const hasContentId = Boolean(String(attachment.contentId || "").trim());
+  const signatureLikeName = /\b(signature|assinatura|logo|smime|favicon)\b/.test(name);
+  const genericInlineImageName = /^image\d+\.(png|jpe?g|gif|bmp|webp)$/i.test(name);
   if (attachment.isHidden === true) return true;
   if (attachment.isHidden === false) return false;
   if (attachment.isInline) return true;
   if (!/^image\//.test(type)) return false;
-  if (/\b(signature|assinatura|logo|smime|favicon)\b/.test(name)) return true;
-  if (/^image\d+\.(png|jpe?g|gif|bmp|webp)$/i.test(name)) return true;
-  return Boolean(attachment.contentId && size > 0 && size <= 96 * 1024);
+  if (signatureLikeName && (hasContentId || size <= 48 * 1024)) return true;
+  if (genericInlineImageName && hasContentId) return true;
+  return Boolean(hasContentId && size > 0 && size <= 48 * 1024);
 }
 
 function isStudioAttachmentHiddenInQuickDocs(
@@ -552,7 +555,6 @@ function dataUrlToUint8Array(dataUrl: string): Uint8Array {
 function StudioPdfPreview({ dataUrl, title }: { dataUrl: string; title: string }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [pageCount, setPageCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -564,7 +566,6 @@ function StudioPdfPreview({ dataUrl, title }: { dataUrl: string; title: string }
 
     host.innerHTML = "";
     setStatus("loading");
-    setPageCount(0);
 
     (async () => {
       try {
@@ -576,7 +577,6 @@ function StudioPdfPreview({ dataUrl, title }: { dataUrl: string; title: string }
         }
 
         const nextPageCount = Number(pdf.numPages || 0);
-        setPageCount(nextPageCount);
 
         for (let pageNumber = 1; pageNumber <= nextPageCount; pageNumber += 1) {
           if (cancelled) break;
@@ -618,9 +618,16 @@ function StudioPdfPreview({ dataUrl, title }: { dataUrl: string; title: string }
 
   return (
     <div style={S.attachmentPdfPreviewShell} aria-label={title}>
-      {status === "loading" ? <div style={S.attachmentPdfPreviewMeta}>A carregar PDF...</div> : null}
-      {status === "ready" && pageCount > 0 ? <div style={S.attachmentPdfPreviewMeta}>{pageCount} pagina(s)</div> : null}
-      <div ref={hostRef} style={S.attachmentPdfPreviewCanvasHost} />
+      {status === "loading" ? (
+        <div style={S.attachmentPdfPreviewLoading}>A carregar PDF...</div>
+      ) : null}
+      <div
+        ref={hostRef}
+        style={{
+          ...S.attachmentPdfPreviewCanvasHost,
+          display: status === "loading" ? "none" : S.attachmentPdfPreviewCanvasHost.display,
+        }}
+      />
     </div>
   );
 }
@@ -2125,6 +2132,7 @@ function StudioInner() {
       storagePathHint: (attachment as any).storagePathHint,
       documentState: (attachment as any).documentState,
       hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
+      isHidden: typeof (attachment as any).isHidden === "boolean" ? (attachment as any).isHidden : undefined,
     })),
   }), [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
 
@@ -4904,8 +4912,14 @@ function StudioInner() {
   }
 
   const topCardsGridStyle = classificationEditorActive
-    ? { ...S.topCardsGrid, gridTemplateColumns: "minmax(220px,0.94fr) minmax(150px,0.5fr) minmax(420px,1.86fr)" }
+    ? { ...S.topCardsGrid, gridTemplateColumns: "minmax(220px,0.9fr) minmax(120px,0.38fr) minmax(460px,2.22fr)" }
     : S.topCardsGrid;
+  const quickDocumentsCardStyle = classificationEditorActive
+    ? { ...S.topCard, opacity: 0.94, transform: "scale(0.985)" }
+    : S.topCard;
+  const classificationCardStyle = classificationEditorActive
+    ? { ...S.topCardWide, border: "1px solid rgba(37,99,235,0.18)", boxShadow: "0 16px 34px rgba(37,99,235,0.08)" }
+    : S.topCardWide;
   const previewShellStyle = classificationEditorActive
     ? { ...S.previewShellLarge, ...S.previewShellFocus }
     : S.previewShellLarge;
@@ -4947,7 +4961,7 @@ function StudioInner() {
       <div style={S.dashboard}>
         <div style={topCardsGridStyle}>
 
-          <section style={S.topCard}>
+          <section style={quickDocumentsCardStyle}>
             <div style={S.sectionHeaderCompact}>
               <div>
                 <div style={S.sectionTitle}>Emails</div>
@@ -5057,7 +5071,7 @@ function StudioInner() {
             </div>
           </section>
 
-          <section style={S.topCardWide}>
+          <section style={classificationCardStyle}>
             <div style={S.sectionHeaderCompact}>
               <div>
                 <div style={S.sectionTitle}>Classificacao</div>
@@ -5232,9 +5246,9 @@ const S: Record<string, React.CSSProperties> = {
   badge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(30,64,175,0.08)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 600 },
   notice: { padding: "7px 9px", borderRadius: 10, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 10.5, lineHeight: 1.35 },
   dashboard: { minHeight: 0, display: "grid", gridTemplateRows: "minmax(0,0.84fr) minmax(0,1.46fr)", gap: 8, overflow: "hidden" },
-  topCardsGrid: { minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1.04fr) minmax(0,0.88fr) minmax(0,1.16fr)", gap: 8 },
-  topCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.9)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 6, overflow: "hidden" },
-  topCardWide: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.9)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden" },
+  topCardsGrid: { minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1.04fr) minmax(0,0.88fr) minmax(0,1.16fr)", gap: 8, transition: "grid-template-columns 180ms ease" },
+  topCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.9)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 6, overflow: "hidden", transition: "transform 180ms ease, width 180ms ease, box-shadow 180ms ease" },
+  topCardWide: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.9)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", transition: "transform 180ms ease, width 180ms ease, box-shadow 180ms ease" },
   topCardScroll: { minHeight: 0, display: "grid", gap: 5, overflowY: "auto", paddingRight: 1 },
   sectionHeaderCompact: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
   sectionTitle: { fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(15,23,42,0.82)" },
@@ -5292,8 +5306,8 @@ const S: Record<string, React.CSSProperties> = {
   classificationEditorShell: { minHeight: 0, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 8, overflow: "hidden" },
   classificationEditorHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" },
   classificationEditorBody: { minHeight: 0, overflow: "auto", paddingRight: 2 },
-  previewShellLarge: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden" },
-  previewShellFocus: { width: "68%", minWidth: 0, justifySelf: "start" },
+  previewShellLarge: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", transition: "width 180ms ease, max-width 180ms ease, transform 180ms ease" },
+  previewShellFocus: { width: "58%", maxWidth: "58%", minWidth: 0, justifySelf: "start" },
   previewToolbar: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", paddingBottom: 1, borderBottom: "1px solid rgba(148,163,184,0.1)" },
   previewTab: { height: 24, padding: "0 9px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
   previewTabOn: { height: 24, padding: "0 9px", borderRadius: 999, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(219,234,254,0.9)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
@@ -5365,9 +5379,9 @@ const S: Record<string, React.CSSProperties> = {
   documentPreviewIframe: { width: "100%", height: "100%", minHeight: 540, border: "none", display: "block", background: "#fff" },
   attachmentPreviewWrap: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#f8fafc", overflow: "hidden", minHeight: 0, height: "100%", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.45)" },
   attachmentPreviewImage: { width: "100%", height: "100%", minHeight: 540, objectFit: "contain", display: "block", background: "#fff" },
-  attachmentPdfPreviewShell: { display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", height: "100%", minHeight: 0, background: "#f8fafc", borderRadius: 12, overflow: "hidden", border: "1px solid rgba(15, 23, 42, 0.08)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.45)" },
-  attachmentPdfPreviewMeta: { padding: "7px 10px", fontSize: 9.5, fontWeight: 700, color: "#64748b", borderBottom: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.82)" },
-  attachmentPdfPreviewCanvasHost: { overflow: "auto", padding: 12, display: "grid", justifyItems: "center", alignContent: "start", gap: 12, minHeight: 0 },
+  attachmentPdfPreviewShell: { display: "grid", height: "100%", minHeight: 0, background: "#f8fafc", borderRadius: 12, overflow: "hidden", border: "1px solid rgba(15, 23, 42, 0.08)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.45)" },
+  attachmentPdfPreviewLoading: { display: "grid", placeItems: "center", minHeight: 220, padding: 18, color: "var(--iccc-muted)", fontSize: 10.5 },
+  attachmentPdfPreviewCanvasHost: { overflow: "auto", padding: 12, display: "grid", justifyItems: "center", alignContent: "start", gap: 12, minHeight: 0, height: "100%" },
   attachmentPreviewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 10.5, lineHeight: 1.42, whiteSpace: "pre-wrap", height: "100%", overflow: "auto", boxSizing: "border-box" },
   attachmentPreviewEmpty: { padding: "14px 12px", borderRadius: 12, border: "1px dashed rgba(148,163,184,0.24)", background: "rgba(248,250,252,0.82)", color: "var(--iccc-muted)", fontSize: 10.5 },
   attachList: { display: "grid", gap: 10 },
