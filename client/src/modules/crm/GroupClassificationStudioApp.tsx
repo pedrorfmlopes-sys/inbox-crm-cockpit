@@ -22,11 +22,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 type SectionId = "emails" | "classification" | "labels" | "filters" | "groups";
 type ScopeMode = "related" | "all";
 type ApplyScopeMode = "current" | "selected" | "principal_group";
+type ApplyDialogScopeMode = "current" | "selected" | "case_all";
 type PreviewMode = "email" | "document" | "reply" | "forward";
 type ClassificationLayoutMode = "normal" | "advanced";
 type EmailLabelStatus = GroupLabelStatus;
 type DocumentLifecycleState = "ingested" | "processed" | "accepted" | "rejected" | "reread_requested";
 type ClassificationFocus = "principal" | "references" | "labels" | "ticket" | "summary";
+type TicketEditorMode = "existing" | "new";
 type AttachmentPreviewState =
   | { kind: "image"; src: string }
   | { kind: "pdf"; src: string }
@@ -104,6 +106,13 @@ const DOCUMENT_STATE_OPTIONS: Array<{ value: DocumentLifecycleState; label: stri
   { value: "accepted", label: "Aceite" },
   { value: "rejected", label: "Rejeitado" },
   { value: "reread_requested", label: "Reler" },
+];
+
+const OUTLOOK_CATEGORY_COLOR_LEGEND = [
+  { key: "blue", label: "Azul = Em analise", style: { borderColor: "rgba(59,130,246,0.34)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8" } },
+  { key: "amber", label: "Amarelo = Aguarda", style: { borderColor: "rgba(245,158,11,0.3)", background: "rgba(254,243,199,0.95)", color: "#b45309" } },
+  { key: "green", label: "Verde = Concluido", style: { borderColor: "rgba(34,197,94,0.28)", background: "rgba(220,252,231,0.95)", color: "#15803d" } },
+  { key: "red", label: "Vermelho = Bloqueado", style: { borderColor: "rgba(239,68,68,0.26)", background: "rgba(254,226,226,0.95)", color: "#b91c1c" } },
 ];
 
 const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
@@ -1318,7 +1327,17 @@ function StudioInner() {
   const [attachmentTextMap, setAttachmentTextMap] = useState<Record<string, string>>({});
   const [selectionTouched, setSelectionTouched] = useState({ principal: false, references: false, ticket: false });
   const [actionBusy, setActionBusy] = useState(false);
-  const [classificationFocus, setClassificationFocus] = useState<ClassificationFocus>("principal");
+  const [classificationFocus, setClassificationFocus] = useState<ClassificationFocus>("summary");
+  const [applyDialogOpen, setApplyDialogOpen] = useState(false);
+  const [applyDialogScopeMode, setApplyDialogScopeMode] = useState<ApplyDialogScopeMode>("current");
+  const [applyDialogSection, setApplyDialogSection] = useState<ClassificationFocus>("summary");
+  const [applyDialogEmailKeys, setApplyDialogEmailKeys] = useState<string[]>([]);
+  const [applyDialogExpandedEmailKeys, setApplyDialogExpandedEmailKeys] = useState<string[]>([]);
+  const [classificationSuggestionExpanded, setClassificationSuggestionExpanded] = useState<Record<"principal" | "labels", boolean>>({
+    principal: false,
+    labels: false,
+  });
+  const [ticketEditorMode, setTicketEditorMode] = useState<TicketEditorMode>("existing");
   const [managedGroupId, setManagedGroupId] = useState("");
   const [managedGroupDescription, setManagedGroupDescription] = useState("");
   const [managedGroupNotes, setManagedGroupNotes] = useState("");
@@ -1336,6 +1355,22 @@ function StudioInner() {
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
   const [favoriteGroupIds, setFavoriteGroupIds] = useState<string[]>([]);
   const hydratedEmailKeysRef = useRef<Set<string>>(new Set());
+  const classificationDraftSnapshotRef = useRef<null | {
+    principalGroupId: string;
+    principalSearch: string;
+    referenceGroupIds: string[];
+    referenceSearch: string;
+    selectedLabels: string[];
+    labelDrafts: Record<string, LabelDraft>;
+    classificationMetaDraft: ClassificationMetaDraft;
+    selectedTicketId: string;
+    selectedSeriesId: string;
+    ticketStatusDraft: string;
+    ticketSearch: string;
+    ticketSearchResults: GroupTicketEntry[];
+    createTicketTitle: string;
+    selectionTouched: { principal: boolean; references: boolean; ticket: boolean };
+  } | null>(null);
 
   const currentSeed = useMemo(() => readSeedEmail(params), [params]);
   const fallbackIdentity = useMemo(() => buildFallbackEmail(params), [params]);
@@ -1645,6 +1680,10 @@ function StudioInner() {
     () => emailPool.filter((email) => selectedTargetEmailKeys.includes(makeEmailKey(email))),
     [emailPool, selectedTargetEmailKeys]
   );
+  const caseScopeEmails = useMemo(
+    () => dedupeEmails([...(selectedEmail ? [selectedEmail] : []), ...relatedEmails]),
+    [relatedEmails, selectedEmail]
+  );
 
   const principalScopeEmails = useMemo(() => {
     if (!principalAnchorGroupId) return [];
@@ -1656,6 +1695,10 @@ function StudioInner() {
   }, [emailPool, principalAnchorGroupId, currentCaseBusinessGroups, currentContext, groupMap]);
   const selectedTargetCount = selectedTargetEmails.length;
   const principalScopeCount = principalScopeEmails.length;
+  const applyDialogSelectedEmails = useMemo(
+    () => caseScopeEmails.filter((email) => applyDialogEmailKeys.includes(makeEmailKey(email))),
+    [applyDialogEmailKeys, caseScopeEmails]
+  );
 
   const selectedEmailTicketIds = useMemo(() => {
     if (!selectedEmail) return [];
@@ -1690,6 +1733,16 @@ function StudioInner() {
   useEffect(() => {
     if (!selectedEmailKey) return;
     setPreviewMode("email");
+  }, [selectedEmailKey]);
+
+  useEffect(() => {
+    setApplyDialogOpen(false);
+    setApplyDialogExpandedEmailKeys([]);
+    classificationDraftSnapshotRef.current = null;
+    if (section === "classification") {
+      setClassificationFocus("summary");
+      setSection("emails");
+    }
   }, [selectedEmailKey]);
 
   const previewHtml = useMemo(() => buildEmailPreviewHtml(selectedEmail), [selectedEmail]);
@@ -2347,7 +2400,8 @@ function StudioInner() {
       selectedEmail?.status,
     ]
   );
-  const classificationEditorActive = section !== "emails";
+  const classificationEditorActive = section === "classification" && classificationFocus !== "summary";
+  const auxiliaryEditorActive = section === "labels" || section === "filters" || section === "groups";
   const classificationCardTitle = useMemo(() => {
     if (section === "classification") {
       if (classificationFocus === "principal") return "Grupo principal";
@@ -2382,40 +2436,28 @@ function StudioInner() {
           title: "Grupo principal",
           value: principalGroup?.name || "Sem grupo principal",
           description: classificationMetaDraft.principalStatusEnabled ? principalStatusValue || "Sem estado ativo" : "Sem estado ativo",
-          onClick: () => {
-            setSection("classification");
-            setClassificationFocus("principal");
-          },
+          onClick: () => openClassificationEditor("principal"),
         },
         {
           key: "labels" as const,
           title: "Etiquetas",
           value: selectedLabels.length ? selectedLabels.join(", ") : "Sem etiquetas",
           description: selectedLabels.length ? `${selectedLabels.length} atribuida(s)` : "Sem atribuicoes estruturadas",
-          onClick: () => {
-            setSection("labels");
-            setClassificationFocus("labels");
-          },
+          onClick: () => openClassificationEditor("labels"),
         },
         {
           key: "ticket" as const,
           title: "Ticket",
           value: ticketValue,
           description: classificationMetaDraft.ticketStatusEnabled ? ticketStatusValue || "Sem estado ativo" : "Sem seguimento ligado",
-          onClick: () => {
-            setSection("classification");
-            setClassificationFocus("ticket");
-          },
+          onClick: () => openClassificationEditor("ticket"),
         },
         {
           key: "references" as const,
           title: "Referencias",
           value: referenceSummaryValue,
           description: referenceGroups.length ? `${referenceGroups.length} referencia(s)` : "Disponivel no modo avancado",
-          onClick: () => {
-            setSection("classification");
-            setClassificationFocus("references");
-          },
+          onClick: () => openClassificationEditor("references"),
         },
       ];
     },
@@ -2433,10 +2475,6 @@ function StudioInner() {
       ticketSeries,
       relatedTickets,
     ]
-  );
-  const classificationAdvancedTiles = useMemo(
-    () => MENU.filter((item) => item.id === "filters" || item.id === "groups"),
-    []
   );
   const previewHasDocument = Boolean(selectedAttachmentPreview);
 
@@ -2565,6 +2603,10 @@ function StudioInner() {
   const selectedLabelStatuses = useMemo(
     () => Array.from(new Set(Object.values(selectedLabelStates).filter(Boolean))),
     [selectedLabelStates]
+  );
+  const selectedLabelSharedStatus = useMemo(
+    () => (selectedLabelStatuses.length === 1 ? selectedLabelStatuses[0] : ""),
+    [selectedLabelStatuses]
   );
   const emailStatusSummary = useMemo(
     () => selectedLabelStatuses.length ? selectedLabelStatuses.map((entry) => formatEmailLabelStatus(entry)).join(", ") : "--",
@@ -3387,27 +3429,29 @@ function StudioInner() {
     }
   }
 
-  async function handleApplyClassification() {
+  async function handleApplyClassification(targetEmailsOverride?: RelatedEmailEntry[]) {
     setActionBusy(true);
     let activeCategoryOperationId = "";
     let activeCategoryRequestId = "";
     let categoryOperationClosed = false;
     try {
       const targetEmails = dedupeEmails(
-        (
-          applyScopeMode === "selected"
-            ? selectedTargetEmails
-            : applyScopeMode === "principal_group"
-              ? principalScopeEmails
-              : [selectedEmail].filter(Boolean)
-        ) as RelatedEmailEntry[]
+        (targetEmailsOverride && targetEmailsOverride.length
+          ? targetEmailsOverride
+          : (
+            applyScopeMode === "selected"
+              ? selectedTargetEmails
+              : applyScopeMode === "principal_group"
+                ? principalScopeEmails
+                : [selectedEmail].filter(Boolean)
+          )) as RelatedEmailEntry[]
       );
       const effectiveTargetEmails = targetEmails.length
         ? targetEmails
         : ((selectedEmail ? [selectedEmail] : []) as RelatedEmailEntry[]);
       if (!effectiveTargetEmails.length) {
         setStatus("Nao existe nenhum email alvo para atualizar.");
-        return;
+        return false;
       }
       const includesCurrentTarget = selectedEmailIsCurrent || effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
       const currentTargetIdentity = includesCurrentTarget
@@ -3428,7 +3472,7 @@ function StudioInner() {
               ? "Ja existe outra classificacao em curso para este email. Aguarda um momento."
               : "Nao foi possivel identificar o email atual para confirmar a classificacao."
           );
-          return;
+          return false;
         }
         activeCategoryOperationId = openedOperation.operation.operationId;
         setOutlookCategoryOperationPhase(activeCategoryOperationId, "saving");
@@ -3749,6 +3793,7 @@ function StudioInner() {
           ? `Classificacao aplicada a ${effectiveTargetEmails.length} emails.`
           : "Classificacao aplicada ao email selecionado."
       );
+      return true;
     } catch (actionError: any) {
       if (activeCategoryOperationId && !categoryOperationClosed) {
         completeOutlookCategoryOperation(activeCategoryOperationId, {
@@ -3758,6 +3803,7 @@ function StudioInner() {
         });
       }
       setStatus(actionError?.message || "Nao foi possivel aplicar a classificacao.");
+      return false;
     } finally {
       setActionBusy(false);
     }
@@ -3826,6 +3872,511 @@ function StudioInner() {
     }
     const opened = await requestCockpitHostAction({ type: "open-email", itemId: selectedEmail.itemId, emailWebLink: selectedEmail.emailWebLink });
     setStatus(opened ? "Email aberto no Outlook. Usa Reencaminhar no Outlook para continuar." : "Este email ainda nao tem abertura direta para reencaminhar.");
+  }
+
+  function captureClassificationDraftSnapshot() {
+    return {
+      principalGroupId,
+      principalSearch,
+      referenceGroupIds: [...referenceGroupIds],
+      referenceSearch,
+      selectedLabels: [...selectedLabels],
+      labelDrafts: structuredClone(labelDrafts),
+      classificationMetaDraft: structuredClone(classificationMetaDraft),
+      selectedTicketId,
+      selectedSeriesId,
+      ticketStatusDraft,
+      ticketSearch,
+      ticketSearchResults: [...ticketSearchResults],
+      createTicketTitle,
+      selectionTouched: { ...selectionTouched },
+    };
+  }
+
+  function restoreClassificationDraftSnapshot() {
+    const snapshot = classificationDraftSnapshotRef.current;
+    if (!snapshot) return;
+    setPrincipalGroupId(snapshot.principalGroupId);
+    setPrincipalSearch(snapshot.principalSearch);
+    setReferenceGroupIds([...snapshot.referenceGroupIds]);
+    setReferenceSearch(snapshot.referenceSearch);
+    setSelectedLabels([...snapshot.selectedLabels]);
+    setLabelDrafts(structuredClone(snapshot.labelDrafts));
+    setClassificationMetaDraft(structuredClone(snapshot.classificationMetaDraft));
+    setSelectedTicketId(snapshot.selectedTicketId);
+    setSelectedSeriesId(snapshot.selectedSeriesId);
+    setTicketStatusDraft(snapshot.ticketStatusDraft);
+    setTicketSearch(snapshot.ticketSearch);
+    setTicketSearchResults([...snapshot.ticketSearchResults]);
+    setCreateTicketTitle(snapshot.createTicketTitle);
+    setSelectionTouched({ ...snapshot.selectionTouched });
+  }
+
+  function clearClassificationDraftSession() {
+    classificationDraftSnapshotRef.current = null;
+    setClassificationFocus("summary");
+    setSection("emails");
+    setApplyDialogOpen(false);
+    setApplyDialogExpandedEmailKeys([]);
+  }
+
+  function openClassificationEditor(nextFocus: ClassificationFocus) {
+    if (!classificationDraftSnapshotRef.current) {
+      classificationDraftSnapshotRef.current = captureClassificationDraftSnapshot();
+    }
+    if (nextFocus === "ticket") {
+      setTicketEditorMode(selectedSeriesId ? "new" : "existing");
+    }
+    setSection("classification");
+    setClassificationFocus(nextFocus);
+  }
+
+  function handleCloseClassificationEditor() {
+    restoreClassificationDraftSnapshot();
+    clearClassificationDraftSession();
+  }
+
+  function getDefaultApplyDialogEmailKeys(mode: ApplyDialogScopeMode): string[] {
+    if (mode === "case_all") {
+      return caseScopeEmails.map((email) => makeEmailKey(email)).filter(Boolean);
+    }
+    if (mode === "selected") {
+      const selectedKeys = selectedTargetEmailKeys.filter((key) => caseScopeEmails.some((email) => makeEmailKey(email) === key));
+      return selectedKeys.length ? selectedKeys : [String(selectedEmailKey || "").trim()].filter(Boolean);
+    }
+    return [String(selectedEmailKey || "").trim()].filter(Boolean);
+  }
+
+  function setApplyDialogScope(mode: ApplyDialogScopeMode) {
+    setApplyDialogScopeMode(mode);
+    setApplyDialogEmailKeys(getDefaultApplyDialogEmailKeys(mode));
+  }
+
+  function openApplyDialog(sectionFocus: ClassificationFocus = classificationFocus) {
+    const defaultMode: ApplyDialogScopeMode = selectedTargetEmailKeys.length > 1 ? "selected" : "current";
+    setApplyDialogSection(sectionFocus === "summary" ? "summary" : sectionFocus);
+    setApplyDialogExpandedEmailKeys([]);
+    setApplyDialogOpen(true);
+    setApplyDialogScopeMode(defaultMode);
+    setApplyDialogEmailKeys(getDefaultApplyDialogEmailKeys(defaultMode));
+  }
+
+  function toggleApplyDialogEmailKey(emailKey: string) {
+    if (!emailKey) return;
+    setApplyDialogEmailKeys((current) => current.includes(emailKey) ? current.filter((entry) => entry !== emailKey) : [...current, emailKey]);
+  }
+
+  function toggleApplyDialogExpandedEmailKey(emailKey: string) {
+    if (!emailKey) return;
+    setApplyDialogExpandedEmailKeys((current) => current.includes(emailKey) ? current.filter((entry) => entry !== emailKey) : [...current, emailKey]);
+  }
+
+  async function handleConfirmApplyDialog() {
+    const selectedEmails = applyDialogSelectedEmails.length
+      ? applyDialogSelectedEmails
+      : ((selectedEmail ? [selectedEmail] : []) as RelatedEmailEntry[]);
+    const applied = await handleApplyClassification(selectedEmails);
+    if (!applied) return;
+    clearClassificationDraftSession();
+  }
+
+  function renderOutlookColorLegend() {
+    return (
+      <div style={S.legendRow}>
+        {OUTLOOK_CATEGORY_COLOR_LEGEND.map((entry) => (
+          <span key={entry.key} style={{ ...S.legendChip, ...entry.style }}>{entry.label}</span>
+        ))}
+      </div>
+    );
+  }
+
+  function renderSuggestionTray(
+    kind: "principal" | "labels",
+    title: string,
+    chips: Array<{ key: string; label: string; active?: boolean; onClick: () => void }>,
+    helper: string
+  ) {
+    const visible = chips.slice(0, 3);
+    const hidden = chips.slice(3);
+    const expanded = classificationSuggestionExpanded[kind];
+    return (
+      <div style={S.editorBlock}>
+        <div style={S.editorBlockHeader}>
+          <div style={S.editorBlockTitle}>{title}</div>
+          {hidden.length ? (
+            <button
+              type="button"
+              style={S.chevronBtn}
+              onClick={() => setClassificationSuggestionExpanded((current) => ({ ...current, [kind]: !current[kind] }))}
+            >
+              {expanded ? "⌃" : "⌄"}
+            </button>
+          ) : null}
+        </div>
+        <div style={S.chipGridCompact}>
+          {visible.length ? visible.map((chip) => (
+            <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
+              {chip.label}
+            </button>
+          )) : <span style={S.mutedMini}>Sem sugestoes fortes nesta leitura.</span>}
+        </div>
+        {hidden.length ? (
+          <div style={expanded ? S.editorExpandableOpen : S.editorExpandableClosed}>
+            <div style={expanded ? S.editorExpandableScroll : S.editorExpandableHint}>
+              {expanded
+                ? hidden.map((chip) => (
+                  <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
+                    {chip.label}
+                  </button>
+                ))
+                : helper}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderClassificationEditorHeader() {
+    const focusTitle = classificationFocus === "principal"
+      ? "Grupo principal"
+      : classificationFocus === "labels"
+        ? "Etiquetas"
+        : classificationFocus === "ticket"
+          ? "Ticket"
+          : "Referencias";
+    return (
+      <div style={S.editorHeader}>
+        <div style={S.editorHeaderMeta}>
+          <div style={S.sectionTitle}>Classificacao</div>
+          <div style={S.editorHeaderTitle}>{focusTitle}</div>
+          <div style={S.editorModeText}>{classificationLayoutMode === "advanced" ? "Modo avancado" : "Modo normal"}</div>
+        </div>
+        <div style={S.editorHeaderActions}>
+          <button type="button" style={S.secondaryBtn} onClick={handleCloseClassificationEditor}>Voltar</button>
+          <button type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationFocus)} disabled={actionBusy || !canApplyClassification}>
+            <Icons.Save size={12} />
+            Aplicar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderPrincipalEditor() {
+    const suggestionChips = suggestedExistingGroups.map((group) => ({
+      key: group.id,
+      label: group.name || group.id,
+      active: group.id === principalGroupId,
+      onClick: () => {
+        if (group.id === principalGroupId) clearPrincipalSelection();
+        else selectPrincipalGroup(group);
+      },
+    }));
+    return (
+      <div style={S.editorPanelStack}>
+        <div style={S.editorModeKicker}>Grupo principal</div>
+        <div style={S.editorLead}>Escolhe ou ajusta o dossier principal do email.</div>
+        {renderSuggestionTray("principal", "Sugestoes", suggestionChips, "Ao expandir, aparecem as restantes sugestoes com barra de scroll vertical se forem muitas.")}
+        <div style={S.editorBlock}>
+          <div style={S.editorBlockTitle}>Pesquisar ou criar</div>
+          <div style={S.searchInlineRow}>
+            <input
+              style={S.input}
+              value={principalSearch}
+              onChange={(event) => setPrincipalSearchValue(event.target.value)}
+              placeholder="Escreve o nome do grupo..."
+            />
+            <button
+              type="button"
+              style={S.secondaryBtn}
+              onClick={() => {
+                if (exactPrincipalSearchGroup) {
+                  selectPrincipalGroup(exactPrincipalSearchGroup);
+                  return;
+                }
+                if (principalCanCreate) {
+                  setStatus("Este grupo sera criado quando aplicares a classificacao.");
+                }
+              }}
+            >
+              Pesquisar
+            </button>
+          </div>
+          {principalSearchResults.length ? (
+            <div style={S.searchResultListCompact}>
+              {principalSearchResults.map((group) => (
+                <button
+                  key={group.id}
+                  type="button"
+                  style={group.id === principalGroupId ? S.searchResultBtnOn : S.searchResultBtn}
+                  onClick={() => selectPrincipalGroup(group)}
+                >
+                  <span>{group.name}</span>
+                  {group.id === principalGroupId ? <span style={S.resultMiniMeta}>Selecionado</span> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div style={S.editorBlock}>
+          <div style={S.editorBlockTitle}>Selecionado</div>
+          <div style={S.editorValueStrong}>{principalGroup?.name || (principalCanCreate ? principalSearch || "--" : "--")}</div>
+        </div>
+        {classificationLayoutMode === "advanced" ? (
+          <div style={S.editorBlock}>
+            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
+            <div style={S.editorOptionGrid}>
+              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.principalCategorize} onChange={(event) => updateClassificationMeta({ principalCategorize: event.target.checked })} /> Grupo em categoria Outlook</label>
+              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.principalStatusCategorize} onChange={(event) => updateClassificationMeta({ principalStatusEnabled: event.target.checked, principalStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
+            </div>
+            {renderOutlookColorLegend()}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderLabelsEditor() {
+    const suggestionChips = suggestedLabelSeeds.map((label) => ({
+      key: label,
+      label,
+      active: selectedLabels.includes(label),
+      onClick: () => applySuggestedLabel(label),
+    }));
+    return (
+      <div style={S.editorPanelStack}>
+        <div style={S.editorModeKicker}>Etiquetas</div>
+        <div style={S.editorLead}>Liga ou desliga apenas as etiquetas relevantes.</div>
+        {renderSuggestionTray("labels", "Sugestoes da leitura", suggestionChips, "Ao expandir, aparecem as restantes sugestoes com barra de scroll vertical se forem muitas.")}
+        <div style={S.editorBlock}>
+          <div style={S.editorBlockTitle}>Selecionadas</div>
+          <div style={S.chipGridCompact}>
+            {selectedLabels.length ? selectedLabels.map((label) => (
+              <button key={label} type="button" style={S.groupChipBtnOn} onClick={() => removeLabel(label)}>{label}</button>
+            )) : <span style={S.mutedMini}>Sem etiquetas selecionadas.</span>}
+          </div>
+        </div>
+        {classificationLayoutMode === "advanced" ? (
+          <div style={S.editorBlock}>
+            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
+            <div style={S.editorAdvancedFieldGrid}>
+              <label style={S.field}>
+                <span style={S.cardMeta}>Estado da etiqueta</span>
+                <select
+                  style={S.select}
+                  value={selectedLabelSharedStatus}
+                  onChange={(event) => {
+                    const nextValue = String(event.target.value || "").trim() as EmailLabelStatus | "";
+                    selectedLabels.forEach((label) => updateLabelDraft(label, {
+                      hasStatus: Boolean(nextValue),
+                      status: nextValue || undefined,
+                    }));
+                  }}
+                >
+                  <option value="">Sem estado</option>
+                  {LABEL_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label style={S.compactCheckBoxField}><input type="checkbox" checked={selectedLabels.some((label) => labelDrafts[label]?.categorize === true)} onChange={(event) => selectedLabels.forEach((label) => updateLabelDraft(label, { categorize: event.target.checked }))} /> Etiqueta em categoria Outlook</label>
+            </div>
+            <label style={S.compactCheckBoxField}><input type="checkbox" checked={selectedLabels.some((label) => labelDrafts[label]?.hasStatus === true)} onChange={(event) => selectedLabels.forEach((label) => updateLabelDraft(label, { hasStatus: event.target.checked, status: event.target.checked ? (labelDrafts[label]?.status || "em_analise") : undefined }))} /> Refletir estado pela cor da categoria</label>
+            {renderOutlookColorLegend()}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderTicketEditor() {
+    const activeList = ticketSearchResults.length ? ticketSearchResults : availableTicketChoices.slice(0, 8);
+    return (
+      <div style={S.editorPanelStack}>
+        <div style={S.editorModeKicker}>Ticket</div>
+        <div style={S.editorLead}>Liga um ticket so se houver seguimento operacional.</div>
+        <div style={S.editorBlock}>
+          <div style={S.editorBlockTitle}>Estado atual</div>
+          <div style={S.editorValueStrong}>{selectedTicket?.code || (selectedSeriesId ? "Novo ticket preparado" : "Sem ticket ligado")}</div>
+        </div>
+        <div style={S.editorSplitRow}>
+          <button type="button" style={ticketEditorMode === "existing" ? S.editorModeBtnOn : S.editorModeBtn} onClick={() => setTicketEditorMode("existing")}>Ligar ticket existente</button>
+          <button type="button" style={ticketEditorMode === "new" ? S.editorModeBtnOn : S.editorModeBtn} onClick={() => setTicketEditorMode("new")}>Criar novo ticket</button>
+        </div>
+        {ticketEditorMode === "existing" ? (
+          <div style={S.editorBlock}>
+            <div style={S.searchInlineRow}>
+              <input style={S.input} value={ticketSearch} onChange={(event) => setTicketSearch(event.target.value)} placeholder="Pesquisar ticket por codigo..." />
+              <button type="button" style={S.secondaryBtn} onClick={() => void handleSearchTickets()}>Procurar</button>
+            </div>
+            <div style={S.searchResultListCompact}>
+              {activeList.length ? activeList.map((ticket) => (
+                <button key={ticket.id} type="button" style={ticket.id === selectedTicketId ? S.searchResultBtnOn : S.searchResultBtn} onClick={() => applySuggestedTicket(ticket.id)}>
+                  <span>{ticket.code || ticket.title || "Ticket"}</span>
+                  {ticket.id === selectedTicketId ? <span style={S.resultMiniMeta}>Ligado</span> : null}
+                </button>
+              )) : <span style={S.mutedMini}>Sem tickets disponiveis para ligar.</span>}
+            </div>
+          </div>
+        ) : (
+          <div style={S.editorBlock}>
+            <div style={S.editorAdvancedFieldGrid}>
+              <label style={S.field}>
+                <span style={S.cardMeta}>Serie</span>
+                <select style={S.select} value={selectedSeriesId} onChange={(event) => { setSelectedSeriesId(event.target.value); setSelectionTouched((current) => ({ ...current, ticket: true })); }}>
+                  <option value="">Escolher serie...</option>
+                  {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
+                </select>
+              </label>
+              <label style={S.field}>
+                <span style={S.cardMeta}>Titulo</span>
+                <input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do novo ticket" />
+              </label>
+            </div>
+          </div>
+        )}
+        {classificationLayoutMode === "advanced" ? (
+          <div style={S.editorBlock}>
+            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
+            <div style={S.editorAdvancedFieldGrid}>
+              <label style={S.field}>
+                <span style={S.cardMeta}>Estado do ticket</span>
+                <select style={S.select} value={ticketStatusDraft} onChange={(event) => setTicketStatusDraft(event.target.value)}>
+                  {TICKET_STATUS_OPTIONS.map((option) => <option key={option.value || "none"} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label style={S.compactCheckBoxField}><input type="checkbox" checked={Boolean(selectedTicketId || selectedSeriesId)} onChange={(event) => { if (!event.target.checked) clearTicketSelection(); }} /> Ticket em categoria Outlook</label>
+            </div>
+            <label style={S.compactCheckBoxField}><input type="checkbox" checked={classificationMetaDraft.ticketStatusCategorize} onChange={(event) => updateClassificationMeta({ ticketStatusEnabled: event.target.checked, ticketStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
+            {renderOutlookColorLegend()}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderReferencesEditor() {
+    if (classificationLayoutMode !== "advanced") {
+      return (
+        <div style={S.editorPanelStack}>
+          <div style={S.editorModeKicker}>Referencias</div>
+          <div style={S.editorLead}>As referencias so aparecem no modo avancado.</div>
+        </div>
+      );
+    }
+    return (
+      <div style={S.editorPanelStack}>
+        <div style={S.editorModeKicker}>Referencias</div>
+        <div style={S.editorLead}>Liga este caso a outros dossiers apenas quando houver ligacao estrutural real.</div>
+        <div style={S.editorBlock}>
+          <div style={S.editorBlockTitle}>Ligadas</div>
+          <div style={S.chipGridCompact}>
+            {referenceGroups.length ? referenceGroups.map((group) => (
+              <button key={group.id} type="button" style={S.groupChipBtnOn} onClick={() => toggleReferenceGroup(group.id)}>
+                {group.name || group.id}
+              </button>
+            )) : <span style={S.mutedMini}>Sem referencias ligadas.</span>}
+          </div>
+        </div>
+        <div style={S.editorBlock}>
+          <div style={S.editorBlockTitle}>Pesquisar outro dossier</div>
+          <div style={S.searchInlineRow}>
+            <input style={S.input} value={referenceSearch} onChange={(event) => setReferenceSearchValue(event.target.value)} placeholder="Escreve para pesquisar..." />
+            <button type="button" style={S.secondaryBtn} onClick={() => { if (exactReferenceSearchGroup) toggleReferenceGroup(exactReferenceSearchGroup.id); }}>Procurar</button>
+          </div>
+          {referenceSearchResults.length ? (
+            <div style={S.searchResultListCompact}>
+              {referenceSearchResults.map((group) => (
+                <button key={group.id} type="button" style={referenceGroupIds.includes(group.id) ? S.searchResultBtnOn : S.searchResultBtn} onClick={() => toggleReferenceGroup(group.id)}>
+                  <span>{group.name}</span>
+                  {referenceGroupIds.includes(group.id) ? <span style={S.resultMiniMeta}>Ligada</span> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div style={S.editorBlock}>
+          <div style={S.editorBlockTitle}>Opcoes avancadas</div>
+          <div style={S.editorOptionGrid}>
+            <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceCategorize} onChange={(event) => updateClassificationMeta({ referenceCategorize: event.target.checked })} /> Referencia em categoria Outlook</label>
+            <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceStatusCategorize} onChange={(event) => updateClassificationMeta({ referenceStatusEnabled: event.target.checked, referenceStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
+          </div>
+          {renderOutlookColorLegend()}
+        </div>
+      </div>
+    );
+  }
+
+  function renderClassificationEditorContent() {
+    if (classificationFocus === "principal") return renderPrincipalEditor();
+    if (classificationFocus === "labels") return renderLabelsEditor();
+    if (classificationFocus === "ticket") return renderTicketEditor();
+    return renderReferencesEditor();
+  }
+
+  function renderApplyDialog() {
+    if (!applyDialogOpen) return null;
+    const sectionLabel = applyDialogSection === "principal"
+      ? "Grupo principal"
+      : applyDialogSection === "labels"
+        ? "Etiquetas"
+        : applyDialogSection === "ticket"
+          ? "Ticket"
+          : applyDialogSection === "references"
+            ? "Referencias"
+            : "Classificacao";
+    return (
+      <div style={S.modalBackdrop}>
+        <div style={S.modalSheet}>
+          <div style={S.modalHeader}>
+            <div>
+              <div style={S.kicker}>Aplicar alteracoes</div>
+              <div style={S.modalTitle}>{sectionLabel}</div>
+            </div>
+            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
+          </div>
+          <div style={S.modalScopeRow}>
+            <button type="button" style={applyDialogScopeMode === "current" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("current")}>So este email</button>
+            <button type="button" style={applyDialogScopeMode === "selected" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("selected")}>Emails selecionados</button>
+            <button type="button" style={applyDialogScopeMode === "case_all" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("case_all")}>Todos os emails do caso</button>
+          </div>
+          <div style={S.modalBlock}>
+            <div style={S.modalBlockHeader}>
+              <div style={S.editorBlockTitle}>Escolher emails</div>
+              <button type="button" style={S.linkBtn} onClick={() => setApplyDialogEmailKeys(caseScopeEmails.map((email) => makeEmailKey(email)).filter(Boolean))}>Selecionar todos</button>
+            </div>
+            <div style={S.applyEmailList}>
+              {caseScopeEmails.map((email) => {
+                const emailKey = makeEmailKey(email);
+                const expanded = applyDialogExpandedEmailKeys.includes(emailKey);
+                const checked = applyDialogEmailKeys.includes(emailKey);
+                const previewText = String(email.bodyText || htmlToPlainText(email.bodyHtml || "") || buildSnippet(email) || "").trim();
+                return (
+                  <div key={emailKey} style={checked ? S.applyEmailRowOn : S.applyEmailRow}>
+                    <div style={S.applyEmailRowTop}>
+                      <label style={S.applyEmailMain}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleApplyDialogEmailKey(emailKey)} />
+                        <span style={S.applyEmailSubject}>{email.subject || "(sem assunto)"}</span>
+                        <span style={S.applyEmailMeta}>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</span>
+                      </label>
+                      <button type="button" style={S.chevronBtn} onClick={() => toggleApplyDialogExpandedEmailKey(emailKey)}>{expanded ? "⌃" : "⌄"}</button>
+                    </div>
+                    {expanded ? (
+                      <div style={S.applyEmailPreview}>{previewText || "Sem preview resumido para este email."}</div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={S.modalFooter}>
+            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
+            <button type="button" style={S.primaryBtn} onClick={() => void handleConfirmApplyDialog()} disabled={actionBusy || !applyDialogSelectedEmails.length}>
+              Confirmar aplicacao
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   function renderWorkspace() {
@@ -4955,7 +5506,7 @@ function StudioInner() {
         <div style={S.headerActions}>
           <button type="button" style={S.secondaryBtn} onClick={() => setSection("groups")} disabled={!manageableGroups.length}>Renomear</button>
           <button type="button" style={S.secondaryBtn} onClick={() => setStatus("Fluxo de fundir preparado para a fase seguinte.")} disabled={!manageableGroups.length}>Fundir</button>
-          <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || !canApplyClassification}>
+          <button type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationEditorActive ? classificationFocus : "summary")} disabled={actionBusy || !canApplyClassification}>
             <Icons.Save size={12} />
             Guardar
           </button>
@@ -5085,48 +5636,14 @@ function StudioInner() {
             <div style={S.sectionHeaderCompact}>
               <div>
                 <div style={S.sectionTitle}>Classificacao</div>
-                <div style={S.sectionSubtitle}>Compacta e contextual</div>
+                <div style={S.sectionSubtitle}>{classificationEditorActive ? "Editor aberto" : "Resumo do que esta atribuido"}</div>
               </div>
               <div style={S.segmentedControl}>
                 <button type="button" style={classificationLayoutMode === "normal" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("normal")}>Normal</button>
                 <button type="button" style={classificationLayoutMode === "advanced" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("advanced")}>Avancado</button>
               </div>
             </div>
-            {!classificationEditorActive ? (
-              <div style={S.classificationSummary}>
-                {classificationSummaryTiles
-                  .filter((item) => classificationLayoutMode === "advanced" || item.key !== "references")
-                  .map((item) => (
-                    <button key={item.key} type="button" style={S.classificationTile} onClick={item.onClick}>
-                      <span style={S.classificationTileLabel}>{item.title}</span>
-                      <span style={S.classificationTileValue}>{item.value}</span>
-                      <span style={S.classificationTileMeta}>{item.description}</span>
-                    </button>
-                  ))}
-                {classificationLayoutMode === "normal" ? (
-                  <div style={S.advancedHintBox}>
-                    <span style={S.advancedHintChip}>Referencias e opcoes adicionais aparecem no modo avancado.</span>
-                  </div>
-                ) : null}
-                {classificationLayoutMode === "advanced" ? (
-                  <div style={S.classificationExtraGrid}>
-                    {classificationAdvancedTiles.map((item) => (
-                      <button key={item.id} type="button" style={S.classificationTileMuted} onClick={() => setSection(item.id)}>
-                        <span style={S.classificationTileLabel}>{item.label}</span>
-                        <span style={S.classificationTileValue}>{item.help}</span>
-                        <span style={S.classificationTileMeta}>Abrir editor contextual</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                <div style={S.classificationFooter}>
-                  <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || !canApplyClassification}>
-                    <Icons.Save size={12} />
-                    Gravar / atualizar
-                  </button>
-                </div>
-              </div>
-            ) : (
+            {auxiliaryEditorActive ? (
               <div style={S.classificationEditorShell}>
                 <div style={S.classificationEditorHeader}>
                   <button
@@ -5145,6 +5662,28 @@ function StudioInner() {
                   </div>
                 </div>
                 <div style={S.classificationEditorBody}>{renderWorkspace()}</div>
+              </div>
+            ) : !classificationEditorActive ? (
+              <div style={S.classificationSummary}>
+                {classificationSummaryTiles
+                  .filter((item) => classificationLayoutMode === "advanced" || item.key !== "references")
+                  .map((item) => (
+                    <button key={item.key} type="button" style={S.classificationTile} onClick={item.onClick}>
+                      <span style={S.classificationTileLabel}>{item.title}</span>
+                      <span style={S.classificationTileValue}>{item.value}</span>
+                      <span style={S.classificationTileMeta}>{item.description}</span>
+                    </button>
+                  ))}
+                <div style={S.classificationModeHint}>
+                  {classificationLayoutMode === "normal"
+                    ? "Modo normal: grupo principal, etiquetas e ticket."
+                    : "Modo avancado: inclui referencias e opcoes finas."}
+                </div>
+              </div>
+            ) : (
+              <div style={S.classificationEditorShell}>
+                {renderClassificationEditorHeader()}
+                <div style={S.classificationEditorBody}>{renderClassificationEditorContent()}</div>
               </div>
             )}
           </section>
@@ -5228,6 +5767,7 @@ function StudioInner() {
             </div>
         </section>
       </div>
+      {renderApplyDialog()}
     </div>
   );
 }
@@ -5314,6 +5854,7 @@ const S: Record<string, React.CSSProperties> = {
   classificationTileLabel: { fontSize: 8.5, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--iccc-muted)" },
   classificationTileValue: { fontSize: 11.25, fontWeight: 550, color: "var(--iccc-text)", lineHeight: 1.2 },
   classificationTileMeta: { fontSize: 9.5, lineHeight: 1.25, color: "var(--iccc-muted)" },
+  classificationModeHint: { padding: "7px 9px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.82)", color: "var(--iccc-muted)", fontSize: 9.75, lineHeight: 1.35 },
   advancedHintBox: { display: "flex", flexWrap: "wrap", gap: 8 },
   advancedHintChip: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(239,246,255,0.72)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 700 },
   classificationExtraGrid: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
@@ -5321,6 +5862,35 @@ const S: Record<string, React.CSSProperties> = {
   classificationEditorShell: { minHeight: 0, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 8, overflow: "hidden" },
   classificationEditorHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" },
   classificationEditorBody: { minHeight: 0, overflow: "auto", paddingRight: 2 },
+  editorHeader: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" },
+  editorHeaderMeta: { display: "grid", gap: 3 },
+  editorHeaderTitle: { fontSize: 13.5, fontWeight: 650, color: "var(--iccc-text)" },
+  editorHeaderActions: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  editorModeText: { fontSize: 10, color: "var(--iccc-muted)" },
+  editorPanelStack: { display: "grid", gap: 10, alignContent: "start" },
+  editorModeKicker: { fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#1d4ed8" },
+  editorLead: { fontSize: 11, lineHeight: 1.4, color: "var(--iccc-text-soft, #334155)" },
+  editorBlock: { display: "grid", gap: 8, padding: 10, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.84)" },
+  editorBlockHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  editorBlockTitle: { fontSize: 10.5, fontWeight: 700, color: "var(--iccc-text)" },
+  editorValueStrong: { fontSize: 12.5, fontWeight: 600, color: "var(--iccc-text)" },
+  editorExpandableClosed: { borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.82)", padding: "7px 9px" },
+  editorExpandableOpen: { borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.82)", padding: "7px 9px" },
+  editorExpandableScroll: { display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 96, overflowY: "auto", alignContent: "flex-start" },
+  editorExpandableHint: { fontSize: 9.5, lineHeight: 1.35, color: "var(--iccc-muted)" },
+  chipGridCompact: { display: "flex", flexWrap: "wrap", gap: 6 },
+  editorOptionGrid: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
+  editorAdvancedFieldGrid: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
+  compactCheck: { display: "flex", alignItems: "center", gap: 8, fontSize: 10.5, color: "var(--iccc-text)" },
+  compactCheckBoxField: { minHeight: 34, display: "flex", alignItems: "center", gap: 8, padding: "0 10px", borderRadius: 10, border: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.88)", fontSize: 10.5, color: "var(--iccc-text)" },
+  searchInlineRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center" },
+  searchResultListCompact: { display: "grid", gap: 6, maxHeight: 172, overflowY: "auto", paddingRight: 1 },
+  chevronBtn: { width: 24, height: 24, borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.88)", color: "#475569", fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  legendRow: { display: "flex", flexWrap: "wrap", gap: 6 },
+  legendChip: { display: "inline-flex", alignItems: "center", padding: "3px 8px", borderRadius: 999, border: "1px solid transparent", fontSize: 9.5, fontWeight: 700 },
+  editorSplitRow: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
+  editorModeBtn: { minHeight: 42, padding: "0 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.86)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 600, textAlign: "left", cursor: "pointer" },
+  editorModeBtnOn: { minHeight: 42, padding: "0 12px", borderRadius: 12, border: "1px solid rgba(37,99,235,0.22)", background: "rgba(219,234,254,0.9)", color: "#1d4ed8", fontSize: 11, fontWeight: 700, textAlign: "left", cursor: "pointer" },
   previewShellLarge: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", transition: "width 180ms ease, max-width 180ms ease, transform 180ms ease, grid-column 180ms ease" },
   focusPreviewShell: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", gridColumn: "1 / span 2", gridRow: "2", width: "100%", maxWidth: "100%", minWidth: 0, justifySelf: "stretch" },
   previewToolbar: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", paddingBottom: 1, borderBottom: "1px solid rgba(148,163,184,0.1)" },
@@ -5411,5 +5981,23 @@ const S: Record<string, React.CSSProperties> = {
   summaryGrid: { display: "grid", gap: 8 },
   summaryActionBar: { position: "sticky", bottom: -12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", paddingTop: 12, paddingBottom: 4, background: "linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.96) 16%, rgba(255,255,255,0.98) 100%)" },
   note: { padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(191,219,254,0.8)", background: "#eff6ff", color: "#1d4ed8", fontSize: 13, lineHeight: 1.5 },
+  modalBackdrop: { position: "fixed", inset: 0, background: "rgba(15,23,42,0.18)", display: "grid", placeItems: "center", padding: 20, zIndex: 60 },
+  modalSheet: { width: "min(860px, 100%)", maxHeight: "min(84vh, 920px)", overflow: "hidden", borderRadius: 18, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.98)", boxShadow: "0 24px 60px rgba(15,23,42,0.18)", display: "grid", gridTemplateRows: "auto auto minmax(0,1fr) auto", gap: 12, padding: 16 },
+  modalHeader: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  modalTitle: { fontSize: 14, fontWeight: 650, color: "var(--iccc-text)" },
+  modalScopeRow: { display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8 },
+  scopeChip: { minHeight: 38, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)", fontSize: 10.75, fontWeight: 600, cursor: "pointer" },
+  scopeChipOn: { minHeight: 38, borderRadius: 12, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 10.75, fontWeight: 700, cursor: "pointer" },
+  modalBlock: { minHeight: 0, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 8 },
+  modalBlockHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  applyEmailList: { minHeight: 0, overflowY: "auto", display: "grid", gap: 8, paddingRight: 2 },
+  applyEmailRow: { borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(248,250,252,0.84)", padding: "9px 10px", display: "grid", gap: 8 },
+  applyEmailRowOn: { borderRadius: 12, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.9)", padding: "9px 10px", display: "grid", gap: 8 },
+  applyEmailRowTop: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "start" },
+  applyEmailMain: { display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", alignItems: "start", gap: 8, minWidth: 0 },
+  applyEmailSubject: { fontSize: 10.75, fontWeight: 600, color: "var(--iccc-text)", lineHeight: 1.25, display: "block", minWidth: 0 },
+  applyEmailMeta: { fontSize: 9.5, color: "var(--iccc-muted)", lineHeight: 1.2, display: "block", marginTop: 2 },
+  applyEmailPreview: { maxHeight: 92, overflowY: "auto", padding: "7px 9px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(255,255,255,0.9)", color: "var(--iccc-text-soft, #334155)", fontSize: 10, lineHeight: 1.4, whiteSpace: "pre-wrap" },
+  modalFooter: { display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" },
 };
 
