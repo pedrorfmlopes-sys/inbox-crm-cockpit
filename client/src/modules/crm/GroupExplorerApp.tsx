@@ -1,19 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import {
-  deleteGroupDocument,
-  getGroupDocumentContentBase64,
+  getEmailAttachmentContentBase64,
+  getEmailAttachmentTextContent,
   getGroupDocumentTextContent,
   getGroupDocumentContentUrl,
   getGroupDocuments,
   getGroupEmails,
+  getRelatedEmailContext,
   listLinkGroups,
   removeEmailFromLinkGroup,
   type GroupDocumentEntry,
+  type GroupTicketEntry,
   type LinkGroupEntry,
   type RelatedEmailEntry,
 } from "@/api";
-import { addBase64AttachmentToCompose, getAttachments, getSelectedMessageContext, openLinkedOutlookEmail, requestCockpitHostAction, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { getAttachments, getSelectedMessageContext, openGroupClassificationStudio, openGroupSettings, openLinkedOutlookEmail, requestCockpitHostAction, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getSettings } from "@/settings";
 import { applySkin } from "@/ui/skins";
 import { PanelState } from "@/ui/PanelState";
@@ -25,7 +27,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 type EmailSortMode = "date_desc" | "date_asc" | "subject_asc" | "subject_desc";
 type EmailAttachmentFilter = "all" | "with" | "without";
 type DocumentFilterMode = "all" | "selected_email";
-type PreviewMode = "email" | "document";
+type PreviewMode = "email" | "document" | "reply" | "forward";
+type ClassificationMode = "normal" | "advanced";
+type ClassificationEditor = "summary" | "principal" | "labels" | "ticket" | "references";
 type PreviewState =
   | { kind: "image"; src: string }
   | { kind: "pdf"; src: string }
@@ -33,6 +37,21 @@ type PreviewState =
   | { kind: "text"; text: string }
   | { kind: "unsupported" };
 type EmailAttachmentEntry = NonNullable<RelatedEmailEntry["attachments"]>[number];
+type QuickDocumentEntry = {
+  key: string;
+  title: string;
+  meta: string;
+  attachmentCount?: number;
+  kind: "attachment" | "document";
+  attachment?: EmailAttachmentEntry;
+  document?: GroupDocumentEntry;
+};
+type ClassificationContextState = {
+  email: RelatedEmailEntry | null;
+  emails: RelatedEmailEntry[];
+  groups: LinkGroupEntry[];
+  tickets: GroupTicketEntry[];
+};
 
 function dataUrlToUint8Array(dataUrl: string): Uint8Array {
   const base64 = stripDataUrlPrefix(dataUrl);
@@ -283,6 +302,24 @@ function makeDocumentKey(document: Partial<GroupDocumentEntry>): string {
   return String(document?.id || document?.storagePathHint || document?.name || "");
 }
 
+function makeAttachmentKey(attachment: Partial<EmailAttachmentEntry>): string {
+  return String(attachment?.key || attachment?.id || attachment?.contentId || attachment?.name || "");
+}
+
+function formatStatusLabel(value: string | undefined): string {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "Sem estado";
+  return normalized
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function formatChipValue(value: string | undefined, fallback = "Sem dados"): string {
+  return String(value || "").trim() || fallback;
+}
+
 function emailHasAttachments(email: RelatedEmailEntry): boolean {
   return Array.isArray(email.attachments) && email.attachments.length > 0;
 }
@@ -359,6 +396,96 @@ function buildDocumentPreview(groupId: string, document: GroupDocumentEntry | nu
   if (kind === "image") return { kind, src };
   if (kind === "pdf") return { kind, src };
   return { kind: "unsupported" };
+}
+
+function inferAttachmentKind(attachment: EmailAttachmentEntry): "image" | "pdf" | "office" | "text" | "unsupported" {
+  return inferDocumentKind({
+    id: makeAttachmentKey(attachment),
+    name: attachment.name,
+    contentType: attachment.contentType,
+    contentBase64: attachment.content,
+  } as GroupDocumentEntry);
+}
+
+function buildAttachmentPreview(
+  attachment: EmailAttachmentEntry | null,
+  hydratedContent?: { base64: string; contentType: string; fileName: string } | null,
+  textPreview?: string
+): PreviewState | null {
+  if (!attachment) return null;
+  const kind = inferAttachmentKind(attachment);
+  if (kind === "text") {
+    if (typeof textPreview === "string" && textPreview.trim()) return { kind, text: textPreview };
+    const content = stripDataUrlPrefix(attachment.content);
+    if (!content) return null;
+    try {
+      return { kind, text: globalThis.atob(content) };
+    } catch {
+      return { kind: "unsupported" };
+    }
+  }
+
+  const base64 = stripDataUrlPrefix(hydratedContent?.base64 || attachment.content);
+  if (!base64) return null;
+  const src = `data:${normalizeAttachmentMimeType(hydratedContent?.contentType || attachment.contentType, hydratedContent?.fileName || attachment.name)};base64,${base64}`;
+  if (kind === "image") return { kind, src };
+  if (kind === "pdf") return { kind, src };
+  if (kind === "office") return { kind: "unsupported" };
+  return { kind: "unsupported" };
+}
+
+function buildClassificationStudioParams(email: RelatedEmailEntry | null): Record<string, string> {
+  if (!email) return {};
+  const params: Record<string, string> = {};
+  if (email.itemId) params.itemId = String(email.itemId);
+  if (email.internetMessageId) params.internetMessageId = String(email.internetMessageId);
+  if (email.conversationId) params.conversationId = String(email.conversationId);
+  if (email.subject) params.subject = String(email.subject);
+  if (email.fromEmail) params.fromEmail = String(email.fromEmail);
+  if (email.fromName) params.fromName = String(email.fromName);
+  if (email.receivedAtIso || email.messageDateIso) params.receivedAtIso = String(email.receivedAtIso || email.messageDateIso);
+  return params;
+}
+
+function resolvePrimaryGroup(
+  email: RelatedEmailEntry | null,
+  groups: LinkGroupEntry[],
+  selectedGroup: LinkGroupEntry | null
+): LinkGroupEntry | null {
+  if (!email) return selectedGroup;
+  const principalRelated = (email.relatedGroups || []).find((group) => String(group.relationKind || "").toLowerCase() === "principal");
+  const principalId = String(principalRelated?.id || email.groupId || "").trim();
+  if (principalId) {
+    const match = groups.find((group) => group.id === principalId);
+    if (match) return match;
+  }
+  if (selectedGroup && (!principalId || selectedGroup.id === principalId)) return selectedGroup;
+  return null;
+}
+
+function resolveReferenceGroups(
+  email: RelatedEmailEntry | null,
+  groups: LinkGroupEntry[],
+  principalGroupId: string | undefined
+): LinkGroupEntry[] {
+  if (!email) return [];
+  const refs = (email.relatedGroups || []).filter((group) => String(group.relationKind || "").toLowerCase() !== "principal");
+  const resolved = refs
+    .map((entry) => groups.find((group) => group.id === entry.id) || ({ id: entry.id || "", name: entry.name || entry.id || "Referencia" } as LinkGroupEntry))
+    .filter((entry) => entry?.id && entry.id !== principalGroupId);
+  return resolved.filter((entry, index, all) => all.findIndex((candidate) => candidate.id === entry.id) === index);
+}
+
+function resolveTicketForEmail(email: RelatedEmailEntry | null, tickets: GroupTicketEntry[], principalGroupId: string | undefined): GroupTicketEntry | null {
+  if (!email || !tickets.length) return null;
+  const emailKey = String(email.emailKey || email.id || "").trim();
+  return (
+    tickets.find((ticket) => emailKey && String(ticket.createdFromEmailKey || "").trim() === emailKey)
+    || tickets.find((ticket) => Boolean(ticket.emailLinked))
+    || tickets.find((ticket) => principalGroupId && Array.isArray(ticket.groupIds) && ticket.groupIds.includes(principalGroupId))
+    || tickets[0]
+    || null
+  );
 }
 
 function sanitizeEmailHtml(html: string | undefined): string {
@@ -441,22 +568,13 @@ function buildEmailHoverText(email: RelatedEmailEntry): string {
   ].filter(Boolean).join("\n");
 }
 
-function buildDocumentHoverText(document: GroupDocumentEntry): string {
-  return [
-    document.name ? `Documento: ${document.name}` : "",
-    normalizeDocumentMimeType(document.contentType, document.name) ? `Tipo: ${normalizeDocumentMimeType(document.contentType, document.name)}` : "",
-    formatBytes(document.size) ? `Tamanho: ${formatBytes(document.size)}` : "",
-    document.sourceEmailSubject ? `Email: ${document.sourceEmailSubject}` : "",
-  ].filter(Boolean).join("\n");
-}
-
 export default function GroupExplorerApp(): JSX.Element {
   const initial = useMemo(() => readExplorerParams(), []);
-  const downloadAnchorRef = useRef<HTMLAnchorElement | null>(null);
   const [groups, setGroups] = useState<LinkGroupEntry[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState(initial.groupId);
   const [selectedEmailKey, setSelectedEmailKey] = useState(initial.emailKey);
   const [selectedDocumentId, setSelectedDocumentId] = useState(initial.documentId);
+  const [selectedQuickDocumentKey, setSelectedQuickDocumentKey] = useState("");
   const [groupEmails, setGroupEmails] = useState<RelatedEmailEntry[]>([]);
   const [groupDocuments, setGroupDocuments] = useState<GroupDocumentEntry[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(true);
@@ -472,10 +590,16 @@ export default function GroupExplorerApp(): JSX.Element {
   const [dateTo, setDateTo] = useState("");
   const [documentFilterMode, setDocumentFilterMode] = useState<DocumentFilterMode>("all");
   const [documentSearch, setDocumentSearch] = useState("");
-  const [previewMode, setPreviewMode] = useState<PreviewMode>("document");
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("email");
+  const [classificationMode, setClassificationMode] = useState<ClassificationMode>("normal");
+  const [classificationEditor, setClassificationEditor] = useState<ClassificationEditor>("summary");
+  const [classificationContext, setClassificationContext] = useState<ClassificationContextState | null>(null);
+  const [classificationLoading, setClassificationLoading] = useState(false);
   const [liveCurrentContext, setLiveCurrentContext] = useState<OutlookMessageContext | null>(null);
   const [liveCurrentAttachments, setLiveCurrentAttachments] = useState<OutlookAttachment[]>([]);
   const [documentTextPreviewById, setDocumentTextPreviewById] = useState<Record<string, string>>({});
+  const [attachmentTextPreviewByKey, setAttachmentTextPreviewByKey] = useState<Record<string, string>>({});
+  const [attachmentPreviewDataByKey, setAttachmentPreviewDataByKey] = useState<Record<string, { base64: string; contentType: string; fileName: string }>>({});
 
   useEffect(() => {
     (async () => {
@@ -590,20 +714,16 @@ export default function GroupExplorerApp(): JSX.Element {
     [filteredEmails, groupEmails, selectedEmailKey]
   );
 
-  const filteredDocuments = useMemo(() => {
+  const selectedEmailDocuments = useMemo(() => {
     const query = String(documentSearch || "").trim().toLowerCase();
     return groupDocuments.filter((document) => {
+      if (!matchesSelectedEmail(document, selectedEmail)) return false;
       if (documentFilterMode === "selected_email" && !matchesSelectedEmail(document, selectedEmail)) return false;
       if (!query) return true;
       const haystack = [document.name, document.sourceEmailSubject, document.contentType].map((value) => String(value || "").toLowerCase()).join(" ");
       return haystack.includes(query);
     });
   }, [documentFilterMode, documentSearch, groupDocuments, selectedEmail]);
-
-  const selectedDocument = useMemo(
-    () => filteredDocuments.find((document) => makeDocumentKey(document) === selectedDocumentId) || groupDocuments.find((document) => makeDocumentKey(document) === selectedDocumentId) || null,
-    [filteredDocuments, groupDocuments, selectedDocumentId]
-  );
 
   const selectedEmailAttachments = useMemo(() => {
     const persisted = Array.isArray(selectedEmail?.attachments) ? selectedEmail.attachments : [];
@@ -613,6 +733,39 @@ export default function GroupExplorerApp(): JSX.Element {
     return mergeEmailAttachments(persisted, liveCurrentAttachments);
   }, [liveCurrentAttachments, liveCurrentContext, selectedEmail]);
 
+  const quickDocuments = useMemo<QuickDocumentEntry[]>(() => {
+    const attachmentEntries = selectedEmailAttachments.map((attachment) => ({
+      key: `attachment:${makeAttachmentKey(attachment)}`,
+      title: attachment.name,
+      meta: [normalizeAttachmentMimeType(attachment.contentType, attachment.name) || "Anexo", formatBytes(attachment.size)].filter(Boolean).join(" - "),
+      kind: "attachment" as const,
+      attachment,
+    }));
+    const documentEntries = selectedEmailDocuments.map((document) => ({
+      key: `document:${makeDocumentKey(document)}`,
+      title: document.name,
+      meta: [normalizeDocumentMimeType(document.contentType, document.name) || "Documento", formatBytes(document.size)].filter(Boolean).join(" - "),
+      kind: "document" as const,
+      document,
+    }));
+    return [...attachmentEntries, ...documentEntries];
+  }, [selectedEmailAttachments, selectedEmailDocuments]);
+
+  const selectedQuickDocument = useMemo(
+    () => quickDocuments.find((entry) => entry.key === selectedQuickDocumentKey) || quickDocuments[0] || null,
+    [quickDocuments, selectedQuickDocumentKey]
+  );
+
+  const selectedAttachment = useMemo(
+    () => (selectedQuickDocument?.kind === "attachment" ? selectedQuickDocument.attachment || null : null),
+    [selectedQuickDocument]
+  );
+
+  const selectedDocument = useMemo(() => {
+    if (selectedQuickDocument?.kind === "document") return selectedQuickDocument.document || null;
+    return selectedEmailDocuments.find((document) => makeDocumentKey(document) === selectedDocumentId) || null;
+  }, [selectedDocumentId, selectedEmailDocuments, selectedQuickDocument]);
+
   const selectedDocumentTextPreview = useMemo(
     () => (selectedDocument?.id ? documentTextPreviewById[selectedDocument.id] : ""),
     [documentTextPreviewById, selectedDocument?.id]
@@ -621,12 +774,32 @@ export default function GroupExplorerApp(): JSX.Element {
     () => buildDocumentPreview(selectedGroupId, selectedDocument, selectedDocumentTextPreview),
     [selectedDocument, selectedDocumentTextPreview, selectedGroupId]
   );
+  const selectedAttachmentKey = useMemo(() => (selectedAttachment ? makeAttachmentKey(selectedAttachment) : ""), [selectedAttachment]);
+  const selectedAttachmentTextPreview = useMemo(
+    () => (selectedAttachmentKey ? attachmentTextPreviewByKey[selectedAttachmentKey] : ""),
+    [attachmentTextPreviewByKey, selectedAttachmentKey]
+  );
+  const selectedAttachmentPreview = useMemo(
+    () => buildAttachmentPreview(selectedAttachment, selectedAttachmentKey ? attachmentPreviewDataByKey[selectedAttachmentKey] : null, selectedAttachmentTextPreview),
+    [attachmentPreviewDataByKey, selectedAttachment, selectedAttachmentKey, selectedAttachmentTextPreview]
+  );
   const selectedEmailPreviewHtml = useMemo(
     () => buildEmailPreviewHtml(selectedEmail, selectedEmailAttachments),
     [selectedEmail, selectedEmailAttachments]
   );
   const selectedEmailHasPreview = Boolean(String(selectedEmail?.bodyHtml || "").trim() || String(selectedEmail?.bodyText || "").trim());
   const selectedProvider = useMemo(() => providerLabel(selectedDocument?.storageProvider || groupDocuments[0]?.storageProvider), [groupDocuments, selectedDocument]);
+  const selectedEmailContextPayload = useMemo(
+    () => ({
+      itemId: String(selectedEmail?.itemId || "").trim(),
+      internetMessageId: String(selectedEmail?.internetMessageId || "").trim(),
+      conversationId: String(selectedEmail?.conversationId || "").trim(),
+      subject: String(selectedEmail?.subject || "").trim(),
+      fromEmail: String(selectedEmail?.fromEmail || "").trim(),
+      receivedAtIso: String(selectedEmail?.receivedAtIso || selectedEmail?.messageDateIso || "").trim(),
+    }),
+    [selectedEmail]
+  );
 
   useEffect(() => {
     if (!filteredEmails.some((email) => makeEmailKey(email) === selectedEmailKey)) {
@@ -635,20 +808,15 @@ export default function GroupExplorerApp(): JSX.Element {
   }, [filteredEmails, selectedEmailKey]);
 
   useEffect(() => {
-    if (!filteredDocuments.some((document) => makeDocumentKey(document) === selectedDocumentId)) {
-      setSelectedDocumentId("");
+    if (!quickDocuments.some((entry) => entry.key === selectedQuickDocumentKey)) {
+      setSelectedQuickDocumentKey(quickDocuments[0]?.key || "");
     }
-  }, [filteredDocuments, selectedDocumentId]);
+  }, [quickDocuments, selectedQuickDocumentKey]);
 
   useEffect(() => {
-    if (selectedDocument) {
-      setPreviewMode("document");
-      return;
-    }
-    if (selectedEmailHasPreview) {
-      setPreviewMode("email");
-    }
-  }, [selectedDocument, selectedEmailHasPreview, selectedEmailKey]);
+    setClassificationEditor("summary");
+    setPreviewMode("email");
+  }, [selectedEmailKey]);
 
   useEffect(() => {
     const documentId = String(selectedDocument?.id || "").trim();
@@ -679,6 +847,111 @@ export default function GroupExplorerApp(): JSX.Element {
     };
   }, [documentTextPreviewById, selectedDocument, selectedGroupId]);
 
+  useEffect(() => {
+    const attachment = selectedAttachment;
+    const emailId = String(selectedEmail?.id || "").trim();
+    const attachmentKey = selectedAttachmentKey;
+    if (!attachment || !emailId || !attachmentKey) return;
+    if (attachment.content) return;
+    if ((attachment as any).hasContent === false) return;
+
+    const kind = inferAttachmentKind(attachment);
+    if (kind === "text") {
+      if (Object.prototype.hasOwnProperty.call(attachmentTextPreviewByKey, attachmentKey)) return;
+      let cancelled = false;
+      void getEmailAttachmentTextContent(emailId, attachmentKey)
+        .then((text) => {
+          if (cancelled) return;
+          setAttachmentTextPreviewByKey((current) => current[attachmentKey] === text ? current : { ...current, [attachmentKey]: text });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setAttachmentTextPreviewByKey((current) => Object.prototype.hasOwnProperty.call(current, attachmentKey) ? current : { ...current, [attachmentKey]: "" });
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (attachmentPreviewDataByKey[attachmentKey]) return;
+    let cancelled = false;
+    void getEmailAttachmentContentBase64(emailId, attachmentKey)
+      .then((payload) => {
+        if (cancelled) return;
+        setAttachmentPreviewDataByKey((current) => current[attachmentKey]?.base64 === payload.base64 ? current : { ...current, [attachmentKey]: payload });
+      })
+      .catch(() => {
+        if (cancelled) return;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachmentPreviewDataByKey, attachmentTextPreviewByKey, selectedAttachment, selectedAttachmentKey, selectedEmail?.id]);
+
+  useEffect(() => {
+    const hasIdentity = Object.values(selectedEmailContextPayload).some(Boolean);
+    if (!hasIdentity) {
+      setClassificationContext(null);
+      return;
+    }
+    let cancelled = false;
+    setClassificationLoading(true);
+    void getRelatedEmailContext(selectedEmailContextPayload)
+      .then((nextContext) => {
+        if (cancelled) return;
+        setClassificationContext(nextContext);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setClassificationContext(null);
+      })
+      .finally(() => {
+        if (!cancelled) setClassificationLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEmailContextPayload]);
+
+  const classificationEmail = useMemo(
+    () => classificationContext?.email || selectedEmail,
+    [classificationContext?.email, selectedEmail]
+  );
+  const classificationGroups = useMemo(() => {
+    const merged = new Map<string, LinkGroupEntry>();
+    [selectedGroup, ...groups, ...(classificationContext?.groups || [])].filter(Boolean).forEach((group) => {
+      if (group?.id) merged.set(group.id, group);
+    });
+    return Array.from(merged.values());
+  }, [classificationContext?.groups, groups, selectedGroup]);
+  const classificationPrincipalGroup = useMemo(
+    () => resolvePrimaryGroup(classificationEmail, classificationGroups, selectedGroup),
+    [classificationEmail, classificationGroups, selectedGroup]
+  );
+  const classificationReferenceGroups = useMemo(
+    () => resolveReferenceGroups(classificationEmail, classificationGroups, classificationPrincipalGroup?.id),
+    [classificationEmail, classificationGroups, classificationPrincipalGroup?.id]
+  );
+  const classificationTicket = useMemo(
+    () => resolveTicketForEmail(classificationEmail, classificationContext?.tickets || [], classificationPrincipalGroup?.id),
+    [classificationContext?.tickets, classificationEmail, classificationPrincipalGroup?.id]
+  );
+  const classificationLabels = useMemo(
+    () => Array.from(new Set((classificationEmail?.labels || []).map((label) => String(label || "").trim()).filter(Boolean))).sort((left, right) => left.localeCompare(right, "pt")),
+    [classificationEmail?.labels]
+  );
+  const classificationAdvancedSummary = useMemo(() => {
+    const meta = classificationEmail?.classificationMeta;
+    const values: string[] = [];
+    if (meta?.principalCategorize) values.push("Grupo principal em categoria");
+    if (meta?.principalStatusEnabled) values.push("Estado do grupo ativo");
+    if (meta?.referenceCategorize) values.push("Referencias em categoria");
+    if (meta?.referenceStatusEnabled) values.push("Estado de referencias ativo");
+    if (meta?.ticketStatusEnabled) values.push("Estado de ticket ativo");
+    if (Array.isArray(meta?.categorizedLabelNames) && meta.categorizedLabelNames.length) values.push(`${meta.categorizedLabelNames.length} etiqueta(s) categorizada(s)`);
+    return values;
+  }, [classificationEmail?.classificationMeta]);
+
   async function refreshCurrentGroup() {
     if (!selectedGroupId) return;
     setLoadingEmails(true);
@@ -695,6 +968,35 @@ export default function GroupExplorerApp(): JSX.Element {
       setLoadingEmails(false);
       setLoadingDocuments(false);
     }
+  }
+
+  async function handleOpenGroupSettings() {
+    if (!selectedGroupId) return;
+    try {
+      await openGroupSettings({ groupId: selectedGroupId });
+    } catch (nextError: any) {
+      setError(nextError?.message || "Nao foi possivel abrir as definicoes do grupo.");
+    }
+  }
+
+  async function handleOpenClassificationStudio() {
+    if (!selectedEmail) {
+      setNotice("Seleciona um email para abrir o editor completo.");
+      return;
+    }
+    try {
+      await openGroupClassificationStudio(buildClassificationStudioParams(selectedEmail));
+    } catch (nextError: any) {
+      setError(nextError?.message || "Nao foi possivel abrir o editor completo do caso.");
+    }
+  }
+
+  function handleOpenQuickDocument(entry: QuickDocumentEntry) {
+    setSelectedQuickDocumentKey(entry.key);
+    if (entry.kind === "document" && entry.document) {
+      setSelectedDocumentId(makeDocumentKey(entry.document));
+    }
+    setPreviewMode("document");
   }
 
   async function handleOpenEmail(email: RelatedEmailEntry) {
@@ -759,68 +1061,70 @@ export default function GroupExplorerApp(): JSX.Element {
     }
   }
 
-function handleDownloadDocument(document: GroupDocumentEntry) {
-  if (!selectedGroupId || !document?.id || document.hasContent === false) {
-    setNotice("Este documento nao tem conteudo disponivel para download.");
-    return;
-  }
-  const anchor = downloadAnchorRef.current || globalThis.document.createElement("a");
-  downloadAnchorRef.current = anchor;
-  anchor.href = getGroupDocumentContentUrl(selectedGroupId, document.id, { download: true });
-  anchor.target = "_blank";
-  anchor.rel = "noopener";
-  anchor.click();
-}
-
-  async function handleAttachDocument(document: GroupDocumentEntry) {
-    try {
-      if (!selectedGroupId || !document?.id || document.hasContent === false) {
-        setNotice("Este documento nao tem conteudo disponivel para anexar.");
-        return;
-      }
-      const payload = await getGroupDocumentContentBase64(selectedGroupId, document.id);
-      await addBase64AttachmentToCompose(document.name || payload.fileName || "documento", payload.base64);
-      setNotice(`Documento "${document.name}" anexado ao email em edicao.`);
-    } catch (nextError: any) {
-      setError(nextError?.message || "Nao foi possivel anexar o documento.");
-    }
-  }
-
-  async function handleDeleteDocument(document: GroupDocumentEntry) {
-    if (!selectedGroup) return;
-    setBusy(true);
-    try {
-      await deleteGroupDocument(selectedGroup.id, document.id);
-      await refreshCurrentGroup();
-      setNotice(`Documento "${document.name}" removido.`);
-    } catch (nextError: any) {
-      setError(nextError?.message || "Nao foi possivel remover o documento.");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const caseClient = formatChipValue(selectedGroup?.contacts?.[0]?.company || selectedGroup?.contacts?.[0]?.name, "Sem cliente");
+  const caseBrand = formatChipValue(selectedGroup?.entities?.[0]?.name, "Sem marca");
+  const caseState = formatStatusLabel(selectedGroup?.status);
+  const activePreviewState = selectedQuickDocument?.kind === "attachment" ? selectedAttachmentPreview : selectedDocumentPreview;
+  const activePreviewTitle = selectedQuickDocument?.title || selectedDocument?.name || "Documento";
+  const previewHasDocument = Boolean(selectedQuickDocument);
+  const classificationItems = [
+    {
+      key: "principal" as const,
+      title: "Grupo principal",
+      value: classificationPrincipalGroup?.name || "Sem grupo principal",
+      description: classificationEmail?.classificationMeta?.principalStatusEnabled ? formatStatusLabel(classificationPrincipalGroup?.status) : "Sem estado ativo",
+    },
+    {
+      key: "labels" as const,
+      title: "Etiquetas",
+      value: classificationLabels.length ? classificationLabels.join(", ") : "Sem etiquetas",
+      description: classificationLabels.length ? `${classificationLabels.length} atribuida(s)` : "Sem atribuicoes estruturadas",
+    },
+    {
+      key: "ticket" as const,
+      title: "Ticket",
+      value: classificationTicket ? `${classificationTicket.code} - ${classificationTicket.title}` : "Sem ticket",
+      description: classificationTicket ? formatStatusLabel(classificationTicket.status) : "Sem seguimento ligado",
+    },
+    {
+      key: "references" as const,
+      title: "Referencias",
+      value: classificationReferenceGroups.length ? classificationReferenceGroups.map((entry) => entry.name || entry.id).join(", ") : "Sem referencias",
+      description: classificationReferenceGroups.length ? `${classificationReferenceGroups.length} referencia(s)` : "Disponivel no modo avancado",
+    },
+  ];
 
   return (
     <div style={styles.root}>
       <header style={styles.headerShell}>
         <div style={styles.headerIdentity}>
-          <div style={styles.eyebrow}>Explorador documental</div>
-          <div style={styles.title}>Grupos</div>
+          <div style={styles.eyebrow}>Explorador de caso</div>
+          <div style={styles.caseTitleRow}>
+            <div style={styles.title}>{selectedGroup?.name || "Grupo"}</div>
+            <div style={styles.caseChips}>
+              <span style={styles.caseChip}>Cliente: {caseClient}</span>
+              <span style={styles.caseChip}>Marca: {caseBrand}</span>
+              <span style={styles.caseChip}>Estado: {caseState}</span>
+            </div>
+          </div>
           <div style={styles.headerSelectorRow}>
-            <div style={styles.selectWrap}>
-              <select style={styles.select} value={selectedGroupId} onChange={(event) => { setSelectedGroupId(event.target.value); setSelectedEmailKey(""); setSelectedDocumentId(""); setNotice(null); }}>
+            <div style={{ ...styles.selectWrap, minWidth: 220 }}>
+              <select style={styles.select} value={selectedGroupId} onChange={(event) => { setSelectedGroupId(event.target.value); setSelectedEmailKey(""); setSelectedDocumentId(""); setSelectedQuickDocumentKey(""); setNotice(null); }}>
                 {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
               </select>
             </div>
+            <button type="button" style={styles.ghostBtn} onClick={() => void handleOpenGroupSettings()} disabled={!selectedGroupId}>Renomear</button>
+            <button type="button" style={styles.ghostBtn} onClick={() => setNotice("Fluxo de fusao preparado para fase seguinte.")} disabled={!selectedGroupId}>Fundir</button>
+            <button type="button" style={styles.primaryBtn} onClick={() => void handleOpenClassificationStudio()} disabled={!selectedEmail}>Guardar</button>
             <button type="button" style={styles.iconBtn} onClick={() => void refreshCurrentGroup()} disabled={loadingGroups || loadingEmails || loadingDocuments} title="Atualizar"><Icons.RefreshCw size={12} /></button>
             <button type="button" style={styles.closeBtn} onClick={closeExplorer}>Fechar</button>
           </div>
         </div>
         <div style={styles.headerMetrics}>
-          <div style={styles.metricMini}><span style={styles.metricLabel}>Grupo</span><span style={styles.metricValue}>{selectedGroup?.name || "-"}</span></div>
-          <div style={styles.metricMini}><span style={styles.metricLabel}>Provider</span><span style={styles.metricValue}>{selectedProvider}</span></div>
-          <div style={styles.metricMini}><span style={styles.metricLabel}>Docs</span><span style={styles.metricValue}>{groupDocuments.length}</span></div>
           <div style={styles.metricMini}><span style={styles.metricLabel}>Emails</span><span style={styles.metricValue}>{groupEmails.length}</span></div>
+          <div style={styles.metricMini}><span style={styles.metricLabel}>Rapidos</span><span style={styles.metricValue}>{quickDocuments.length}</span></div>
+          <div style={styles.metricMini}><span style={styles.metricLabel}>Docs guardados</span><span style={styles.metricValue}>{groupDocuments.length}</span></div>
+          <div style={styles.metricMini}><span style={styles.metricLabel}>Provider</span><span style={styles.metricValue}>{selectedProvider}</span></div>
         </div>
       </header>
 
@@ -832,42 +1136,18 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
       </div>
       {selectedGroup ? (
         <div style={styles.explorerBody}>
-          <section style={styles.columnsGrid}>
-            <section style={styles.panel}>
+          <section style={styles.topCardsGrid}>
+            <section style={styles.panelCompact}>
               <div style={styles.sectionHeaderCompact}>
-                <div style={styles.sectionTitle}>Emails</div>
+                <div>
+                  <div style={styles.sectionTitle}>Emails</div>
+                  <div style={styles.sectionSubtitle}>Exploracao do caso</div>
+                </div>
               </div>
-              <div style={styles.filterGridEmails}>
-                <label style={styles.filterFieldWide}>
-                  <span style={styles.filterLabel}>Pesquisar</span>
-                  <input style={styles.input} value={emailSearch} onChange={(event) => setEmailSearch(event.target.value)} placeholder="Assunto, contacto ou email..." />
-                </label>
-                <label style={styles.filterField}>
-                  <span style={styles.filterLabel}>Anexos</span>
-                  <select style={styles.compactSelect} value={emailAttachmentFilter} onChange={(event) => setEmailAttachmentFilter(event.target.value as EmailAttachmentFilter)}>
-                    <option value="all">Todos</option>
-                    <option value="with">Com</option>
-                    <option value="without">Sem</option>
-                  </select>
-                </label>
-                <label style={styles.filterField}>
-                  <span style={styles.filterLabel}>Ordenar</span>
-                  <select style={styles.compactSelect} value={emailSort} onChange={(event) => setEmailSort(event.target.value as EmailSortMode)}>
-                    <option value="date_desc">Recentes</option>
-                    <option value="date_asc">Antigos</option>
-                    <option value="subject_asc">A-Z</option>
-                    <option value="subject_desc">Z-A</option>
-                  </select>
-                </label>
-                <label style={styles.filterField}>
-                  <span style={styles.filterLabel}>De</span>
-                  <input style={styles.compactInput} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-                </label>
-                <label style={styles.filterField}>
-                  <span style={styles.filterLabel}>Ate</span>
-                  <input style={styles.compactInput} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-                </label>
-              </div>
+              <label style={styles.filterFieldWide}>
+                <span style={styles.filterLabel}>Pesquisar</span>
+                <input style={styles.input} value={emailSearch} onChange={(event) => setEmailSearch(event.target.value)} placeholder="Assunto, contacto ou email..." />
+              </label>
               <div style={styles.listShellEmails}>
                 {loadingEmails && !groupEmails.length ? <PanelState compact tone="loading" title="A carregar emails" description="A listar os emails do grupo." /> : null}
                 {!loadingEmails && !filteredEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Nao ha emails a corresponder aos filtros atuais." /> : null}
@@ -876,17 +1156,20 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
                   const canOpen = Boolean(email.itemId || email.emailWebLink);
                   const attachmentCount = emailHasAttachments(email) ? (email.attachments?.length || 0) : 0;
                   return (
-                    <div key={makeEmailKey(email)} style={active ? styles.cardActive : styles.card}>
+                    <div key={makeEmailKey(email)} style={active ? styles.cardLineActive : styles.cardLine}>
                       <button
                         type="button"
-                        style={styles.cardMain}
-                        onClick={() => setSelectedEmailKey(makeEmailKey(email))}
+                        style={styles.cardMainExpanded}
+                        onClick={() => {
+                          setSelectedEmailKey(makeEmailKey(email));
+                          setPreviewMode("email");
+                        }}
                         title={buildEmailHoverText(email)}
                       >
                         <div style={styles.cardTitle}>{email.subject || "(sem assunto)"}</div>
+                        <div style={styles.cardMetaLine}>{[email.fromName || email.fromEmail || "Sem remetente", formatDate(email.messageDateIso || email.receivedAtIso) || "Sem data"].filter(Boolean).join(" - ")}</div>
                         <div style={styles.cardBadgeRow}>
-                          <span style={styles.metaTag} title={formatDate(email.messageDateIso || email.receivedAtIso) || "Sem data"}>{formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</span>
-                          <span style={styles.metaTag} title={attachmentCount ? `${attachmentCount} anexo(s)` : "Sem anexos"}>{attachmentCount || 0}</span>
+                          <span style={styles.metaTag}>{attachmentCount} anexo(s)</span>
                         </div>
                       </button>
                       <div style={styles.cardActions}>
@@ -899,103 +1182,95 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
               </div>
             </section>
 
-            <section style={styles.panel}>
+            <section style={styles.panelCompact}>
               <div style={styles.sectionHeaderCompact}>
-                <div style={styles.sectionTitle}>Documentos</div>
+                <div>
+                  <div style={styles.sectionTitle}>Documentos rapidos</div>
+                  <div style={styles.sectionSubtitle}>Do email selecionado</div>
+                </div>
               </div>
-              <div style={styles.filterGridDocuments}>
-                <label style={styles.filterField}>
-                  <span style={styles.filterLabel}>Filtro</span>
-                  <select style={styles.compactSelect} value={documentFilterMode} onChange={(event) => setDocumentFilterMode(event.target.value as DocumentFilterMode)}>
-                    <option value="all">Todos</option>
-                    <option value="selected_email">Email ativo</option>
-                  </select>
-                </label>
-                <label style={styles.filterFieldWide}>
-                  <span style={styles.filterLabel}>Pesquisar</span>
-                  <input style={styles.input} value={documentSearch} onChange={(event) => setDocumentSearch(event.target.value)} placeholder="Nome, tipo ou assunto..." />
-                </label>
-              </div>
-              <div style={styles.listShellDocuments}>
-                {loadingDocuments && !groupDocuments.length ? <PanelState compact tone="loading" title="A carregar documentos" description="A listar os documentos guardados." /> : null}
-                {!loadingDocuments && !filteredDocuments.length ? <PanelState compact tone="info" title="Sem documentos visiveis" description={documentFilterMode === "selected_email" ? "Nao ha documentos associados ao email atualmente selecionado." : "Este grupo ainda nao tem documentos guardados visiveis neste filtro."} /> : null}
-                {filteredDocuments.map((document) => {
-                  const active = makeDocumentKey(document) === makeDocumentKey(selectedDocument || {});
+              <div style={styles.listShellDocumentsCompact}>
+                {loadingDocuments && !quickDocuments.length ? <PanelState compact tone="loading" title="A carregar documentos" description="A preparar os documentos do email selecionado." /> : null}
+                {!loadingDocuments && !quickDocuments.length ? <PanelState compact tone="info" title="Sem documentos rapidos" description="Este email ainda nao tem anexos ou documentos associados para abrir aqui." /> : null}
+                {quickDocuments.map((entry) => {
+                  const active = entry.key === selectedQuickDocument?.key;
                   return (
-                    <div key={makeDocumentKey(document)} style={active ? styles.cardActive : styles.card}>
-                      <button
-                        type="button"
-                        style={styles.cardMain}
-                        onClick={() => setSelectedDocumentId(makeDocumentKey(document))}
-                        title={buildDocumentHoverText(document)}
-                      >
-                        <div style={styles.cardTitle}>{document.name}</div>
-                        <div style={styles.cardMetaCompact}>
-                          <span>{formatBytes(document.size) || document.contentType || "Documento"}</span>
-                        </div>
-                      </button>
-                      <div style={styles.cardActions}>
-                        <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(document)} disabled={document.hasContent === false} title="Download"><Icons.Download size={10} /></button>
-                        <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(document)} disabled={document.hasContent === false} title="Anexar ao email"><Icons.Upload size={10} /></button>
-                        <button type="button" style={styles.iconBtnDanger} onClick={() => void handleDeleteDocument(document)} disabled={busy} title="Apagar"><Icons.Trash size={10} /></button>
+                    <div key={entry.key} style={active ? styles.cardLineActive : styles.cardLine}>
+                      <div style={styles.cardMainExpanded}>
+                        <div style={styles.cardTitle}>{entry.title}</div>
+                        <div style={styles.cardMetaLine}>{entry.meta || (entry.kind === "attachment" ? "Anexo" : "Documento guardado")}</div>
                       </div>
+                      <button type="button" style={styles.inlineActionBtn} onClick={() => handleOpenQuickDocument(entry)}>Abrir</button>
                     </div>
                   );
                 })}
               </div>
+            </section>
+
+            <section style={styles.panelCompact}>
+              <div style={styles.sectionHeaderCompact}>
+                <div>
+                  <div style={styles.sectionTitle}>Classificacao</div>
+                  <div style={styles.sectionSubtitle}>Compacta e contextual</div>
+                </div>
+                <div style={styles.segmentedControl}>
+                  <button type="button" style={classificationMode === "normal" ? styles.segmentBtnActive : styles.segmentBtn} onClick={() => setClassificationMode("normal")}>Normal</button>
+                  <button type="button" style={classificationMode === "advanced" ? styles.segmentBtnActive : styles.segmentBtn} onClick={() => setClassificationMode("advanced")}>Avancado</button>
+                </div>
+              </div>
+              {classificationEditor === "summary" ? (
+                <div style={styles.classificationSummary}>
+                  {classificationLoading ? <PanelState compact tone="loading" title="A preparar classificacao" description="A carregar o estado final do email selecionado." /> : null}
+                  {!classificationLoading ? classificationItems.filter((item) => classificationMode === "advanced" || item.key !== "references").map((item) => (
+                    <button key={item.key} type="button" style={styles.classificationTile} onClick={() => setClassificationEditor(item.key)}>
+                      <span style={styles.classificationTileLabel}>{item.title}</span>
+                      <strong style={styles.classificationTileValue}>{item.value}</strong>
+                      <span style={styles.classificationTileMeta}>{item.description}</span>
+                    </button>
+                  )) : null}
+                  {classificationMode === "advanced" && classificationAdvancedSummary.length ? (
+                    <div style={styles.advancedHintBox}>
+                      {classificationAdvancedSummary.map((item) => <span key={item} style={styles.advancedHintChip}>{item}</span>)}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div style={styles.classificationEditor}>
+                  <button type="button" style={styles.backBtn} onClick={() => setClassificationEditor("summary")}>Voltar</button>
+                  <div style={styles.classificationEditorTitle}>
+                    {classificationEditor === "principal" ? "Grupo principal" : classificationEditor === "labels" ? "Etiquetas" : classificationEditor === "ticket" ? "Ticket" : "Referencias"}
+                  </div>
+                  {classificationEditor === "principal" ? <div style={styles.editorLead}>{classificationPrincipalGroup?.name || "Sem grupo principal ligado"}</div> : null}
+                  {classificationEditor === "labels" ? <div style={styles.editorLead}>{classificationLabels.length ? classificationLabels.join(", ") : "Sem etiquetas"}</div> : null}
+                  {classificationEditor === "ticket" ? <div style={styles.editorLead}>{classificationTicket ? `${classificationTicket.code} - ${classificationTicket.title}` : "Sem ticket ligado"}</div> : null}
+                  {classificationEditor === "references" ? <div style={styles.editorLead}>{classificationReferenceGroups.length ? `${classificationReferenceGroups.length} referencia(s)` : "Sem referencias ligadas"}</div> : null}
+                  <div style={styles.editorBodyText}>
+                    {classificationEditor === "principal" ? "Mostramos o grupo principal atual e deixamos o editor completo preparado para a fase seguinte." : null}
+                    {classificationEditor === "labels" ? "Modo compacto: aqui vemos apenas as etiquetas atribuidas no caso atual." : null}
+                    {classificationEditor === "ticket" ? `Estado atual: ${classificationTicket ? formatStatusLabel(classificationTicket.status) : "Nao definido"}` : null}
+                    {classificationEditor === "references" ? "As referencias e opcoes adicionais continuam acessiveis no modo avancado e no editor completo." : null}
+                  </div>
+                  {classificationEditor === "references" && classificationReferenceGroups.length ? (
+                    <div style={styles.inlineChips}>
+                      {classificationReferenceGroups.map((group) => <span key={group.id} style={styles.metaTag}>{group.name || group.id}</span>)}
+                    </div>
+                  ) : null}
+                  <button type="button" style={styles.primaryBtnWide} onClick={() => void handleOpenClassificationStudio()} disabled={!selectedEmail}>
+                    Abrir editor completo
+                  </button>
+                </div>
+              )}
             </section>
           </section>
 
           <section style={styles.previewPanel}>
             <div style={styles.sectionHeaderCompact}>
               <div style={styles.sectionTitle}>Preview</div>
-              <div style={styles.sectionActions}>
-                <div style={styles.previewTabs}>
-                  <button
-                    type="button"
-                    style={previewMode === "email" ? styles.previewTabActive : styles.previewTab}
-                    onClick={() => setPreviewMode("email")}
-                    disabled={!selectedEmailHasPreview}
-                    title={selectedEmailHasPreview ? "Ver preview do email selecionado" : "Este email ainda nao tem corpo guardado"}
-                  >
-                    Email
-                  </button>
-                  <button
-                    type="button"
-                    style={previewMode === "document" ? styles.previewTabActive : styles.previewTab}
-                    onClick={() => setPreviewMode("document")}
-                    disabled={!selectedDocument}
-                    title={selectedDocument ? "Ver preview do documento selecionado" : "Seleciona um documento"}
-                  >
-                    Documento
-                  </button>
-                </div>
-                {selectedEmail ? (
-                  <>
-                    <button
-                      type="button"
-                      style={styles.previewActionBtn}
-                      onClick={() => void handleReplyEmail(selectedEmail)}
-                      title={emailMatchesCurrentContext(selectedEmail, liveCurrentContext) ? "Responder ao email atual" : "Abrir email para responder"}
-                    >
-                      Responder
-                    </button>
-                    <button
-                      type="button"
-                      style={styles.previewActionBtn}
-                      onClick={() => void handleForwardEmail(selectedEmail)}
-                      title={emailMatchesCurrentContext(selectedEmail, liveCurrentContext) ? "Reencaminhar o email atual" : "Abrir email para reencaminhar"}
-                    >
-                      Reencam.
-                    </button>
-                  </>
-                ) : null}
-                {selectedDocument ? (
-                  <>
-                  <button type="button" style={styles.iconBtn} onClick={() => handleDownloadDocument(selectedDocument)} disabled={selectedDocument.hasContent === false} title="Download"><Icons.Download size={10} /></button>
-                  <button type="button" style={styles.iconBtn} onClick={() => void handleAttachDocument(selectedDocument)} disabled={selectedDocument.hasContent === false} title="Anexar ao email"><Icons.Upload size={10} /></button>
-                  </>
-                ) : null}
+              <div style={styles.previewTabs}>
+                <button type="button" style={previewMode === "email" ? styles.previewTabActive : styles.previewTab} onClick={() => setPreviewMode("email")} disabled={!selectedEmailHasPreview}>Email</button>
+                <button type="button" style={previewMode === "document" ? styles.previewTabActive : styles.previewTab} onClick={() => setPreviewMode("document")} disabled={!previewHasDocument}>Documento</button>
+                <button type="button" style={previewMode === "reply" ? styles.previewTabActive : styles.previewTab} onClick={() => setPreviewMode("reply")} disabled={!selectedEmail}>Responder</button>
+                <button type="button" style={previewMode === "forward" ? styles.previewTabActive : styles.previewTab} onClick={() => setPreviewMode("forward")} disabled={!selectedEmail}>Reencaminhar</button>
               </div>
             </div>
             {previewMode === "email" ? (
@@ -1011,26 +1286,42 @@ function handleDownloadDocument(document: GroupDocumentEntry) {
               ) : (
                 <PanelState compact tone="info" title="Preview do email indisponivel" description="Este email ainda nao tem corpo HTML ou texto guardado para preview." />
               )
-            ) : !selectedDocument ? (
-              <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe um documento para abrir o preview." />
-            ) : selectedDocumentPreview?.kind === "image" ? (
-              <div style={styles.previewFrame}><img src={selectedDocumentPreview.src} alt={selectedDocument.name} style={styles.previewImage} /></div>
-            ) : selectedDocumentPreview?.kind === "pdf" ? (
+            ) : previewMode === "document" && !previewHasDocument ? (
+              <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe um documento rapido para abrir o preview." />
+            ) : previewMode === "document" && activePreviewState?.kind === "image" ? (
+              <div style={styles.previewFrame}><img src={activePreviewState.src} alt={activePreviewTitle} style={styles.previewImage} /></div>
+            ) : previewMode === "document" && activePreviewState?.kind === "pdf" ? (
               <div style={styles.previewFrame}>
-                {selectedDocumentPreview.src.startsWith("data:")
-                  ? <PdfPreview title={selectedDocument.name} dataUrl={selectedDocumentPreview.src} />
-                  : <iframe title={selectedDocument.name} src={selectedDocumentPreview.src} style={styles.previewIframe} />}
+                {activePreviewState.src.startsWith("data:")
+                  ? <PdfPreview title={activePreviewTitle} dataUrl={activePreviewState.src} />
+                  : <iframe title={activePreviewTitle} src={activePreviewState.src} style={styles.previewIframe} />}
               </div>
-            ) : selectedDocumentPreview?.kind === "office" ? (
+            ) : previewMode === "document" && activePreviewState?.kind === "office" ? (
               <div style={styles.previewFrame}>
                 <iframe
-                  title={selectedDocument.name}
-                  src={selectedDocumentPreview.url}
+                  title={activePreviewTitle}
+                  src={activePreviewState.url}
                   style={styles.previewIframe}
                 />
               </div>
-            ) : selectedDocumentPreview?.kind === "text" ? (
-              <pre style={styles.previewText}>{selectedDocumentPreview.text}</pre>
+            ) : previewMode === "document" && activePreviewState?.kind === "text" ? (
+              <pre style={styles.previewText}>{activePreviewState.text}</pre>
+            ) : previewMode === "reply" ? (
+              <div style={styles.replyComposerShell}>
+                <div style={styles.replyComposerLead}>Resposta preparada para o email selecionado</div>
+                <div style={styles.replyComposerMeta}>Estrutura pronta para futura integracao com editor, IA e selecao de anexos.</div>
+                <div style={styles.replyComposerActions}>
+                  <button type="button" style={styles.primaryBtnWide} onClick={() => void handleReplyEmail(selectedEmail)}>Abrir resposta no Outlook</button>
+                </div>
+              </div>
+            ) : previewMode === "forward" ? (
+              <div style={styles.replyComposerShell}>
+                <div style={styles.replyComposerLead}>Reencaminhamento preparado para o email selecionado</div>
+                <div style={styles.replyComposerMeta}>A vista fica pronta para receber o editor e a configuracao de anexos numa fase seguinte.</div>
+                <div style={styles.replyComposerActions}>
+                  <button type="button" style={styles.primaryBtnWide} onClick={() => void handleForwardEmail(selectedEmail)}>Abrir reencaminhamento no Outlook</button>
+                </div>
+              </div>
             ) : (
               <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode ser descarregado ou anexado. Alguns formatos Office podem exigir URL publica para preview." />
             )}
@@ -1055,49 +1346,65 @@ const styles: Record<string, React.CSSProperties> = {
     boxSizing: "border-box",
   },
   statusStack: { display: "grid", gap: 8, minHeight: 0, alignContent: "start" },
-  explorerBody: { display: "grid", gridTemplateRows: "minmax(280px, 0.9fr) minmax(300px, 1.1fr)", gap: 10, minHeight: 0, overflow: "hidden" },
-  headerShell: { display: "grid", gridTemplateColumns: "minmax(240px, 1.25fr) minmax(300px, 0.95fr)", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.9)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.08)", minHeight: 116, maxHeight: 116, overflow: "hidden", alignItems: "stretch" },
-  headerIdentity: { display: "grid", gap: 6, minWidth: 0, alignContent: "space-between" },
+  explorerBody: { display: "grid", gridTemplateRows: "minmax(310px, 0.85fr) minmax(320px, 1.15fr)", gap: 10, minHeight: 0, overflow: "hidden" },
+  headerShell: { display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(260px, 0.7fr)", gap: 10, padding: 14, borderRadius: 16, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.94)", boxShadow: "0 12px 30px rgba(15, 23, 42, 0.08)", alignItems: "stretch" },
+  headerIdentity: { display: "grid", gap: 10, minWidth: 0, alignContent: "space-between" },
   eyebrow: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#5b6b83" },
-  title: { fontSize: 16, fontWeight: 700, color: "#0f172a" },
-  headerSelectorRow: { display: "grid", gridTemplateColumns: "1fr auto auto", gap: 6, alignItems: "center" },
-  headerMetrics: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, alignContent: "stretch", minHeight: 0 },
-  metricMini: { display: "grid", gap: 1, padding: 8, borderRadius: 10, background: "rgba(15, 23, 42, 0.03)", minWidth: 0 },
+  caseTitleRow: { display: "grid", gap: 8, minWidth: 0 },
+  title: { fontSize: 22, fontWeight: 800, color: "#0f172a", lineHeight: 1.1 },
+  caseChips: { display: "flex", gap: 8, flexWrap: "wrap" },
+  caseChip: { fontSize: 11, fontWeight: 700, color: "#334155", background: "rgba(15, 23, 42, 0.05)", border: "1px solid rgba(15, 23, 42, 0.08)", borderRadius: 999, padding: "4px 10px" },
+  headerSelectorRow: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
+  headerMetrics: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, alignContent: "stretch", minHeight: 0 },
+  metricMini: { display: "grid", gap: 2, padding: 10, borderRadius: 12, background: "rgba(15, 23, 42, 0.03)", minWidth: 0 },
   metricLabel: { fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: "#6b7280" },
-  metricValue: { fontSize: 11, fontWeight: 600, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  metricValue: { fontSize: 12, fontWeight: 700, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   selectWrap: { minWidth: 0 },
-  select: { width: "100%", borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "rgba(248,250,252,0.95)", color: "#172b4d", padding: "8px 12px", fontSize: 11, fontWeight: 600, outline: "none" },
-  closeBtn: { borderRadius: 999, border: "none", background: "#1d4ed8", color: "#fff", padding: "7px 13px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
-  columnsGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10, alignItems: "stretch", minHeight: 0, overflow: "hidden" },
-  panel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0, height: "100%", gridTemplateRows: "auto auto minmax(0, 1fr)", overflow: "hidden" },
-  previewPanel: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.92)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0, height: "100%", overflow: "hidden", gridTemplateRows: "auto minmax(0, 1fr)" },
+  select: { width: "100%", borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "rgba(248,250,252,0.95)", color: "#172b4d", padding: "9px 14px", fontSize: 12, fontWeight: 600, outline: "none" },
+  ghostBtn: { borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#fff", color: "#0f172a", padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
+  primaryBtn: { borderRadius: 999, border: "none", background: "#1d4ed8", color: "#fff", padding: "8px 14px", fontSize: 11, fontWeight: 800, cursor: "pointer" },
+  closeBtn: { borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff", color: "#0f172a", padding: "8px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
+  topCardsGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(280px, 0.9fr) minmax(300px, 1fr)", gap: 10, alignItems: "stretch", minHeight: 0, overflow: "hidden" },
+  panelCompact: { display: "grid", gap: 10, padding: 12, borderRadius: 16, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.94)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0, overflow: "hidden", gridTemplateRows: "auto auto minmax(0, 1fr)" },
+  previewPanel: { display: "grid", gap: 10, padding: 12, borderRadius: 16, border: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.94)", boxShadow: "0 10px 28px rgba(15, 23, 42, 0.05)", minHeight: 0, overflow: "hidden", gridTemplateRows: "auto minmax(0, 1fr)" },
   sectionHeaderCompact: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" },
   sectionTitle: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#0f172a" },
-  sectionActions: { display: "inline-flex", gap: 4, alignItems: "center" },
-  previewTabs: { display: "inline-flex", gap: 4, alignItems: "center", marginRight: 4 },
-  previewTab: { borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#fff", color: "#42526E", padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" },
-  previewTabActive: { borderRadius: 999, border: "1px solid rgba(37, 99, 235, 0.22)", background: "#dbeafe", color: "#1d4ed8", padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" },
-  previewActionBtn: { borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#fff", color: "#0f172a", padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" },
-  filterGridEmails: { display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) repeat(4, minmax(0, 0.7fr))", gap: 6, alignItems: "end" },
-  filterGridDocuments: { display: "grid", gridTemplateColumns: "minmax(120px, 0.6fr) minmax(0, 1.4fr)", gap: 6, alignItems: "end" },
-  filterField: { display: "grid", gap: 3, minWidth: 0 },
+  sectionSubtitle: { fontSize: 12, color: "#64748b" },
+  previewTabs: { display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" },
+  previewTab: { borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#fff", color: "#42526E", padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
+  previewTabActive: { borderRadius: 999, border: "1px solid rgba(37, 99, 235, 0.22)", background: "#dbeafe", color: "#1d4ed8", padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
   filterFieldWide: { display: "grid", gap: 3, minWidth: 0 },
   filterLabel: { fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b" },
-  input: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "7px 9px", fontSize: 11, outline: "none", minWidth: 0 },
-  compactInput: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "7px 9px", fontSize: 11, outline: "none", minWidth: 0 },
-  compactSelect: { width: "100%", borderRadius: 10, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "7px 9px", fontSize: 11, outline: "none", minWidth: 0 },
-  listShellTall: { display: "grid", gap: 6, overflowY: "auto", minHeight: 0, paddingRight: 4 },
+  input: { width: "100%", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#f8fafc", color: "#172b4d", padding: "9px 10px", fontSize: 12, outline: "none", minWidth: 0 },
   listShellEmails: { display: "grid", gap: 6, overflowY: "auto", minHeight: 0, paddingRight: 4, alignContent: "start" },
-  listShellDocuments: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, overflowY: "auto", minHeight: 0, paddingRight: 4, alignContent: "start" },
-  card: { display: "grid", gridTemplateColumns: "1fr auto", gap: 6, alignItems: "center", padding: 7, borderRadius: 11, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff" },
-  cardActive: { display: "grid", gridTemplateColumns: "1fr auto", gap: 6, alignItems: "center", padding: 7, borderRadius: 11, border: "1px solid rgba(37, 99, 235, 0.35)", background: "rgba(219, 234, 254, 0.65)" },
-  cardMain: { border: "none", background: "transparent", padding: 0, textAlign: "left", display: "grid", gap: 3, minWidth: 0, cursor: "pointer" },
-  cardTitle: { fontSize: 10.5, fontWeight: 600, color: "#172b4d", lineHeight: 1.22, wordBreak: "break-word" },
-  cardMeta: { display: "none" },
-  cardMetaCompact: { display: "flex", flexWrap: "wrap", gap: 6, fontSize: 9.5, color: "#6b778c", lineHeight: 1.2 },
+  listShellDocumentsCompact: { display: "grid", gap: 6, overflowY: "auto", minHeight: 0, paddingRight: 4, alignContent: "start" },
+  cardLine: { display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", padding: 10, borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff" },
+  cardLineActive: { display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", padding: 10, borderRadius: 12, border: "1px solid rgba(37, 99, 235, 0.35)", background: "rgba(219, 234, 254, 0.55)" },
+  cardMainExpanded: { border: "none", background: "transparent", padding: 0, textAlign: "left", display: "grid", gap: 4, minWidth: 0, cursor: "pointer" },
+  cardTitle: { fontSize: 12, fontWeight: 700, color: "#172b4d", lineHeight: 1.28, wordBreak: "break-word" },
+  cardMetaLine: { fontSize: 11, color: "#64748b", lineHeight: 1.35, wordBreak: "break-word" },
   cardBadgeRow: { display: "flex", flexWrap: "wrap", gap: 4 },
   cardActions: { display: "inline-flex", gap: 4, alignItems: "center" },
-  metaTag: { fontSize: 9, color: "#42526E", background: "#FFFFFF", borderRadius: 999, padding: "1px 6px", border: "1px solid rgba(15, 23, 42, 0.08)" },
+  inlineActionBtn: { borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#fff", color: "#0f172a", padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
+  segmentedControl: { display: "inline-flex", gap: 4, padding: 3, borderRadius: 999, background: "rgba(15, 23, 42, 0.06)" },
+  segmentBtn: { borderRadius: 999, border: "none", background: "transparent", color: "#64748b", padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
+  segmentBtnActive: { borderRadius: 999, border: "none", background: "#fff", color: "#0f172a", padding: "6px 10px", fontSize: 11, fontWeight: 800, boxShadow: "0 2px 8px rgba(15,23,42,0.08)", cursor: "pointer" },
+  classificationSummary: { display: "grid", gap: 8, minHeight: 0, overflowY: "auto", alignContent: "start" },
+  classificationTile: { border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff", borderRadius: 12, padding: 10, textAlign: "left", display: "grid", gap: 4, cursor: "pointer" },
+  classificationTileLabel: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b" },
+  classificationTileValue: { fontSize: 13, color: "#0f172a", lineHeight: 1.3 },
+  classificationTileMeta: { fontSize: 11, color: "#64748b" },
+  advancedHintBox: { display: "flex", flexWrap: "wrap", gap: 6, paddingTop: 4 },
+  advancedHintChip: { fontSize: 10, fontWeight: 700, color: "#1d4ed8", background: "rgba(219, 234, 254, 0.9)", borderRadius: 999, padding: "4px 8px" },
+  classificationEditor: { display: "grid", gridTemplateRows: "auto auto auto 1fr auto", gap: 10, minHeight: 0 },
+  backBtn: { justifySelf: "start", borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.12)", background: "#fff", color: "#0f172a", padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" },
+  classificationEditorTitle: { fontSize: 13, fontWeight: 800, color: "#0f172a" },
+  editorLead: { fontSize: 14, fontWeight: 700, color: "#172b4d", lineHeight: 1.35 },
+  editorBodyText: { fontSize: 12, color: "#64748b", lineHeight: 1.45 },
+  inlineChips: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" },
+  emptyInlineText: { fontSize: 11, color: "#94a3b8" },
+  primaryBtnWide: { borderRadius: 12, border: "none", background: "#1d4ed8", color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", width: "100%" },
+  metaTag: { fontSize: 10, color: "#42526E", background: "#FFFFFF", borderRadius: 999, padding: "3px 8px", border: "1px solid rgba(15, 23, 42, 0.08)" },
   iconBtn: { width: 22, height: 22, borderRadius: 999, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#fff", color: "#1d4ed8", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   iconBtnDanger: { width: 22, height: 22, borderRadius: 999, border: "1px solid rgba(239, 68, 68, 0.18)", background: "rgba(254, 226, 226, 0.9)", color: "#b91c1c", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   previewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 0, height: "100%" },
@@ -1107,4 +1414,8 @@ const styles: Record<string, React.CSSProperties> = {
   pdfPreviewMeta: { padding: "8px 12px", fontSize: 10, fontWeight: 700, color: "#64748b", borderBottom: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.8)" },
   pdfPreviewCanvasHost: { overflow: "auto", padding: 12, display: "grid", justifyItems: "center", alignContent: "start", gap: 12, minHeight: 0 },
   previewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", height: "100%", overflow: "auto", boxSizing: "border-box" },
+  replyComposerShell: { display: "grid", placeItems: "center", alignContent: "center", justifyItems: "center", gap: 12, minHeight: 0, background: "linear-gradient(180deg, rgba(248,250,252,0.9), rgba(241,245,249,0.95))", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", padding: 24, textAlign: "center" },
+  replyComposerLead: { fontSize: 18, fontWeight: 800, color: "#0f172a" },
+  replyComposerMeta: { fontSize: 13, color: "#64748b", maxWidth: 560, lineHeight: 1.5 },
+  replyComposerActions: { display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" },
 };
