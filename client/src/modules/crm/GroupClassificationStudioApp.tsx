@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentContentUrl, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { clientLog } from "@/logger";
 import { beginOutlookCategoryOperation, completeOutlookCategoryOperation, enqueueOutlookCategorySyncRequest, getManagedOutlookCategorySnapshot, OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY, requestCockpitHostAction, setOutlookCategoryOperationPhase, waitForOutlookCategorySyncResult } from "@/office";
 import { buildOutlookCategoryPlan, buildOutlookCategorySourceFromRelatedContext, getOutlookCategoryPlanSignature, getOutlookCategorySourceSignature } from "@/outlookCategories";
@@ -454,6 +454,35 @@ function stripDataUrlPrefix(value: string): string {
   const separatorIndex = raw.indexOf(",");
   if (raw.startsWith("data:") && separatorIndex >= 0) return raw.slice(separatorIndex + 1);
   return raw;
+}
+
+function normalizeStudioAttachmentMimeType(value: string | undefined, name: string | undefined): string {
+  const raw = String(value || "").trim().toLowerCase();
+  const fileName = String(name || "").trim().toLowerCase();
+  if (raw === "application/x-pdf" || (!raw && /\.pdf$/.test(fileName))) return "application/pdf";
+  if (raw === "image/jpg") return "image/jpeg";
+  return raw || "application/octet-stream";
+}
+
+function canUseOfficeWebViewer(): boolean {
+  try {
+    const url = new URL(window.location.origin);
+    const hostname = String(url.hostname || "").trim().toLowerCase();
+    return Boolean(
+      /^https?:$/i.test(url.protocol)
+      && hostname
+      && hostname !== "localhost"
+      && hostname !== "127.0.0.1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildOfficePreviewUrl(sourceUrl: string): string {
+  const normalizedSourceUrl = String(sourceUrl || "").trim();
+  if (!normalizedSourceUrl || !canUseOfficeWebViewer()) return "";
+  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(normalizedSourceUrl)}`;
 }
 
 function dataUrlToUint8Array(dataUrl: string): Uint8Array {
@@ -1651,14 +1680,27 @@ function StudioInner() {
     () => String(selectedEmail?.id || selectedEmail?.emailKey || "").trim(),
     [selectedEmail?.emailKey, selectedEmail?.id]
   );
+  const selectedAttachmentPreviewContentUrl = useMemo(() => {
+    if (!selectedAttachmentPreviewEmailId || !selectedAttachmentPreviewRemoteId || selectedAttachmentPreview?.hasContent !== true) return "";
+    return getEmailAttachmentContentUrl(selectedAttachmentPreviewEmailId, selectedAttachmentPreviewRemoteId);
+  }, [selectedAttachmentPreview?.hasContent, selectedAttachmentPreviewEmailId, selectedAttachmentPreviewRemoteId]);
 
   const selectedAttachmentPreviewMode = useMemo(() => {
     const attachment = selectedAttachmentPreview;
     if (!attachment) return "none";
-    const contentType = String(attachment.contentType || "").toLowerCase();
+    const contentType = normalizeStudioAttachmentMimeType(attachment.contentType, attachment.name);
     const name = String(attachment.name || "").toLowerCase();
     if (/^image\//.test(contentType) || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(name)) return "image";
     if (contentType.includes("pdf") || /\.pdf$/.test(name)) return "pdf";
+    if (
+      contentType === "application/msword"
+      || contentType === "application/vnd.ms-excel"
+      || contentType === "application/vnd.ms-powerpoint"
+      || contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      || contentType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      || contentType === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+      || /\.(docx?|xlsx?|pptx?)$/.test(name)
+    ) return "office";
     if (/text|json|xml|csv/.test(contentType) || /\.(txt|csv|json|xml|html?)$/.test(name)) return "text";
     return "unsupported";
   }, [selectedAttachmentPreview]);
@@ -1666,15 +1708,22 @@ function StudioInner() {
   const selectedAttachmentPreviewSrc = useMemo(() => {
     const attachment = selectedAttachmentPreview;
     if (!attachment) return "";
-    const contentType = String(attachment.contentType || "application/octet-stream").trim() || "application/octet-stream";
+    const contentType = normalizeStudioAttachmentMimeType(attachment.contentType, attachment.name);
     const localContent = String(attachment.content || "").trim() || selectedAttachmentPreviewRemoteBase64;
     if (selectedAttachmentPreviewMode === "image" || selectedAttachmentPreviewMode === "pdf") {
       if (localContent) {
         return `data:${contentType};base64,${localContent}`;
       }
+      if (selectedAttachmentPreviewContentUrl) {
+        return selectedAttachmentPreviewContentUrl;
+      }
     }
     return "";
-  }, [selectedAttachmentPreview, selectedAttachmentPreviewMode, selectedAttachmentPreviewRemoteBase64]);
+  }, [selectedAttachmentPreview, selectedAttachmentPreviewMode, selectedAttachmentPreviewContentUrl, selectedAttachmentPreviewRemoteBase64]);
+  const selectedAttachmentOfficePreviewUrl = useMemo(
+    () => selectedAttachmentPreviewMode === "office" ? buildOfficePreviewUrl(selectedAttachmentPreviewContentUrl) : "",
+    [selectedAttachmentPreviewContentUrl, selectedAttachmentPreviewMode]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -4754,7 +4803,7 @@ function StudioInner() {
                         checked={selectedTargetEmailKeys.includes(makeEmailKey(email))}
                         onChange={() => toggleTargetEmailKey(makeEmailKey(email))}
                       />
-                      <strong>{email.subject || "(sem assunto)"}</strong>
+                      <span style={S.emailSubject}>{email.subject || "(sem assunto)"}</span>
                     </label>
                     {Array.isArray(email.attachments) && email.attachments.length ? <span style={S.counter}>{email.attachments.length}</span> : null}
                   </div>
@@ -4783,8 +4832,8 @@ function StudioInner() {
                     return (
                       <div key={key} style={active ? S.quickDocRowOn : S.quickDocRow}>
                         <div style={S.quickDocMain}>
-                          <strong>{attachment.name || "Anexo"}</strong>
-                          <span style={S.cardMeta}>
+                          <span style={S.quickDocTitle}>{attachment.name || "Anexo"}</span>
+                          <span style={S.quickDocMeta}>
                             {[attachment.contentType || "ficheiro", attachment.size ? `${Math.round(Number(attachment.size || 0) / 1024)} KB` : ""].filter(Boolean).join(" · ")}
                           </span>
                         </div>
@@ -4815,7 +4864,7 @@ function StudioInner() {
                   .map((item) => (
                     <button key={item.key} type="button" style={S.classificationTile} onClick={item.onClick}>
                       <span style={S.classificationTileLabel}>{item.title}</span>
-                      <strong style={S.classificationTileValue}>{item.value}</strong>
+                      <span style={S.classificationTileValue}>{item.value}</span>
                       <span style={S.classificationTileMeta}>{item.description}</span>
                     </button>
                   ))}
@@ -4829,7 +4878,7 @@ function StudioInner() {
                     {classificationAdvancedTiles.map((item) => (
                       <button key={item.id} type="button" style={S.classificationTileMuted} onClick={() => setSection(item.id)}>
                         <span style={S.classificationTileLabel}>{item.label}</span>
-                        <strong style={S.classificationTileValue}>{item.help}</strong>
+                        <span style={S.classificationTileValue}>{item.help}</span>
                         <span style={S.classificationTileMeta}>Abrir editor contextual</span>
                       </button>
                     ))}
@@ -4883,16 +4932,10 @@ function StudioInner() {
               ) : null}
               {previewMode === "document" ? (
                 selectedAttachmentPreview ? (
-                  <div style={S.stack}>
-                    <div style={S.summaryGrid}>
-                      <div style={S.summaryRow}><span>Ficheiro</span><strong>{selectedAttachmentPreview.name || "--"}</strong></div>
-                      <div style={S.summaryRow}><span>Tipo</span><strong>{selectedAttachmentPreview.contentType || "ficheiro"}</strong></div>
-                      <div style={S.summaryRow}><span>Tamanho</span><strong>{selectedAttachmentPreview.size ? `${Math.round(Number(selectedAttachmentPreview.size || 0) / 1024)} KB` : "--"}</strong></div>
-                      <div style={S.summaryRow}><span>Estado documental</span><strong>{formatDocumentLifecycleState(selectedAttachmentDocumentState)}</strong></div>
-                    </div>
+                  <div style={S.documentPreviewShell}>
                     {selectedAttachmentPreviewMode === "image" ? (
                       selectedAttachmentPreviewSrc ? (
-                        <div style={S.attachmentPreviewWrap}>
+                        <div style={S.documentPreviewFrame}>
                           <img src={selectedAttachmentPreviewSrc} alt={selectedAttachmentPreview?.name || "Imagem"} style={S.attachmentPreviewImage} />
                         </div>
                       ) : (
@@ -4907,7 +4950,13 @@ function StudioInner() {
                     ) : null}
                     {selectedAttachmentPreviewMode === "pdf" ? (
                       selectedAttachmentPreviewSrc ? (
-                        <StudioPdfPreview dataUrl={selectedAttachmentPreviewSrc} title={selectedAttachmentPreview?.name || "PDF"} />
+                        selectedAttachmentPreviewSrc.startsWith("data:")
+                          ? <StudioPdfPreview dataUrl={selectedAttachmentPreviewSrc} title={selectedAttachmentPreview?.name || "PDF"} />
+                          : (
+                            <div style={S.documentPreviewFrame}>
+                              <iframe title={selectedAttachmentPreview?.name || "PDF"} src={selectedAttachmentPreviewSrc} style={S.documentPreviewIframe} />
+                            </div>
+                          )
                       ) : (
                         <div style={S.attachmentPreviewEmpty}>
                           {selectedAttachmentPreviewRemoteStatus === "loading"
@@ -4916,6 +4965,15 @@ function StudioInner() {
                               ? "Nao foi possivel carregar o conteudo persistido deste PDF."
                               : "Este PDF ainda nao foi persistido com conteudo."}
                         </div>
+                      )
+                    ) : null}
+                    {selectedAttachmentPreviewMode === "office" ? (
+                      selectedAttachmentOfficePreviewUrl ? (
+                        <div style={S.documentPreviewFrame}>
+                          <iframe title={selectedAttachmentPreview?.name || "Documento"} src={selectedAttachmentOfficePreviewUrl} style={S.documentPreviewIframe} />
+                        </div>
+                      ) : (
+                        <div style={S.attachmentPreviewEmpty}>Preview nao disponivel para este formato Office neste ambiente.</div>
                       )
                     ) : null}
                     {selectedAttachmentPreviewMode === "text" ? (
@@ -4968,68 +5026,71 @@ export default function GroupClassificationStudioApp(): JSX.Element {
 }
 
 const S: Record<string, React.CSSProperties> = {
-  root: { height: "100vh", boxSizing: "border-box", padding: 18, display: "grid", gridTemplateRows: "auto auto auto auto minmax(0,1fr)", gap: 12, background: "var(--iccc-bg)", color: "var(--iccc-text)", fontFamily: "var(--iccc-font)", overflow: "hidden" },
-  header: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "14px 16px", borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)" },
-  headerMain: { display: "grid", gap: 8, minWidth: 0 },
-  headerActions: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" },
+  root: { height: "100vh", boxSizing: "border-box", padding: 14, display: "grid", gridTemplateRows: "auto auto auto auto minmax(0,1fr)", gap: 10, background: "var(--iccc-bg)", color: "var(--iccc-text)", fontFamily: "var(--iccc-font)", overflow: "hidden" },
+  header: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderRadius: 16, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)" },
+  headerMain: { display: "grid", gap: 5, minWidth: 0 },
+  headerActions: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, flexWrap: "wrap" },
   kicker: { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--iccc-muted)" },
-  mainTitle: { fontSize: 24, fontWeight: 800, color: "var(--iccc-text)" },
-  mainMeta: { fontSize: 13, lineHeight: 1.45, color: "var(--iccc-muted)", maxWidth: 820 },
-  caseTitleRow: { display: "grid", gap: 8 },
-  caseTitle: { fontSize: 18, fontWeight: 800, color: "var(--iccc-text)" },
-  caseChips: { display: "flex", gap: 8, flexWrap: "wrap" },
-  caseChip: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(15,23,42,0.05)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 700 },
-  primaryBtn: { height: 36, padding: "0 14px", borderRadius: 12, border: "1px solid rgba(37,99,235,0.2)", background: "linear-gradient(180deg,#3b82f6 0%, #2563eb 100%)", color: "#fff", fontSize: 12, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", boxShadow: "0 8px 18px rgba(37,99,235,0.25)" },
-  secondaryBtn: { height: 34, padding: "0 12px", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)", fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" },
-  context: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 14px", borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.8)" },
-  contextTitle: { fontSize: 15, fontWeight: 700, color: "var(--iccc-text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 780 },
-  badges: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" },
-  badge: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(30,64,175,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
-  notice: { padding: "10px 12px", borderRadius: 12, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 12, lineHeight: 1.45 },
-  dashboard: { minHeight: 0, display: "grid", gridTemplateRows: "minmax(0,0.9fr) minmax(0,1.35fr)", gap: 12, overflow: "hidden" },
-  topCardsGrid: { minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1.05fr) minmax(0,0.9fr) minmax(0,1.15fr)", gap: 12 },
-  topCard: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
-  topCardWide: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
-  topCardScroll: { minHeight: 0, display: "grid", gap: 8, overflowY: "auto", paddingRight: 2 },
-  sectionHeaderCompact: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
-  sectionTitle: { fontSize: 16, fontWeight: 800, color: "var(--iccc-text)" },
-  sectionSubtitle: { fontSize: 11, color: "var(--iccc-muted)" },
+  mainTitle: { fontSize: 18, fontWeight: 700, color: "var(--iccc-text)" },
+  mainMeta: { fontSize: 11, lineHeight: 1.35, color: "var(--iccc-muted)", maxWidth: 760 },
+  caseTitleRow: { display: "grid", gap: 6 },
+  caseTitle: { fontSize: 14, fontWeight: 700, color: "var(--iccc-text)" },
+  caseChips: { display: "flex", gap: 6, flexWrap: "wrap" },
+  caseChip: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(15,23,42,0.05)", color: "var(--iccc-text)", fontSize: 10, fontWeight: 600 },
+  primaryBtn: { height: 32, padding: "0 12px", borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "linear-gradient(180deg,#3b82f6 0%, #2563eb 100%)", color: "#fff", fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", boxShadow: "0 6px 14px rgba(37,99,235,0.18)" },
+  secondaryBtn: { height: 30, padding: "0 10px", borderRadius: 10, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" },
+  context: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "9px 12px", borderRadius: 14, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.8)" },
+  contextTitle: { fontSize: 13, fontWeight: 600, color: "var(--iccc-text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 780 },
+  badges: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" },
+  badge: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(30,64,175,0.08)", color: "#1d4ed8", fontSize: 10, fontWeight: 600 },
+  notice: { padding: "8px 10px", borderRadius: 10, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: 11, lineHeight: 1.35 },
+  dashboard: { minHeight: 0, display: "grid", gridTemplateRows: "minmax(0,0.88fr) minmax(0,1.4fr)", gap: 10, overflow: "hidden" },
+  topCardsGrid: { minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1.05fr) minmax(0,0.9fr) minmax(0,1.15fr)", gap: 10 },
+  topCard: { minHeight: 0, borderRadius: 14, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 10, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 8, overflow: "hidden" },
+  topCardWide: { minHeight: 0, borderRadius: 14, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 10, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 8, overflow: "hidden" },
+  topCardScroll: { minHeight: 0, display: "grid", gap: 6, overflowY: "auto", paddingRight: 2 },
+  sectionHeaderCompact: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 },
+  sectionTitle: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--iccc-text)" },
+  sectionSubtitle: { fontSize: 10, color: "var(--iccc-muted)" },
   shell: { minHeight: 0, display: "grid", gridTemplateColumns: "220px 320px minmax(0,1fr)", gap: 12 },
   sidebar: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gap: 8, alignContent: "start", overflowY: "auto" },
   menu: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(255,255,255,0.78)", padding: "10px 12px", display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", gap: 10, cursor: "pointer" },
   menuOn: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.9)", padding: "10px 12px", display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", gap: 10, cursor: "pointer" },
   listCol: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
   colTitle: { fontSize: 17, fontWeight: 800, color: "var(--iccc-text)" },
-  emailTools: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
-  input: { width: "100%", height: 38, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none" },
+  emailTools: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" },
+  input: { width: "100%", height: 34, boxSizing: "border-box", borderRadius: 10, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 10px", fontSize: 12, color: "var(--iccc-text)", outline: "none" },
   textarea: { width: "100%", minHeight: 120, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "10px 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none", resize: "vertical" },
   select: { width: "100%", height: 38, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none" },
   listBody: { minHeight: 0, display: "grid", gap: 8, overflowY: "auto", paddingRight: 2 },
-  email: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(255,255,255,0.78)", padding: "10px 12px", display: "grid", gap: 6, cursor: "pointer" },
-  emailOn: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", padding: "10px 12px", display: "grid", gap: 6, cursor: "pointer" },
+  email: { width: "100%", textAlign: "left", borderRadius: 11, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(255,255,255,0.78)", padding: "8px 10px", display: "grid", gap: 4, cursor: "pointer" },
+  emailOn: { width: "100%", textAlign: "left", borderRadius: 11, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", padding: "8px 10px", display: "grid", gap: 4, cursor: "pointer" },
   emailTop: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
   emailPick: { display: "flex", alignItems: "flex-start", gap: 8, minWidth: 0, cursor: "pointer" },
-  emailMeta: { fontSize: 11, color: "var(--iccc-muted)" },
-  emailSnippet: { fontSize: 12, lineHeight: 1.45, color: "var(--iccc-text-soft, #334155)" },
-  counter: { minWidth: 22, height: 22, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 700 },
-  quickDocList: { display: "grid", gap: 8 },
-  quickDocRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 10, alignItems: "center", borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", padding: "10px 12px" },
-  quickDocRowOn: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 10, alignItems: "center", borderRadius: 14, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", padding: "10px 12px" },
-  quickDocMain: { display: "grid", gap: 4, minWidth: 0 },
-  inlineActionBtn: { height: 32, padding: "0 12px", borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  emailSubject: { fontSize: 11.5, fontWeight: 600, lineHeight: 1.25, color: "var(--iccc-text)", minWidth: 0, textAlign: "left" },
+  emailMeta: { fontSize: 10, color: "var(--iccc-muted)" },
+  emailSnippet: { fontSize: 11, lineHeight: 1.35, color: "var(--iccc-text-soft, #334155)", maxHeight: 30, overflow: "hidden" },
+  counter: { minWidth: 18, height: 18, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 10, fontWeight: 700 },
+  quickDocList: { display: "grid", gap: 6 },
+  quickDocRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center", borderRadius: 11, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", padding: "8px 10px" },
+  quickDocRowOn: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center", borderRadius: 11, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", padding: "8px 10px" },
+  quickDocMain: { display: "grid", gap: 3, minWidth: 0 },
+  quickDocTitle: { fontSize: 11, fontWeight: 600, color: "var(--iccc-text)", lineHeight: 1.25, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  quickDocMeta: { fontSize: 10, color: "var(--iccc-muted)", lineHeight: 1.2 },
+  inlineActionBtn: { height: 26, padding: "0 10px", borderRadius: 999, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.92)", color: "#1d4ed8", fontSize: 10, fontWeight: 700, cursor: "pointer" },
   workCol: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, overflow: "hidden" },
   stack: { height: "100%", minHeight: 0, display: "grid", gap: 10, alignContent: "start", overflowY: "auto", paddingRight: 2 },
   card: { borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.74)", padding: 12, display: "grid", gap: 10 },
   cardSticky: { position: "sticky", top: 0, zIndex: 4, borderRadius: 16, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.97)", padding: 12, display: "grid", gap: 10, boxShadow: "0 8px 24px rgba(15,23,42,0.06)" },
-  segmentedControl: { display: "inline-flex", alignItems: "center", borderRadius: 12, border: "1px solid rgba(37,99,235,0.24)", overflow: "hidden", background: "rgba(239,246,255,0.75)" },
-  segmentBtn: { height: 30, padding: "0 12px", border: "none", background: "transparent", color: "#475569", fontSize: 11, fontWeight: 700, cursor: "pointer" },
-  segmentBtnActive: { height: 30, padding: "0 12px", border: "none", background: "rgba(37,99,235,0.16)", color: "#1d4ed8", fontSize: 11, fontWeight: 800, cursor: "pointer" },
-  classificationSummary: { minHeight: 0, display: "grid", gap: 10, alignContent: "start", overflowY: "auto", paddingRight: 2 },
-  classificationTile: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", padding: "12px 14px", display: "grid", gap: 4, cursor: "pointer" },
-  classificationTileMuted: { width: "100%", textAlign: "left", borderRadius: 14, border: "1px solid rgba(191,219,254,0.8)", background: "rgba(239,246,255,0.7)", padding: "12px 14px", display: "grid", gap: 4, cursor: "pointer" },
-  classificationTileLabel: { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--iccc-muted)" },
-  classificationTileValue: { fontSize: 13, fontWeight: 800, color: "var(--iccc-text)" },
-  classificationTileMeta: { fontSize: 11, lineHeight: 1.4, color: "var(--iccc-muted)" },
+  segmentedControl: { display: "inline-flex", alignItems: "center", borderRadius: 999, border: "1px solid rgba(37,99,235,0.18)", overflow: "hidden", background: "rgba(239,246,255,0.75)" },
+  segmentBtn: { height: 26, padding: "0 10px", border: "none", background: "transparent", color: "#475569", fontSize: 10, fontWeight: 700, cursor: "pointer" },
+  segmentBtnActive: { height: 26, padding: "0 10px", border: "none", background: "rgba(37,99,235,0.16)", color: "#1d4ed8", fontSize: 10, fontWeight: 700, cursor: "pointer" },
+  classificationSummary: { minHeight: 0, display: "grid", gap: 8, alignContent: "start", overflowY: "auto", paddingRight: 2 },
+  classificationTile: { width: "100%", textAlign: "left", borderRadius: 11, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", padding: "9px 11px", display: "grid", gap: 3, cursor: "pointer" },
+  classificationTileMuted: { width: "100%", textAlign: "left", borderRadius: 11, border: "1px solid rgba(191,219,254,0.8)", background: "rgba(239,246,255,0.7)", padding: "9px 11px", display: "grid", gap: 3, cursor: "pointer" },
+  classificationTileLabel: { fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--iccc-muted)" },
+  classificationTileValue: { fontSize: 12, fontWeight: 600, color: "var(--iccc-text)", lineHeight: 1.25 },
+  classificationTileMeta: { fontSize: 10, lineHeight: 1.3, color: "var(--iccc-muted)" },
   advancedHintBox: { display: "flex", flexWrap: "wrap", gap: 8 },
   advancedHintChip: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(239,246,255,0.8)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
   classificationExtraGrid: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
@@ -5037,12 +5098,12 @@ const S: Record<string, React.CSSProperties> = {
   classificationEditorShell: { minHeight: 0, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
   classificationEditorHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
   classificationEditorBody: { minHeight: 0, overflow: "auto", paddingRight: 2 },
-  previewShellLarge: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
-  previewToolbar: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", paddingBottom: 4, borderBottom: "1px solid rgba(148,163,184,0.14)" },
-  previewTab: { height: 32, padding: "0 12px", borderRadius: 10, border: "1px solid rgba(148,163,184,0.24)", background: "rgba(255,255,255,0.86)", color: "var(--iccc-text)", fontSize: 12, fontWeight: 700, cursor: "pointer" },
-  previewTabOn: { height: 32, padding: "0 12px", borderRadius: 10, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 12, fontWeight: 800, cursor: "pointer" },
-  previewBody: { minHeight: 0, overflow: "auto", paddingRight: 2, display: "grid", gap: 12, alignContent: "start" },
-  previewPlaceholder: { minHeight: 420, borderRadius: 16, border: "1px dashed rgba(148,163,184,0.32)", background: "rgba(255,255,255,0.72)", display: "grid", alignContent: "center", justifyItems: "start", gap: 10, padding: 24 },
+  previewShellLarge: { minHeight: 0, borderRadius: 14, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 10, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 8, overflow: "hidden" },
+  previewToolbar: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", paddingBottom: 2, borderBottom: "1px solid rgba(148,163,184,0.12)" },
+  previewTab: { height: 26, padding: "0 10px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.22)", background: "rgba(255,255,255,0.86)", color: "var(--iccc-text)", fontSize: 10, fontWeight: 700, cursor: "pointer" },
+  previewTabOn: { height: 26, padding: "0 10px", borderRadius: 999, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8", fontSize: 10, fontWeight: 700, cursor: "pointer" },
+  previewBody: { minHeight: 0, overflow: "auto", paddingRight: 2, display: "grid", gap: 8, alignContent: "start" },
+  previewPlaceholder: { minHeight: 420, borderRadius: 12, border: "1px dashed rgba(148,163,184,0.32)", background: "rgba(255,255,255,0.72)", display: "grid", alignContent: "center", justifyItems: "start", gap: 8, padding: 20 },
   sectionCard: { borderRadius: 16, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", overflow: "hidden", display: "grid" },
   classificationSectionCard: { borderRadius: 16, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.78)", overflow: "hidden", display: "grid", scrollMarginTop: 168 },
   sectionHead: { width: "100%", border: "none", borderBottom: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.58)", color: "var(--iccc-text)", padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, cursor: "pointer" },
@@ -5077,8 +5138,8 @@ const S: Record<string, React.CSSProperties> = {
   classificationFocusBtn: { height: 30, border: "none", borderRight: "1px solid rgba(37,99,235,0.24)", background: "transparent", color: "#475569", fontSize: 11, fontWeight: 700, cursor: "pointer" },
   classificationFocusBtnOn: { height: 30, border: "none", borderRight: "1px solid rgba(37,99,235,0.24)", background: "rgba(37,99,235,0.16)", color: "#1d4ed8", fontSize: 11, fontWeight: 800, cursor: "pointer" },
   titleRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
-  cardTitle: { fontSize: 15, fontWeight: 800, color: "var(--iccc-text)" },
-  cardMeta: { fontSize: 11, lineHeight: 1.4, color: "var(--iccc-muted)" },
+  cardTitle: { fontSize: 13, fontWeight: 700, color: "var(--iccc-text)" },
+  cardMeta: { fontSize: 10, lineHeight: 1.3, color: "var(--iccc-muted)" },
   metaLine: { display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: "var(--iccc-muted)" },
   chips: { display: "flex", flexWrap: "wrap", gap: 8 },
   groupChip: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: "rgba(29,78,216,0.08)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 },
@@ -5104,13 +5165,16 @@ const S: Record<string, React.CSSProperties> = {
   check: { display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--iccc-text)" },
   inlineChecks: { display: "flex", gap: 16, flexWrap: "wrap" },
   attachmentPickerBar: { display: "flex", flexWrap: "wrap", gap: 8 },
-  attachmentPreviewWrap: { borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "#fff", padding: 12, display: "grid", justifyItems: "center" },
-  attachmentPreviewImage: { display: "block", maxWidth: "100%", maxHeight: 560, borderRadius: 10, objectFit: "contain" },
-  attachmentPdfPreviewShell: { display: "grid", gap: 10, padding: 12, borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "#fff" },
-  attachmentPdfPreviewMeta: { fontSize: 12, color: "var(--iccc-muted)" },
-  attachmentPdfPreviewCanvasHost: { display: "grid", gap: 12, justifyItems: "center" },
-  attachmentPreviewText: { margin: 0, padding: 14, borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.84)", color: "var(--iccc-text)", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'Segoe UI', sans-serif" },
-  attachmentPreviewEmpty: { padding: "18px 16px", borderRadius: 14, border: "1px dashed rgba(148,163,184,0.32)", background: "rgba(255,255,255,0.7)", color: "var(--iccc-muted)", fontSize: 12 },
+  documentPreviewShell: { minHeight: 0, display: "grid", alignContent: "start", gap: 8 },
+  documentPreviewFrame: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", overflow: "hidden", background: "#f8fafc", minHeight: 0, height: "100%" },
+  documentPreviewIframe: { width: "100%", height: "100%", minHeight: 520, border: "none", display: "block", background: "#fff" },
+  attachmentPreviewWrap: { borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", background: "#f8fafc", overflow: "hidden", minHeight: 0, height: "100%" },
+  attachmentPreviewImage: { width: "100%", height: "100%", minHeight: 520, objectFit: "contain", display: "block", background: "#fff" },
+  attachmentPdfPreviewShell: { display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", height: "100%", minHeight: 0, background: "#f8fafc", borderRadius: 12, overflow: "hidden", border: "1px solid rgba(15, 23, 42, 0.08)" },
+  attachmentPdfPreviewMeta: { padding: "8px 12px", fontSize: 10, fontWeight: 700, color: "#64748b", borderBottom: "1px solid rgba(15, 23, 42, 0.08)", background: "rgba(255,255,255,0.8)" },
+  attachmentPdfPreviewCanvasHost: { overflow: "auto", padding: 12, display: "grid", justifyItems: "center", alignContent: "start", gap: 12, minHeight: 0 },
+  attachmentPreviewText: { margin: 0, padding: 12, background: "#f8fafc", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.08)", fontFamily: "Consolas, monospace", fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", height: "100%", overflow: "auto", boxSizing: "border-box" },
+  attachmentPreviewEmpty: { padding: "16px 14px", borderRadius: 12, border: "1px dashed rgba(148,163,184,0.32)", background: "rgba(255,255,255,0.7)", color: "var(--iccc-muted)", fontSize: 11 },
   attachList: { display: "grid", gap: 10 },
   attachRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 12, alignItems: "center", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.76)" },
   attachMeta: { display: "grid", gap: 3, minWidth: 0, color: "var(--iccc-text)" },
