@@ -2162,6 +2162,10 @@ function StudioInner() {
     if (section === "groups") return "Grupos";
     return "Classificacao";
   }, [classificationFocus, section]);
+  const effectiveTicketStatus = useMemo(
+    () => String(ticketStatusDraft || selectedTicket?.status || "").trim(),
+    [selectedTicket?.status, ticketStatusDraft]
+  );
   const classificationSummaryTiles = useMemo(
     () => {
       const ticketCodes = relatedTickets.map((ticket) => String(ticket.code || "").trim()).filter(Boolean);
@@ -2390,10 +2394,6 @@ function StudioInner() {
         }))
         .filter((entry) => entry.hasStatus),
     [referenceGroups]
-  );
-  const effectiveTicketStatus = useMemo(
-    () => String(ticketStatusDraft || selectedTicket?.status || "").trim(),
-    [selectedTicket?.status, ticketStatusDraft]
   );
   const ticketStatusLabel = useMemo(
     () => effectiveTicketStatus ? formatTicketStatusLabel(effectiveTicketStatus) : "",
