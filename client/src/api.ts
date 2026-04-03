@@ -182,6 +182,7 @@ export type RelevantEmailPayload = {
     storagePathHint?: string;
     documentState?: "ingested" | "processed" | "accepted" | "rejected" | "reread_requested" | string;
     hasContent?: boolean;
+    isHidden?: boolean;
   }>;
 };
 
@@ -352,6 +353,7 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
     storagePathHint?: string;
     documentState?: "ingested" | "processed" | "accepted" | "rejected" | "reread_requested" | string;
     hasContent?: boolean;
+    isHidden?: boolean;
   }>;
 };
 
@@ -638,6 +640,7 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
           storagePathHint: String(attachment?.storagePathHint || "").trim() || undefined,
           documentState: String(attachment?.documentState || "").trim() || undefined,
           hasContent: attachment?.hasContent === true || Boolean(String(attachment?.content || "").trim()),
+          isHidden: typeof attachment?.isHidden === "boolean" ? attachment.isHidden : undefined,
         }))
         .filter((attachment: any) => attachment.name)
       : [],

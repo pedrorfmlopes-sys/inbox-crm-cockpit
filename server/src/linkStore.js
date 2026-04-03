@@ -642,6 +642,12 @@ function normalizeEmailAttachmentInput(input = {}, current = {}) {
       input?.documentState ?? current?.documentState,
       current?.documentState ? normalizeDocumentState(current.documentState, DEFAULT_EMAIL_ATTACHMENT_STATE) : DEFAULT_EMAIL_ATTACHMENT_STATE
     ),
+    isHidden:
+      typeof input?.isHidden === "boolean"
+        ? input.isHidden
+        : typeof current?.isHidden === "boolean"
+          ? current.isHidden
+          : undefined,
     hasContent:
       typeof input?.hasContent === "boolean"
         ? input.hasContent

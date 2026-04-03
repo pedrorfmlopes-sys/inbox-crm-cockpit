@@ -27,6 +27,12 @@ type ClassificationLayoutMode = "normal" | "advanced";
 type EmailLabelStatus = GroupLabelStatus;
 type DocumentLifecycleState = "ingested" | "processed" | "accepted" | "rejected" | "reread_requested";
 type ClassificationFocus = "principal" | "references" | "labels" | "ticket" | "summary";
+type AttachmentPreviewState =
+  | { kind: "image"; src: string }
+  | { kind: "pdf"; src: string }
+  | { kind: "office"; url: string }
+  | { kind: "text"; text: string }
+  | { kind: "unsupported" };
 type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
 type ReadingSuggestionChip = { key: string; label: string; kind: "group" | "ticket" | "label"; value: string };
 type GroupContactDraft = { key: string; name: string; email?: string; company?: string; source?: string };
@@ -166,6 +172,54 @@ function formatDocumentLifecycleState(value: string | undefined): string {
 
 function isRejectedDocumentLifecycleState(value: string | undefined): boolean {
   return normalizeDocumentLifecycleState(value) === "rejected";
+}
+
+function inferStudioAttachmentKind(
+  attachment: ReturnType<typeof normalizeStudioAttachment>
+): AttachmentPreviewState["kind"] | "none" {
+  if (!attachment) return "none";
+  const name = String(attachment.name || "").toLowerCase();
+  const type = normalizeStudioAttachmentMimeType(attachment.contentType, attachment.name);
+  if (type.startsWith("image/") || /\.(png|jpe?g|gif|bmp|webp|svg)$/.test(name)) return "image";
+  if (type.includes("pdf") || /\.pdf$/.test(name)) return "pdf";
+  if (
+    type === "application/msword"
+    || type === "application/vnd.ms-excel"
+    || type === "application/vnd.ms-powerpoint"
+    || type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    || type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    || type === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    || /\.(docx?|xlsx?|pptx?)$/.test(name)
+  ) {
+    return "office";
+  }
+  if (type.startsWith("text/") || type.includes("json") || type.includes("xml") || type.includes("csv") || /\.(txt|md|json|xml|csv|log|ya?ml)$/.test(name)) return "text";
+  return "unsupported";
+}
+
+function isLikelyDecorativeAttachment(
+  attachment: ReturnType<typeof normalizeStudioAttachment>
+): boolean {
+  if (!attachment) return false;
+  const type = normalizeStudioAttachmentMimeType(attachment.contentType, attachment.name);
+  const name = String(attachment.name || "").trim().toLowerCase();
+  const size = Number(attachment.size || 0) || 0;
+  if (attachment.isHidden === true) return true;
+  if (attachment.isHidden === false) return false;
+  if (attachment.isInline) return true;
+  if (!/^image\//.test(type)) return false;
+  if (/\b(signature|assinatura|logo|smime|favicon)\b/.test(name)) return true;
+  if (/^image\d+\.(png|jpe?g|gif|bmp|webp)$/i.test(name)) return true;
+  return Boolean(attachment.contentId && size > 0 && size <= 96 * 1024);
+}
+
+function isStudioAttachmentHiddenInQuickDocs(
+  attachment: ReturnType<typeof normalizeStudioAttachment>
+): boolean {
+  if (!attachment) return false;
+  if (attachment.isHidden === true) return true;
+  if (attachment.isHidden === false) return false;
+  return isLikelyDecorativeAttachment(attachment);
 }
 
 function normalizeClassificationMetaDraft(
@@ -636,7 +690,11 @@ function normalizeStudioAttachment(attachment: any) {
     isInline: attachment.isInline,
     contentId: String(attachment.contentId || "").trim() || undefined,
     documentState: normalizeDocumentLifecycleState(attachment.documentState, "ingested"),
+    storageProvider: String(attachment.storageProvider || "").trim() || undefined,
+    storageBasePath: String(attachment.storageBasePath || "").trim() || undefined,
+    storagePathHint: String(attachment.storagePathHint || "").trim() || undefined,
     hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+    isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
   };
 }
 
@@ -671,7 +729,7 @@ function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | nu
   const attachments = Array.isArray(email.attachments)
     ? email.attachments
         .map((attachment) => normalizeStudioAttachment(attachment))
-        .filter(Boolean)
+        .filter((attachment): attachment is NonNullable<ReturnType<typeof normalizeStudioAttachment>> => Boolean(attachment))
         .map((attachment) => ({
           key: attachment.key,
           id: attachment.id,
@@ -686,6 +744,7 @@ function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | nu
           storagePathHint: (attachment as any).storagePathHint,
           documentState: (attachment as any).documentState,
           hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
+          isHidden: typeof (attachment as any).isHidden === "boolean" ? (attachment as any).isHidden : undefined,
         }))
     : [];
   return {
@@ -749,6 +808,31 @@ function updateAttachmentStateOnEmail(
     return {
       ...attachment,
       documentState: nextState,
+    };
+  });
+  if (!changed) return email;
+  return {
+    ...email,
+    attachments: nextAttachments,
+  };
+}
+
+function updateAttachmentVisibilityOnEmail(
+  email: RelatedEmailEntry | null,
+  attachmentKey: string,
+  isHidden: boolean
+): RelatedEmailEntry | null {
+  if (!email) return email;
+  const targetKey = String(attachmentKey || "").trim();
+  if (!targetKey || !Array.isArray(email.attachments)) return email;
+  let changed = false;
+  const nextAttachments = email.attachments.map((attachment) => {
+    const currentKey = makeAttachmentKey(attachment || {});
+    if (currentKey !== targetKey) return attachment;
+    changed = true;
+    return {
+      ...attachment,
+      isHidden,
     };
   });
   if (!changed) return email;
@@ -1221,6 +1305,7 @@ function StudioInner() {
   const [selectedAttachmentPreviewRemoteBase64, setSelectedAttachmentPreviewRemoteBase64] = useState("");
   const [selectedAttachmentPreviewRemoteStatus, setSelectedAttachmentPreviewRemoteStatus] = useState<"idle" | "loading" | "ready" | "missing">("idle");
   const [selectedAttachmentPreviewRemoteText, setSelectedAttachmentPreviewRemoteText] = useState("");
+  const [showHiddenQuickDocuments, setShowHiddenQuickDocuments] = useState(false);
   const [managedGroupEmails, setManagedGroupEmails] = useState<RelatedEmailEntry[]>([]);
   const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
@@ -1652,6 +1737,14 @@ function StudioInner() {
       .filter((attachment): attachment is NonNullable<typeof attachment> => Boolean(attachment))
       .filter((attachment) => String(attachment.name || "").trim());
   }, [selectedEmail?.attachments]);
+  const quickDocumentAttachments = useMemo(
+    () => selectedEmailAttachments.filter((attachment) => showHiddenQuickDocuments || !isStudioAttachmentHiddenInQuickDocs(attachment)),
+    [selectedEmailAttachments, showHiddenQuickDocuments]
+  );
+  const quickDocumentHiddenCount = useMemo(
+    () => selectedEmailAttachments.filter((attachment) => isStudioAttachmentHiddenInQuickDocs(attachment)).length,
+    [selectedEmailAttachments]
+  );
   const activeSelectedEmailAttachments = useMemo(
     () => selectedEmailAttachments.filter((attachment) => !isRejectedDocumentLifecycleState((attachment as any)?.documentState)),
     [selectedEmailAttachments]
@@ -1724,7 +1817,6 @@ function StudioInner() {
     () => selectedAttachmentPreviewMode === "office" ? buildOfficePreviewUrl(selectedAttachmentPreviewContentUrl) : "",
     [selectedAttachmentPreviewContentUrl, selectedAttachmentPreviewMode]
   );
-
   useEffect(() => {
     let cancelled = false;
     const localContent = String(selectedAttachmentPreview?.content || "").trim();
@@ -1773,6 +1865,16 @@ function StudioInner() {
     selectedAttachmentPreviewRemoteId,
   ]);
 
+  useEffect(() => {
+    if (!selectedAttachmentPreviewKey || showHiddenQuickDocuments) return;
+    if (quickDocumentAttachments.some((attachment) => makeAttachmentKey(attachment) === selectedAttachmentPreviewKey)) return;
+    const nextKey = quickDocumentAttachments[0] ? makeAttachmentKey(quickDocumentAttachments[0]) : "";
+    setSelectedAttachmentPreviewKey(nextKey);
+    if (!nextKey && previewMode === "document") {
+      setPreviewMode("email");
+    }
+  }, [previewMode, quickDocumentAttachments, selectedAttachmentPreviewKey, showHiddenQuickDocuments]);
+
   const selectedAttachmentPreviewText = useMemo(() => {
     if (selectedAttachmentPreviewMode !== "text") return "";
     const localContent = String(selectedAttachmentPreview?.content || "").trim();
@@ -1781,6 +1883,28 @@ function StudioInner() {
     }
     return selectedAttachmentPreviewRemoteText;
   }, [selectedAttachmentPreview?.content, selectedAttachmentPreviewMode, selectedAttachmentPreviewRemoteText]);
+  const selectedAttachmentDocumentPreview = useMemo<AttachmentPreviewState | null>(() => {
+    if (!selectedAttachmentPreview) return null;
+    if (selectedAttachmentPreviewMode === "office") {
+      return selectedAttachmentOfficePreviewUrl ? { kind: "office", url: selectedAttachmentOfficePreviewUrl } : { kind: "unsupported" };
+    }
+    if (selectedAttachmentPreviewMode === "text") {
+      return selectedAttachmentPreviewText ? { kind: "text", text: selectedAttachmentPreviewText } : null;
+    }
+    if ((selectedAttachmentPreviewMode === "image" || selectedAttachmentPreviewMode === "pdf") && selectedAttachmentPreviewSrc) {
+      return { kind: selectedAttachmentPreviewMode, src: selectedAttachmentPreviewSrc };
+    }
+    if (selectedAttachmentPreviewMode === "unsupported") {
+      return { kind: "unsupported" };
+    }
+    return null;
+  }, [
+    selectedAttachmentOfficePreviewUrl,
+    selectedAttachmentPreview,
+    selectedAttachmentPreviewMode,
+    selectedAttachmentPreviewSrc,
+    selectedAttachmentPreviewText,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3315,6 +3439,7 @@ function StudioInner() {
           storagePathHint: (attachment as any).storagePathHint,
           documentState: normalizeDocumentLifecycleState((attachment as any)?.documentState, "ingested"),
           hasContent: (attachment as any)?.hasContent === true || Boolean(String(attachment.content || "").trim()),
+          isHidden: typeof (attachment as any)?.isHidden === "boolean" ? (attachment as any).isHidden : undefined,
         }));
         return {
           itemId: String(targetEmail?.itemId || (targetIsCurrent ? currentContext.itemId : "") || "").trim() || undefined,
@@ -3341,6 +3466,7 @@ function StudioInner() {
             storagePathHint: (attachment as any).storagePathHint,
             documentState: (attachment as any).documentState,
             hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
+            isHidden: typeof (attachment as any)?.isHidden === "boolean" ? (attachment as any).isHidden : undefined,
           })),
         };
       };
@@ -3611,11 +3737,47 @@ function StudioInner() {
     }
   }
 
-  function handleOpenQuickAttachment(attachment: ReturnType<typeof normalizeStudioAttachment>) {
+  function handleOpenQuickAttachment(attachment: NonNullable<ReturnType<typeof normalizeStudioAttachment>>) {
     const key = makeAttachmentKey(attachment);
     if (!key) return;
     setSelectedAttachmentPreviewKey(key);
     setPreviewMode("document");
+  }
+
+  async function handleSetQuickAttachmentHidden(
+    attachment: NonNullable<ReturnType<typeof normalizeStudioAttachment>>,
+    nextHidden: boolean
+  ) {
+    if (!selectedEmail || !attachment) return;
+    const attachmentKey = makeAttachmentKey(attachment);
+    if (!attachmentKey) return;
+    const updatedEmail = updateAttachmentVisibilityOnEmail(selectedEmail, attachmentKey, nextHidden);
+    if (!updatedEmail) {
+      setStatus("Nao foi possivel atualizar a visibilidade deste documento.");
+      return;
+    }
+    setActionBusy(true);
+    try {
+      setRelatedEmails((current) => current.map((email) => makeEmailKey(email) === makeEmailKey(updatedEmail) ? updatedEmail : email));
+      setKnownEmails((current) => current.map((email) => makeEmailKey(email) === makeEmailKey(updatedEmail) ? updatedEmail : email));
+      const latestSettings = await getSettings().catch(() => null);
+      const payload = buildRelevantEmailPayloadFromRelatedEmail(updatedEmail);
+      if (payload) {
+        await registerRelevantEmail({
+          ...payload,
+          ...buildAttachmentStorageOptions(latestSettings),
+        });
+      }
+      setStatus(
+        nextHidden
+          ? `Documento "${attachment.name}" ocultado dos documentos rapidos.`
+          : `Documento "${attachment.name}" mantido visivel nos documentos rapidos.`
+      );
+    } catch (actionError: any) {
+      setStatus(actionError?.message || "Nao foi possivel atualizar a visibilidade do documento.");
+    } finally {
+      setActionBusy(false);
+    }
   }
 
   async function handlePreviewReply() {
@@ -4741,6 +4903,13 @@ function StudioInner() {
     );
   }
 
+  const topCardsGridStyle = classificationEditorActive
+    ? { ...S.topCardsGrid, gridTemplateColumns: "minmax(220px,0.94fr) minmax(150px,0.5fr) minmax(420px,1.86fr)" }
+    : S.topCardsGrid;
+  const previewShellStyle = classificationEditorActive
+    ? { ...S.previewShellLarge, ...S.previewShellFocus }
+    : S.previewShellLarge;
+
   return (
     <div style={S.root}>
       <div style={S.header}>
@@ -4776,7 +4945,7 @@ function StudioInner() {
       {status ? <div style={S.notice}>{status}</div> : null}
 
       <div style={S.dashboard}>
-        <div style={S.topCardsGrid}>
+        <div style={topCardsGridStyle}>
 
           <section style={S.topCard}>
             <div style={S.sectionHeaderCompact}>
@@ -4820,24 +4989,66 @@ function StudioInner() {
                 <div style={S.sectionTitle}>Documentos rapidos</div>
                 <div style={S.sectionSubtitle}>Do email selecionado</div>
               </div>
+              {quickDocumentHiddenCount ? (
+                <button
+                  type="button"
+                  style={showHiddenQuickDocuments ? S.quietToggleBtnOn : S.quietToggleBtn}
+                  onClick={() => setShowHiddenQuickDocuments((current) => !current)}
+                >
+                  {showHiddenQuickDocuments ? `Ocultar ocultos (${quickDocumentHiddenCount})` : `Mostrar ocultos (${quickDocumentHiddenCount})`}
+                </button>
+              ) : null}
             </div>
             <div style={S.topCardScroll}>
-              {!selectedEmailAttachments.length ? (
+              {!quickDocumentAttachments.length ? (
                 <PanelState compact tone="info" title="Sem documentos rapidos" description="Este email ainda nao tem anexos persistidos para abrir aqui." />
               ) : (
                 <div style={S.quickDocList}>
-                  {selectedEmailAttachments.map((attachment) => {
+                  {quickDocumentAttachments.map((attachment) => {
                     const key = makeAttachmentKey(attachment);
                     const active = key === selectedAttachmentPreviewKey && previewMode === "document";
+                    const hidden = isStudioAttachmentHiddenInQuickDocs(attachment);
+                    const rowStyle = active
+                      ? hidden
+                        ? { ...S.quickDocRowOn, ...S.quickDocRowHidden }
+                        : S.quickDocRowOn
+                      : hidden
+                        ? { ...S.quickDocRow, ...S.quickDocRowHidden }
+                        : S.quickDocRow;
                     return (
-                      <div key={key} style={active ? S.quickDocRowOn : S.quickDocRow}>
+                      <div
+                        key={key}
+                        style={rowStyle}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleOpenQuickAttachment(attachment)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            handleOpenQuickAttachment(attachment);
+                          }
+                        }}
+                      >
                         <div style={S.quickDocMain}>
                           <span style={S.quickDocTitle}>{attachment.name || "Anexo"}</span>
                           <span style={S.quickDocMeta}>
                             {[attachment.contentType || "ficheiro", attachment.size ? `${Math.round(Number(attachment.size || 0) / 1024)} KB` : ""].filter(Boolean).join(" · ")}
                           </span>
                         </div>
-                        <button type="button" style={S.inlineActionBtn} onClick={() => handleOpenQuickAttachment(attachment)}>Abrir</button>
+                        <div style={S.quickDocActions}>
+                          {hidden ? <span style={S.quickDocHint}>oculto</span> : null}
+                          <button
+                            type="button"
+                            style={hidden ? S.quickDocActionBtnOn : S.quickDocActionBtn}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleSetQuickAttachmentHidden(attachment, hidden ? false : true);
+                            }}
+                            disabled={actionBusy}
+                          >
+                            {hidden ? "Manter visivel" : "Ocultar"}
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -4915,7 +5126,7 @@ function StudioInner() {
           </section>
         </div>
 
-        <section style={S.previewShellLarge}>
+        <section style={previewShellStyle}>
             <div style={S.previewToolbar}>
               <button type="button" style={previewMode === "email" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("email")} disabled={!previewHtml}>Email</button>
               <button type="button" style={previewMode === "document" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("document")} disabled={!previewHasDocument}>Documento</button>
@@ -4933,61 +5144,37 @@ function StudioInner() {
               {previewMode === "document" ? (
                 selectedAttachmentPreview ? (
                   <div style={S.documentPreviewShell}>
-                    {selectedAttachmentPreviewMode === "image" ? (
-                      selectedAttachmentPreviewSrc ? (
-                        <div style={S.documentPreviewFrame}>
-                          <img src={selectedAttachmentPreviewSrc} alt={selectedAttachmentPreview?.name || "Imagem"} style={S.attachmentPreviewImage} />
-                        </div>
-                      ) : (
-                        <div style={S.attachmentPreviewEmpty}>
-                          {selectedAttachmentPreviewRemoteStatus === "loading"
-                            ? "A carregar imagem..."
-                            : selectedAttachmentPreview?.hasContent
-                              ? "Nao foi possivel carregar o conteudo persistido desta imagem."
-                              : "Esta imagem ainda nao foi persistida com conteudo."}
-                        </div>
-                      )
+                    {selectedAttachmentDocumentPreview?.kind === "image" ? (
+                      <div style={S.documentPreviewFrame}>
+                        <img src={selectedAttachmentDocumentPreview.src} alt={selectedAttachmentPreview?.name || "Imagem"} style={S.attachmentPreviewImage} />
+                      </div>
                     ) : null}
-                    {selectedAttachmentPreviewMode === "pdf" ? (
-                      selectedAttachmentPreviewSrc ? (
-                        selectedAttachmentPreviewSrc.startsWith("data:")
-                          ? <StudioPdfPreview dataUrl={selectedAttachmentPreviewSrc} title={selectedAttachmentPreview?.name || "PDF"} />
-                          : (
-                            <div style={S.documentPreviewFrame}>
-                              <iframe title={selectedAttachmentPreview?.name || "PDF"} src={selectedAttachmentPreviewSrc} style={S.documentPreviewIframe} />
-                            </div>
-                          )
-                      ) : (
-                        <div style={S.attachmentPreviewEmpty}>
-                          {selectedAttachmentPreviewRemoteStatus === "loading"
-                            ? "A carregar PDF..."
-                            : selectedAttachmentPreview?.hasContent
-                              ? "Nao foi possivel carregar o conteudo persistido deste PDF."
-                              : "Este PDF ainda nao foi persistido com conteudo."}
-                        </div>
-                      )
+                    {selectedAttachmentDocumentPreview?.kind === "pdf" ? (
+                      <div style={S.documentPreviewFrame}>
+                        {selectedAttachmentDocumentPreview.src.startsWith("data:")
+                          ? <StudioPdfPreview dataUrl={selectedAttachmentDocumentPreview.src} title={selectedAttachmentPreview?.name || "PDF"} />
+                          : <iframe title={selectedAttachmentPreview?.name || "PDF"} src={selectedAttachmentDocumentPreview.src} style={S.documentPreviewIframe} />}
+                      </div>
                     ) : null}
-                    {selectedAttachmentPreviewMode === "office" ? (
-                      selectedAttachmentOfficePreviewUrl ? (
-                        <div style={S.documentPreviewFrame}>
-                          <iframe title={selectedAttachmentPreview?.name || "Documento"} src={selectedAttachmentOfficePreviewUrl} style={S.documentPreviewIframe} />
-                        </div>
-                      ) : (
-                        <div style={S.attachmentPreviewEmpty}>Preview nao disponivel para este formato Office neste ambiente.</div>
-                      )
+                    {selectedAttachmentDocumentPreview?.kind === "office" ? (
+                      <div style={S.documentPreviewFrame}>
+                        <iframe title={selectedAttachmentPreview?.name || "Documento"} src={selectedAttachmentDocumentPreview.url} style={S.documentPreviewIframe} />
+                      </div>
                     ) : null}
-                    {selectedAttachmentPreviewMode === "text" ? (
-                      selectedAttachmentPreviewText ? (
-                        <pre style={S.attachmentPreviewText}>{selectedAttachmentPreviewText}</pre>
-                      ) : (
-                        <div style={S.attachmentPreviewEmpty}>Nao foi possivel ler o conteudo textual deste ficheiro.</div>
-                      )
+                    {selectedAttachmentDocumentPreview?.kind === "text" ? (
+                      <pre style={S.attachmentPreviewText}>{selectedAttachmentDocumentPreview.text}</pre>
                     ) : null}
-                    {selectedAttachmentPreviewMode === "unsupported" ? (
-                      <div style={S.attachmentPreviewEmpty}>Preview nao disponivel para este tipo de ficheiro.</div>
+                    {!selectedAttachmentDocumentPreview && selectedAttachmentPreviewRemoteStatus === "loading" ? (
+                      <PanelState compact tone="loading" title="A carregar documento" description="A preparar o preview do documento selecionado." />
+                    ) : null}
+                    {selectedAttachmentDocumentPreview?.kind === "unsupported" ? (
+                      <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode exigir download ou URL publica para preview." />
+                    ) : null}
+                    {!selectedAttachmentDocumentPreview && selectedAttachmentPreviewRemoteStatus !== "loading" && selectedAttachmentPreviewMode !== "none" ? (
+                      <PanelState compact tone="info" title="Preview nao disponivel" description="Nao foi possivel abrir este documento com a mesma base de preview da aba Grupos." />
                     ) : null}
                     {selectedAttachmentPreviewMode === "none" ? (
-                      <div style={S.attachmentPreviewEmpty}>Escolhe um anexo para ver o preview.</div>
+                      <PanelState compact tone="info" title="Escolhe um documento" description="Seleciona um documento rapido para abrir o preview." />
                     ) : null}
                   </div>
                 ) : (
@@ -5074,9 +5261,16 @@ const S: Record<string, React.CSSProperties> = {
   quickDocList: { display: "grid", gap: 5 },
   quickDocRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center", borderRadius: 10, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.78)", padding: "7px 8px" },
   quickDocRowOn: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center", borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.96)", padding: "7px 8px" },
+  quickDocRowHidden: { opacity: 0.8 },
   quickDocMain: { display: "grid", gap: 3, minWidth: 0 },
   quickDocTitle: { fontSize: 10.5, fontWeight: 550, color: "var(--iccc-text)", lineHeight: 1.2, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   quickDocMeta: { fontSize: 9.25, color: "var(--iccc-muted)", lineHeight: 1.15 },
+  quickDocActions: { display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" },
+  quickDocHint: { fontSize: 9, fontWeight: 700, color: "var(--iccc-muted)" },
+  quickDocActionBtn: { height: 22, padding: "0 8px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.92)", color: "#475569", fontSize: 9.25, fontWeight: 700, cursor: "pointer" },
+  quickDocActionBtnOn: { height: 22, padding: "0 8px", borderRadius: 999, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.88)", color: "#1d4ed8", fontSize: 9.25, fontWeight: 700, cursor: "pointer" },
+  quietToggleBtn: { height: 22, padding: "0 8px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.88)", color: "#64748b", fontSize: 9.25, fontWeight: 700, cursor: "pointer" },
+  quietToggleBtnOn: { height: 22, padding: "0 8px", borderRadius: 999, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.88)", color: "#1d4ed8", fontSize: 9.25, fontWeight: 700, cursor: "pointer" },
   inlineActionBtn: { height: 24, padding: "0 9px", borderRadius: 999, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.88)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
   workCol: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, overflow: "hidden" },
   stack: { height: "100%", minHeight: 0, display: "grid", gap: 10, alignContent: "start", overflowY: "auto", paddingRight: 2 },
@@ -5099,6 +5293,7 @@ const S: Record<string, React.CSSProperties> = {
   classificationEditorHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" },
   classificationEditorBody: { minHeight: 0, overflow: "auto", paddingRight: 2 },
   previewShellLarge: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden" },
+  previewShellFocus: { width: "68%", minWidth: 0, justifySelf: "start" },
   previewToolbar: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", paddingBottom: 1, borderBottom: "1px solid rgba(148,163,184,0.1)" },
   previewTab: { height: 24, padding: "0 9px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
   previewTabOn: { height: 24, padding: "0 9px", borderRadius: 999, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(219,234,254,0.9)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
