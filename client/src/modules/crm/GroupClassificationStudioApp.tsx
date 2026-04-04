@@ -108,11 +108,38 @@ const DOCUMENT_STATE_OPTIONS: Array<{ value: DocumentLifecycleState; label: stri
   { value: "reread_requested", label: "Reler" },
 ];
 
-const OUTLOOK_CATEGORY_COLOR_LEGEND = [
-  { key: "blue", label: "Azul = Em analise", style: { borderColor: "rgba(59,130,246,0.34)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8" } },
-  { key: "amber", label: "Amarelo = Aguarda", style: { borderColor: "rgba(245,158,11,0.3)", background: "rgba(254,243,199,0.95)", color: "#b45309" } },
-  { key: "green", label: "Verde = Concluido", style: { borderColor: "rgba(34,197,94,0.28)", background: "rgba(220,252,231,0.95)", color: "#15803d" } },
-  { key: "red", label: "Vermelho = Bloqueado", style: { borderColor: "rgba(239,68,68,0.26)", background: "rgba(254,226,226,0.95)", color: "#b91c1c" } },
+type UnifiedStatusColorKey = "blue" | "amber" | "green" | "red";
+
+const UNIFIED_STATUS_COLOR_MAP: Array<{
+  key: UnifiedStatusColorKey;
+  label: string;
+  aliases: string[];
+  style: React.CSSProperties;
+}> = [
+  {
+    key: "blue",
+    label: "Azul = Em analise",
+    aliases: ["em_analise", "aberto", "open"],
+    style: { borderColor: "rgba(59,130,246,0.34)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8" },
+  },
+  {
+    key: "amber",
+    label: "Amarelo = Aguarda",
+    aliases: ["aguarda", "em_progresso", "pending"],
+    style: { borderColor: "rgba(245,158,11,0.3)", background: "rgba(254,243,199,0.95)", color: "#b45309" },
+  },
+  {
+    key: "green",
+    label: "Verde = Concluido",
+    aliases: ["concluido", "resolved", "done"],
+    style: { borderColor: "rgba(34,197,94,0.28)", background: "rgba(220,252,231,0.95)", color: "#15803d" },
+  },
+  {
+    key: "red",
+    label: "Vermelho = Bloqueado",
+    aliases: ["bloqueado", "fechado", "closed", "blocked"],
+    style: { borderColor: "rgba(239,68,68,0.26)", background: "rgba(254,226,226,0.95)", color: "#b91c1c" },
+  },
 ];
 
 const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
@@ -294,6 +321,37 @@ function normalizeClassificationMetaDraft(
       ? value.categorizedLabelNames.map((label) => String(label || "").trim()).filter(Boolean)
       : [],
   };
+}
+
+function getComparableStringListSignature(values: string[]): string {
+  return JSON.stringify(
+    Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)))
+      .sort((left, right) => left.localeCompare(right, "pt"))
+  );
+}
+
+function getComparableLabelDraftsSignature(drafts: Record<string, LabelDraft>): string {
+  return JSON.stringify(
+    Object.keys(drafts || {})
+      .sort((left, right) => left.localeCompare(right, "pt"))
+      .map((label) => {
+        const draft = drafts[label];
+        return {
+          label,
+          categorize: draft?.categorize === true,
+          hasStatus: draft?.hasStatus === true,
+          status: draft?.hasStatus ? String(draft?.status || "").trim() || undefined : undefined,
+        };
+      })
+  );
+}
+
+function getComparableClassificationMetaSignature(value?: Partial<ClassificationMetaDraft> | null): string {
+  const normalized = normalizeClassificationMetaDraft(value);
+  return JSON.stringify({
+    ...normalized,
+    categorizedLabelNames: [...(normalized.categorizedLabelNames || [])].sort((left, right) => left.localeCompare(right, "pt")),
+  });
 }
 
 function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
@@ -1352,6 +1410,7 @@ function StudioInner() {
   const [selectedTicketId, setSelectedTicketId] = useState("");
   const [ticketStatusDraft, setTicketStatusDraft] = useState("");
   const [ticketSearch, setTicketSearch] = useState("");
+  const [ticketSearchBusy, setTicketSearchBusy] = useState(false);
   const [ticketSearchResults, setTicketSearchResults] = useState<GroupTicketEntry[]>([]);
   const [labelInput, setLabelInput] = useState("");
   const [labelCatalogReady, setLabelCatalogReady] = useState(false);
@@ -1396,6 +1455,7 @@ function StudioInner() {
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
   const [favoriteGroupIds, setFavoriteGroupIds] = useState<string[]>([]);
   const hydratedEmailKeysRef = useRef<Set<string>>(new Set());
+  const ticketSearchRequestSeqRef = useRef(0);
   const classificationDraftSnapshotRef = useRef<null | {
     principalGroupId: string;
     principalSearch: string;
@@ -1736,10 +1796,24 @@ function StudioInner() {
   }, [emailPool, principalAnchorGroupId, currentCaseBusinessGroups, currentContext, groupMap]);
   const selectedTargetCount = selectedTargetEmails.length;
   const principalScopeCount = principalScopeEmails.length;
+  const currentScopeEmail = useMemo(
+    () => caseScopeEmails.find((email) => makeEmailKey(email) === selectedEmailKey) || selectedEmail || caseScopeEmails[0] || null,
+    [caseScopeEmails, selectedEmail, selectedEmailKey]
+  );
   const applyDialogSelectedEmails = useMemo(
     () => caseScopeEmails.filter((email) => applyDialogEmailKeys.includes(makeEmailKey(email))),
     [applyDialogEmailKeys, caseScopeEmails]
   );
+  const applyDialogEffectiveEmails = useMemo(() => {
+    if (applyDialogScopeMode === "current") {
+      return (currentScopeEmail ? [currentScopeEmail] : []) as RelatedEmailEntry[];
+    }
+    if (applyDialogScopeMode === "case_all") {
+      return caseScopeEmails;
+    }
+    return applyDialogSelectedEmails;
+  }, [applyDialogScopeMode, applyDialogSelectedEmails, caseScopeEmails, currentScopeEmail]);
+  const normalizedTicketSearch = useMemo(() => String(ticketSearch || "").trim(), [ticketSearch]);
 
   const selectedEmailTicketIds = useMemo(() => {
     if (!selectedEmail) return [];
@@ -1789,6 +1863,20 @@ function StudioInner() {
       setSection("emails");
     }
   }, [selectedEmailKey]);
+
+  useEffect(() => {
+    if (classificationFocus !== "ticket" || ticketEditorMode !== "existing") return;
+    if (!normalizedTicketSearch) {
+      ticketSearchRequestSeqRef.current += 1;
+      setTicketSearchBusy(false);
+      setTicketSearchResults([]);
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      void handleSearchTickets(normalizedTicketSearch, { silent: true });
+    }, 180);
+    return () => window.clearTimeout(timeoutId);
+  }, [classificationFocus, normalizedTicketSearch, ticketEditorMode]);
 
   const previewHtml = useMemo(() => buildEmailPreviewHtml(selectedEmail), [selectedEmail]);
   const labelCatalog = useMemo(() => {
@@ -1853,7 +1941,6 @@ function StudioInner() {
     }, []);
     return rows.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
   }, [relatedTickets, ticketSearchResults]);
-
   const selectedEmailAttachments = useMemo(() => {
     return (selectedEmail?.attachments || [])
       .map((attachment) => normalizeStudioAttachment(attachment))
@@ -2450,6 +2537,36 @@ function StudioInner() {
       selectedEmail?.status,
     ]
   );
+  const hasPendingClassificationChanges = useMemo(() => {
+    const snapshot = classificationDraftSnapshotRef.current;
+    if (!snapshot) return false;
+    return snapshot.principalGroupId !== principalGroupId
+      || snapshot.principalSearch !== principalSearch
+      || getComparableStringListSignature(snapshot.referenceGroupIds) !== getComparableStringListSignature(referenceGroupIds)
+      || snapshot.referenceSearch !== referenceSearch
+      || getComparableStringListSignature(snapshot.selectedLabels) !== getComparableStringListSignature(selectedLabels)
+      || getComparableLabelDraftsSignature(snapshot.labelDrafts) !== getComparableLabelDraftsSignature(labelDrafts)
+      || getComparableClassificationMetaSignature(snapshot.classificationMetaDraft) !== getComparableClassificationMetaSignature(classificationMetaDraft)
+      || snapshot.selectedTicketId !== selectedTicketId
+      || snapshot.selectedSeriesId !== selectedSeriesId
+      || snapshot.ticketStatusDraft !== ticketStatusDraft
+      || snapshot.ticketSearch !== ticketSearch
+      || snapshot.createTicketTitle !== createTicketTitle;
+  }, [
+    classificationMetaDraft,
+    createTicketTitle,
+    labelDrafts,
+    principalGroupId,
+    principalSearch,
+    referenceGroupIds,
+    referenceSearch,
+    selectedLabels,
+    selectedSeriesId,
+    selectedTicketId,
+    ticketSearch,
+    ticketStatusDraft,
+  ]);
+  const canApplyFromClassificationEditor = hasPendingClassificationChanges || canApplyClassification;
   const classificationEditorActive = section === "classification" && classificationFocus !== "summary";
   const auxiliaryEditorActive = section === "labels" || section === "filters" || section === "groups";
   const classificationCardTitle = useMemo(() => {
@@ -3497,19 +3614,39 @@ function StudioInner() {
     }
   }
 
-  async function handleSearchTickets() {
-    setActionBusy(true);
+  async function handleSearchTickets(queryOverride?: string, options?: { silent?: boolean }) {
+    const query = String(queryOverride ?? ticketSearch ?? "").trim();
+    const requestSeq = ++ticketSearchRequestSeqRef.current;
+    if (!query) {
+      setTicketSearchResults([]);
+      setTicketSearchBusy(false);
+      if (!options?.silent) {
+        setStatus("Escreve primeiro parte do codigo ou do titulo para pesquisar tickets.");
+      }
+      return [];
+    }
+    setTicketSearchBusy(true);
     try {
       const rows = await searchGroupTickets({
-        q: String(ticketSearch || "").trim() || undefined,
+        q: query || undefined,
         limit: 20,
       });
+      if (requestSeq !== ticketSearchRequestSeqRef.current) return rows;
       setTicketSearchResults(rows);
-      setStatus(rows.length ? `${rows.length} ticket(s) encontrados.` : "Nenhum ticket encontrado para estes filtros.");
+      if (!options?.silent) {
+        setStatus(rows.length ? `${rows.length} ticket(s) encontrados.` : "Nenhum ticket encontrado para estes filtros.");
+      }
+      return rows;
     } catch (actionError: any) {
+      if (requestSeq === ticketSearchRequestSeqRef.current) {
+        setTicketSearchResults([]);
+      }
       setStatus(actionError?.message || "Nao foi possivel pesquisar tickets.");
+      return [];
     } finally {
-      setActionBusy(false);
+      if (requestSeq === ticketSearchRequestSeqRef.current) {
+        setTicketSearchBusy(false);
+      }
     }
   }
 
@@ -4061,8 +4198,8 @@ function StudioInner() {
   }
 
   async function handleConfirmApplyDialog() {
-    const selectedEmails = applyDialogSelectedEmails.length
-      ? applyDialogSelectedEmails
+    const selectedEmails = applyDialogEffectiveEmails.length
+      ? applyDialogEffectiveEmails
       : ((selectedEmail ? [selectedEmail] : []) as RelatedEmailEntry[]);
     const applied = await handleApplyClassification(selectedEmails);
     if (!applied) return;
@@ -4072,7 +4209,7 @@ function StudioInner() {
   function renderOutlookColorLegend() {
     return (
       <div style={S.legendRow}>
-        {OUTLOOK_CATEGORY_COLOR_LEGEND.map((entry) => (
+        {UNIFIED_STATUS_COLOR_MAP.map((entry) => (
           <span key={entry.key} style={{ ...S.legendChip, ...entry.style }}>{entry.label}</span>
         ))}
       </div>
@@ -4185,7 +4322,7 @@ function StudioInner() {
         </div>
         <div style={S.editorHeaderActions}>
           <button type="button" style={S.secondaryBtn} onClick={handleCloseClassificationEditor}>Voltar</button>
-          <button type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationFocus)} disabled={actionBusy || !canApplyClassification}>
+          <button type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationFocus)} disabled={actionBusy || !canApplyFromClassificationEditor}>
             <Icons.Save size={12} />
             Aplicar
           </button>
@@ -4384,7 +4521,7 @@ function StudioInner() {
   }
 
   function renderTicketEditor() {
-    const activeList = ticketSearchResults.length ? ticketSearchResults : availableTicketChoices.slice(0, 8);
+    const activeList = normalizedTicketSearch ? ticketSearchResults : availableTicketChoices.slice(0, 8);
     return (
       <div style={S.editorPanelStack}>
         <div style={S.editorModeKicker}>Ticket</div>
@@ -4407,12 +4544,14 @@ function StudioInner() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    void handleSearchTickets();
+                    void handleSearchTickets(undefined, { silent: false });
                   }
                 }}
                 placeholder="Pesquisar por codigo, titulo ou etiqueta..."
               />
-              <button type="button" style={S.secondaryBtn} onClick={() => void handleSearchTickets()}>Procurar</button>
+              <button type="button" style={S.secondaryBtn} onClick={() => void handleSearchTickets(undefined, { silent: false })} disabled={!normalizedTicketSearch}>
+                Procurar
+              </button>
             </div>
             <div style={S.searchResultListCompact}>
               {activeList.length ? activeList.map((ticket) => (
@@ -4421,7 +4560,13 @@ function StudioInner() {
                   {ticket.title && ticket.title !== ticket.code ? <span style={S.resultMiniMeta}>{ticket.title}</span> : null}
                   {ticket.id === selectedTicketId ? <span style={S.resultMiniMeta}>Ligado</span> : null}
                 </button>
-              )) : <span style={S.mutedMini}>Sem tickets disponiveis para ligar.</span>}
+              )) : (
+                <span style={S.mutedMini}>
+                  {normalizedTicketSearch
+                    ? (ticketSearchBusy ? "A procurar tickets..." : "Nenhum ticket encontrado para esta pesquisa.")
+                    : "Sem tickets disponiveis para ligar."}
+                </span>
+              )}
             </div>
           </div>
         ) : (
@@ -4640,7 +4785,6 @@ function StudioInner() {
           : applyDialogSection === "references"
             ? "Referencias"
             : "Classificacao";
-    const currentScopeEmail = caseScopeEmails.find((email) => makeEmailKey(email) === selectedEmailKey) || selectedEmail || caseScopeEmails[0] || null;
     const displayEmails = applyDialogScopeMode === "current"
       ? (currentScopeEmail ? [currentScopeEmail] : [])
       : caseScopeEmails;
@@ -4718,7 +4862,7 @@ function StudioInner() {
           </div>
           <div style={S.modalFooter}>
             <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
-            <button type="button" style={S.primaryBtn} onClick={() => void handleConfirmApplyDialog()} disabled={actionBusy || !applyDialogSelectedEmails.length}>
+            <button type="button" style={S.primaryBtn} onClick={() => void handleConfirmApplyDialog()} disabled={actionBusy || !applyDialogEffectiveEmails.length}>
               Confirmar aplicacao
             </button>
           </div>
@@ -5846,7 +5990,7 @@ function StudioInner() {
         <div style={S.headerActions}>
           <button type="button" style={S.secondaryBtn} onClick={() => setSection("groups")} disabled={!manageableGroups.length}>Renomear</button>
           <button type="button" style={S.secondaryBtn} onClick={() => setStatus("Fluxo de fundir preparado para a fase seguinte.")} disabled={!manageableGroups.length}>Fundir</button>
-          <button type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationEditorActive ? classificationFocus : "summary")} disabled={actionBusy || !canApplyClassification}>
+          <button type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationEditorActive ? classificationFocus : "summary")} disabled={actionBusy || !(classificationEditorActive ? canApplyFromClassificationEditor : canApplyClassification)}>
             <Icons.Save size={12} />
             Guardar
           </button>
@@ -6208,12 +6352,12 @@ const S: Record<string, React.CSSProperties> = {
   topCardsGrid: { minHeight: 0, display: "grid", gridTemplateColumns: "minmax(0,1.04fr) minmax(0,0.88fr) minmax(0,1.16fr)", gap: 8, transition: "grid-template-columns 180ms ease" },
   dashboardFocus: { minHeight: 0, display: "grid", gridTemplateColumns: "minmax(240px,0.98fr) minmax(210px,0.76fr) minmax(520px,1.86fr)", gridTemplateRows: "minmax(0,1fr) minmax(0,0.88fr)", gap: 8, overflow: "hidden" },
   topCardsGridFocus: { display: "contents" },
-  topCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.9)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 6, overflow: "hidden", transition: "transform 180ms ease, width 180ms ease, box-shadow 180ms ease" },
-  topCardWide: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.9)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", transition: "transform 180ms ease, width 180ms ease, box-shadow 180ms ease" },
-  focusEmailsCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 6, overflow: "hidden", gridColumn: "1", gridRow: "1" },
-  focusQuickDocumentsCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.88)", boxShadow: "0 6px 18px rgba(15,23,42,0.025)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", gridColumn: "2", gridRow: "1" },
+  topCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.9)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 5, overflow: "hidden", transition: "transform 180ms ease, width 180ms ease, box-shadow 180ms ease" },
+  topCardWide: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.9)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 5, overflow: "hidden", transition: "transform 180ms ease, width 180ms ease, box-shadow 180ms ease" },
+  focusEmailsCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 5, overflow: "hidden", gridColumn: "1", gridRow: "1" },
+  focusQuickDocumentsCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.88)", boxShadow: "0 6px 18px rgba(15,23,42,0.025)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 5, overflow: "hidden", gridColumn: "2", gridRow: "1" },
   focusClassificationCard: { minHeight: 0, borderRadius: 14, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(255,255,255,0.97)", boxShadow: "0 18px 36px rgba(37,99,235,0.08)", padding: 10, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 8, overflow: "hidden", gridColumn: "3", gridRow: "1 / span 2" },
-  topCardScroll: { minHeight: 0, display: "grid", gap: 4, overflowY: "auto", paddingRight: 1 },
+  topCardScroll: { minHeight: 0, display: "grid", gap: 3, overflowY: "auto", paddingRight: 1 },
   sectionHeaderCompact: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
   sectionTitle: { fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(15,23,42,0.82)" },
   sectionSubtitle: { fontSize: 9.5, color: "var(--iccc-muted)" },
@@ -6224,21 +6368,21 @@ const S: Record<string, React.CSSProperties> = {
   listCol: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
   colTitle: { fontSize: 17, fontWeight: 800, color: "var(--iccc-text)" },
   emailTools: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, flexWrap: "wrap" },
-  emailControlsRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", alignItems: "center", gap: 8 },
-  emailToolsInline: { display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" },
+  emailControlsRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", alignItems: "center", gap: 6 },
+  emailToolsInline: { display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" },
   input: { width: "100%", height: 30, boxSizing: "border-box", borderRadius: 9, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(248,250,252,0.92)", padding: "0 9px", fontSize: 11, color: "var(--iccc-text)", outline: "none" },
   textarea: { width: "100%", minHeight: 120, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "10px 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none", resize: "vertical" },
   select: { width: "100%", height: 38, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none" },
   listBody: { minHeight: 0, display: "grid", gap: 8, overflowY: "auto", paddingRight: 2 },
-  email: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.78)", padding: "7px 8px", display: "grid", gap: 6, cursor: "pointer" },
-  emailOn: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.96)", padding: "7px 8px", display: "grid", gap: 6, cursor: "pointer" },
-  emailTop: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", alignItems: "center", gap: 8 },
-  emailPick: { display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", alignItems: "center", gap: 8, minWidth: 0, cursor: "pointer" },
-  emailTopRight: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, minWidth: 0 },
-  emailSubject: { fontSize: 10.75, fontWeight: 550, lineHeight: 1.2, color: "var(--iccc-text)", minWidth: 0, textAlign: "left", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  emailMeta: { fontSize: 9.1, color: "var(--iccc-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 116 },
-  emailSnippet: { maxHeight: 92, overflowY: "auto", padding: "7px 9px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.86)", color: "var(--iccc-text-soft, #334155)", fontSize: 9.75, lineHeight: 1.38, whiteSpace: "pre-wrap" },
-  counter: { minWidth: 16, height: 16, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 9.25, fontWeight: 700 },
+  email: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.78)", padding: "5px 7px", display: "grid", gap: 4, cursor: "pointer" },
+  emailOn: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.96)", padding: "5px 7px", display: "grid", gap: 4, cursor: "pointer" },
+  emailTop: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", alignItems: "center", gap: 6 },
+  emailPick: { display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", alignItems: "center", gap: 6, minWidth: 0, cursor: "pointer" },
+  emailTopRight: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5, minWidth: 0 },
+  emailSubject: { fontSize: 10.25, fontWeight: 550, lineHeight: 1.15, color: "var(--iccc-text)", minWidth: 0, textAlign: "left", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  emailMeta: { fontSize: 8.75, color: "var(--iccc-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 108 },
+  emailSnippet: { maxHeight: 84, overflowY: "auto", padding: "6px 8px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.86)", color: "var(--iccc-text-soft, #334155)", fontSize: 9.4, lineHeight: 1.34, whiteSpace: "pre-wrap" },
+  counter: { minWidth: 14, height: 14, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 8.4, fontWeight: 700 },
   quickDocList: { display: "grid", gap: 4 },
   quickDocLineMain: { display: "grid", minWidth: 0 },
   quickDocRowHiddenTone: { opacity: 0.82 },
@@ -6293,7 +6437,7 @@ const S: Record<string, React.CSSProperties> = {
   compactCheckBoxField: { minHeight: 34, display: "flex", alignItems: "center", gap: 8, padding: "0 10px", borderRadius: 10, border: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.88)", fontSize: 10.5, color: "var(--iccc-text)" },
   searchInlineRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center" },
   searchResultListCompact: { display: "grid", gap: 6, maxHeight: 172, overflowY: "auto", paddingRight: 1 },
-  chevronBtn: { width: 24, height: 24, borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.88)", color: "#475569", fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  chevronBtn: { width: 20, height: 20, borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.88)", color: "#475569", fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   legendRow: { display: "flex", flexWrap: "wrap", gap: 6 },
   legendChip: { display: "inline-flex", alignItems: "center", padding: "3px 8px", borderRadius: 999, border: "1px solid transparent", fontSize: 9.5, fontWeight: 700 },
   editorSplitRow: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
