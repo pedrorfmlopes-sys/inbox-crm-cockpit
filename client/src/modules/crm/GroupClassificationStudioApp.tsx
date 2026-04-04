@@ -252,6 +252,32 @@ function formatQuickDocumentMeta(
   return [typeLabel, sizeLabel].filter(Boolean).join(" · ");
 }
 
+function buildQuickDocumentPreviewText(
+  attachment: ReturnType<typeof normalizeStudioAttachment>
+): string {
+  if (!attachment) return "";
+  const kind = inferStudioAttachmentKind(attachment);
+  const textContent = String(attachment.content || "").trim();
+  if (kind === "text" && textContent) {
+    return textContent.slice(0, 420).trim();
+  }
+  if (kind === "pdf") {
+    return attachment.hasContent
+      ? "PDF pronto para abrir no preview inferior."
+      : "PDF identificado. O conteudo sera aberto no preview inferior quando estiver disponivel.";
+  }
+  if (kind === "image") {
+    return "Imagem pronta para visualizacao no preview inferior.";
+  }
+  if (kind === "office") {
+    return "Documento Office pronto para abrir no preview inferior.";
+  }
+  const stateLabel = formatDocumentLifecycleState((attachment as any)?.documentState);
+  return stateLabel
+    ? `${stateLabel}. Seleciona este ficheiro para o abrir no preview inferior.`
+    : "Seleciona este ficheiro para o abrir no preview inferior.";
+}
+
 function normalizeClassificationMetaDraft(
   value?: Partial<ClassificationMetaDraft> | null
 ): ClassificationMetaDraft {
@@ -1347,6 +1373,7 @@ function StudioInner() {
   const [applyDialogEmailKeys, setApplyDialogEmailKeys] = useState<string[]>([]);
   const [applyDialogExpandedEmailKeys, setApplyDialogExpandedEmailKeys] = useState<string[]>([]);
   const [expandedEmailKeys, setExpandedEmailKeys] = useState<string[]>([]);
+  const [expandedQuickDocumentKeys, setExpandedQuickDocumentKeys] = useState<string[]>([]);
   const [classificationSuggestionExpanded, setClassificationSuggestionExpanded] = useState<Record<"principal" | "labels", boolean>>({
     principal: false,
     labels: false,
@@ -1841,6 +1868,11 @@ function StudioInner() {
     () => selectedEmailAttachments.filter((attachment) => isStudioAttachmentHiddenInQuickDocs(attachment)).length,
     [selectedEmailAttachments]
   );
+  useEffect(() => {
+    setExpandedQuickDocumentKeys((current) =>
+      current.filter((key) => quickDocumentAttachments.some((attachment) => makeAttachmentKey(attachment) === key))
+    );
+  }, [quickDocumentAttachments]);
   const activeSelectedEmailAttachments = useMemo(
     () => selectedEmailAttachments.filter((attachment) => !isRejectedDocumentLifecycleState((attachment as any)?.documentState)),
     [selectedEmailAttachments]
@@ -2919,6 +2951,7 @@ function StudioInner() {
   }
 
   function toggleReferenceGroup(groupId: string) {
+    if (!groupId || groupId === principalGroupId) return;
     setSelectionTouched((current) => ({ ...current, references: true }));
     setReferenceGroupIds((current) => current.includes(groupId) ? current.filter((entry) => entry !== groupId) : [...current, groupId]);
   }
@@ -2942,7 +2975,18 @@ function StudioInner() {
     if (!group?.id) return;
     setSelectionTouched((current) => ({ ...current, principal: true }));
     setPrincipalGroupId(group.id);
+    setReferenceGroupIds((current) => current.filter((entry) => entry !== group.id));
     setPrincipalSearchValue(group.name);
+  }
+
+  function toggleExpandedQuickDocumentKey(attachmentKey: string) {
+    const key = String(attachmentKey || "").trim();
+    if (!key) return;
+    setExpandedQuickDocumentKeys((current) =>
+      current.includes(key)
+        ? current.filter((entry) => entry !== key)
+        : [key]
+    );
   }
 
   function toggleFavoritePrincipalGroup(group: LinkGroupEntry) {
@@ -5828,11 +5872,13 @@ function StudioInner() {
               </div>
               <span style={S.cardMeta}>Selecionados: {selectedTargetCount}</span>
             </div>
-            <div style={S.emailTools}>
-              <button type="button" style={S.linkBtn} onClick={selectAllVisibleEmails}>Todos visiveis</button>
-              <button type="button" style={S.linkBtn} onClick={clearSelectedTargets}>Limpar</button>
+            <div style={S.emailControlsRow}>
+              <input style={S.input} value={emailSearch} onChange={(event) => setEmailSearch(event.target.value)} placeholder="Pesquisar por assunto, remetente ou texto..." />
+              <div style={S.emailToolsInline}>
+                <button type="button" style={S.linkBtn} onClick={selectAllVisibleEmails}>Todos visiveis</button>
+                <button type="button" style={S.linkBtn} onClick={clearSelectedTargets}>Limpar</button>
+              </div>
             </div>
-            <input style={S.input} value={emailSearch} onChange={(event) => setEmailSearch(event.target.value)} placeholder="Pesquisar por assunto, remetente ou texto..." />
             <div style={S.topCardScroll}>
               {loading ? <PanelState compact tone="loading" title="A carregar emails" description="A preparar a lista desta nova janela." /> : null}
               {!loading && !visibleEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Ajusta os filtros ou muda a fonte da lista." /> : null}
@@ -5910,15 +5956,17 @@ function StudioInner() {
                 <div style={S.sectionTitle}>Documentos rapidos</div>
                 <div style={S.sectionSubtitle}>Do email selecionado</div>
               </div>
-              {quickDocumentHiddenCount ? (
-                <button
-                  type="button"
-                  style={showHiddenQuickDocuments ? S.quietToggleBtnOn : S.quietToggleBtn}
-                  onClick={() => setShowHiddenQuickDocuments((current) => !current)}
-                >
-                  {showHiddenQuickDocuments ? `Ocultar ocultos (${quickDocumentHiddenCount})` : `Mostrar ocultos (${quickDocumentHiddenCount})`}
-                </button>
-              ) : null}
+              <div style={S.emailToolsInline}>
+                {quickDocumentHiddenCount ? (
+                  <button
+                    type="button"
+                    style={showHiddenQuickDocuments ? S.quietToggleBtnOn : S.quietToggleBtn}
+                    onClick={() => setShowHiddenQuickDocuments((current) => !current)}
+                  >
+                    {showHiddenQuickDocuments ? `Ocultar ocultos (${quickDocumentHiddenCount})` : `Mostrar ocultos (${quickDocumentHiddenCount})`}
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div style={S.topCardScroll}>
               {!quickDocumentAttachments.length ? (
@@ -5928,14 +5976,16 @@ function StudioInner() {
                   {quickDocumentAttachments.map((attachment) => {
                     const key = makeAttachmentKey(attachment);
                     const active = key === selectedAttachmentPreviewKey && previewMode === "document";
+                    const expanded = expandedQuickDocumentKeys.includes(key);
                     const hidden = isStudioAttachmentHiddenInQuickDocs(attachment);
+                    const previewText = buildQuickDocumentPreviewText(attachment);
                     const rowStyle = active
                       ? hidden
-                        ? { ...S.quickDocRowOn, ...S.quickDocRowHidden }
-                        : S.quickDocRowOn
+                        ? { ...S.emailOn, ...S.quickDocRowHiddenTone }
+                        : S.emailOn
                       : hidden
-                        ? { ...S.quickDocRow, ...S.quickDocRowHidden }
-                        : S.quickDocRow;
+                        ? { ...S.email, ...S.quickDocRowHiddenTone }
+                        : S.email;
                     return (
                       <div
                         key={key}
@@ -5950,24 +6000,39 @@ function StudioInner() {
                           }
                         }}
                       >
-                        <div style={S.quickDocMain}>
-                          <span style={S.quickDocTitle}>{attachment.name || "Anexo"}</span>
-                          <span style={S.quickDocMeta}>{formatQuickDocumentMeta(attachment)}</span>
+                        <div style={S.emailTop}>
+                          <div style={S.quickDocLineMain}>
+                            <span style={S.emailSubject}>{attachment.name || "Anexo"}</span>
+                          </div>
+                          <div style={S.emailTopRight}>
+                            <span style={S.emailMeta}>{formatQuickDocumentMeta(attachment)}</span>
+                            {hidden ? <span style={S.quickDocStateBadge}>Oculto</span> : null}
+                            <button
+                              type="button"
+                              style={hidden ? S.quickDocActionBtnOn : S.quickDocActionBtn}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleSetQuickAttachmentHidden(attachment, hidden ? false : true);
+                              }}
+                              disabled={actionBusy}
+                            >
+                              {hidden ? "Mostrar" : "Ocultar"}
+                            </button>
+                            {previewText ? (
+                              <button
+                                type="button"
+                                style={S.chevronBtn}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleExpandedQuickDocumentKey(key);
+                                }}
+                              >
+                                {expanded ? "\u2303" : "\u2304"}
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
-                        <div style={S.quickDocActions}>
-                          {hidden ? <span style={S.quickDocHint}>oculto</span> : null}
-                          <button
-                            type="button"
-                            style={hidden ? S.quickDocActionBtnOn : S.quickDocActionBtn}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void handleSetQuickAttachmentHidden(attachment, hidden ? false : true);
-                            }}
-                            disabled={actionBusy}
-                          >
-                            {hidden ? "Mostrar" : "Ocultar"}
-                          </button>
-                        </div>
+                        {expanded && previewText ? <div style={S.emailSnippet}>{previewText}</div> : null}
                       </div>
                     );
                   })}
@@ -6148,7 +6213,7 @@ const S: Record<string, React.CSSProperties> = {
   focusEmailsCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 6, overflow: "hidden", gridColumn: "1", gridRow: "1" },
   focusQuickDocumentsCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.88)", boxShadow: "0 6px 18px rgba(15,23,42,0.025)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 6, overflow: "hidden", gridColumn: "2", gridRow: "1" },
   focusClassificationCard: { minHeight: 0, borderRadius: 14, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(255,255,255,0.97)", boxShadow: "0 18px 36px rgba(37,99,235,0.08)", padding: 10, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 8, overflow: "hidden", gridColumn: "3", gridRow: "1 / span 2" },
-  topCardScroll: { minHeight: 0, display: "grid", gap: 5, overflowY: "auto", paddingRight: 1 },
+  topCardScroll: { minHeight: 0, display: "grid", gap: 4, overflowY: "auto", paddingRight: 1 },
   sectionHeaderCompact: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
   sectionTitle: { fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(15,23,42,0.82)" },
   sectionSubtitle: { fontSize: 9.5, color: "var(--iccc-muted)" },
@@ -6159,6 +6224,8 @@ const S: Record<string, React.CSSProperties> = {
   listCol: { minHeight: 0, borderRadius: 18, border: "1px solid var(--iccc-border)", background: "var(--iccc-panel)", boxShadow: "var(--iccc-shadow)", padding: 12, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 10, overflow: "hidden" },
   colTitle: { fontSize: 17, fontWeight: 800, color: "var(--iccc-text)" },
   emailTools: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, flexWrap: "wrap" },
+  emailControlsRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", alignItems: "center", gap: 8 },
+  emailToolsInline: { display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" },
   input: { width: "100%", height: 30, boxSizing: "border-box", borderRadius: 9, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(248,250,252,0.92)", padding: "0 9px", fontSize: 11, color: "var(--iccc-text)", outline: "none" },
   textarea: { width: "100%", minHeight: 120, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "10px 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none", resize: "vertical" },
   select: { width: "100%", height: 38, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none" },
@@ -6172,15 +6239,10 @@ const S: Record<string, React.CSSProperties> = {
   emailMeta: { fontSize: 9.1, color: "var(--iccc-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 116 },
   emailSnippet: { maxHeight: 92, overflowY: "auto", padding: "7px 9px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.86)", color: "var(--iccc-text-soft, #334155)", fontSize: 9.75, lineHeight: 1.38, whiteSpace: "pre-wrap" },
   counter: { minWidth: 16, height: 16, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 9.25, fontWeight: 700 },
-  quickDocList: { display: "grid", gap: 5 },
-  quickDocRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center", borderRadius: 10, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.78)", padding: "7px 8px" },
-  quickDocRowOn: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center", borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.96)", padding: "7px 8px" },
-  quickDocRowHidden: { opacity: 0.8 },
-  quickDocMain: { display: "grid", gap: 3, minWidth: 0 },
-  quickDocTitle: { fontSize: 10.5, fontWeight: 550, color: "var(--iccc-text)", lineHeight: 1.2, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  quickDocMeta: { fontSize: 9.25, color: "var(--iccc-muted)", lineHeight: 1.15 },
-  quickDocActions: { display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" },
-  quickDocHint: { fontSize: 9, fontWeight: 700, color: "var(--iccc-muted)" },
+  quickDocList: { display: "grid", gap: 4 },
+  quickDocLineMain: { display: "grid", minWidth: 0 },
+  quickDocRowHiddenTone: { opacity: 0.82 },
+  quickDocStateBadge: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 44, height: 18, padding: "0 7px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.9)", color: "#64748b", fontSize: 8.75, fontWeight: 700 },
   quickDocActionBtn: { height: 22, padding: "0 8px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.92)", color: "#475569", fontSize: 9.25, fontWeight: 700, cursor: "pointer" },
   quickDocActionBtnOn: { height: 22, padding: "0 8px", borderRadius: 999, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.88)", color: "#1d4ed8", fontSize: 9.25, fontWeight: 700, cursor: "pointer" },
   quietToggleBtn: { height: 22, padding: "0 8px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.88)", color: "#64748b", fontSize: 9.25, fontWeight: 700, cursor: "pointer" },
