@@ -664,6 +664,19 @@ function buildSnippet(email: RelatedEmailEntry): string {
   return source.length > 180 ? `${source.slice(0, 177).trim()}...` : source;
 }
 
+function buildEmailPreviewText(email: RelatedEmailEntry): string {
+  return String(email.bodyText || htmlToPlainText(String(email.bodyHtml || "")) || buildSnippet(email) || "").trim();
+}
+
+function buildCompactEmailMeta(email: RelatedEmailEntry): string {
+  return [
+    String(email.fromName || email.fromEmail || "").trim(),
+    formatDate(email.messageDateIso || email.receivedAtIso),
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
 function buildEmailCorpus(email: RelatedEmailEntry): string {
   return [
     email.subject,
@@ -1333,6 +1346,7 @@ function StudioInner() {
   const [applyDialogSection, setApplyDialogSection] = useState<ClassificationFocus>("summary");
   const [applyDialogEmailKeys, setApplyDialogEmailKeys] = useState<string[]>([]);
   const [applyDialogExpandedEmailKeys, setApplyDialogExpandedEmailKeys] = useState<string[]>([]);
+  const [expandedEmailKeys, setExpandedEmailKeys] = useState<string[]>([]);
   const [classificationSuggestionExpanded, setClassificationSuggestionExpanded] = useState<Record<"principal" | "labels", boolean>>({
     principal: false,
     labels: false,
@@ -1734,6 +1748,10 @@ function StudioInner() {
     if (!selectedEmailKey) return;
     setPreviewMode("email");
   }, [selectedEmailKey]);
+
+  useEffect(() => {
+    setExpandedEmailKeys((current) => current.filter((key) => visibleEmails.some((email) => makeEmailKey(email) === key)));
+  }, [visibleEmails]);
 
   useEffect(() => {
     setApplyDialogOpen(false);
@@ -3971,6 +3989,11 @@ function StudioInner() {
     setApplyDialogExpandedEmailKeys((current) => current.includes(emailKey) ? current.filter((entry) => entry !== emailKey) : [...current, emailKey]);
   }
 
+  function toggleExpandedEmailKey(emailKey: string) {
+    if (!emailKey) return;
+    setExpandedEmailKeys((current) => current.includes(emailKey) ? current.filter((entry) => entry !== emailKey) : [...current, emailKey]);
+  }
+
   async function handleConfirmApplyDialog() {
     const selectedEmails = applyDialogSelectedEmails.length
       ? applyDialogSelectedEmails
@@ -3990,7 +4013,7 @@ function StudioInner() {
     );
   }
 
-  function renderSuggestionTray(
+  function renderSuggestionTrayLegacy(
     kind: "principal" | "labels",
     title: string,
     chips: Array<{ key: string; label: string; active?: boolean; onClick: () => void }>,
@@ -4020,16 +4043,58 @@ function StudioInner() {
             </button>
           )) : <span style={S.mutedMini}>Sem sugestoes fortes nesta leitura.</span>}
         </div>
-        {hidden.length ? (
-          <div style={expanded ? S.editorExpandableOpen : S.editorExpandableClosed}>
-            <div style={expanded ? S.editorExpandableScroll : S.editorExpandableHint}>
-              {expanded
-                ? hidden.map((chip) => (
-                  <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
-                    {chip.label}
-                  </button>
-                ))
-                : helper}
+        {hidden.length && expanded ? (
+          <div style={S.editorExpandableOpen}>
+            <div style={S.editorExpandableScroll}>
+              {hidden.map((chip) => (
+                <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderSuggestionTray(
+    kind: "principal" | "labels",
+    title: string,
+    chips: Array<{ key: string; label: string; active?: boolean; onClick: () => void }>
+  ) {
+    const visible = chips.slice(0, 3);
+    const hidden = chips.slice(3);
+    const expanded = classificationSuggestionExpanded[kind];
+    return (
+      <div style={S.editorBlock}>
+        <div style={S.editorBlockHeader}>
+          <div style={S.editorBlockTitle}>{title}</div>
+          {hidden.length ? (
+            <button
+              type="button"
+              style={S.chevronBtn}
+              onClick={() => setClassificationSuggestionExpanded((current) => ({ ...current, [kind]: !current[kind] }))}
+            >
+              {expanded ? "\u2303" : "\u2304"}
+            </button>
+          ) : null}
+        </div>
+        <div style={S.chipGridCompact}>
+          {visible.length ? visible.map((chip) => (
+            <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
+              {chip.label}
+            </button>
+          )) : <span style={S.mutedMini}>Sem sugestoes fortes nesta leitura.</span>}
+        </div>
+        {hidden.length && expanded ? (
+          <div style={S.editorExpandableOpen}>
+            <div style={S.editorExpandableScroll}>
+              {hidden.map((chip) => (
+                <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
+                  {chip.label}
+                </button>
+              ))}
             </div>
           </div>
         ) : null}
@@ -4077,7 +4142,7 @@ function StudioInner() {
       <div style={S.editorPanelStack}>
         <div style={S.editorModeKicker}>Grupo principal</div>
         <div style={S.editorLead}>Escolhe ou ajusta o dossier principal do email.</div>
-        {renderSuggestionTray("principal", "Sugestoes", suggestionChips, "Ao expandir, aparecem as restantes sugestoes com barra de scroll vertical se forem muitas.")}
+        {renderSuggestionTray("principal", "Sugestoes", suggestionChips)}
         <div style={S.editorBlock}>
           <div style={S.editorBlockTitle}>Pesquisar ou criar</div>
           <div style={S.searchInlineRow}>
@@ -4148,7 +4213,7 @@ function StudioInner() {
       <div style={S.editorPanelStack}>
         <div style={S.editorModeKicker}>Etiquetas</div>
         <div style={S.editorLead}>Liga ou desliga apenas as etiquetas relevantes.</div>
-        {renderSuggestionTray("labels", "Sugestoes da leitura", suggestionChips, "Ao expandir, aparecem as restantes sugestoes com barra de scroll vertical se forem muitas.")}
+        {renderSuggestionTray("labels", "Sugestoes da leitura", suggestionChips)}
         <div style={S.editorBlock}>
           <div style={S.editorBlockTitle}>Selecionadas</div>
           <div style={S.chipGridCompact}>
@@ -4296,11 +4361,15 @@ function StudioInner() {
         </div>
         <div style={S.editorBlock}>
           <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-          <div style={S.editorOptionGrid}>
-            <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceCategorize} onChange={(event) => updateClassificationMeta({ referenceCategorize: event.target.checked })} /> Referencia em categoria Outlook</label>
-            <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceStatusCategorize} onChange={(event) => updateClassificationMeta({ referenceStatusEnabled: event.target.checked, referenceStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
+          <div style={S.editorOptionStackLoose}>
+            <div style={S.editorOptionGrid}>
+              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceCategorize} onChange={(event) => updateClassificationMeta({ referenceCategorize: event.target.checked })} /> Referencia em categoria Outlook</label>
+              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceStatusCategorize} onChange={(event) => updateClassificationMeta({ referenceStatusEnabled: event.target.checked, referenceStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
+            </div>
+            <div style={S.editorLegendWrap}>
+              {renderOutlookColorLegend()}
+            </div>
           </div>
-          {renderOutlookColorLegend()}
         </div>
       </div>
     );
@@ -4313,7 +4382,7 @@ function StudioInner() {
     return renderReferencesEditor();
   }
 
-  function renderApplyDialog() {
+  function renderApplyDialogLegacy() {
     if (!applyDialogOpen) return null;
     const sectionLabel = applyDialogSection === "principal"
       ? "Grupo principal"
@@ -4367,6 +4436,104 @@ function StudioInner() {
                 );
               })}
             </div>
+          </div>
+          <div style={S.modalFooter}>
+            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
+            <button type="button" style={S.primaryBtn} onClick={() => void handleConfirmApplyDialog()} disabled={actionBusy || !applyDialogSelectedEmails.length}>
+              Confirmar aplicacao
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderApplyDialog() {
+    if (!applyDialogOpen) return null;
+    const sectionLabel = applyDialogSection === "principal"
+      ? "Grupo principal"
+      : applyDialogSection === "labels"
+        ? "Etiquetas"
+        : applyDialogSection === "ticket"
+          ? "Ticket"
+          : applyDialogSection === "references"
+            ? "Referencias"
+            : "Classificacao";
+    const currentScopeEmail = caseScopeEmails.find((email) => makeEmailKey(email) === selectedEmailKey) || selectedEmail || caseScopeEmails[0] || null;
+    const displayEmails = applyDialogScopeMode === "current"
+      ? (currentScopeEmail ? [currentScopeEmail] : [])
+      : caseScopeEmails;
+    const manualSelectionEnabled = applyDialogScopeMode === "selected";
+    const showEmailList = applyDialogScopeMode !== "current";
+    return (
+      <div style={S.modalBackdrop}>
+        <div style={S.modalSheet}>
+          <div style={S.modalHeader}>
+            <div>
+              <div style={S.kicker}>Aplicar alteracoes</div>
+              <div style={S.modalTitle}>{sectionLabel}</div>
+            </div>
+            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
+          </div>
+          <div style={S.modalScopeRow}>
+            <button type="button" style={applyDialogScopeMode === "current" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("current")}>So este email</button>
+            <button type="button" style={applyDialogScopeMode === "selected" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("selected")}>Emails selecionados</button>
+            <button type="button" style={applyDialogScopeMode === "case_all" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("case_all")}>Todos os emails do caso</button>
+          </div>
+          <div style={S.modalBlock}>
+            <div style={S.modalBlockHeader}>
+              <div style={S.editorBlockTitle}>{applyDialogScopeMode === "current" ? "Email alvo" : "Escolher emails"}</div>
+              {manualSelectionEnabled ? (
+                <button type="button" style={S.linkBtn} onClick={() => setApplyDialogEmailKeys(caseScopeEmails.map((email) => makeEmailKey(email)).filter(Boolean))}>Selecionar todos</button>
+              ) : null}
+            </div>
+            {!showEmailList && currentScopeEmail ? (
+              <div style={S.applySingleEmailSummary}>
+                <div style={S.applyEmailSummaryHead}>
+                  <div style={S.applyEmailSummaryTitle}>{currentScopeEmail.subject || "(sem assunto)"}</div>
+                  <button type="button" style={S.chevronBtn} onClick={() => toggleApplyDialogExpandedEmailKey(makeEmailKey(currentScopeEmail))}>
+                    {applyDialogExpandedEmailKeys.includes(makeEmailKey(currentScopeEmail)) ? "\u2303" : "\u2304"}
+                  </button>
+                </div>
+                <div style={S.applyEmailSummaryMeta}>{buildCompactEmailMeta(currentScopeEmail)}</div>
+                {applyDialogExpandedEmailKeys.includes(makeEmailKey(currentScopeEmail)) ? (
+                  <div style={S.applyEmailPreview}>{buildEmailPreviewText(currentScopeEmail) || "Sem preview resumido para este email."}</div>
+                ) : null}
+              </div>
+            ) : (
+              <div style={S.applyEmailList}>
+                {displayEmails.map((email) => {
+                  const emailKey = makeEmailKey(email);
+                  const expanded = applyDialogExpandedEmailKeys.includes(emailKey);
+                  const checked = applyDialogScopeMode === "case_all" || applyDialogEmailKeys.includes(emailKey);
+                  return (
+                    <div key={emailKey} style={checked ? S.applyEmailRowOn : S.applyEmailRow}>
+                      <div style={S.applyEmailRowTop}>
+                        <label style={S.applyEmailMain}>
+                          {manualSelectionEnabled ? (
+                            <input type="checkbox" checked={checked} onChange={() => toggleApplyDialogEmailKey(emailKey)} />
+                          ) : (
+                            <span style={checked ? S.applyScopeBadgeOn : S.applyScopeBadge}>
+                              {applyDialogScopeMode === "case_all" ? "Incluido" : "Atual"}
+                            </span>
+                          )}
+                          <span style={S.applyEmailSubject}>{email.subject || "(sem assunto)"}</span>
+                        </label>
+                        <div style={S.applyEmailRowTail}>
+                          <span style={S.applyEmailMeta}>{buildCompactEmailMeta(email) || "--"}</span>
+                          <button type="button" style={S.chevronBtn} onClick={() => toggleApplyDialogExpandedEmailKey(emailKey)}>
+                            {expanded ? "\u2303" : "\u2304"}
+                          </button>
+                        </div>
+                      </div>
+                      {expanded ? (
+                        <div style={S.applyEmailPreview}>{buildEmailPreviewText(email) || "Sem preview resumido para este email."}</div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <div style={S.modalFooter}>
             <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
@@ -5540,7 +5707,55 @@ function StudioInner() {
             <div style={S.topCardScroll}>
               {loading ? <PanelState compact tone="loading" title="A carregar emails" description="A preparar a lista desta nova janela." /> : null}
               {!loading && !visibleEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Ajusta os filtros ou muda a fonte da lista." /> : null}
-              {!loading && visibleEmails.map((email) => (
+              {!loading && visibleEmails.map((email) => {
+                const emailKey = makeEmailKey(email);
+                const expanded = expandedEmailKeys.includes(emailKey);
+                const active = emailKey === makeEmailKey(selectedEmail || {});
+                return (
+                  <div
+                    key={`compact-${emailKey}`}
+                    style={active ? S.emailOn : S.email}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedEmailKey(emailKey)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedEmailKey(emailKey);
+                      }
+                    }}
+                  >
+                    <div style={S.emailTop}>
+                      <label style={S.emailPick} onClick={(event) => event.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedTargetEmailKeys.includes(emailKey)}
+                          onChange={() => toggleTargetEmailKey(emailKey)}
+                        />
+                        <span style={S.emailSubject}>{email.subject || "(sem assunto)"}</span>
+                      </label>
+                      <div style={S.emailTopRight}>
+                        <span style={S.emailMeta}>{buildCompactEmailMeta(email) || "--"}</span>
+                        {Array.isArray(email.attachments) && email.attachments.length ? <span style={S.counter}>{email.attachments.length}</span> : null}
+                        <button
+                          type="button"
+                          style={S.chevronBtn}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleExpandedEmailKey(emailKey);
+                          }}
+                        >
+                          {expanded ? "\u2303" : "\u2304"}
+                        </button>
+                      </div>
+                    </div>
+                    {expanded ? (
+                      <div style={S.emailSnippet}>{buildEmailPreviewText(email) || "Sem preview curto disponivel."}</div>
+                    ) : null}
+                  </div>
+                );
+              })}
+              {false && !loading && visibleEmails.map((email) => (
                 <button key={makeEmailKey(email)} type="button" style={makeEmailKey(email) === makeEmailKey(selectedEmail || {}) ? S.emailOn : S.email} onClick={() => setSelectedEmailKey(makeEmailKey(email))}>
                   <div style={S.emailTop}>
                     <label style={S.emailPick} onClick={(event) => event.stopPropagation()}>
@@ -5819,13 +6034,14 @@ const S: Record<string, React.CSSProperties> = {
   textarea: { width: "100%", minHeight: 120, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "10px 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none", resize: "vertical" },
   select: { width: "100%", height: 38, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none" },
   listBody: { minHeight: 0, display: "grid", gap: 8, overflowY: "auto", paddingRight: 2 },
-  email: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.78)", padding: "7px 8px", display: "grid", gap: 3, cursor: "pointer" },
-  emailOn: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.96)", padding: "7px 8px", display: "grid", gap: 3, cursor: "pointer" },
-  emailTop: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
-  emailPick: { display: "flex", alignItems: "flex-start", gap: 8, minWidth: 0, cursor: "pointer" },
-  emailSubject: { fontSize: 10.75, fontWeight: 550, lineHeight: 1.25, color: "var(--iccc-text)", minWidth: 0, textAlign: "left" },
-  emailMeta: { fontSize: 9.25, color: "var(--iccc-muted)" },
-  emailSnippet: { fontSize: 10, lineHeight: 1.3, color: "var(--iccc-text-soft, #334155)", maxHeight: 28, overflow: "hidden", opacity: 0.88 },
+  email: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.78)", padding: "7px 8px", display: "grid", gap: 6, cursor: "pointer" },
+  emailOn: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.96)", padding: "7px 8px", display: "grid", gap: 6, cursor: "pointer" },
+  emailTop: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", alignItems: "center", gap: 8 },
+  emailPick: { display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", alignItems: "center", gap: 8, minWidth: 0, cursor: "pointer" },
+  emailTopRight: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, minWidth: 0 },
+  emailSubject: { fontSize: 10.75, fontWeight: 550, lineHeight: 1.2, color: "var(--iccc-text)", minWidth: 0, textAlign: "left", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  emailMeta: { fontSize: 9.1, color: "var(--iccc-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 116 },
+  emailSnippet: { maxHeight: 92, overflowY: "auto", padding: "7px 9px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.86)", color: "var(--iccc-text-soft, #334155)", fontSize: 9.75, lineHeight: 1.38, whiteSpace: "pre-wrap" },
   counter: { minWidth: 16, height: 16, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 9.25, fontWeight: 700 },
   quickDocList: { display: "grid", gap: 5 },
   quickDocRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center", borderRadius: 10, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.78)", padding: "7px 8px" },
@@ -5874,12 +6090,13 @@ const S: Record<string, React.CSSProperties> = {
   editorBlockHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   editorBlockTitle: { fontSize: 10.5, fontWeight: 700, color: "var(--iccc-text)" },
   editorValueStrong: { fontSize: 12.5, fontWeight: 600, color: "var(--iccc-text)" },
-  editorExpandableClosed: { borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.82)", padding: "7px 9px" },
   editorExpandableOpen: { borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.82)", padding: "7px 9px" },
   editorExpandableScroll: { display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 96, overflowY: "auto", alignContent: "flex-start" },
   editorExpandableHint: { fontSize: 9.5, lineHeight: 1.35, color: "var(--iccc-muted)" },
   chipGridCompact: { display: "flex", flexWrap: "wrap", gap: 6 },
   editorOptionGrid: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
+  editorOptionStackLoose: { display: "grid", gap: 12 },
+  editorLegendWrap: { paddingTop: 2 },
   editorAdvancedFieldGrid: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
   compactCheck: { display: "flex", alignItems: "center", gap: 8, fontSize: 10.5, color: "var(--iccc-text)" },
   compactCheckBoxField: { minHeight: 34, display: "flex", alignItems: "center", gap: 8, padding: "0 10px", borderRadius: 10, border: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.88)", fontSize: 10.5, color: "var(--iccc-text)" },
@@ -5993,10 +6210,17 @@ const S: Record<string, React.CSSProperties> = {
   applyEmailList: { minHeight: 0, overflowY: "auto", display: "grid", gap: 8, paddingRight: 2 },
   applyEmailRow: { borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(248,250,252,0.84)", padding: "9px 10px", display: "grid", gap: 8 },
   applyEmailRowOn: { borderRadius: 12, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.9)", padding: "9px 10px", display: "grid", gap: 8 },
-  applyEmailRowTop: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "start" },
-  applyEmailMain: { display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", alignItems: "start", gap: 8, minWidth: 0 },
-  applyEmailSubject: { fontSize: 10.75, fontWeight: 600, color: "var(--iccc-text)", lineHeight: 1.25, display: "block", minWidth: 0 },
-  applyEmailMeta: { fontSize: 9.5, color: "var(--iccc-muted)", lineHeight: 1.2, display: "block", marginTop: 2 },
+  applySingleEmailSummary: { borderRadius: 12, border: "1px solid rgba(37,99,235,0.16)", background: "rgba(239,246,255,0.76)", padding: "10px 11px", display: "grid", gap: 6 },
+  applyEmailSummaryHead: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center" },
+  applyEmailSummaryTitle: { fontSize: 11.25, fontWeight: 600, color: "var(--iccc-text)", lineHeight: 1.2, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  applyEmailSummaryMeta: { fontSize: 9.5, color: "var(--iccc-muted)", lineHeight: 1.2 },
+  applyEmailRowTop: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center" },
+  applyEmailMain: { display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", alignItems: "center", gap: 8, minWidth: 0 },
+  applyEmailRowTail: { display: "flex", alignItems: "center", gap: 6, minWidth: 0, justifyContent: "flex-end" },
+  applyEmailSubject: { fontSize: 10.75, fontWeight: 600, color: "var(--iccc-text)", lineHeight: 1.2, display: "block", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  applyEmailMeta: { fontSize: 9.25, color: "var(--iccc-muted)", lineHeight: 1.2, display: "block", maxWidth: 160, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  applyScopeBadge: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 56, height: 22, padding: "0 8px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.92)", color: "#64748b", fontSize: 9, fontWeight: 700 },
+  applyScopeBadgeOn: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 56, height: 22, padding: "0 8px", borderRadius: 999, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(239,246,255,0.92)", color: "#1d4ed8", fontSize: 9, fontWeight: 700 },
   applyEmailPreview: { maxHeight: 92, overflowY: "auto", padding: "7px 9px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(255,255,255,0.9)", color: "var(--iccc-text-soft, #334155)", fontSize: 10, lineHeight: 1.4, whiteSpace: "pre-wrap" },
   modalFooter: { display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" },
 };
