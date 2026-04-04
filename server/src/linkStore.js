@@ -2185,15 +2185,26 @@ async function listDbGroupTicketSeries() {
 
 async function listDbGroupTickets(query = "", options = {}) {
   if (!db.isEnabled()) return [];
-  const q = normalizeString(query).toLowerCase();
+  const rawQuery = normalizeString(query).toLowerCase();
+  const q = normalizeSearchToken(query);
   const groupId = normalizeString(options?.groupId);
   const emailKey = normalizeString(options?.emailKey);
   const limit = Math.max(1, Math.min(normalizePositiveInt(options?.limit || 50, 50), 200));
   const where = [];
   const params = [];
-  if (q) {
+  if (rawQuery || q) {
+    params.push(`%${rawQuery}%`);
     params.push(`%${q}%`);
-    where.push(`(LOWER(t.code) LIKE $${params.length} OR LOWER(t.title) LIKE $${params.length} OR LOWER(COALESCE(t.description, '')) LIKE $${params.length})`);
+    where.push(`(
+      LOWER(t.code) LIKE $${params.length - 1}
+      OR LOWER(t.title) LIKE $${params.length - 1}
+      OR LOWER(COALESCE(t.description, '')) LIKE $${params.length - 1}
+      OR LOWER(COALESCE(array_to_string(t.labels_json::text[], ' '), '')) LIKE $${params.length - 1}
+      OR REGEXP_REPLACE(LOWER(COALESCE(t.code, '')), '[^a-z0-9]+', '_', 'g') LIKE $${params.length}
+      OR REGEXP_REPLACE(LOWER(COALESCE(t.title, '')), '[^a-z0-9]+', '_', 'g') LIKE $${params.length}
+      OR REGEXP_REPLACE(LOWER(COALESCE(t.description, '')), '[^a-z0-9]+', '_', 'g') LIKE $${params.length}
+      OR REGEXP_REPLACE(LOWER(COALESCE(array_to_string(t.labels_json::text[], ' '), '')), '[^a-z0-9]+', '_', 'g') LIKE $${params.length}
+    )`);
   }
   if (groupId) {
     params.push(groupId);
@@ -3950,7 +3961,7 @@ export async function listGroupTickets(query = "", options = {}) {
     }
   }
 
-  const q = normalizeString(query).toLowerCase();
+  const q = normalizeSearchToken(query);
   const groupId = normalizeString(options?.groupId);
   const emailKey = resolveEmailKeyFromInput(store, options?.email || {});
   const limit = Math.max(1, Math.min(normalizePositiveInt(options?.limit || 50, 50), 200));
@@ -3974,9 +3985,9 @@ export async function listGroupTickets(query = "", options = {}) {
         ...(ticket.labels || []),
         ...(ticket.groups || []).map((group) => group?.name),
       ]
+        .map((value) => normalizeSearchToken(value))
         .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+        .join(" ");
       return haystack.includes(q);
     })
     .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")))

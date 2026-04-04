@@ -2929,13 +2929,13 @@ function StudioInner() {
   }
 
   function setPrincipalSearchValue(value: string) {
-    const nextValue = String(value || "").trim();
+    const nextValue = String(value || "");
     setPrincipalSearch(nextValue);
     setCreateGroupName(nextValue);
   }
 
   function setReferenceSearchValue(value: string) {
-    setReferenceSearch(String(value || "").trim());
+    setReferenceSearch(String(value || ""));
   }
 
   function selectPrincipalGroup(group: LinkGroupEntry | null) {
@@ -3117,7 +3117,29 @@ function StudioInner() {
               : undefined
           ),
         });
+    setLabelCatalogEntries((current) => {
+      if (current.some((entry) => String(entry?.label || "").trim().toLowerCase() === value.toLowerCase())) {
+        return current;
+      }
+      return [...current, { label: value, categorize: false, hasStatus: false }];
+    });
     setLabelInput("");
+  }
+
+  function handleClassificationLabelSearchAction() {
+    const rawValue = String(classificationLabelInput || "").trim();
+    if (!rawValue) return;
+    if (classificationLabelCanCreate) {
+      addLabel(rawValue);
+      return;
+    }
+    if (exactClassificationLabel) {
+      if (selectedLabels.includes(exactClassificationLabel)) {
+        removeLabel(exactClassificationLabel);
+      } else {
+        addLabel(exactClassificationLabel);
+      }
+    }
   }
 
   function updateLabelDraft(label: string, patch: Partial<LabelDraft>) {
@@ -4150,6 +4172,16 @@ function StudioInner() {
               style={S.input}
               value={principalSearch}
               onChange={(event) => setPrincipalSearchValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (principalCanCreate) {
+                    void handleCreateGroupAndLink("principal", principalSearch);
+                  } else if (exactPrincipalSearchGroup) {
+                    selectPrincipalGroup(exactPrincipalSearchGroup);
+                  }
+                }
+              }}
               placeholder="Escreve o nome do grupo..."
             />
             <button
@@ -4161,11 +4193,12 @@ function StudioInner() {
                   return;
                 }
                 if (principalCanCreate) {
-                  setStatus("Este grupo sera criado quando aplicares a classificacao.");
+                  void handleCreateGroupAndLink("principal", principalSearch);
                 }
               }}
+              title={principalCanCreate ? "Criar grupo" : exactPrincipalSearchGroup ? "Selecionar grupo existente" : "Pesquisar grupo"}
             >
-              Pesquisar
+              {principalCanCreate ? "Criar" : "Pesquisar"}
             </button>
           </div>
           {principalSearchResults.length ? (
@@ -4214,6 +4247,59 @@ function StudioInner() {
         <div style={S.editorModeKicker}>Etiquetas</div>
         <div style={S.editorLead}>Liga ou desliga apenas as etiquetas relevantes.</div>
         {renderSuggestionTray("labels", "Sugestoes da leitura", suggestionChips)}
+        <div style={S.editorBlock}>
+          <div style={S.editorBlockTitle}>Pesquisar ou criar</div>
+          <div style={S.searchInlineRow}>
+            <input
+              style={S.input}
+              value={classificationLabelInput}
+              onChange={(event) => setClassificationLabelInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  handleClassificationLabelSearchAction();
+                }
+              }}
+              placeholder="Escreve o nome da etiqueta..."
+            />
+            <button
+              type="button"
+              style={S.secondaryBtn}
+              onClick={handleClassificationLabelSearchAction}
+              disabled={!String(classificationLabelInput || "").trim()}
+            >
+              {classificationLabelCanCreate ? "Criar" : "Ligar"}
+            </button>
+          </div>
+          {filteredClassificationLabels.length && String(classificationLabelInput || "").trim() ? (
+            <div style={S.searchResultListCompact}>
+              {filteredClassificationLabels.map((label) => (
+                <button
+                  key={label}
+                  type="button"
+                  style={selectedLabels.includes(label) ? S.searchResultBtnOn : S.searchResultBtn}
+                  onClick={() => {
+                    if (selectedLabels.includes(label)) {
+                      removeLabel(label);
+                    } else {
+                      addLabel(label);
+                    }
+                    setClassificationLabelInput(label);
+                  }}
+                >
+                  <span>{label}</span>
+                  {selectedLabels.includes(label) ? <span style={S.resultMiniMeta}>Ligada</span> : null}
+                </button>
+              ))}
+            </div>
+          ) : String(classificationLabelInput || "").trim() ? (
+            <div style={S.cardMeta}>
+              {classificationLabelCanCreate
+                ? `Ainda nao existe nenhuma etiqueta com este nome. Usa Criar para adicionar "${String(classificationLabelInput || "").trim()}".`
+                : "Etiqueta exata encontrada. Usa Ligar para a associar ou remover."}
+            </div>
+          ) : null}
+        </div>
         <div style={S.editorBlock}>
           <div style={S.editorBlockTitle}>Selecionadas</div>
           <div style={S.chipGridCompact}>
@@ -4270,13 +4356,25 @@ function StudioInner() {
         {ticketEditorMode === "existing" ? (
           <div style={S.editorBlock}>
             <div style={S.searchInlineRow}>
-              <input style={S.input} value={ticketSearch} onChange={(event) => setTicketSearch(event.target.value)} placeholder="Pesquisar ticket por codigo..." />
+              <input
+                style={S.input}
+                value={ticketSearch}
+                onChange={(event) => setTicketSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void handleSearchTickets();
+                  }
+                }}
+                placeholder="Pesquisar por codigo, titulo ou etiqueta..."
+              />
               <button type="button" style={S.secondaryBtn} onClick={() => void handleSearchTickets()}>Procurar</button>
             </div>
             <div style={S.searchResultListCompact}>
               {activeList.length ? activeList.map((ticket) => (
                 <button key={ticket.id} type="button" style={ticket.id === selectedTicketId ? S.searchResultBtnOn : S.searchResultBtn} onClick={() => applySuggestedTicket(ticket.id)}>
                   <span>{ticket.code || ticket.title || "Ticket"}</span>
+                  {ticket.title && ticket.title !== ticket.code ? <span style={S.resultMiniMeta}>{ticket.title}</span> : null}
                   {ticket.id === selectedTicketId ? <span style={S.resultMiniMeta}>Ligado</span> : null}
                 </button>
               )) : <span style={S.mutedMini}>Sem tickets disponiveis para ligar.</span>}
@@ -4345,9 +4443,48 @@ function StudioInner() {
         <div style={S.editorBlock}>
           <div style={S.editorBlockTitle}>Pesquisar outro dossier</div>
           <div style={S.searchInlineRow}>
-            <input style={S.input} value={referenceSearch} onChange={(event) => setReferenceSearchValue(event.target.value)} placeholder="Escreve para pesquisar..." />
-            <button type="button" style={S.secondaryBtn} onClick={() => { if (exactReferenceSearchGroup) toggleReferenceGroup(exactReferenceSearchGroup.id); }}>Procurar</button>
+            <input
+              style={S.input}
+              value={referenceSearch}
+              onChange={(event) => setReferenceSearchValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (referenceCanCreate) {
+                    void handleCreateGroupAndLink("referencia", referenceSearch);
+                  } else if (exactReferenceSearchGroup) {
+                    toggleReferenceGroup(exactReferenceSearchGroup.id);
+                    setReferenceSearchValue(exactReferenceSearchGroup.name);
+                  }
+                }
+              }}
+              placeholder="Escreve para pesquisar..."
+            />
+            <button
+              type="button"
+              style={S.secondaryBtn}
+              onClick={() => {
+                if (referenceCanCreate) {
+                  void handleCreateGroupAndLink("referencia", referenceSearch);
+                  return;
+                }
+                if (exactReferenceSearchGroup) {
+                  toggleReferenceGroup(exactReferenceSearchGroup.id);
+                  setReferenceSearchValue(exactReferenceSearchGroup.name);
+                }
+              }}
+              title={referenceCanCreate ? "Criar referencia" : exactReferenceSearchGroup ? "Ligar ou desligar referencia existente" : "Pesquisar referencia"}
+            >
+              {referenceCanCreate ? "Criar" : "Procurar"}
+            </button>
           </div>
+          {!referenceSearchResults.length && String(referenceSearch || "").trim() ? (
+            <div style={S.cardMeta}>
+              {referenceCanCreate
+                ? `Ainda nao existe nenhum dossier com este nome. Usa Procurar para criar "${String(referenceSearch || "").trim()}".`
+                : "Referencia exata encontrada. Usa Procurar para a ligar ou desligar."}
+            </div>
+          ) : null}
           {referenceSearchResults.length ? (
             <div style={S.searchResultListCompact}>
               {referenceSearchResults.map((group) => (
@@ -5003,26 +5140,18 @@ function StudioInner() {
                     style={S.input}
                     value={classificationLabelInput}
                     onChange={(event) => setClassificationLabelInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        handleClassificationLabelSearchAction();
+                      }
+                    }}
                     placeholder="Escreve o nome da etiqueta..."
                   />
                   <button
                     type="button"
                     style={String(classificationLabelInput || "").trim() ? S.iconActionBtn : S.iconActionBtnDisabled}
-                    onClick={() => {
-                      const rawValue = String(classificationLabelInput || "").trim();
-                      if (!rawValue) return;
-                      if (classificationLabelCanCreate) {
-                        addLabel(rawValue);
-                        return;
-                      }
-                      if (exactClassificationLabel) {
-                        if (selectedLabels.includes(exactClassificationLabel)) {
-                          removeLabel(exactClassificationLabel);
-                        } else {
-                          addLabel(exactClassificationLabel);
-                        }
-                      }
-                    }}
+                    onClick={handleClassificationLabelSearchAction}
                     disabled={!String(classificationLabelInput || "").trim()}
                     title={classificationLabelCanCreate ? "Criar etiqueta" : exactClassificationLabel ? "Ligar ou desligar etiqueta existente" : "Pesquisar etiqueta"}
                   >
