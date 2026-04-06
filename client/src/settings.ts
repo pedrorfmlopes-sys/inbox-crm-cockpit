@@ -90,7 +90,7 @@ export type GroupTicketUiSettings = {
   aiInstructions: string;
 };
 
-export type GroupLabelStatus = "em_analise" | "em_progresso" | "concluido";
+export type GroupLabelStatus = "em_analise" | "em_progresso" | "concluido" | string;
 
 export type GroupLabelCatalogEntry = {
   label: string;

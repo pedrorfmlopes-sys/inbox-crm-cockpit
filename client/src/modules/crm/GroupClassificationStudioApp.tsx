@@ -3681,14 +3681,15 @@ function StudioInner() {
         setStatus("Nao existe nenhum email alvo para atualizar.");
         return { ok: false, coreSuccess: false, error: "Nao existe nenhum email alvo." };
       }
-      const includesCurrentTarget = selectedEmailIsCurrent || effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
-      const currentTargetIdentity = includesCurrentTarget
+      const hasIdentity = Boolean(String(currentContext?.itemId || "").trim() || String(currentContext?.internetMessageId || "").trim());
+      const currentTargetIdentity = hasIdentity
         ? {
             itemId: String(currentContext.itemId || "").trim() || undefined,
             internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
             conversationId: String(currentContext.conversationId || "").trim() || undefined,
           }
-        : null;
+        : undefined;
+      const includesCurrentTarget = Boolean(currentTargetIdentity && effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext)));
       if (currentTargetIdentity) {
         const openedOperation = beginOutlookCategoryOperation({
           owner: "classification",
@@ -4225,14 +4226,11 @@ function StudioInner() {
 
   function renderOutlookColorLegend(): React.ReactNode {
     return (
-      <S.StatusLegendContainer>
-        {Object.entries(UNIFIED_STATUS_COLOR_MAP).map(([status, config]) => (
-          <S.StatusLegendItem key={status}>
-            <S.StatusLegendColorBox style={{ backgroundColor: config.color }} />
-            <S.StatusLegendLabel>{config.label}</S.StatusLegendLabel>
-          </S.StatusLegendItem>
+      <div style={S.legendRow}>
+        {UNIFIED_STATUS_COLOR_MAP.map((entry) => (
+          <span key={entry.key} style={{ ...S.legendChip, ...entry.style }}>{entry.label}</span>
         ))}
-      </S.StatusLegendContainer>
+      </div>
     );
   }
 
@@ -6383,7 +6381,7 @@ const S: Record<string, React.CSSProperties> = {
   focusEmailsCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.92)", boxShadow: "0 8px 20px rgba(15,23,42,0.03)", padding: 8, display: "grid", gridTemplateRows: "auto auto minmax(0,1fr)", gap: 5, overflow: "hidden", gridColumn: "1", gridRow: "1" },
   focusQuickDocumentsCard: { minHeight: 0, borderRadius: 12, border: "1px solid rgba(148,163,184,0.14)", background: "rgba(255,255,255,0.88)", boxShadow: "0 6px 18px rgba(15,23,42,0.025)", padding: 8, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 5, overflow: "hidden", gridColumn: "2", gridRow: "1" },
   focusClassificationCard: { minHeight: 0, borderRadius: 14, border: "1px solid rgba(37,99,235,0.18)", background: "rgba(255,255,255,0.97)", boxShadow: "0 18px 36px rgba(37,99,235,0.08)", padding: 10, display: "grid", gridTemplateRows: "auto minmax(0,1fr)", gap: 8, overflow: "hidden", gridColumn: "3", gridRow: "1 / span 2" },
-  topCardScroll: { minHeight: 0, display: "grid", gap: 3, overflowY: "auto", paddingRight: 1 },
+  topCardScroll: { minHeight: 0, display: "grid", gap: 3, alignContent: "start", overflowY: "auto", paddingRight: 1 },
   sectionHeaderCompact: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
   sectionTitle: { fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(15,23,42,0.82)" },
   sectionSubtitle: { fontSize: 9.5, color: "var(--iccc-muted)" },
@@ -6399,18 +6397,18 @@ const S: Record<string, React.CSSProperties> = {
   input: { width: "100%", height: 30, boxSizing: "border-box", borderRadius: 9, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(248,250,252,0.92)", padding: "0 9px", fontSize: 11, color: "var(--iccc-text)", outline: "none" },
   textarea: { width: "100%", minHeight: 120, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "10px 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none", resize: "vertical" },
   select: { width: "100%", height: 38, boxSizing: "border-box", borderRadius: 12, border: "1px solid var(--iccc-border)", background: "rgba(255,255,255,0.92)", padding: "0 12px", fontSize: 13, color: "var(--iccc-text)", outline: "none" },
-  listBody: { minHeight: 0, display: "grid", gap: 8, overflowY: "auto", paddingRight: 2 },
-  email: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.78)", padding: "5px 7px", display: "grid", gap: 4, cursor: "pointer" },
-  emailOn: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.96)", padding: "5px 7px", display: "grid", gap: 4, cursor: "pointer" },
-  emailTop: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", alignItems: "center", gap: 6 },
+  listBody: { minHeight: 0, display: "grid", gap: 6, alignContent: "start", overflowY: "auto", paddingRight: 2 },
+  email: { width: "100%", height: 30, boxSizing: "border-box", textAlign: "left", borderRadius: 8, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.78)", padding: "0 7px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", overflow: "hidden" },
+  emailOn: { width: "100%", height: 30, boxSizing: "border-box", textAlign: "left", borderRadius: 8, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.96)", padding: "0 7px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", overflow: "hidden" },
+  emailTop: { display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1, overflow: "hidden" },
   emailPick: { display: "grid", gridTemplateColumns: "auto minmax(0,1fr)", alignItems: "center", gap: 6, minWidth: 0, cursor: "pointer" },
   emailTopRight: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5, minWidth: 0 },
   emailSubject: { fontSize: 10.25, fontWeight: 550, lineHeight: 1.15, color: "var(--iccc-text)", minWidth: 0, textAlign: "left", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   emailMeta: { fontSize: 8.75, color: "var(--iccc-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 108 },
   emailSnippet: { maxHeight: 84, overflowY: "auto", padding: "6px 8px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.86)", color: "var(--iccc-text-soft, #334155)", fontSize: 9.4, lineHeight: 1.34, whiteSpace: "pre-wrap" },
   counter: { minWidth: 14, height: 14, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 8.4, fontWeight: 700 },
-  quickDocList: { display: "grid", gap: 4 },
-  quickDocLineMain: { display: "grid", minWidth: 0 },
+  quickDocList: { display: "grid", gap: 4, alignContent: "start" },
+  quickDocLineMain: { display: "flex", alignItems: "center", minWidth: 0, gap: 6, flex: 1, overflow: "hidden" },
   quickDocRowHiddenTone: { opacity: 0.82 },
   quickDocStateBadge: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 44, height: 18, padding: "0 7px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.9)", color: "#64748b", fontSize: 8.75, fontWeight: 700 },
   quickDocActionBtn: { height: 22, padding: "0 8px", borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.92)", color: "#475569", fontSize: 9.25, fontWeight: 700, cursor: "pointer" },
@@ -6431,6 +6429,8 @@ const S: Record<string, React.CSSProperties> = {
   classificationTileLabel: { fontSize: 8.5, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--iccc-muted)" },
   classificationTileValue: { fontSize: 11.25, fontWeight: 550, color: "var(--iccc-text)", lineHeight: 1.2 },
   classificationTileMeta: { fontSize: 9.5, lineHeight: 1.25, color: "var(--iccc-muted)" },
+  legendRow: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 },
+  legendChip: { padding: "3px 8px", borderRadius: 6, fontSize: 9.5, fontWeight: 700, border: "1px solid" },
   classificationModeHint: { padding: "7px 9px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.82)", color: "var(--iccc-muted)", fontSize: 9.75, lineHeight: 1.35 },
   advancedHintBox: { display: "flex", flexWrap: "wrap", gap: 8 },
   advancedHintChip: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(239,246,255,0.72)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 700 },
@@ -6464,8 +6464,6 @@ const S: Record<string, React.CSSProperties> = {
   searchInlineRow: { display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center" },
   searchResultListCompact: { display: "grid", gap: 6, maxHeight: 172, overflowY: "auto", paddingRight: 1 },
   chevronBtn: { width: 20, height: 20, borderRadius: 999, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.88)", color: "#475569", fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-  legendRow: { display: "flex", flexWrap: "wrap", gap: 6 },
-  legendChip: { display: "inline-flex", alignItems: "center", padding: "3px 8px", borderRadius: 999, border: "1px solid transparent", fontSize: 9.5, fontWeight: 700 },
   editorSplitRow: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
   editorModeBtn: { minHeight: 42, padding: "0 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.86)", color: "var(--iccc-text)", fontSize: 11, fontWeight: 600, textAlign: "left", cursor: "pointer" },
   editorModeBtnOn: { minHeight: 42, padding: "0 12px", borderRadius: 12, border: "1px solid rgba(37,99,235,0.22)", background: "rgba(219,234,254,0.9)", color: "#1d4ed8", fontSize: 11, fontWeight: 700, textAlign: "left", cursor: "pointer" },

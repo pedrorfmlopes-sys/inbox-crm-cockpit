@@ -64,12 +64,11 @@
 - **Abordagem Não Destrutiva**: O backend (`linkStore.js`) foi tornado permissivo para aceitar e manter aliases legados (ex: "Aberto", "Aguarda", "Bloqueado") sem reescrita automática, garantindo unificação visual sem migração de base de dados.
 - **Sincronização Outlook**: As categorias do Outlook geradas em `outlookCategories.ts` agora seguem os mesmos labels amigáveis da UI.
 
-## Correção do Modal "Aplicar a..." (Abril 2026)
-- **Causa Raiz**: O modal ficava bloqueado devido a uma dependência rígida entre a persistência core (DB/Odoo) e a sincronização Outlook. Falhas ou timeouts no Outlook impediam o fecho do modal e o feedback ao utilizador.
-- **Separação de Responsabilidades**: Implementada separação clara entre **Core Persistence** (crítica para o fecho) e **Outlook Sync** (projeção não bloqueante).
-- **Feedback Intra-modal**: Adicionados estados de `status` e `actionBusy` ao modal para mostrar progresso em tempo real e erros sem fechar o diálogo prematuramente.
-- **Robustez**: O modal agora fecha assim que os dados centrais são guardados. Erros de sincronização com o Outlook são reportados como avisos, mas não impedem a conclusão da tarefa pelo utilizador.
-- **Estabilização UI**: Corrigido crash no `renderOutlookColorLegend` que impedia a renderização de legendas de categorias.
+## Hotfix Final do Modal "Aplicar a..." (Abril 2026)
+- **Densidade dos Cards**: Corrigidas as regras CSS (`S.email` e `S.quickDocList`) para garantir que os cards ocupem apenas uma linha compacta (28-30px de altura). Os itens usam `flex` puro, as legendas cortam com `ellipsis`, e bloqueou-se o `alignContent: "stretch"` para impedir que o flex grid estique os cards verticalmente quando há poucos itens ou o espaço é grande.
+- **Ecrã Branco Modo Avançado (React #130)**: A causa raiz do log em produção foi identificada. O componente tentava renderizar `<S.StatusLegendContainer>`, que era um styled-component inexistente na diretoria inline `S`, o que devolvia `undefined`. O `renderOutlookColorLegend` foi reescrito para utilizar nós DOM nativos (`div` e `span`) com estilos CSS corretos, sanando o formidável crash.
+- **Projeção Outlook Sync**: O fluxo que gravava categorias no Outlook deixava de executar caso a UI pedisse para processar "Todos os emails do caso". O cálculo de `includesCurrentTarget` (que aprova a adição da gravação Outlook para o item master aberto no painel) foi reescrito. Agora confere corretamente não as seleções da UI, mas se o array `effectiveTargetEmails` engloba o `currentContext.itemId`. A persistência Outlook passa a executar-se corretamente nos 3 scopes: "Só este email", "Emails selecionados", e "Todos os emails do caso".
+- **Nota Limitação Outlook Sync**: O sync em tempo real pela Add-in API impõe projeção imediata apenas sobre o email currente aberto no ecra (`context.mailbox.item`). Emails não abertos recebem guardado no Odoo, mas só propagarão para o Exchange Server em flows background extra ou polling.
 
 ## Áreas sensíveis onde não convém mexer sem revisão
 - `server/src/index.js`

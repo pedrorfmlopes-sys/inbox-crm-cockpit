@@ -1,5 +1,6 @@
 import type { GroupTicketEntry, LinkGroupEntry, RelatedEmailEntry } from "@/api";
 import type { CockpitSettingsV1 } from "@/settings";
+import { getStatusDisplayConfig } from ".\/statusUtils";
 
 export const ODOO_LINKED_CATEGORY = "Odoo Linked";
 export const CRM_FOLLOW_UP_CATEGORY = "CRM: Follow-up";
@@ -71,18 +72,11 @@ export function normalizeUniqueCategoryValues(values?: readonly string[] | null)
 }
 
 export function normalizeGroupStatusCategoryLabel(value: string | undefined): string {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "concluido") return "Concluido";
-  if (normalized === "em_progresso") return "Em progresso";
-  if (normalized === "em_analise") return "Em analise";
-  return String(value || "").trim();
+  return getStatusDisplayConfig(value).label;
 }
 
 export function normalizeTicketStatusCategoryLabel(value: string | undefined): string {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "open" || normalized === "aberto") return "Aberto";
-  if (normalized === "closed" || normalized === "fechado") return "Fechado";
-  return normalizeGroupStatusCategoryLabel(value);
+  return getStatusDisplayConfig(value).label;
 }
 
 export function normalizeOutlookCategorySource(source?: Partial<OutlookCategorySource> | null): OutlookCategorySource {

@@ -97,15 +97,10 @@ function normalizeRecordId(value) {
 }
 
 function normalizeGroupStatus(value) {
-  const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, "_");
-  if (!normalized) return "";
-  if (normalized === "concluido" || normalized === "concluido." || normalized === "completed" || normalized === "done") {
-    return "concluido";
-  }
-  if (normalized === "em_progresso" || normalized === "progresso" || normalized === "in_progress" || normalized === "progress") {
-    return "em_progresso";
-  }
-  return "em_analise";
+  // Non-destructive normalization: preserve the literal status to avoid data migration.
+  // The UI (getStatusDisplayConfig) handles the unified presentation mapping.
+  const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, "_").replace(/[^\w]/g, "");
+  return normalized || "";
 }
 
 function normalizeDocumentState(value, fallback = DEFAULT_EMAIL_ATTACHMENT_STATE) {
@@ -283,20 +278,10 @@ function normalizePositiveInt(value, fallback = 1, min = 1, max = 999999) {
 }
 
 function normalizeTicketStatus(value) {
-  const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, "_");
-  if (!normalized) return "";
-  if (normalized === "aberto") return "open";
-  if (normalized === "fechado") return "closed";
-  if (
-    normalized === "open"
-    || normalized === "closed"
-    || normalized === "em_analise"
-    || normalized === "em_progresso"
-    || normalized === "concluido"
-  ) {
-    return normalized;
-  }
-  return normalized;
+  // Non-destructive normalization: preserve the literal status to avoid data migration.
+  // The UI (getStatusDisplayConfig) handles the unified presentation mapping.
+  const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, "_").replace(/[^\w]/g, "");
+  return normalized || "";
 }
 
 function normalizeTicketPrefix(value) {
