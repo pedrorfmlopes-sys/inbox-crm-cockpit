@@ -54,6 +54,12 @@ import QuickDocumentsCard from "./group-classification/components/QuickDocuments
 import StatusLegend from "./group-classification/components/StatusLegend";
 import ClassificationEditor from "./group-classification/components/ClassificationEditor";
 import ApplyDialog from "./group-classification/components/ApplyDialog";
+import PreviewPane, { StudioPdfPreview } from "./group-classification/components/PreviewPane";
+import { 
+  escapeHtml, sanitizeEmailPreviewHtml, buildEmailPreviewHtml, 
+  decodeBase64Text, stripDataUrlPrefix, canUseOfficeWebViewer, 
+  buildOfficePreviewUrl, dataUrlToUint8Array 
+} from "./group-classification/previewUtils";
 
 type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
 
@@ -131,212 +137,7 @@ function getComparableClassificationMetaSignature(value?: Partial<Classification
 
 // Moved to documentUtils.ts
 
-function escapeHtml(value: string): string {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function sanitizeEmailPreviewHtml(html: string): string {
-  const raw = String(html || "")
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<\?xml[\s\S]*?\?>/gi, " ")
-    .replace(/<\/?(xml|o:[^>\s]+|v:[^>\s]+)[^>]*>/gi, " ")
-    .trim();
-  if (!raw) return "";
-
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(raw, "text/html");
-    doc.querySelectorAll("script, noscript, iframe, object, embed, form, link[rel='stylesheet'], meta[http-equiv], base, svg").forEach((node) => node.remove());
-    doc.querySelectorAll<HTMLElement>("*").forEach((element) => {
-      Array.from(element.attributes).forEach((attribute) => {
-        const name = String(attribute.name || "").toLowerCase();
-        const value = String(attribute.value || "").trim();
-        if (!name) return;
-        if (name.startsWith("on")) {
-          element.removeAttribute(attribute.name);
-          return;
-        }
-        if (name === "style" && /url\s*\(/i.test(value)) {
-          element.removeAttribute(attribute.name);
-          return;
-        }
-        if (!["src", "href", "poster", "background", "data"].includes(name)) return;
-        if (/^(cid|javascript|vbscript|file|ms-appx|about):/i.test(value)) {
-          if (element.tagName === "IMG") {
-            const fallbackLabel = element.getAttribute("alt") || element.getAttribute("title") || "Imagem inline indisponivel neste preview.";
-            element.setAttribute("alt", fallbackLabel);
-          }
-          element.removeAttribute(attribute.name);
-        }
-      });
-    });
-    return String(doc.body?.innerHTML || "")
-      .replace(/<!--[\s\S]*?-->/g, " ")
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .trim();
-  } catch {
-    return raw
-      .replace(/<!--[\s\S]*?-->/g, " ")
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
-      .replace(/<svg[\s\S]*?<\/svg>/gi, "")
-      .replace(/\s(on\w+)=(".*?"|'.*?'|[^\s>]+)/gi, "")
-      .replace(/\s(style)=(".*?url\s*\(.*?\).*?"|'.*?url\s*\(.*?\).*?'|[^\s>]+)/gi, "")
-      .replace(/\s(src|href|poster|background|data)=("cid:[^"]*"|'cid:[^']*'|cid:[^\s>]+)/gi, "");
-  }
-}
-
-function buildEmailPreviewHtml(email: RelatedEmailEntry | null): string {
-  const html = String(email?.bodyHtml || "").trim();
-  if (html) {
-    const sanitizedHtml = sanitizeEmailPreviewHtml(html);
-    if (sanitizedHtml) {
-      return `<div style="padding:18px;color:#172b4d;font:14px/1.5 'Segoe UI',sans-serif;word-break:break-word">${sanitizedHtml}</div>`;
-    }
-  }
-  const text = String(email?.bodyText || "").trim();
-  if (!text) return "";
-  return `<pre style="margin:0;padding:18px;color:#172b4d;background:#fff;font:14px/1.55 'Segoe UI',sans-serif;white-space:pre-wrap;word-break:break-word">${escapeHtml(text)}</pre>`;
-}
-
-function decodeBase64Text(content: string): string {
-  try {
-    const binary = globalThis.atob(String(content || "").trim());
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    return new TextDecoder("utf-8").decode(bytes);
-  } catch {
-    return "";
-  }
-}
-
-function stripDataUrlPrefix(value: string): string {
-  const raw = String(value || "").trim();
-  const separatorIndex = raw.indexOf(",");
-  if (raw.startsWith("data:") && separatorIndex >= 0) return raw.slice(separatorIndex + 1);
-  return raw;
-}
-
-// normalizeStudioAttachmentMimeType moved to documentUtils.ts
-
-function canUseOfficeWebViewer(): boolean {
-  try {
-    const url = new URL(window.location.origin);
-    const hostname = String(url.hostname || "").trim().toLowerCase();
-    return Boolean(
-      /^https?:$/i.test(url.protocol)
-      && hostname
-      && hostname !== "localhost"
-      && hostname !== "127.0.0.1"
-    );
-  } catch {
-    return false;
-  }
-}
-
-function buildOfficePreviewUrl(sourceUrl: string): string {
-  const normalizedSourceUrl = String(sourceUrl || "").trim();
-  if (!normalizedSourceUrl || !canUseOfficeWebViewer()) return "";
-  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(normalizedSourceUrl)}`;
-}
-
-function dataUrlToUint8Array(dataUrl: string): Uint8Array {
-  const base64 = stripDataUrlPrefix(dataUrl);
-  const binary = globalThis.atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-function StudioPdfPreview({ dataUrl, title }: { dataUrl: string; title: string }) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-
-  useEffect(() => {
-    let cancelled = false;
-    const host = hostRef.current;
-    if (!host || !dataUrl) {
-      setStatus("error");
-      return;
-    }
-
-    host.innerHTML = "";
-    setStatus("loading");
-
-    (async () => {
-      try {
-        const loadingTask = pdfjsLib.getDocument({ data: dataUrlToUint8Array(dataUrl) });
-        const pdf = await loadingTask.promise;
-        if (cancelled) {
-          void loadingTask.destroy();
-          return;
-        }
-
-        const nextPageCount = Number(pdf.numPages || 0);
-
-        for (let pageNumber = 1; pageNumber <= nextPageCount; pageNumber += 1) {
-          if (cancelled) break;
-          const page = await pdf.getPage(pageNumber);
-          const viewport = page.getViewport({ scale: 1.15 });
-          const canvas = document.createElement("canvas");
-          canvas.style.display = "block";
-          canvas.style.width = "100%";
-          canvas.style.maxWidth = `${Math.ceil(viewport.width)}px`;
-          canvas.style.height = "auto";
-          canvas.style.margin = pageNumber === nextPageCount ? "0 auto" : "0 auto 12px auto";
-          canvas.style.background = "#fff";
-          canvas.style.borderRadius = "8px";
-          canvas.style.boxShadow = "0 6px 16px rgba(15,23,42,0.08)";
-          const context = canvas.getContext("2d", { alpha: false });
-          if (!context) continue;
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          host.appendChild(canvas);
-          await page.render({
-            canvasContext: context,
-            viewport,
-            canvas: canvas as any,
-          }).promise;
-        }
-
-        if (!cancelled) setStatus("ready");
-      } catch (error) {
-        console.warn("[classification-studio] pdf preview failed", error);
-        if (!cancelled) setStatus("error");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (hostRef.current) hostRef.current.innerHTML = "";
-    };
-  }, [dataUrl]);
-
-  if (status === "error") {
-    return <div style={S.attachmentPreviewEmpty}>Este PDF foi detetado, mas nao foi possivel renderiza-lo dentro do add-in.</div>;
-  }
-
-  return (
-    <div style={S.attachmentPdfPreviewShell} aria-label={title}>
-      {status === "loading" ? (
-        <div style={S.attachmentPdfPreviewLoading}>A carregar PDF...</div>
-      ) : null}
-      <div
-        ref={hostRef}
-        style={{
-          ...S.attachmentPdfPreviewCanvasHost,
-          display: status === "loading" ? "none" : S.attachmentPdfPreviewCanvasHost.display,
-        }}
-      />
-    </div>
-  );
-}
+// helpers moved to previewUtils.ts
 
 // Moved to documentUtils.ts
 
@@ -5397,85 +5198,20 @@ function StudioInner() {
           </section>
         </div>
 
-        <section style={previewShellStyle}>
-            <div style={S.previewToolbar}>
-              <button type="button" style={previewMode === "email" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("email")} disabled={!previewHtml}>Email</button>
-              <button type="button" style={previewMode === "document" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("document")} disabled={!previewHasDocument}>Documento</button>
-              <button type="button" style={previewMode === "reply" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("reply")} disabled={!selectedEmail}>Responder</button>
-              <button type="button" style={previewMode === "forward" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("forward")} disabled={!selectedEmail}>Reencaminhar</button>
-            </div>
-            <div style={S.previewBody}>
-              {previewMode === "email" ? (
-                previewHtml ? (
-                  <div style={S.previewHtml} dangerouslySetInnerHTML={{ __html: previewHtml }} />
-                ) : (
-                  <PanelState compact tone="info" title="Preview indisponivel" description="Este email ainda nao tem corpo guardado suficiente para preview." />
-                )
-              ) : null}
-              {previewMode === "document" ? (
-                selectedAttachmentPreview ? (
-                  <div style={S.documentPreviewShell}>
-                    {selectedAttachmentDocumentPreview?.kind === "image" ? (
-                      <div style={S.documentPreviewFrame}>
-                        <img src={selectedAttachmentDocumentPreview.src!} alt={selectedAttachmentPreview?.name || "Imagem"} style={S.attachmentPreviewImage} />
-                      </div>
-                    ) : null}
-                    {selectedAttachmentDocumentPreview?.kind === "pdf" ? (
-                      <div style={S.documentPreviewFrame}>
-                        {selectedAttachmentDocumentPreview.src!.startsWith("data:")
-                          ? <StudioPdfPreview dataUrl={selectedAttachmentDocumentPreview.src!} title={selectedAttachmentPreview?.name || "PDF"} />
-                          : <iframe title={selectedAttachmentPreview?.name || "PDF"} src={selectedAttachmentDocumentPreview.src!} style={S.documentPreviewIframe} />}
-                      </div>
-                    ) : null}
-                    {selectedAttachmentDocumentPreview?.kind === "office" ? (
-                      <div style={S.documentPreviewFrame}>
-                        <iframe title={selectedAttachmentPreview?.name || "Documento"} src={selectedAttachmentDocumentPreview.url!} style={S.documentPreviewIframe} />
-                      </div>
-                    ) : null}
-                    {selectedAttachmentDocumentPreview?.kind === "text" ? (
-                      <div style={S.documentPreviewFrame}>
-                        <pre style={S.attachmentPreviewText}>{selectedAttachmentDocumentPreview.text!}</pre>
-                      </div>
-                    ) : null}
-                    {!selectedAttachmentDocumentPreview && selectedAttachmentPreviewRemoteStatus === "loading" ? (
-                      <PanelState compact tone="loading" title="A carregar documento" description="A preparar o preview do documento selecionado." />
-                    ) : null}
-                    {selectedAttachmentDocumentPreview?.kind === "unsupported" ? (
-                      <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode exigir download ou URL publica para preview." />
-                    ) : null}
-                    {!selectedAttachmentDocumentPreview && selectedAttachmentPreviewRemoteStatus !== "loading" && selectedAttachmentPreviewMode !== "none" ? (
-                      <PanelState compact tone="info" title="Preview nao disponivel" description="Nao foi possivel abrir este documento com a mesma base de preview da aba Grupos." />
-                    ) : null}
-                    {selectedAttachmentPreviewMode === "none" ? (
-                      <PanelState compact tone="info" title="Escolhe um documento" description="Seleciona um documento rapido para abrir o preview." />
-                    ) : null}
-                  </div>
-                ) : (
-                  <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe primeiro um documento rapido para abrir o preview." />
-                )
-              ) : null}
-              {previewMode === "reply" ? (
-                <div style={S.previewPlaceholder}>
-                  <div style={S.cardTitle}>Responder</div>
-                  <div style={S.cardMeta}>Estrutura pronta para editor, IA e selecao de anexos numa fase seguinte.</div>
-                  <button type="button" style={S.primaryBtn} onClick={() => void handlePreviewReply()} disabled={!selectedEmail}>
-                    <Icons.MessageSquare size={12} />
-                    Abrir resposta
-                  </button>
-                </div>
-              ) : null}
-              {previewMode === "forward" ? (
-                <div style={S.previewPlaceholder}>
-                  <div style={S.cardTitle}>Reencaminhar</div>
-                  <div style={S.cardMeta}>Estrutura pronta para editor, IA e composicao de envio numa fase seguinte.</div>
-                  <button type="button" style={S.primaryBtn} onClick={() => void handlePreviewForward()} disabled={!selectedEmail}>
-                    <Icons.ExternalLink size={12} />
-                    Abrir reencaminhamento
-                  </button>
-                </div>
-              ) : null}
-            </div>
-        </section>
+        <PreviewPane
+          previewShellStyle={previewShellStyle}
+          previewMode={previewMode}
+          setPreviewMode={setPreviewMode}
+          previewHtml={previewHtml}
+          previewHasDocument={previewHasDocument}
+          selectedEmail={selectedEmail}
+          selectedAttachmentPreview={selectedAttachmentPreview}
+          selectedAttachmentDocumentPreview={selectedAttachmentDocumentPreview}
+          selectedAttachmentPreviewRemoteStatus={selectedAttachmentPreviewRemoteStatus}
+          selectedAttachmentPreviewMode={selectedAttachmentPreviewMode}
+          handlePreviewReply={handlePreviewReply}
+          handlePreviewForward={handlePreviewForward}
+        />
       </div>
       <ApplyDialog
         isOpen={applyDialogOpen}
