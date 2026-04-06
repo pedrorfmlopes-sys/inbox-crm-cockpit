@@ -58,14 +58,14 @@ const ApplyDialog: React.FC<ApplyDialogProps> = ({
   const showEmailList = scopeMode !== "current";
 
   return (
-    <div style={S.modalBackdrop}>
+    <div style={S.modalBackdrop} data-testid="apply-dialog">
       <div style={S.modalSheet}>
         <div style={S.modalHeader}>
           <div>
             <div style={S.kicker}>Aplicar alteracoes</div>
             <div style={S.modalTitle}>{sectionLabel}</div>
           </div>
-          <button type="button" style={S.secondaryBtn} onClick={onClose} disabled={actionBusy}>Cancelar</button>
+          <button data-testid="apply-dialog-cancel" type="button" style={S.secondaryBtn} onClick={onClose} disabled={actionBusy}>Cancelar</button>
         </div>
 
         <div style={S.modalScopeRow}>
@@ -140,8 +140,8 @@ const ApplyDialog: React.FC<ApplyDialogProps> = ({
             {status ? <div style={{ fontSize: 11, fontWeight: 600, color: "var(--iccc-muted)" }}>{status}</div> : null}
             {actionBusy ? <span style={{ fontSize: 10, color: "#1d4ed8", fontWeight: 700 }}>A processar...</span> : null}
           </div>
-          <button type="button" style={S.secondaryBtn} onClick={onClose} disabled={actionBusy}>Cancelar</button>
-          <button type="button" style={S.primaryBtn} onClick={handleConfirm} disabled={actionBusy || (manualSelectionEnabled && !selectedEmailKeys.length)}>
+          <button data-testid="apply-dialog-cancel" type="button" style={S.secondaryBtn} onClick={onClose} disabled={actionBusy}>Cancelar</button>
+          <button data-testid="apply-dialog-confirm" type="button" style={S.primaryBtn} onClick={handleConfirm} disabled={actionBusy || (manualSelectionEnabled && !selectedEmailKeys.length)}>
             {actionBusy ? "A aplicar..." : "Confirmar e aplicar"}
           </button>
         </div>

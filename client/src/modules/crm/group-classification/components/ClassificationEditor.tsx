@@ -79,7 +79,7 @@ export interface ClassificationEditorProps {
   actionBusy: boolean;
 }
 
-const ClassificationEditor: React.FC<ClassificationEditorProps> = (props) => {
+const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttributes<HTMLDivElement>> = (props) => {
   const {
     classificationFocus,
     classificationLayoutMode,
@@ -145,6 +145,7 @@ const ClassificationEditor: React.FC<ClassificationEditorProps> = (props) => {
     referenceSearchResults,
     referenceGroupIds,
     actionBusy,
+    ...rest
   } = props;
 
   function renderSuggestionTray(
@@ -210,6 +211,7 @@ const ClassificationEditor: React.FC<ClassificationEditorProps> = (props) => {
           <div style={S.editorBlockTitle}>Pesquisar ou criar</div>
           <div style={S.searchInlineRow}>
             <input
+              data-testid="principal-search-input"
               style={S.input}
               value={principalSearch}
               onChange={(event) => setPrincipalSearchValue(event.target.value)}
@@ -561,11 +563,18 @@ const ClassificationEditor: React.FC<ClassificationEditorProps> = (props) => {
     );
   }
 
-  // Final content layout branch
-  if (classificationFocus === "principal") return renderPrincipalEditor();
-  if (classificationFocus === "labels") return renderLabelsEditor();
-  if (classificationFocus === "ticket") return renderTicketEditor();
-  return renderReferencesEditor();
+  const editorContent = (() => {
+    if (classificationFocus === "principal") return renderPrincipalEditor();
+    if (classificationFocus === "labels") return renderLabelsEditor();
+    if (classificationFocus === "ticket") return renderTicketEditor();
+    return renderReferencesEditor();
+  })();
+
+  return (
+    <div {...rest}>
+      {editorContent}
+    </div>
+  );
 };
 
 const S: Record<string, React.CSSProperties> = {

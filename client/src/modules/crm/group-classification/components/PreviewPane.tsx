@@ -105,7 +105,7 @@ export function StudioPdfPreview({ dataUrl, title }: { dataUrl: string; title: s
   );
 }
 
-const PreviewPane: React.FC<PreviewPaneProps> = (props) => {
+const PreviewPane: React.FC<PreviewPaneProps & React.HTMLAttributes<HTMLElement>> = (props) => {
   const {
     previewShellStyle,
     previewMode,
@@ -119,10 +119,11 @@ const PreviewPane: React.FC<PreviewPaneProps> = (props) => {
     selectedAttachmentPreviewMode,
     handlePreviewReply,
     handlePreviewForward,
+    ...rest
   } = props;
 
   return (
-    <section style={previewShellStyle}>
+    <section style={previewShellStyle} {...rest}>
       <div style={S.previewToolbar}>
         <button type="button" style={previewMode === "email" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("email")} disabled={!previewHtml}>Email</button>
         <button type="button" style={previewMode === "document" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("document")} disabled={!previewHasDocument}>Documento</button>

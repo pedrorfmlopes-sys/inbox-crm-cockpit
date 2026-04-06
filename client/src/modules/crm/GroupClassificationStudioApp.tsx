@@ -3378,6 +3378,7 @@ function StudioInner() {
           <div style={S.editorBlockTitle}>Pesquisar ou criar</div>
           <div style={S.searchInlineRow}>
             <input
+              data-testid="principal-search-input"
               style={S.input}
               value={principalSearch}
               onChange={(event) => setPrincipalSearchValue(event.target.value)}
@@ -5006,7 +5007,7 @@ function StudioInner() {
   const previewShellStyle = classificationEditorActive ? S.focusPreviewShell : S.previewShellLarge;
 
   return (
-    <div style={S.root}>
+    <div style={S.root} data-testid="studio-root">
       <div style={S.header}>
         <div style={S.headerMain}>
           <div style={S.kicker}>Gestor de Grupos</div>
@@ -5024,7 +5025,7 @@ function StudioInner() {
         <div style={S.headerActions}>
           <button type="button" style={S.secondaryBtn} onClick={() => setSection("groups")} disabled={!manageableGroups.length}>Renomear</button>
           <button type="button" style={S.secondaryBtn} onClick={() => setStatus("Fluxo de fundir preparado para a fase seguinte.")} disabled={!manageableGroups.length}>Fundir</button>
-          <button type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationEditorActive ? classificationFocus : "summary")} disabled={actionBusy || !(classificationEditorActive ? canApplyFromClassificationEditor : canApplyClassification)}>
+          <button data-testid="main-save-button" type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationEditorActive ? classificationFocus : "summary")} disabled={actionBusy || !(classificationEditorActive ? canApplyFromClassificationEditor : canApplyClassification)}>
             <Icons.Save size={12} />
             Guardar
           </button>
@@ -5081,8 +5082,8 @@ function StudioInner() {
                 <div style={S.sectionSubtitle}>{classificationEditorActive ? "Editor aberto" : "Resumo do que esta atribuido"}</div>
               </div>
               <div style={S.segmentedControl}>
-                <button type="button" style={classificationLayoutMode === "normal" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("normal")}>Normal</button>
-                <button type="button" style={classificationLayoutMode === "advanced" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("advanced")}>Avancado</button>
+                <button data-testid="mode-normal-button" type="button" style={classificationLayoutMode === "normal" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("normal")}>Normal</button>
+                <button data-testid="mode-advanced-button" type="button" style={classificationLayoutMode === "advanced" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("advanced")}>Avancado</button>
               </div>
             </div>
             {auxiliaryEditorActive ? (
@@ -5106,11 +5107,11 @@ function StudioInner() {
                 <div style={S.classificationEditorBody}>{renderWorkspace()}</div>
               </div>
             ) : !classificationEditorActive ? (
-              <div style={S.classificationSummary}>
+              <div style={S.classificationSummary} data-testid="classification-summary">
                 {classificationSummaryTiles
                   .filter((item) => classificationLayoutMode === "advanced" || item.key !== "references")
                   .map((item) => (
-                    <button key={item.key} type="button" style={S.classificationTile} onClick={item.onClick}>
+                    <button key={item.key} data-testid={`summary-tile-${item.key}`} type="button" style={S.classificationTile} onClick={item.onClick}>
                       <span style={S.classificationTileLabel}>{item.title}</span>
                       <span style={S.classificationTileValue}>{item.value}</span>
                       <span style={S.classificationTileMeta}>{item.description}</span>
@@ -5127,6 +5128,7 @@ function StudioInner() {
                 {renderClassificationEditorHeader()}
                 <div style={S.classificationEditorBody}>
                   <ClassificationEditor
+                    data-testid="classification-editor"
                     classificationFocus={classificationFocus}
                     classificationLayoutMode={classificationLayoutMode}
                     classificationSuggestionExpanded={classificationSuggestionExpanded}
@@ -5199,6 +5201,7 @@ function StudioInner() {
         </div>
 
         <PreviewPane
+          data-testid="preview-pane"
           previewShellStyle={previewShellStyle}
           previewMode={previewMode}
           setPreviewMode={setPreviewMode}
@@ -5214,6 +5217,7 @@ function StudioInner() {
         />
       </div>
       <ApplyDialog
+        data-testid="apply-dialog"
         isOpen={applyDialogOpen}
         onClose={() => setApplyDialogOpen(false)}
         section={applyDialogSection}

@@ -37,7 +37,7 @@ const QuickDocumentsCard: React.FC<QuickDocumentsCardProps> = ({
   actionBusy
 }) => {
   return (
-    <section style={style}>
+    <section style={style} data-testid="quick-documents-card">
       <div style={S.sectionHeaderCompact}>
         <div>
           <div style={S.sectionTitle}>Documentos Rapidos</div>

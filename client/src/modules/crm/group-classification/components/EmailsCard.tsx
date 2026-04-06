@@ -37,7 +37,7 @@ const EmailsCard: React.FC<EmailsCardProps> = ({
   setSelectedEmailKey
 }) => {
   return (
-    <section style={style}>
+    <section style={style} data-testid="emails-card">
       <div style={S.sectionHeaderCompact}>
         <div>
           <div style={S.sectionTitle}>Emails</div>
@@ -54,10 +54,10 @@ const EmailsCard: React.FC<EmailsCardProps> = ({
         />
         <div style={S.emailToolsInline}>
           <button type="button" style={S.linkBtn} onClick={selectAllVisibleEmails}>Todos visiveis</button>
-          <button type="button" style={S.linkBtn} onClick={clearSelectedTargets}>Limpar</button>
+          <button data-testid="clear-selected-emails" type="button" style={S.linkBtn} onClick={clearSelectedTargets}>Limpar</button>
         </div>
       </div>
-      <div style={S.topCardScroll}>
+      <div style={S.topCardScroll} data-testid="emails-list">
         {loading ? <PanelState compact tone="loading" title="A carregar emails" description="A preparar a lista desta nova janela." /> : null}
         {!loading && !visibleEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Ajusta os filtros ou muda a fonte da lista." /> : null}
         {!loading && visibleEmails.map((email) => {
