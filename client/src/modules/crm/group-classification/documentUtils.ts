@@ -1,9 +1,9 @@
 import {
-  RelatedEmailEntry, RelevantEmailPayload, LinkGroupEntry, GroupTicketEntry,
-  GroupContactDraft, GroupEntityDraft
+  RelatedEmailEntry, RelevantEmailPayload, LinkGroupEntry, GroupTicketEntry
 } from "@/api";
 import {
-  ClassificationMetaDraft, DocumentLifecycleState, LabelDraft, EmailLabelStatus
+  ClassificationMetaDraft, DocumentLifecycleState, LabelDraft, EmailLabelStatus,
+  GroupContactDraft, GroupEntityDraft
 } from "./types";
 import { GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX, EMPTY_CLASSIFICATION_META } from "./constants";
 
@@ -47,17 +47,10 @@ export function readSeedEmail(params: StudioParams): RelatedEmailEntry | null {
     const fromName = String(parsed?.fromName || "").trim();
     const receivedAtIso = String(parsed?.receivedAtIso || parsed?.messageDateIso || "").trim();
     if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
-    return {
+    return ({
       emailKey: itemId || internetMessageId || `${conversationId}|${subject || fromEmail}`,
       itemId: itemId || undefined,
       internetMessageId: internetMessageId || undefined,
-      conversationId: conversationId || undefined,
-      subject: subject || "(sem assunto)",
-      fromEmail: fromEmail || undefined,
-      fromName: fromName || undefined,
-      receivedAtIso: receivedAtIso || undefined,
-      messageDateIso: receivedAtIso || undefined,
-      bodyText: String(parsed?.bodyText || "").trim(),
       bodyHtml: String(parsed?.bodyHtml || "").trim(),
       attachments: Array.isArray(parsed?.attachments)
         ? parsed.attachments
@@ -72,7 +65,7 @@ export function readSeedEmail(params: StudioParams): RelatedEmailEntry | null {
         : [],
       relatedGroups: [],
       relatedReasons: [],
-    };
+    } as any);
   } catch {
     return null;
   }
@@ -103,7 +96,7 @@ export function buildFallbackEmail(params: StudioParams): RelatedEmailEntry {
     isFallback: true,
     relatedGroups: [],
     relatedReasons: [],
-  };
+  } as any;
 }
 
 export function normalizeDocumentLifecycleState(value: string | undefined, fallback: DocumentLifecycleState = "ingested"): DocumentLifecycleState {
@@ -365,7 +358,7 @@ export function scoreRelatedEmailEntry(email: RelatedEmailEntry | null | undefin
   if (Array.isArray(email.attachments)) {
     score += scoreStudioAttachmentCollection(email.attachments);
   }
-  if (!email.isFallback) score += 5;
+  if (!(email as any).isFallback) score += 5;
   return score;
 }
 
@@ -511,7 +504,7 @@ export function buildEmailCorpus(email: RelatedEmailEntry): string {
 
 export function isExternalEmail(email: RelatedEmailEntry): boolean {
   const from = String(email.fromEmail || "").toLowerCase();
-  return from && !from.includes("nicolazzi.it") && !from.includes("inboxcockpit.com");
+  return Boolean(from && !from.includes("nicolazzi.it") && !from.includes("inboxcockpit.com"));
 }
 
 export function isCurrentContextEmail(email: Partial<RelatedEmailEntry>, currentContext: Partial<StudioParams>) {

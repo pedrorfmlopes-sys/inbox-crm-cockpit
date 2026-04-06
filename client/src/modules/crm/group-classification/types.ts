@@ -34,6 +34,35 @@ export type ScopeMode = "related" | "all";
 
 export type ApplyScopeMode = "current" | "selected" | "all";
 
-export type TicketEditorMode = "existing" | "new";
+export interface GroupContactDraft {
+  key: string;
+  name: string;
+  email: string;
+  role: string;
+  isPrincipal: boolean;
+}
+
+export interface GroupEntityDraft {
+  key: string;
+  id?: string;
+  name: string;
+  role: string;
+  isPrincipal: boolean;
+}
 
 export type PreviewMode = "email" | "document" | "reply" | "forward";
+
+export interface AttachmentPreviewState {
+  key: string;
+  status: "idle" | "loading" | "ready" | "missing";
+  contentBase64?: string;
+  contentText?: string;
+}
+
+export interface ReadingSuggestionChip {
+  id: string;
+  kind: "group" | "ticket" | "label";
+  label: string;
+  active: boolean;
+  score: number;
+}
