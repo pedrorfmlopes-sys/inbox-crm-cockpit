@@ -29,20 +29,26 @@
 - O tráfego repetido do add-in pode estar a contribuir materialmente para custos de DB/egress, mas isso não fica provado sem métricas reais de produção.
 - Podem existir diferenças entre o código no repositório e a app atualmente em produção, incluindo variáveis de ambiente, manifest instalado e deploy ativo.
 
-## Principais riscos atuais
-- Backend demasiado exposto: CORS aberto e rotas sensíveis sem uma fronteira de autenticação/autorização claramente consistente.
-- Sessão Odoo com fallback global via ambiente, o que aumenta risco operacional e de acesso indevido.
-- Credenciais e settings sensíveis persistidos no cliente.
-- Verdade arquitetural fragmentada entre Odoo, camada própria de persistência, storage local/OneDrive e storage do browser.
-- Polling frequente, registo repetido de emails relevantes e fetches redundantes, com impacto provável em custo e performance.
-- Ficheiros monolíticos e fluxos paralelos/legados que aumentam o risco de regressão.
+## Audit de Segurança e Fluxo de Dados (Abril 2026)
+- **Documento Detalhado**: [docs/audits/security-and-data-flow-audit.md](docs/audits/security-and-data-flow-audit.md)
+- **Fronteira de Segurança**: Confirmado CORS aberto (`cors()`) e gestão de sessões apenas em memória.
+- **Segredos**: Confirmado que `odooPassword` e API Keys (OpenAI/Gemini) são persistidos no cliente (`settings.ts`). **Prioridade Crítica para correção**.
+- **Fontes de Verdade**: Mapeadas entre Odoo (SSOT para negócio), linkStore (Auxiliar/Studio) e RoamingSettings (Settings/Secrets).
+- **Riscos Estruturais**: Identificados 5 pontos críticos, incluindo o gigantismo dos ficheiros `linkStore.js` (4.5k) e `GroupClassificationStudioApp.tsx` (6.5k).
 
-## Prioridades recomendadas
-1. Fechar perímetro de segurança e reduzir exposição de segredos
-2. Confirmar fontes de verdade por tipo de dado e arquitetura real de produção
-3. Consolidar backend e reduzir superfície genérica/duplicada
-4. Consolidar frontend e unificar ciclo de vida do email atual
-5. Tratar performance, polling, custos e observabilidade
+## Principais riscos atuais (Auditados)
+- **Crítico**: Exposição de credenciais Odoo e chaves AI no armazenamento local do browser/RoamingSettings.
+- **Alto**: Backend com CORS aberto e fallback de autenticação global via variáveis de ambiente em `getOdooCached`.
+- **Alto**: In-memory sessions causam UX pobre em restarts de servidor e dependência de re-auth automática via segredos no client.
+- **Médio**: Verdade arquitetural fragmentada e risco de divergência entre Postgres e Odoo.
+- **Médio**: Rigidez e risco de regressão devido a ficheiros monolíticos massivos.
+
+## Prioridades recomendadas (Atualizadas)
+1. **Segurança (Vaulting)**: Migrar segredos do cliente para o servidor (vaulting).
+2. **Segurança (Perímetro)**: Restringir CORS e endurecer `sessionManager`.
+3. **Coerência de Dados**: Reduzir fallback global de Odoo e consolidar durabilidade de links/sessões em DB.
+4. **Refactoring**: Sharding de módulos massivos para reduzir risco de manutenção.
+5. **Funcional**: Evoluir features apenas após estabilização do perímetro.
 
 ## Frentes em aberto
 - Segurança do backend e política de autenticação/autorização
@@ -52,6 +58,19 @@
 - Consolidação dos módulos AI/CRM e redução de duplicação
 - Observabilidade, testes e processo de code review
 
+## Unificação de Estados e Cores (Abril 2026)
+- **Centralização UI**: Criado `client/src/statusUtils.ts` como SSOT para visualização de estados.
+- **Matriz de Cores**: Implementada matriz unificada (4 grupos: Azul/Analise, Amarelo/Progresso, Verde/Concluido, Vermelho/Fechado).
+- **Abordagem Não Destrutiva**: O backend (`linkStore.js`) foi tornado permissivo para aceitar e manter aliases legados (ex: "Aberto", "Aguarda", "Bloqueado") sem reescrita automática, garantindo unificação visual sem migração de base de dados.
+- **Sincronização Outlook**: As categorias do Outlook geradas em `outlookCategories.ts` agora seguem os mesmos labels amigáveis da UI.
+
+## Correção do Modal "Aplicar a..." (Abril 2026)
+- **Causa Raiz**: O modal ficava bloqueado devido a uma dependência rígida entre a persistência core (DB/Odoo) e a sincronização Outlook. Falhas ou timeouts no Outlook impediam o fecho do modal e o feedback ao utilizador.
+- **Separação de Responsabilidades**: Implementada separação clara entre **Core Persistence** (crítica para o fecho) e **Outlook Sync** (projeção não bloqueante).
+- **Feedback Intra-modal**: Adicionados estados de `status` e `actionBusy` ao modal para mostrar progresso em tempo real e erros sem fechar o diálogo prematuramente.
+- **Robustez**: O modal agora fecha assim que os dados centrais são guardados. Erros de sincronização com o Outlook são reportados como avisos, mas não impedem a conclusão da tarefa pelo utilizador.
+- **Estabilização UI**: Corrigido crash no `renderOutlookColorLegend` que impedia a renderização de legendas de categorias.
+
 ## Áreas sensíveis onde não convém mexer sem revisão
 - `server/src/index.js`
 - `server/src/linkStore.js`
@@ -60,8 +79,12 @@
 - `client/src/office.ts`
 - `client/src/components/shell/CockpitProvider.tsx`
 - `client/src/modules/ai/AiCockpit.tsx`
-- `client/src/modules/crm/GroupClassificationStudioApp.tsx`
+- `client/src/modules/crm/GroupClassificationStudioApp.tsx` (Módulo Crítico)
 - `manifest/`
+
+...
+(rest of the handoff)
+...
 
 ## Última orientação estratégica
 - Segurança e coerência arquitetural antes de novas features.
