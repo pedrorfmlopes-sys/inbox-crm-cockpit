@@ -6,7 +6,7 @@ const StatusLegend: React.FC = () => {
     <div style={S.legend}>
       {UNIFIED_STATUS_LEGEND.map((status) => (
         <div key={status.key} style={S.legendItem}>
-          <div style={{ ...S.legendDot, background: status.hex }} />
+          <div style={{ ...S.legendDot, background: status.style.color }} />
           <span>{status.label}</span>
         </div>
       ))}
