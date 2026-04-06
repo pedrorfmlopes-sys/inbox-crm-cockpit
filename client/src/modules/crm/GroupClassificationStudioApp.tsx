@@ -52,6 +52,8 @@ import {
 import EmailsCard from "./group-classification/components/EmailsCard";
 import QuickDocumentsCard from "./group-classification/components/QuickDocumentsCard";
 import StatusLegend from "./group-classification/components/StatusLegend";
+import ClassificationEditor from "./group-classification/components/ClassificationEditor";
+import ApplyDialog from "./group-classification/components/ApplyDialog";
 
 type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
 
@@ -5322,7 +5324,74 @@ function StudioInner() {
             ) : (
               <div style={S.classificationEditorShell}>
                 {renderClassificationEditorHeader()}
-                <div style={S.classificationEditorBody}>{renderClassificationEditorContent()}</div>
+                <div style={S.classificationEditorBody}>
+                  <ClassificationEditor
+                    classificationFocus={classificationFocus}
+                    classificationLayoutMode={classificationLayoutMode}
+                    classificationSuggestionExpanded={classificationSuggestionExpanded}
+                    setClassificationSuggestionExpanded={setClassificationSuggestionExpanded}
+                    suggestedExistingGroups={suggestedExistingGroups}
+                    principalGroupId={principalGroupId}
+                    clearPrincipalSelection={clearPrincipalSelection}
+                    selectPrincipalGroup={selectPrincipalGroup}
+                    principalSearch={principalSearch}
+                    setPrincipalSearchValue={setPrincipalSearchValue}
+                    principalCanCreate={principalCanCreate}
+                    handleCreateGroupAndLink={handleCreateGroupAndLink}
+                    exactPrincipalSearchGroup={exactPrincipalSearchGroup}
+                    principalSearchResults={principalSearchResults}
+                    principalGroup={principalGroup}
+                    classificationMetaDraft={classificationMetaDraft}
+                    updateClassificationMeta={updateClassificationMeta}
+                    suggestedLabelSeeds={suggestedLabelSeeds}
+                    selectedLabels={selectedLabels}
+                    applySuggestedLabel={applySuggestedLabel}
+                    classificationLabelInput={classificationLabelInput}
+                    setClassificationLabelInput={setClassificationLabelInput}
+                    handleClassificationLabelSearchAction={handleClassificationLabelSearchAction}
+                    classificationLabelCanCreate={classificationLabelCanCreate}
+                    filteredClassificationLabels={filteredClassificationLabels}
+                    removeLabel={removeLabel}
+                    addLabel={addLabel}
+                    selectedLabelSharedStatus={selectedLabelSharedStatus}
+                    updateLabelDraft={updateLabelDraft}
+                    labelDrafts={labelDrafts}
+                    LABEL_STATUS_OPTIONS={LABEL_STATUS_OPTIONS}
+                    normalizedTicketSearch={normalizedTicketSearch}
+                    ticketSearchResults={ticketSearchResults}
+                    availableTicketChoices={availableTicketChoices}
+                    selectedTicket={selectedTicket}
+                    selectedSeriesId={selectedSeriesId}
+                    ticketEditorMode={ticketEditorMode}
+                    setTicketEditorMode={setTicketEditorMode}
+                    ticketSearch={ticketSearch}
+                    setTicketSearch={setTicketSearch}
+                    handleSearchTickets={handleSearchTickets}
+                    ticketSearchBusy={ticketSearchBusy}
+                    setSelectedSeriesId={setSelectedSeriesId}
+                    setSelectionTouched={setSelectionTouched}
+                    ticketSeries={ticketSeries}
+                    createTicketTitle={createTicketTitle}
+                    setCreateTicketTitle={setCreateTicketTitle}
+                    ticketStatusDraft={ticketStatusDraft}
+                    setTicketStatusDraft={setTicketStatusDraft}
+                    TICKET_STATUS_OPTIONS={TICKET_STATUS_OPTIONS}
+                    effectiveTicketStatus={effectiveTicketStatus}
+                    ticketStatusLabel={ticketStatusLabel}
+                    selectedTicketId={selectedTicketId}
+                    applySuggestedTicket={applySuggestedTicket}
+                    clearTicketSelection={clearTicketSelection}
+                    referenceGroups={referenceGroups}
+                    toggleReferenceGroup={toggleReferenceGroup}
+                    referenceSearch={referenceSearch}
+                    setReferenceSearchValue={setReferenceSearchValue}
+                    referenceCanCreate={referenceCanCreate}
+                    exactReferenceSearchGroup={exactReferenceSearchGroup}
+                    referenceSearchResults={referenceSearchResults}
+                    referenceGroupIds={referenceGroupIds}
+                    actionBusy={actionBusy}
+                  />
+                </div>
               </div>
             )}
           </section>
@@ -5408,7 +5477,23 @@ function StudioInner() {
             </div>
         </section>
       </div>
-      {renderApplyDialog()}
+      <ApplyDialog
+        isOpen={applyDialogOpen}
+        onClose={() => setApplyDialogOpen(false)}
+        section={applyDialogSection}
+        scopeMode={applyDialogScopeMode}
+        setScopeMode={setApplyDialogScope}
+        currentScopeEmail={currentScopeEmail}
+        caseScopeEmails={caseScopeEmails}
+        selectedEmailKeys={applyDialogSelectedEmailKeys}
+        setSelectedEmailKeys={setApplyDialogEmailKeys}
+        expandedEmailKeys={applyDialogExpandedEmailKeys}
+        toggleExpandedEmailKey={toggleApplyDialogExpandedEmailKey}
+        toggleEmailKey={toggleApplyDialogEmailKey}
+        status={status}
+        actionBusy={actionBusy}
+        handleConfirm={() => void handleConfirmApplyDialog()}
+      />
     </div>
   );
 }
