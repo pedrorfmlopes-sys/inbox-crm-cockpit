@@ -15,143 +15,61 @@ import {
 import { PanelState } from "@/ui/PanelState";
 import { applySkin } from "@/ui/skins";
 import * as Icons from "@/ui/icons";
+import { getStatusDisplayConfig, UNIFIED_STATUS_LEGEND } from "@/statusUtils";
 import "../../global.css";
+
+import {
+  type SectionId, type ScopeMode, type ApplyScopeMode, type ApplyDialogScopeMode, type PreviewMode,
+  type ClassificationLayoutMode, type EmailLabelStatus, type DocumentLifecycleState,
+  type ClassificationFocus, type TicketEditorMode, type AttachmentPreviewState,
+  type LabelDraft, type ReadingSuggestionChip, type GroupContactDraft, type GroupEntityDraft,
+  type ClassificationMetaDraft, type StudioParams
+} from "./group-classification/types";
+
+import {
+  GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX, MENU, LABEL_STATUS_OPTIONS,
+  TICKET_STATUS_OPTIONS, DOCUMENT_STATE_OPTIONS, EMPTY_CLASSIFICATION_META
+} from "./group-classification/constants";
+
+import {
+  readParams, readSeedEmail, buildFallbackEmail, normalizeDocumentLifecycleState,
+  formatDocumentLifecycleState, isRejectedDocumentLifecycleState, normalizeStudioAttachment,
+  normalizeStudioAttachmentMimeType, inferStudioAttachmentKind, isLikelyDecorativeAttachment,
+  isStudioAttachmentHiddenInQuickDocs, formatQuickDocumentMeta, htmlToPlainText,
+  makeEmailKey, makeAttachmentKey, getStudioAttachmentRemoteId, isStudioAttachmentHydrated,
+  hasHydratedAttachmentCollection, mergeUniqueStrings, mergeUniqueBy,
+  scoreStudioAttachment, scoreStudioAttachmentCollection, normalizeClassificationMetaDraft,
+  mergeClassificationMetaDrafts, scoreRelatedEmailEntry, mergeRelatedEmailEntries,
+  dedupeEmails, buildRelevantEmailPayloadFromRelatedEmail, buildAttachmentStorageOptions,
+  persistRelatedEmailsToServer, normalizeSearchValue, normalizeReferenceCandidate,
+  compactReferenceValue, matchReferenceSet, formatDate, buildSnippet,
+  buildEmailPreviewText, buildQuickDocumentPreviewText, buildCompactEmailMeta, buildEmailCorpus, isExternalEmail,
+  isCurrentContextEmail, detectCaseType, inferCompanyName, normalizeGroupContactDraft,
+  normalizeGroupEntityDraft, dedupeGroupContacts, dedupeGroupEntities,
+  detectReferences, splitSuggestions
+} from "./group-classification/documentUtils";
+
+type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
-type SectionId = "emails" | "classification" | "labels" | "filters" | "groups";
-type ScopeMode = "related" | "all";
-type ApplyScopeMode = "current" | "selected" | "principal_group";
-type ApplyDialogScopeMode = "current" | "selected" | "case_all";
-type PreviewMode = "email" | "document" | "reply" | "forward";
-type ClassificationLayoutMode = "normal" | "advanced";
-type EmailLabelStatus = GroupLabelStatus;
-type DocumentLifecycleState = "ingested" | "processed" | "accepted" | "rejected" | "reread_requested";
-type ClassificationFocus = "principal" | "references" | "labels" | "ticket" | "summary";
-type TicketEditorMode = "existing" | "new";
-type AttachmentPreviewState =
-  | { kind: "image"; src: string }
-  | { kind: "pdf"; src: string }
-  | { kind: "office"; url: string }
-  | { kind: "text"; text: string }
-  | { kind: "unsupported" };
-type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
-type ReadingSuggestionChip = { key: string; label: string; kind: "group" | "ticket" | "label"; value: string };
-type GroupContactDraft = { key: string; name: string; email?: string; company?: string; source?: string };
-type GroupEntityDraft = { key: string; name: string; kind?: string; source?: string };
-type ClassificationMetaDraft = {
-  principalCategorize?: boolean;
-  principalStatusEnabled?: boolean;
-  principalStatusCategorize?: boolean;
-  referenceCategorize?: boolean;
-  referenceStatusEnabled?: boolean;
-  referenceStatusCategorize?: boolean;
-  ticketStatusEnabled?: boolean;
-  ticketStatusCategorize?: boolean;
-  categorizedLabelNames?: string[];
-};
-type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
-type StudioParams = {
-  conversationId?: string;
-  internetMessageId?: string;
-  itemId?: string;
-  subject?: string;
-  fromEmail?: string;
-  fromName?: string;
-  receivedAtIso?: string;
-  seedKey?: string;
-};
-
-const GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX = "iccc_group_classification_seed_v1:";
-
-function isOutlookCategorySyncDebugEnabled(): boolean {
-  try {
-    return window.localStorage?.getItem(OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY) === "1";
-  } catch {
-    return false;
+function logClassificationOutlookCategorySync(phase: string, data: any) {
+  if (typeof localStorage !== "undefined" && localStorage.getItem(OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY)) {
+    clientLog("info", `outlook-category-sync:${phase}`, data);
   }
 }
 
-function logClassificationOutlookCategorySync(event: string, data?: any) {
-  if (!isOutlookCategorySyncDebugEnabled()) return;
-  clientLog.debug(`[outlook-category-sync] classification ${event}`, data);
+function formatEmailLabelStatus(value: string | undefined): string {
+  return getStatusDisplayConfig(value).label;
 }
 
-const MENU: Array<{ id: SectionId; label: string; icon: React.ReactNode; help: string }> = [
-  { id: "emails", label: "Emails", icon: <Icons.MessageSquare size={15} />, help: "Lista e preview base do caso." },
-  { id: "classification", label: "Classificacao", icon: <Icons.Target size={15} />, help: "Grupo principal, referencias e ticket." },
-  { id: "labels", label: "Etiquetas", icon: <Icons.Star size={15} />, help: "Etiquetas e futuras categorias Outlook." },
-  { id: "filters", label: "Filtros", icon: <Icons.Search size={15} />, help: "Reducao da lista e testes de vista." },
-  { id: "groups", label: "Grupos", icon: <Icons.Building size={15} />, help: "Gestao do grupo como dossier." },
-];
+function formatGroupStatusLabel(value: string | undefined): string {
+  return getStatusDisplayConfig(value).label || "--";
+}
 
-const LABEL_STATUS_OPTIONS: Array<{ value: EmailLabelStatus; label: string }> = [
-  { value: "em_analise", label: "Em analise" },
-  { value: "em_progresso", label: "Em progresso" },
-  { value: "concluido", label: "Concluido" },
-];
-
-const TICKET_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "", label: "Sem estado" },
-  { value: "open", label: "Aberto" },
-  { value: "em_analise", label: "Em analise" },
-  { value: "em_progresso", label: "Em progresso" },
-  { value: "concluido", label: "Concluido" },
-  { value: "closed", label: "Fechado" },
-];
-
-const DOCUMENT_STATE_OPTIONS: Array<{ value: DocumentLifecycleState; label: string }> = [
-  { value: "ingested", label: "Recebido" },
-  { value: "processed", label: "Processado" },
-  { value: "accepted", label: "Aceite" },
-  { value: "rejected", label: "Rejeitado" },
-  { value: "reread_requested", label: "Reler" },
-];
-
-type UnifiedStatusColorKey = "blue" | "amber" | "green" | "red";
-
-const UNIFIED_STATUS_COLOR_MAP: Array<{
-  key: UnifiedStatusColorKey;
-  label: string;
-  aliases: string[];
-  style: React.CSSProperties;
-}> = [
-  {
-    key: "blue",
-    label: "Azul = Em analise",
-    aliases: ["em_analise", "aberto", "open"],
-    style: { borderColor: "rgba(59,130,246,0.34)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8" },
-  },
-  {
-    key: "amber",
-    label: "Amarelo = Aguarda",
-    aliases: ["aguarda", "em_progresso", "pending"],
-    style: { borderColor: "rgba(245,158,11,0.3)", background: "rgba(254,243,199,0.95)", color: "#b45309" },
-  },
-  {
-    key: "green",
-    label: "Verde = Concluido",
-    aliases: ["concluido", "resolved", "done"],
-    style: { borderColor: "rgba(34,197,94,0.28)", background: "rgba(220,252,231,0.95)", color: "#15803d" },
-  },
-  {
-    key: "red",
-    label: "Vermelho = Bloqueado",
-    aliases: ["bloqueado", "fechado", "closed", "blocked"],
-    style: { borderColor: "rgba(239,68,68,0.26)", background: "rgba(254,226,226,0.95)", color: "#b91c1c" },
-  },
-];
-
-const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
-  principalCategorize: true,
-  principalStatusEnabled: false,
-  principalStatusCategorize: false,
-  referenceCategorize: true,
-  referenceStatusEnabled: false,
-  referenceStatusCategorize: false,
-  ticketStatusEnabled: false,
-  ticketStatusCategorize: false,
-};
+function formatTicketStatusLabel(value: string | undefined): string {
+  return getStatusDisplayConfig(value).label || "--";
+}
 
 function createLabelDraftFromCatalog(
   entry?: Partial<GroupLabelCatalogEntry> | null,
@@ -169,159 +87,7 @@ function createLabelDraftFromCatalog(
       : undefined,
   };
 }
-
-function formatEmailLabelStatus(value: string | undefined): string {
-  if (value === "concluido") return "Concluido";
-  if (value === "em_progresso") return "Em progresso";
-  return "Em analise";
-}
-
-function formatGroupStatusLabel(value: string | undefined): string {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "concluido") return "Concluido";
-  if (normalized === "em_progresso") return "Em progresso";
-  if (normalized === "em_analise") return "Em analise";
-  return String(value || "").trim() || "--";
-}
-
-function formatTicketStatusLabel(value: string | undefined): string {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "open") return "Aberto";
-  if (normalized === "closed") return "Fechado";
-  return formatGroupStatusLabel(value);
-}
-
-function normalizeDocumentLifecycleState(value: string | undefined, fallback: DocumentLifecycleState = "ingested"): DocumentLifecycleState {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "processed" || normalized === "accepted" || normalized === "rejected" || normalized === "reread_requested") {
-    return normalized;
-  }
-  if (normalized === "ingested") return "ingested";
-  return fallback;
-}
-
-function formatDocumentLifecycleState(value: string | undefined): string {
-  const normalized = normalizeDocumentLifecycleState(value);
-  const match = DOCUMENT_STATE_OPTIONS.find((entry) => entry.value === normalized);
-  return match?.label || "Recebido";
-}
-
-function isRejectedDocumentLifecycleState(value: string | undefined): boolean {
-  return normalizeDocumentLifecycleState(value) === "rejected";
-}
-
-function inferStudioAttachmentKind(
-  attachment: ReturnType<typeof normalizeStudioAttachment>
-): AttachmentPreviewState["kind"] | "none" {
-  if (!attachment) return "none";
-  const name = String(attachment.name || "").toLowerCase();
-  const type = normalizeStudioAttachmentMimeType(attachment.contentType, attachment.name);
-  if (type.startsWith("image/") || /\.(png|jpe?g|gif|bmp|webp|svg)$/.test(name)) return "image";
-  if (type.includes("pdf") || /\.pdf$/.test(name)) return "pdf";
-  if (
-    type === "application/msword"
-    || type === "application/vnd.ms-excel"
-    || type === "application/vnd.ms-powerpoint"
-    || type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    || type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    || type === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    || /\.(docx?|xlsx?|pptx?)$/.test(name)
-  ) {
-    return "office";
-  }
-  if (type.startsWith("text/") || type.includes("json") || type.includes("xml") || type.includes("csv") || /\.(txt|md|json|xml|csv|log|ya?ml)$/.test(name)) return "text";
-  return "unsupported";
-}
-
-function isLikelyDecorativeAttachment(
-  attachment: ReturnType<typeof normalizeStudioAttachment>
-): boolean {
-  if (!attachment) return false;
-  const type = normalizeStudioAttachmentMimeType(attachment.contentType, attachment.name);
-  const name = String(attachment.name || "").trim().toLowerCase();
-  const size = Number(attachment.size || 0) || 0;
-  const hasContentId = Boolean(String(attachment.contentId || "").trim());
-  const signatureLikeName = /\b(signature|assinatura|logo|smime|favicon)\b/.test(name);
-  const genericInlineImageName = /^image\d+\.(png|jpe?g|gif|bmp|webp)$/i.test(name);
-  if (attachment.isHidden === true) return true;
-  if (attachment.isHidden === false) return false;
-  if (attachment.isInline) return true;
-  if (!/^image\//.test(type)) return false;
-  if (signatureLikeName && (hasContentId || size <= 48 * 1024)) return true;
-  if (genericInlineImageName && hasContentId) return true;
-  return Boolean(hasContentId && size > 0 && size <= 48 * 1024);
-}
-
-function isStudioAttachmentHiddenInQuickDocs(
-  attachment: ReturnType<typeof normalizeStudioAttachment>
-): boolean {
-  if (!attachment) return false;
-  if (attachment.isHidden === true) return true;
-  if (attachment.isHidden === false) return false;
-  return isLikelyDecorativeAttachment(attachment);
-}
-
-function formatQuickDocumentMeta(
-  attachment: ReturnType<typeof normalizeStudioAttachment>
-): string {
-  if (!attachment) return "";
-  const name = String(attachment.name || "").trim();
-  const ext = name.includes(".") ? name.split(".").pop() || "" : "";
-  const kind = inferStudioAttachmentKind(attachment);
-  let typeLabel = "";
-  if (kind === "pdf") typeLabel = "PDF";
-  else if (kind === "office") typeLabel = (ext || "office").toUpperCase();
-  else if (kind === "image") typeLabel = (ext || "imagem").toUpperCase();
-  else if (kind === "text") typeLabel = "Texto";
-  else typeLabel = (ext || "ficheiro").toUpperCase();
-  const size = Number(attachment.size || 0) || 0;
-  const sizeLabel = size > 0 ? `${Math.max(1, Math.round(size / 1024))} KB` : "";
-  return [typeLabel, sizeLabel].filter(Boolean).join(" · ");
-}
-
-function buildQuickDocumentPreviewText(
-  attachment: ReturnType<typeof normalizeStudioAttachment>
-): string {
-  if (!attachment) return "";
-  const kind = inferStudioAttachmentKind(attachment);
-  const textContent = String(attachment.content || "").trim();
-  if (kind === "text" && textContent) {
-    return textContent.slice(0, 420).trim();
-  }
-  if (kind === "pdf") {
-    return attachment.hasContent
-      ? "PDF pronto para abrir no preview inferior."
-      : "PDF identificado. O conteudo sera aberto no preview inferior quando estiver disponivel.";
-  }
-  if (kind === "image") {
-    return "Imagem pronta para visualizacao no preview inferior.";
-  }
-  if (kind === "office") {
-    return "Documento Office pronto para abrir no preview inferior.";
-  }
-  const stateLabel = formatDocumentLifecycleState((attachment as any)?.documentState);
-  return stateLabel
-    ? `${stateLabel}. Seleciona este ficheiro para o abrir no preview inferior.`
-    : "Seleciona este ficheiro para o abrir no preview inferior.";
-}
-
-function normalizeClassificationMetaDraft(
-  value?: Partial<ClassificationMetaDraft> | null
-): ClassificationMetaDraft {
-  return {
-    principalCategorize: value?.principalCategorize !== false,
-    principalStatusEnabled: value?.principalStatusEnabled === true,
-    principalStatusCategorize: value?.principalStatusCategorize === true,
-    referenceCategorize: value?.referenceCategorize !== false,
-    referenceStatusEnabled: value?.referenceStatusEnabled === true,
-    referenceStatusCategorize: value?.referenceStatusCategorize === true,
-    ticketStatusEnabled: value?.ticketStatusEnabled === true,
-    ticketStatusCategorize: value?.ticketStatusCategorize === true,
-    categorizedLabelNames: Array.isArray(value?.categorizedLabelNames)
-      ? value.categorizedLabelNames.map((label) => String(label || "").trim()).filter(Boolean)
-      : [],
-  };
-}
+// Handled via imports from documentUtils.ts
 
 function getComparableStringListSignature(values: string[]): string {
   return JSON.stringify(
@@ -346,6 +112,7 @@ function getComparableLabelDraftsSignature(drafts: Record<string, LabelDraft>): 
   );
 }
 
+// Local state comparison helper (derived from extracted types)
 function getComparableClassificationMetaSignature(value?: Partial<ClassificationMetaDraft> | null): string {
   const normalized = normalizeClassificationMetaDraft(value);
   return JSON.stringify({
@@ -354,185 +121,9 @@ function getComparableClassificationMetaSignature(value?: Partial<Classification
   });
 }
 
-function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
-  const emailKey = String(email?.emailKey || "").trim();
-  const emailId = String(email?.id || "").trim();
-  const itemId = String(email?.itemId || "").trim();
-  const internetMessageId = String(email?.internetMessageId || "").trim().replace(/[<>\s]/g, "").toLowerCase();
-  const isSynthetic = (value: string) => /^email_[0-9a-f-]+$/i.test(value);
+// redundant functions removed
 
-  return String(
-    itemId
-    || internetMessageId
-    || (emailKey && !isSynthetic(emailKey) ? emailKey : "")
-    || (emailId && !isSynthetic(emailId) ? emailId : "")
-    || emailKey
-    || emailId
-    || [
-      String(email?.conversationId || "").trim(),
-      String(email?.subject || "").trim().toLowerCase(),
-      String(email?.fromEmail || "").trim().toLowerCase(),
-      String(email?.messageDateIso || email?.receivedAtIso || "").trim(),
-    ].filter(Boolean).join("|")
-  );
-}
-
-function mergeUniqueStrings(values: string[]): string[] {
-  const seen = new Set<string>();
-  const next: string[] = [];
-  for (const value of values || []) {
-    const normalized = String(value || "").trim();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    next.push(normalized);
-  }
-  return next;
-}
-
-function mergeUniqueBy<T>(values: T[], getKey: (value: T) => string): T[] {
-  const seen = new Set<string>();
-  const next: T[] = [];
-  for (const value of values || []) {
-    const key = String(getKey(value) || "").trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    next.push(value);
-  }
-  return next;
-}
-
-function scoreStudioAttachment(attachment: any): number {
-  const normalized = normalizeStudioAttachment(attachment);
-  if (!normalized?.name) return 0;
-  let score = 10;
-  if (String(normalized.content || "").trim()) score += 40;
-  if (normalized.hasContent === true) score += 25;
-  if (String(normalized.key || "").trim()) score += 18;
-  if (String(normalized.id || "").trim()) score += 10;
-  if (String(normalized.contentId || "").trim()) score += 6;
-  if (String((attachment as any)?.storagePathHint || "").trim()) score += 12;
-  if (String((attachment as any)?.storageBasePath || "").trim()) score += 8;
-  return score;
-}
-
-function scoreStudioAttachmentCollection(attachments: any[]): number {
-  return (Array.isArray(attachments) ? attachments : []).reduce((total, attachment) => total + scoreStudioAttachment(attachment), 0);
-}
-
-function mergeClassificationMetaDrafts(
-  current?: ClassificationMetaDraft | null,
-  incoming?: ClassificationMetaDraft | null
-): ClassificationMetaDraft | undefined {
-  if (!current && !incoming) return undefined;
-  const fallback = normalizeClassificationMetaDraft(current);
-  const preferred = normalizeClassificationMetaDraft(incoming);
-  return {
-    ...fallback,
-    ...preferred,
-    categorizedLabelNames: mergeUniqueStrings([
-      ...(fallback.categorizedLabelNames || []),
-      ...(preferred.categorizedLabelNames || []),
-    ]),
-  };
-}
-
-function scoreRelatedEmailEntry(email: RelatedEmailEntry | null | undefined): number {
-  if (!email) return 0;
-  return Number(Boolean(String(email.emailKey || email.id || email.itemId || email.internetMessageId || "").trim())) * 40
-    + Number(Boolean(String(email.bodyText || "").trim() || String(email.bodyHtml || "").trim())) * 60
-    + Number(Boolean(String(email.status || "").trim())) * 8
-    + scoreStudioAttachmentCollection(Array.isArray(email.attachments) ? email.attachments : [])
-    + ((Array.isArray(email.labels) ? email.labels.length : 0) * 2)
-    + ((Array.isArray(email.relatedGroups) ? email.relatedGroups.length : 0) * 2)
-    + ((Array.isArray(email.relatedRecords) ? email.relatedRecords.length : 0) * 2);
-}
-
-function mergeRelatedEmailEntries(current: RelatedEmailEntry, incoming: RelatedEmailEntry): RelatedEmailEntry {
-  const preferred = scoreRelatedEmailEntry(incoming) >= scoreRelatedEmailEntry(current) ? incoming : current;
-  const fallback = preferred === incoming ? current : incoming;
-  const preferredAttachments = Array.isArray(preferred.attachments) ? preferred.attachments : [];
-  const fallbackAttachments = Array.isArray(fallback.attachments) ? fallback.attachments : [];
-  return {
-    ...fallback,
-    ...preferred,
-    emailKey: String(preferred.emailKey || fallback.emailKey || "").trim() || undefined,
-    id: String(preferred.id || fallback.id || "").trim() || undefined,
-    itemId: String(preferred.itemId || fallback.itemId || "").trim() || undefined,
-    internetMessageId: String(preferred.internetMessageId || fallback.internetMessageId || "").trim() || undefined,
-    conversationId: String(preferred.conversationId || fallback.conversationId || "").trim(),
-    subject: String(preferred.subject || fallback.subject || "").trim(),
-    fromEmail: String(preferred.fromEmail || fallback.fromEmail || "").trim(),
-    fromName: String(preferred.fromName || fallback.fromName || "").trim(),
-    receivedAtIso: String(preferred.receivedAtIso || fallback.receivedAtIso || preferred.messageDateIso || fallback.messageDateIso || "").trim() || undefined,
-    messageDateIso: String(preferred.messageDateIso || fallback.messageDateIso || preferred.receivedAtIso || fallback.receivedAtIso || "").trim() || undefined,
-    bodyText: String(preferred.bodyText || fallback.bodyText || "").trim(),
-    bodyHtml: String(preferred.bodyHtml || fallback.bodyHtml || "").trim(),
-    status: String(preferred.status || fallback.status || "").trim() || undefined,
-    labels: mergeUniqueStrings([...(fallback.labels || []), ...(preferred.labels || [])]),
-    removedInheritedLabels: mergeUniqueStrings([...(fallback.removedInheritedLabels || []), ...(preferred.removedInheritedLabels || [])]),
-    labelStates: {
-      ...(fallback.labelStates || {}),
-      ...(preferred.labelStates || {}),
-    },
-    classificationMeta: mergeClassificationMetaDrafts(fallback.classificationMeta, preferred.classificationMeta),
-    attachments: scoreStudioAttachmentCollection(preferredAttachments) >= scoreStudioAttachmentCollection(fallbackAttachments)
-      ? preferredAttachments
-      : fallbackAttachments,
-    relatedGroups: mergeUniqueBy(
-      [
-        ...(preferred.relatedGroups || []),
-        ...(fallback.relatedGroups || []),
-      ],
-      (group) => String(group?.id || "").trim()
-    ),
-    relatedRecords: mergeUniqueBy(
-      [
-        ...(preferred.relatedRecords || []),
-        ...(fallback.relatedRecords || []),
-      ],
-      (record) => `${String(record?.model || "").trim()}:${String(record?.recordId || "").trim()}`
-    ),
-    relatedReasons: mergeUniqueBy(
-      [
-        ...(preferred.relatedReasons || []),
-        ...(fallback.relatedReasons || []),
-      ],
-      (reason) => JSON.stringify(reason || {})
-    ),
-  };
-}
-
-function dedupeEmails(emails: RelatedEmailEntry[]): RelatedEmailEntry[] {
-  const seen = new Map<string, RelatedEmailEntry>();
-  for (const email of emails || []) {
-    const key = makeEmailKey(email);
-    if (!key) continue;
-    const current = seen.get(key);
-    seen.set(key, current ? mergeRelatedEmailEntries(current, email) : email);
-  }
-  return Array.from(seen.values());
-}
-
-function htmlToPlainText(html: string): string {
-  return String(html || "")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "- ")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#39;|&#039;/gi, "'")
-    .replace(/&quot;/gi, "\"")
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
+// Moved to documentUtils.ts
 
 function escapeHtml(value: string): string {
   return String(value || "")
@@ -624,13 +215,7 @@ function stripDataUrlPrefix(value: string): string {
   return raw;
 }
 
-function normalizeStudioAttachmentMimeType(value: string | undefined, name: string | undefined): string {
-  const raw = String(value || "").trim().toLowerCase();
-  const fileName = String(name || "").trim().toLowerCase();
-  if (raw === "application/x-pdf" || (!raw && /\.pdf$/.test(fileName))) return "application/pdf";
-  if (raw === "image/jpg") return "image/jpeg";
-  return raw || "application/octet-stream";
-}
+// normalizeStudioAttachmentMimeType moved to documentUtils.ts
 
 function canUseOfficeWebViewer(): boolean {
   try {
@@ -747,176 +332,9 @@ function StudioPdfPreview({ dataUrl, title }: { dataUrl: string; title: string }
   );
 }
 
-function buildSnippet(email: RelatedEmailEntry): string {
-  const source = String(email.bodyText || "").trim() || htmlToPlainText(String(email.bodyHtml || ""));
-  return source.length > 180 ? `${source.slice(0, 177).trim()}...` : source;
-}
+// Moved to documentUtils.ts
 
-function buildEmailPreviewText(email: RelatedEmailEntry): string {
-  return String(email.bodyText || htmlToPlainText(String(email.bodyHtml || "")) || buildSnippet(email) || "").trim();
-}
-
-function buildCompactEmailMeta(email: RelatedEmailEntry): string {
-  return [
-    String(email.fromName || email.fromEmail || "").trim(),
-    formatDate(email.messageDateIso || email.receivedAtIso),
-  ]
-    .filter(Boolean)
-    .join(" / ");
-}
-
-function buildEmailCorpus(email: RelatedEmailEntry): string {
-  return [
-    email.subject,
-    email.fromName,
-    email.fromEmail,
-    email.bodyText,
-    htmlToPlainText(String(email.bodyHtml || "")),
-    ...(email.attachments || []).map((attachment) => attachment.name),
-  ]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean)
-    .join(" ");
-}
-
-function matchReferenceSet(text: string, references: string[]): string[] {
-  const compactHaystack = String(text || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
-  return references.filter((reference) => {
-    const compactReference = compactReferenceValue(reference);
-    return Boolean(compactReference && compactHaystack.includes(compactReference));
-  });
-}
-
-function formatDate(value: string | undefined): string {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return raw;
-  return parsed.toLocaleString("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function isExternalEmail(email: RelatedEmailEntry): boolean {
-  const from = String(email.fromEmail || "").toLowerCase();
-  return from ? !from.endsWith("@divitek.pt") : true;
-}
-
-function isCurrentContextEmail(email: Partial<RelatedEmailEntry>, currentContext: Partial<StudioParams>) {
-  const emailItemId = String(email?.itemId || "").trim();
-  const contextItemId = String(currentContext?.itemId || "").trim();
-  if (emailItemId && contextItemId && emailItemId === contextItemId) return true;
-  const emailMessageId = String(email?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
-  const contextMessageId = String(currentContext?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
-  return Boolean(emailMessageId && contextMessageId && emailMessageId === contextMessageId);
-}
-
-function makeAttachmentKey(attachment: { key?: string; id?: string; name?: string; contentId?: string }): string {
-  return String(attachment.key || attachment.id || attachment.contentId || attachment.name || "").trim();
-}
-
-function normalizeStudioAttachment(attachment: any) {
-  if (!attachment || typeof attachment !== "object") return null;
-  return {
-    key: String(attachment.key || "").trim() || undefined,
-    id: String(attachment.id || "").trim() || undefined,
-    name: String(attachment.name || "").trim(),
-    contentType: String(attachment.contentType || "application/octet-stream"),
-    content: String(attachment.content || ""),
-    size: attachment.size,
-    isInline: attachment.isInline,
-    contentId: String(attachment.contentId || "").trim() || undefined,
-    documentState: normalizeDocumentLifecycleState(attachment.documentState, "ingested"),
-    storageProvider: String(attachment.storageProvider || "").trim() || undefined,
-    storageBasePath: String(attachment.storageBasePath || "").trim() || undefined,
-    storagePathHint: String(attachment.storagePathHint || "").trim() || undefined,
-    hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
-    isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
-  };
-}
-
-function getStudioAttachmentRemoteId(attachment: any): string {
-  const normalized = normalizeStudioAttachment(attachment);
-  if (!normalized) return "";
-  return String(normalized.key || normalized.id || normalized.contentId || normalized.name || "").trim();
-}
-
-function isStudioAttachmentHydrated(attachment: any): boolean {
-  const normalized = normalizeStudioAttachment(attachment);
-  if (!normalized?.name) return false;
-  if (String(normalized.content || "").trim()) return true;
-  if (normalized.hasContent !== true) return false;
-  return Boolean(getStudioAttachmentRemoteId(normalized));
-}
-
-function hasHydratedAttachmentCollection(email: RelatedEmailEntry | null): boolean {
-  const attachments = Array.isArray(email?.attachments) ? email.attachments : [];
-  if (!attachments.length) return false;
-  return attachments.every((attachment) => isStudioAttachmentHydrated(attachment));
-}
-
-function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | null): RelevantEmailPayload | null {
-  if (!email) return null;
-  const itemId = String(email.itemId || "").trim();
-  const internetMessageId = String(email.internetMessageId || "").trim();
-  const conversationId = String(email.conversationId || "").trim();
-  const subject = String(email.subject || "").trim();
-  const fromEmail = String(email.fromEmail || "").trim();
-  if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
-  const attachments = Array.isArray(email.attachments)
-    ? email.attachments
-        .map((attachment) => normalizeStudioAttachment(attachment))
-        .filter((attachment): attachment is NonNullable<ReturnType<typeof normalizeStudioAttachment>> => Boolean(attachment))
-        .map((attachment) => ({
-          key: attachment.key,
-          id: attachment.id,
-          name: attachment.name,
-          contentType: attachment.contentType,
-          size: attachment.size,
-          isInline: attachment.isInline,
-          contentId: attachment.contentId,
-          content: attachment.content,
-          storageProvider: (attachment as any).storageProvider,
-          storageBasePath: (attachment as any).storageBasePath,
-          storagePathHint: (attachment as any).storagePathHint,
-          documentState: (attachment as any).documentState,
-          hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
-          isHidden: typeof (attachment as any).isHidden === "boolean" ? (attachment as any).isHidden : undefined,
-        }))
-    : [];
-  return {
-    itemId: itemId || undefined,
-    internetMessageId: internetMessageId || undefined,
-    conversationId: conversationId || undefined,
-    subject: subject || undefined,
-    fromEmail: fromEmail || undefined,
-    fromName: String(email.fromName || "").trim() || undefined,
-    receivedAtIso: String(email.receivedAtIso || email.messageDateIso || "").trim() || undefined,
-    messageDateIso: String(email.messageDateIso || email.receivedAtIso || "").trim() || undefined,
-    bodyText: String(email.bodyText || "").trim() || undefined,
-    bodyHtml: String(email.bodyHtml || "").trim() || undefined,
-    ...(attachments.length ? { attachments } : {}),
-  };
-}
-
-function buildAttachmentStorageOptions(settings?: any): Pick<RelevantEmailPayload, "attachmentStorageProvider" | "attachmentStorageBasePath"> {
-  return {
-    attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
-    attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
-  };
-}
-
-async function persistRelatedEmailsToServer(emails: RelatedEmailEntry[], settings?: any): Promise<void> {
-  const storageOptions = buildAttachmentStorageOptions(settings);
-  const payloads = dedupeEmails(emails)
-    .map((email) => buildRelevantEmailPayloadFromRelatedEmail(email))
-    .filter(Boolean) as RelevantEmailPayload[];
-  if (!payloads.length) return;
-  await Promise.allSettled(
-    payloads.map((payload) => registerRelevantEmail({
-      ...payload,
-      ...storageOptions,
-    }))
-  );
-}
+// Moved to documentUtils.ts
 
 function derivePartnerName(email: RelatedEmailEntry | null): string {
   const fromName = String(email?.fromName || "").trim();
@@ -977,137 +395,9 @@ function updateAttachmentVisibilityOnEmail(
   };
 }
 
-function detectCaseType(text: string): string {
-  const value = text.toLowerCase();
-  if (/(reclam|inciden|nao conforme|defeito)/.test(value)) return "reclamacao";
-  if (/(pedido|encomenda|order|po\b|purchase order|material listo)/.test(value)) return "pedido/encomenda";
-  if (/(proposta|orcamento|quote|quotation)/.test(value)) return "proposta";
-  if (/(projeto|project|obra|worksite)/.test(value)) return "projeto";
-  return "geral";
-}
+// Helpers moved to documentUtils.ts
 
-function inferCompanyName(fromName: string | undefined, fromEmail: string | undefined): string {
-  const rawName = String(fromName || "").trim();
-  if (rawName.includes("|")) {
-    const parts = rawName.split("|").map((part) => part.trim()).filter(Boolean);
-    if (parts.length >= 2) return parts[parts.length - 1];
-  }
-  const email = String(fromEmail || "").trim().toLowerCase();
-  if (!email.includes("@")) return "";
-  const domain = email.split("@")[1] || "";
-  const base = domain.split(".")[0] || "";
-  if (!base) return "";
-  return base
-    .split(/[-_]+/g)
-    .filter(Boolean)
-    .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
-    .join(" ");
-}
-
-function normalizeGroupContactDraft(value: Partial<GroupContactDraft> | null | undefined): GroupContactDraft | null {
-  const name = String(value?.name || "").trim();
-  const email = String(value?.email || "").trim().toLowerCase();
-  const company = String(value?.company || "").trim();
-  const source = String(value?.source || "").trim() || "email";
-  const key = String(value?.key || email || `${normalizeSearchValue(name)}|${normalizeSearchValue(company)}`).trim();
-  if (!key || (!name && !email)) return null;
-  return {
-    key,
-    name: name || email,
-    email: email || undefined,
-    company: company || undefined,
-    source,
-  };
-}
-
-function normalizeGroupEntityDraft(value: Partial<GroupEntityDraft> | null | undefined): GroupEntityDraft | null {
-  const name = String(value?.name || "").trim();
-  const kind = String(value?.kind || "").trim() || "empresa";
-  const source = String(value?.source || "").trim() || "email";
-  const key = String(value?.key || normalizeSearchValue(name)).trim();
-  if (!key || !name) return null;
-  return {
-    key,
-    name,
-    kind,
-    source,
-  };
-}
-
-function dedupeGroupContacts(rows: Array<Partial<GroupContactDraft> | null | undefined>): GroupContactDraft[] {
-  const seen = new Set<string>();
-  const out: GroupContactDraft[] = [];
-  rows.forEach((row) => {
-    const normalized = normalizeGroupContactDraft(row);
-    if (!normalized || seen.has(normalized.key)) return;
-    seen.add(normalized.key);
-    out.push(normalized);
-  });
-  return out;
-}
-
-function dedupeGroupEntities(rows: Array<Partial<GroupEntityDraft> | null | undefined>): GroupEntityDraft[] {
-  const seen = new Set<string>();
-  const out: GroupEntityDraft[] = [];
-  rows.forEach((row) => {
-    const normalized = normalizeGroupEntityDraft(row);
-    if (!normalized || seen.has(normalized.key)) return;
-    seen.add(normalized.key);
-    out.push(normalized);
-  });
-  return out;
-}
-
-function detectReferences(text: string): string[] {
-  const refs = new Set<string>();
-  const patterns = [
-    /\b(?:pedido|encomenda|order|po|proposta|orcamento|obra|projeto|project)\s*(?:n[.oº°]*)?\s*([A-Z]{0,6}[-/]?\d{2,}[A-Z0-9/-]*)/gi,
-    /\b([A-Z]{2,6}[-/]\d{2,})\b/g,
-    /\b(\d{3,}[A-Z0-9/-]{0,10})\b/g,
-  ];
-  for (const pattern of patterns) {
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(text))) {
-      const value = String(match[1] || "").trim();
-      if (value && value.length >= 4) refs.add(value);
-    }
-  }
-  return Array.from(refs).slice(0, 6);
-}
-
-function splitSuggestions(allGroups: LinkGroupEntry[], text: string): LinkGroupEntry[] {
-  const value = text.toLowerCase();
-  return allGroups.filter((group) => {
-    if (String(group?.kind || "").trim().toLowerCase() === "conversation") return false;
-    const name = String(group.name || "").trim().toLowerCase();
-    if (!name || name.length < 4) return false;
-    return value.includes(name);
-  }).slice(0, 8);
-}
-
-function normalizeSearchValue(value: string): string {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
-function normalizeReferenceCandidate(value: string): string {
-  return String(value || "")
-    .replace(/[‐‑–—]/g, "-")
-    .replace(/\s*([/-])\s*/g, "$1")
-    .replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/gi, "")
-    .replace(/[.,;:)\]]+$/g, "")
-    .trim()
-    .toUpperCase();
-}
-
-function compactReferenceValue(value: string): string {
-  return normalizeReferenceCandidate(value).replace(/[\s/-]+/g, "");
-}
+// Moved to documentUtils.ts
 
 function detectReferencesFocused(text: string): string[] {
   const prepared = String(text || "")
@@ -1292,94 +582,9 @@ function mergeTicketEntryLists(left: GroupTicketEntry[], right: GroupTicketEntry
   }, []);
 }
 
-function readParams(): StudioParams {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    conversationId: String(params.get("conversationId") || "").trim() || undefined,
-    internetMessageId: String(params.get("internetMessageId") || "").trim() || undefined,
-    itemId: String(params.get("itemId") || "").trim() || undefined,
-    subject: String(params.get("subject") || "").trim() || undefined,
-    fromEmail: String(params.get("fromEmail") || "").trim() || undefined,
-    fromName: String(params.get("fromName") || "").trim() || undefined,
-    receivedAtIso: String(params.get("receivedAtIso") || "").trim() || undefined,
-    seedKey: String(params.get("seedKey") || "").trim() || undefined,
-  };
-}
+// Moved to documentUtils.ts
 
-function readSeedEmail(params: StudioParams): RelatedEmailEntry | null {
-  const key = String(params.seedKey || "").trim();
-  if (!key || !key.startsWith(GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX)) return null;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const parsed: any = JSON.parse(raw);
-    const itemId = String(parsed?.itemId || "").trim();
-    const internetMessageId = String(parsed?.internetMessageId || "").trim();
-    const conversationId = String(parsed?.conversationId || "").trim();
-    const subject = String(parsed?.subject || "").trim();
-    const fromEmail = String(parsed?.fromEmail || "").trim();
-    const fromName = String(parsed?.fromName || "").trim();
-    const receivedAtIso = String(parsed?.receivedAtIso || parsed?.messageDateIso || "").trim();
-    if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
-    return {
-      emailKey: itemId || internetMessageId || `${conversationId}|${subject || fromEmail}`,
-      itemId: itemId || undefined,
-      internetMessageId: internetMessageId || undefined,
-      conversationId: conversationId || undefined,
-      subject: subject || "(sem assunto)",
-      fromEmail: fromEmail || undefined,
-      fromName: fromName || undefined,
-      receivedAtIso: receivedAtIso || undefined,
-      messageDateIso: receivedAtIso || undefined,
-      bodyText: String(parsed?.bodyText || "").trim(),
-      bodyHtml: String(parsed?.bodyHtml || "").trim(),
-      attachments: Array.isArray(parsed?.attachments)
-        ? parsed.attachments
-          .map((attachment: any) => ({
-            id: String(attachment?.id || "").trim() || undefined,
-            name: String(attachment?.name || "").trim(),
-            contentType: String(attachment?.contentType || "application/octet-stream").trim(),
-            size: Number(attachment?.size || 0) || undefined,
-            isInline: Boolean(attachment?.isInline),
-            contentId: String(attachment?.contentId || "").trim() || undefined,
-            content: String(attachment?.content || "").trim(),
-          }))
-          .filter((attachment: any) => attachment.name)
-        : [],
-      relatedGroups: [],
-      relatedReasons: [],
-    };
-  } catch {
-    return null;
-  }
-}
-
-function buildFallbackEmail(params: StudioParams): RelatedEmailEntry | null {
-  const itemId = String(params.itemId || "").trim();
-  const internetMessageId = String(params.internetMessageId || "").trim();
-  const conversationId = String(params.conversationId || "").trim();
-  const subject = String(params.subject || "").trim();
-  const fromEmail = String(params.fromEmail || "").trim();
-  const fromName = String(params.fromName || "").trim();
-  const receivedAtIso = String(params.receivedAtIso || "").trim();
-  if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
-  return {
-    emailKey: itemId || internetMessageId || `${conversationId}|${subject || fromEmail}`,
-    itemId: itemId || undefined,
-    internetMessageId: internetMessageId || undefined,
-    conversationId: conversationId || undefined,
-    subject: subject || "(sem assunto)",
-    fromEmail: fromEmail || undefined,
-    fromName: fromName || undefined,
-    receivedAtIso: receivedAtIso || undefined,
-    messageDateIso: receivedAtIso || undefined,
-    bodyText: "",
-    bodyHtml: "",
-    attachments: [],
-    relatedGroups: [],
-    relatedReasons: [],
-  };
-}
+// readSeedEmail & buildFallbackEmail moved to documentUtils.ts
 
 function StudioInner() {
   const params = useMemo(() => readParams(), []);
@@ -1434,6 +639,7 @@ function StudioInner() {
   const [applyDialogScopeMode, setApplyDialogScopeMode] = useState<ApplyDialogScopeMode>("current");
   const [applyDialogSection, setApplyDialogSection] = useState<ClassificationFocus>("summary");
   const [applyDialogEmailKeys, setApplyDialogEmailKeys] = useState<string[]>([]);
+  const [applyDialogSelectedEmailKeys, setApplyDialogSelectedEmailKeys] = useState<string[]>([]);
   const [applyDialogExpandedEmailKeys, setApplyDialogExpandedEmailKeys] = useState<string[]>([]);
   const [expandedEmailKeys, setExpandedEmailKeys] = useState<string[]>([]);
   const [expandedQuickDocumentKeys, setExpandedQuickDocumentKeys] = useState<string[]>([]);
@@ -1525,13 +731,13 @@ function StudioInner() {
     void (async () => {
       try {
         const settings = await getSettings();
-        applySkin(settings.skinId || "soft");
+        applySkin((settings.skinId || "soft") as any);
         setLabelCatalogEntries(normalizeGroupLabelCatalog(settings.groupLabelCatalog || []));
         setFavoriteGroupIds(Array.isArray((settings as any)?.groupFavoriteIds)
           ? Array.from(new Set((settings as any).groupFavoriteIds.map((entry: any) => String(entry || "").trim()).filter(Boolean)))
           : []);
       } catch {
-        applySkin("soft");
+        applySkin("soft" as any);
         setLabelCatalogEntries([]);
         setFavoriteGroupIds([]);
       } finally {
@@ -3516,14 +2722,15 @@ function StudioInner() {
         .trim()
         .replace(/[\\/:*?"<>|]+/g, "_");
       await saveGroupDocuments(principalGroupId, {
-        documents: docs.map((doc) => ({
+        documents: docs.map((doc: any) => ({
           ...doc,
+          id: doc.id || doc.key || `new_doc_${Date.now()}_${Math.random().toString(36).slice(2)}`,
           storageProvider,
           storageBasePath,
           storagePathHint: safeGroupName && doc.name
             ? `${safeGroupName}/${String(doc.name || "").trim().replace(/[\\/:*?"<>|]+/g, "_")}`
             : undefined,
-        })),
+        } as GroupDocumentEntry)),
       });
       await refreshSelectedEmailContext();
       setStatus(`${docs.length} anexo(s) guardado(s) nos documentos do grupo principal.`);
@@ -4199,12 +3406,16 @@ function StudioInner() {
     setApplyDialogExpandedEmailKeys([]);
     setApplyDialogOpen(true);
     setApplyDialogScopeMode(defaultMode);
-    setApplyDialogEmailKeys(getDefaultApplyDialogEmailKeys(defaultMode));
+    const keys = getDefaultApplyDialogEmailKeys(defaultMode);
+    setApplyDialogEmailKeys(keys);
+    setApplyDialogSelectedEmailKeys(keys);
   }
 
   function toggleApplyDialogEmailKey(emailKey: string) {
     if (!emailKey) return;
-    setApplyDialogEmailKeys((current) => current.includes(emailKey) ? current.filter((entry) => entry !== emailKey) : [...current, emailKey]);
+    const toggle = (current: string[]) => current.includes(emailKey) ? current.filter((entry) => entry !== emailKey) : [...current, emailKey];
+    setApplyDialogEmailKeys(toggle);
+    setApplyDialogSelectedEmailKeys(toggle);
   }
 
   function toggleApplyDialogExpandedEmailKey(emailKey: string) {
@@ -4227,7 +3438,7 @@ function StudioInner() {
   function renderOutlookColorLegend(): React.ReactNode {
     return (
       <div style={S.legendRow}>
-        {UNIFIED_STATUS_COLOR_MAP.map((entry) => (
+        {UNIFIED_STATUS_LEGEND.map((entry) => (
           <span key={entry.key} style={{ ...S.legendChip, ...entry.style }}>{entry.label}</span>
         ))}
       </div>
