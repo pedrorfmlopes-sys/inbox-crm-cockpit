@@ -40,14 +40,14 @@ type ReadingSuggestionChip = { key: string; label: string; kind: "group" | "tick
 type GroupContactDraft = { key: string; name: string; email?: string; company?: string; source?: string };
 type GroupEntityDraft = { key: string; name: string; kind?: string; source?: string };
 type ClassificationMetaDraft = {
-  principalCategorize: boolean;
-  principalStatusEnabled: boolean;
-  principalStatusCategorize: boolean;
-  referenceCategorize: boolean;
-  referenceStatusEnabled: boolean;
-  referenceStatusCategorize: boolean;
-  ticketStatusEnabled: boolean;
-  ticketStatusCategorize: boolean;
+  principalCategorize?: boolean;
+  principalStatusEnabled?: boolean;
+  principalStatusCategorize?: boolean;
+  referenceCategorize?: boolean;
+  referenceStatusEnabled?: boolean;
+  referenceStatusCategorize?: boolean;
+  ticketStatusEnabled?: boolean;
+  ticketStatusCategorize?: boolean;
   categorizedLabelNames?: string[];
 };
 type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
@@ -459,7 +459,7 @@ function mergeRelatedEmailEntries(current: RelatedEmailEntry, incoming: RelatedE
     id: String(preferred.id || fallback.id || "").trim() || undefined,
     itemId: String(preferred.itemId || fallback.itemId || "").trim() || undefined,
     internetMessageId: String(preferred.internetMessageId || fallback.internetMessageId || "").trim() || undefined,
-    conversationId: String(preferred.conversationId || fallback.conversationId || "").trim() || undefined,
+    conversationId: String(preferred.conversationId || fallback.conversationId || "").trim(),
     subject: String(preferred.subject || fallback.subject || "").trim(),
     fromEmail: String(preferred.fromEmail || fallback.fromEmail || "").trim(),
     fromName: String(preferred.fromName || fallback.fromName || "").trim(),
@@ -707,7 +707,11 @@ function StudioPdfPreview({ dataUrl, title }: { dataUrl: string; title: string }
           canvas.width = Math.ceil(viewport.width);
           canvas.height = Math.ceil(viewport.height);
           host.appendChild(canvas);
-          await page.render({ canvasContext: context, viewport }).promise;
+          await page.render({
+            canvasContext: context,
+            viewport,
+            canvas: canvas as any,
+          }).promise;
         }
 
         if (!cancelled) setStatus("ready");
@@ -3650,11 +3654,14 @@ function StudioInner() {
     }
   }
 
-  async function handleApplyClassification(targetEmailsOverride?: RelatedEmailEntry[]) {
+  async function handleApplyClassification(targetEmailsOverride?: RelatedEmailEntry[]): Promise<{ ok: boolean; coreSuccess: boolean; error?: string }> {
     setActionBusy(true);
+    setStatus("A iniciar aplicacao...");
     let activeCategoryOperationId = "";
     let activeCategoryRequestId = "";
     let categoryOperationClosed = false;
+    let coreSuccess = false;
+
     try {
       const targetEmails = dedupeEmails(
         (targetEmailsOverride && targetEmailsOverride.length
@@ -3672,7 +3679,7 @@ function StudioInner() {
         : ((selectedEmail ? [selectedEmail] : []) as RelatedEmailEntry[]);
       if (!effectiveTargetEmails.length) {
         setStatus("Nao existe nenhum email alvo para atualizar.");
-        return false;
+        return { ok: false, coreSuccess: false, error: "Nao existe nenhum email alvo." };
       }
       const includesCurrentTarget = selectedEmailIsCurrent || effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext));
       const currentTargetIdentity = includesCurrentTarget
@@ -3688,12 +3695,11 @@ function StudioInner() {
           target: currentTargetIdentity,
         });
         if (!openedOperation.ok) {
-          setStatus(
-            openedOperation.reason === "locked"
-              ? "Ja existe outra classificacao em curso para este email. Aguarda um momento."
-              : "Nao foi possivel identificar o email atual para confirmar a classificacao."
-          );
-          return false;
+          const reasonMsg = openedOperation.reason === "locked"
+            ? "Ja existe outra classificacao em curso para este email. Aguarda um momento."
+            : "Nao foi possivel identificar o email atual para confirmar a classificacao.";
+          setStatus(reasonMsg);
+          return { ok: false, coreSuccess: false, error: reasonMsg };
         }
         activeCategoryOperationId = openedOperation.operation.operationId;
         setOutlookCategoryOperationPhase(activeCategoryOperationId, "saving");
@@ -3777,6 +3783,7 @@ function StudioInner() {
       const baseTargetEmail = effectiveTargetEmails[0];
       const baseTargetKey = makeEmailKey(baseTargetEmail);
       if (!selectedTicketId && selectedSeriesId) {
+        setStatus("A criar ticket Odoo...");
         const baseClassifiedEmailPayload = buildClassifiedEmailPayload(baseTargetEmail);
         finalTicket = await createGroupTicket({
           seriesId: selectedSeriesId,
@@ -3795,11 +3802,15 @@ function StudioInner() {
       }
 
       if (selectedTicketId && desiredTicketStatus !== String(currentOutlookTicket?.status || "").trim()) {
+        setStatus("A atualizar estado do ticket...");
         finalTicket = await updateGroupTicket(selectedTicketId, { status: desiredTicketStatus });
         setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
       }
 
+      let emailCounter = 0;
       for (const targetEmail of effectiveTargetEmails) {
+        emailCounter++;
+        setStatus(`A aplicar classificacao (${emailCounter}/${effectiveTargetEmails.length})...`);
         const targetEmailKey = makeEmailKey(targetEmail);
         const targetEmailPayload = buildTargetPayload(targetEmail);
         const classifiedEmailPayload = {
@@ -3863,6 +3874,9 @@ function StudioInner() {
         }
       }
 
+      coreSuccess = true;
+      setStatus("A atualizar dados locais...");
+
       let fallbackCurrentCategoryEmail: RelatedEmailEntry | null = null;
       if (currentTargetIdentity) {
         const currentTargetEmail = effectiveTargetEmails.find((email) => isCurrentContextEmail(email, currentContext))
@@ -3908,7 +3922,8 @@ function StudioInner() {
       if (activeCategoryOperationId) {
         setOutlookCategoryOperationPhase(activeCategoryOperationId, "refreshing");
       }
-      const refreshedContext = await refreshSelectedEmailContext();
+      setStatus("A reidratar emails...");
+      const refreshedContext = await refreshSelectedEmailContext().catch(() => null);
       if (includesCurrentTarget && currentTargetIdentity) {
         if (activeCategoryOperationId) {
           setOutlookCategoryOperationPhase(activeCategoryOperationId, "rehydrating");
@@ -3958,6 +3973,7 @@ function StudioInner() {
               requestId: categoryRequestId,
             });
           }
+          setStatus("A projetar categorias no Outlook...");
           const writerSubmitted = await requestCockpitHostAction({
             type: "sync-managed-categories",
             payload: refreshedCategorySource,
@@ -4014,17 +4030,20 @@ function StudioInner() {
           ? `Classificacao aplicada a ${effectiveTargetEmails.length} emails.`
           : "Classificacao aplicada ao email selecionado."
       );
-      return true;
+      return { ok: true, coreSuccess: true };
     } catch (actionError: any) {
       if (activeCategoryOperationId && !categoryOperationClosed) {
         completeOutlookCategoryOperation(activeCategoryOperationId, {
           result: "failed",
-          requestId: activeCategoryRequestId || undefined,
           detail: String(actionError?.message || "").trim() || undefined,
         });
       }
-      setStatus(actionError?.message || "Nao foi possivel aplicar a classificacao.");
-      return false;
+      const errorMsg = actionError?.message || "Nao foi possivel aplicar a classificacao.";
+      setStatus(errorMsg);
+      if (coreSuccess) {
+        return { ok: true, coreSuccess: true, error: `Guardado com avisos: ${errorMsg}` };
+      }
+      return { ok: false, coreSuccess: false, error: errorMsg };
     } finally {
       setActionBusy(false);
     }
@@ -4198,21 +4217,22 @@ function StudioInner() {
   }
 
   async function handleConfirmApplyDialog() {
-    const selectedEmails = applyDialogEffectiveEmails.length
-      ? applyDialogEffectiveEmails
-      : ((selectedEmail ? [selectedEmail] : []) as RelatedEmailEntry[]);
-    const applied = await handleApplyClassification(selectedEmails);
-    if (!applied) return;
-    clearClassificationDraftSession();
+    const result = await handleApplyClassification();
+    if (result && result.coreSuccess) {
+      setApplyDialogOpen(false);
+    }
   }
 
-  function renderOutlookColorLegend() {
+  function renderOutlookColorLegend(): React.ReactNode {
     return (
-      <div style={S.legendRow}>
-        {UNIFIED_STATUS_COLOR_MAP.map((entry) => (
-          <span key={entry.key} style={{ ...S.legendChip, ...entry.style }}>{entry.label}</span>
+      <S.StatusLegendContainer>
+        {Object.entries(UNIFIED_STATUS_COLOR_MAP).map(([status, config]) => (
+          <S.StatusLegendItem key={status}>
+            <S.StatusLegendColorBox style={{ backgroundColor: config.color }} />
+            <S.StatusLegendLabel>{config.label}</S.StatusLegendLabel>
+          </S.StatusLegendItem>
         ))}
-      </div>
+      </S.StatusLegendContainer>
     );
   }
 
@@ -4790,6 +4810,7 @@ function StudioInner() {
       : caseScopeEmails;
     const manualSelectionEnabled = applyDialogScopeMode === "selected";
     const showEmailList = applyDialogScopeMode !== "current";
+
     return (
       <div style={S.modalBackdrop}>
         <div style={S.modalSheet}>
@@ -4798,18 +4819,20 @@ function StudioInner() {
               <div style={S.kicker}>Aplicar alteracoes</div>
               <div style={S.modalTitle}>{sectionLabel}</div>
             </div>
-            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
+            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)} disabled={actionBusy}>Cancelar</button>
           </div>
+
           <div style={S.modalScopeRow}>
-            <button type="button" style={applyDialogScopeMode === "current" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("current")}>So este email</button>
-            <button type="button" style={applyDialogScopeMode === "selected" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("selected")}>Emails selecionados</button>
-            <button type="button" style={applyDialogScopeMode === "case_all" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("case_all")}>Todos os emails do caso</button>
+            <button type="button" style={applyDialogScopeMode === "current" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("current")} disabled={actionBusy}>So este email</button>
+            <button type="button" style={applyDialogScopeMode === "selected" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("selected")} disabled={actionBusy}>Emails selecionados</button>
+            <button type="button" style={applyDialogScopeMode === "case_all" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("case_all")} disabled={actionBusy}>Todos os emails do caso</button>
           </div>
+
           <div style={S.modalBlock}>
             <div style={S.modalBlockHeader}>
               <div style={S.editorBlockTitle}>{applyDialogScopeMode === "current" ? "Email alvo" : "Escolher emails"}</div>
               {manualSelectionEnabled ? (
-                <button type="button" style={S.linkBtn} onClick={() => setApplyDialogEmailKeys(caseScopeEmails.map((email) => makeEmailKey(email)).filter(Boolean))}>Selecionar todos</button>
+                <button type="button" style={S.linkBtn} onClick={() => setApplyDialogEmailKeys(caseScopeEmails.map((email) => makeEmailKey(email)).filter(Boolean))} disabled={actionBusy}>Selecionar todos</button>
               ) : null}
             </div>
             {!showEmailList && currentScopeEmail ? (
@@ -4829,23 +4852,21 @@ function StudioInner() {
               <div style={S.applyEmailList}>
                 {displayEmails.map((email) => {
                   const emailKey = makeEmailKey(email);
+                  const selected = applyDialogSelectedEmailKeys.includes(emailKey);
                   const expanded = applyDialogExpandedEmailKeys.includes(emailKey);
-                  const checked = applyDialogScopeMode === "case_all" || applyDialogEmailKeys.includes(emailKey);
                   return (
-                    <div key={emailKey} style={checked ? S.applyEmailRowOn : S.applyEmailRow}>
+                    <div key={emailKey} style={selected ? S.applyEmailRowOn : S.applyEmailRow}>
                       <div style={S.applyEmailRowTop}>
-                        <label style={S.applyEmailMain}>
+                        <div style={S.applyEmailMain}>
                           {manualSelectionEnabled ? (
-                            <input type="checkbox" checked={checked} onChange={() => toggleApplyDialogEmailKey(emailKey)} />
+                            <input type="checkbox" checked={selected} onChange={() => toggleApplyDialogEmailKey(emailKey)} disabled={actionBusy} />
                           ) : (
-                            <span style={checked ? S.applyScopeBadgeOn : S.applyScopeBadge}>
-                              {applyDialogScopeMode === "case_all" ? "Incluido" : "Atual"}
-                            </span>
+                            <span style={selected ? S.applyScopeBadgeOn : S.applyScopeBadge}>{selected ? "Incluido" : "Omitir"}</span>
                           )}
                           <span style={S.applyEmailSubject}>{email.subject || "(sem assunto)"}</span>
-                        </label>
+                        </div>
                         <div style={S.applyEmailRowTail}>
-                          <span style={S.applyEmailMeta}>{buildCompactEmailMeta(email) || "--"}</span>
+                          <span style={S.applyEmailMeta}>{buildCompactEmailMeta(email)}</span>
                           <button type="button" style={S.chevronBtn} onClick={() => toggleApplyDialogExpandedEmailKey(emailKey)}>
                             {expanded ? "\u2303" : "\u2304"}
                           </button>
@@ -4860,10 +4881,15 @@ function StudioInner() {
               </div>
             )}
           </div>
+
           <div style={S.modalFooter}>
-            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
-            <button type="button" style={S.primaryBtn} onClick={() => void handleConfirmApplyDialog()} disabled={actionBusy || !applyDialogEffectiveEmails.length}>
-              Confirmar aplicacao
+            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10 }}>
+              {status ? <div style={{ fontSize: 11, fontWeight: 600, color: "var(--iccc-muted)" }}>{status}</div> : null}
+              {actionBusy ? <span style={{ fontSize: 10, color: "#1d4ed8", fontWeight: 700 }}>A processar...</span> : null}
+            </div>
+            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)} disabled={actionBusy}>Cancelar</button>
+            <button type="button" style={S.primaryBtn} onClick={handleConfirmApplyDialog} disabled={actionBusy || (manualSelectionEnabled && !applyDialogSelectedEmailKeys.length)}>
+              {actionBusy ? "A aplicar..." : "Confirmar e aplicar"}
             </button>
           </div>
         </div>
