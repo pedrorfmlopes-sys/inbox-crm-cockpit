@@ -49,6 +49,10 @@ import {
   detectReferences, splitSuggestions
 } from "./group-classification/documentUtils";
 
+import EmailsCard from "./group-classification/components/EmailsCard";
+import QuickDocumentsCard from "./group-classification/components/QuickDocumentsCard";
+import StatusLegend from "./group-classification/components/StatusLegend";
+
 type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -708,7 +712,7 @@ function StudioInner() {
       ...base,
       itemId: String(currentContext.itemId || base.itemId || "").trim() || undefined,
       internetMessageId: String(currentContext.internetMessageId || base.internetMessageId || "").trim() || undefined,
-      conversationId: String(currentContext.conversationId || base.conversationId || "").trim() || undefined,
+      conversationId: String(currentContext.conversationId || base.conversationId || "").trim(),
       subject: String(currentContext.subject || base.subject || "").trim() || undefined,
       fromEmail: String(currentContext.fromEmail || base.fromEmail || "").trim() || undefined,
       fromName: String(currentContext.fromName || base.fromName || "").trim() || undefined,
@@ -3435,15 +3439,7 @@ function StudioInner() {
     }
   }
 
-  function renderOutlookColorLegend(): React.ReactNode {
-    return (
-      <div style={S.legendRow}>
-        {UNIFIED_STATUS_LEGEND.map((entry) => (
-          <span key={entry.key} style={{ ...S.legendChip, ...entry.style }}>{entry.label}</span>
-        ))}
-      </div>
-    );
-  }
+   // StatusLegend extracted to a separate file
 
   function renderSuggestionTrayLegacy(
     kind: "principal" | "labels",
@@ -3638,7 +3634,7 @@ function StudioInner() {
               <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.principalCategorize} onChange={(event) => updateClassificationMeta({ principalCategorize: event.target.checked })} /> Grupo em categoria Outlook</label>
               <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.principalStatusCategorize} onChange={(event) => updateClassificationMeta({ principalStatusEnabled: event.target.checked, principalStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
             </div>
-            {renderOutlookColorLegend()}
+              <StatusLegend />
           </div>
         ) : null}
       </div>
@@ -3742,7 +3738,7 @@ function StudioInner() {
               <label style={S.compactCheckBoxField}><input type="checkbox" checked={selectedLabels.some((label) => labelDrafts[label]?.categorize === true)} onChange={(event) => selectedLabels.forEach((label) => updateLabelDraft(label, { categorize: event.target.checked }))} /> Etiqueta em categoria Outlook</label>
             </div>
             <label style={S.compactCheckBoxField}><input type="checkbox" checked={selectedLabels.some((label) => labelDrafts[label]?.hasStatus === true)} onChange={(event) => selectedLabels.forEach((label) => updateLabelDraft(label, { hasStatus: event.target.checked, status: event.target.checked ? (labelDrafts[label]?.status || "em_analise") : undefined }))} /> Refletir estado pela cor da categoria</label>
-            {renderOutlookColorLegend()}
+              <StatusLegend />
           </div>
         ) : null}
       </div>
@@ -3828,7 +3824,7 @@ function StudioInner() {
               <label style={S.compactCheckBoxField}><input type="checkbox" checked={Boolean(selectedTicketId || selectedSeriesId)} onChange={(event) => { if (!event.target.checked) clearTicketSelection(); }} /> Ticket em categoria Outlook</label>
             </div>
             <label style={S.compactCheckBoxField}><input type="checkbox" checked={classificationMetaDraft.ticketStatusCategorize} onChange={(event) => updateClassificationMeta({ ticketStatusEnabled: event.target.checked, ticketStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
-            {renderOutlookColorLegend()}
+              <StatusLegend />
           </div>
         ) : null}
       </div>
@@ -3922,7 +3918,7 @@ function StudioInner() {
               <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceStatusCategorize} onChange={(event) => updateClassificationMeta({ referenceStatusEnabled: event.target.checked, referenceStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
             </div>
             <div style={S.editorLegendWrap}>
-              {renderOutlookColorLegend()}
+              <StatusLegend />
             </div>
           </div>
         </div>
@@ -5243,182 +5239,37 @@ function StudioInner() {
       <div style={dashboardStyle}>
         <div style={topCardsGridStyle}>
 
-          <section style={emailsCardStyle}>
-            <div style={S.sectionHeaderCompact}>
-              <div>
-                <div style={S.sectionTitle}>Emails</div>
-                <div style={S.sectionSubtitle}>Exploracao do caso</div>
-              </div>
-              <span style={S.cardMeta}>Selecionados: {selectedTargetCount}</span>
-            </div>
-            <div style={S.emailControlsRow}>
-              <input style={S.input} value={emailSearch} onChange={(event) => setEmailSearch(event.target.value)} placeholder="Pesquisar por assunto, remetente ou texto..." />
-              <div style={S.emailToolsInline}>
-                <button type="button" style={S.linkBtn} onClick={selectAllVisibleEmails}>Todos visiveis</button>
-                <button type="button" style={S.linkBtn} onClick={clearSelectedTargets}>Limpar</button>
-              </div>
-            </div>
-            <div style={S.topCardScroll}>
-              {loading ? <PanelState compact tone="loading" title="A carregar emails" description="A preparar a lista desta nova janela." /> : null}
-              {!loading && !visibleEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Ajusta os filtros ou muda a fonte da lista." /> : null}
-              {!loading && visibleEmails.map((email) => {
-                const emailKey = makeEmailKey(email);
-                const expanded = expandedEmailKeys.includes(emailKey);
-                const active = emailKey === makeEmailKey(selectedEmail || {});
-                return (
-                  <div
-                    key={`compact-${emailKey}`}
-                    style={active ? S.emailOn : S.email}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setSelectedEmailKey(emailKey)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        setSelectedEmailKey(emailKey);
-                      }
-                    }}
-                  >
-                    <div style={S.emailTop}>
-                      <label style={S.emailPick} onClick={(event) => event.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={selectedTargetEmailKeys.includes(emailKey)}
-                          onChange={() => toggleTargetEmailKey(emailKey)}
-                        />
-                        <span style={S.emailSubject}>{email.subject || "(sem assunto)"}</span>
-                      </label>
-                      <div style={S.emailTopRight}>
-                        <span style={S.emailMeta}>{buildCompactEmailMeta(email) || "--"}</span>
-                        {Array.isArray(email.attachments) && email.attachments.length ? <span style={S.counter}>{email.attachments.length}</span> : null}
-                        <button
-                          type="button"
-                          style={S.chevronBtn}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleExpandedEmailKey(emailKey);
-                          }}
-                        >
-                          {expanded ? "\u2303" : "\u2304"}
-                        </button>
-                      </div>
-                    </div>
-                    {expanded ? (
-                      <div style={S.emailSnippet}>{buildEmailPreviewText(email) || "Sem preview curto disponivel."}</div>
-                    ) : null}
-                  </div>
-                );
-              })}
-              {false && !loading && visibleEmails.map((email) => (
-                <button key={makeEmailKey(email)} type="button" style={makeEmailKey(email) === makeEmailKey(selectedEmail || {}) ? S.emailOn : S.email} onClick={() => setSelectedEmailKey(makeEmailKey(email))}>
-                  <div style={S.emailTop}>
-                    <label style={S.emailPick} onClick={(event) => event.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selectedTargetEmailKeys.includes(makeEmailKey(email))}
-                        onChange={() => toggleTargetEmailKey(makeEmailKey(email))}
-                      />
-                      <span style={S.emailSubject}>{email.subject || "(sem assunto)"}</span>
-                    </label>
-                    {Array.isArray(email.attachments) && email.attachments.length ? <span style={S.counter}>{email.attachments.length}</span> : null}
-                  </div>
-                  <div style={S.emailMeta}>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</div>
-                  <div style={S.emailSnippet}>{buildSnippet(email) || "Sem preview curto disponivel."}</div>
-                </button>
-              ))}
-            </div>
-          </section>
+          <EmailsCard
+            style={emailsCardStyle}
+            loading={loading}
+            visibleEmails={visibleEmails}
+            selectedEmail={selectedEmail}
+            emailSearch={emailSearch}
+            setEmailSearch={setEmailSearch}
+            selectAllVisibleEmails={selectAllVisibleEmails}
+            clearSelectedTargets={clearSelectedTargets}
+            selectedTargetCount={selectedTargetCount}
+            selectedTargetEmailKeys={selectedTargetEmailKeys}
+            toggleTargetEmailKey={toggleTargetEmailKey}
+            expandedEmailKeys={expandedEmailKeys}
+            toggleExpandedEmailKey={toggleExpandedEmailKey}
+            setSelectedEmailKey={setSelectedEmailKey}
+          />
 
-          <section style={quickDocumentsCardStyle}>
-            <div style={S.sectionHeaderCompact}>
-              <div>
-                <div style={S.sectionTitle}>Documentos rapidos</div>
-                <div style={S.sectionSubtitle}>Do email selecionado</div>
-              </div>
-              <div style={S.emailToolsInline}>
-                {quickDocumentHiddenCount ? (
-                  <button
-                    type="button"
-                    style={showHiddenQuickDocuments ? S.quietToggleBtnOn : S.quietToggleBtn}
-                    onClick={() => setShowHiddenQuickDocuments((current) => !current)}
-                  >
-                    {showHiddenQuickDocuments ? `Ocultar ocultos (${quickDocumentHiddenCount})` : `Mostrar ocultos (${quickDocumentHiddenCount})`}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div style={S.topCardScroll}>
-              {!quickDocumentAttachments.length ? (
-                <PanelState compact tone="info" title="Sem documentos rapidos" description="Este email ainda nao tem anexos persistidos para abrir aqui." />
-              ) : (
-                <div style={S.quickDocList}>
-                  {quickDocumentAttachments.map((attachment) => {
-                    const key = makeAttachmentKey(attachment);
-                    const active = key === selectedAttachmentPreviewKey && previewMode === "document";
-                    const expanded = expandedQuickDocumentKeys.includes(key);
-                    const hidden = isStudioAttachmentHiddenInQuickDocs(attachment);
-                    const previewText = buildQuickDocumentPreviewText(attachment);
-                    const rowStyle = active
-                      ? hidden
-                        ? { ...S.emailOn, ...S.quickDocRowHiddenTone }
-                        : S.emailOn
-                      : hidden
-                        ? { ...S.email, ...S.quickDocRowHiddenTone }
-                        : S.email;
-                    return (
-                      <div
-                        key={key}
-                        style={rowStyle}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => handleOpenQuickAttachment(attachment)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            handleOpenQuickAttachment(attachment);
-                          }
-                        }}
-                      >
-                        <div style={S.emailTop}>
-                          <div style={S.quickDocLineMain}>
-                            <span style={S.emailSubject}>{attachment.name || "Anexo"}</span>
-                          </div>
-                          <div style={S.emailTopRight}>
-                            <span style={S.emailMeta}>{formatQuickDocumentMeta(attachment)}</span>
-                            {hidden ? <span style={S.quickDocStateBadge}>Oculto</span> : null}
-                            <button
-                              type="button"
-                              style={hidden ? S.quickDocActionBtnOn : S.quickDocActionBtn}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void handleSetQuickAttachmentHidden(attachment, hidden ? false : true);
-                              }}
-                              disabled={actionBusy}
-                            >
-                              {hidden ? "Mostrar" : "Ocultar"}
-                            </button>
-                            {previewText ? (
-                              <button
-                                type="button"
-                                style={S.chevronBtn}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  toggleExpandedQuickDocumentKey(key);
-                                }}
-                              >
-                                {expanded ? "\u2303" : "\u2304"}
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                        {expanded && previewText ? <div style={S.emailSnippet}>{previewText}</div> : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
+          <QuickDocumentsCard
+            style={quickDocumentsCardStyle}
+            quickDocumentAttachments={quickDocumentAttachments}
+            selectedAttachmentPreviewKey={selectedAttachmentPreviewKey}
+            previewMode={previewMode}
+            expandedQuickDocumentKeys={expandedQuickDocumentKeys}
+            quickDocumentHiddenCount={quickDocumentHiddenCount}
+            showHiddenQuickDocuments={showHiddenQuickDocuments}
+            setShowHiddenQuickDocuments={setShowHiddenQuickDocuments}
+            handleOpenQuickAttachment={handleOpenQuickAttachment}
+            handleSetQuickAttachmentHidden={handleSetQuickAttachmentHidden}
+            toggleExpandedQuickDocumentKey={toggleExpandedQuickDocumentKey}
+            actionBusy={actionBusy}
+          />
 
           <section style={classificationCardStyle}>
             <div style={S.sectionHeaderCompact}>
@@ -5497,23 +5348,25 @@ function StudioInner() {
                   <div style={S.documentPreviewShell}>
                     {selectedAttachmentDocumentPreview?.kind === "image" ? (
                       <div style={S.documentPreviewFrame}>
-                        <img src={selectedAttachmentDocumentPreview.src} alt={selectedAttachmentPreview?.name || "Imagem"} style={S.attachmentPreviewImage} />
+                        <img src={selectedAttachmentDocumentPreview.src!} alt={selectedAttachmentPreview?.name || "Imagem"} style={S.attachmentPreviewImage} />
                       </div>
                     ) : null}
                     {selectedAttachmentDocumentPreview?.kind === "pdf" ? (
                       <div style={S.documentPreviewFrame}>
-                        {selectedAttachmentDocumentPreview.src.startsWith("data:")
-                          ? <StudioPdfPreview dataUrl={selectedAttachmentDocumentPreview.src} title={selectedAttachmentPreview?.name || "PDF"} />
-                          : <iframe title={selectedAttachmentPreview?.name || "PDF"} src={selectedAttachmentDocumentPreview.src} style={S.documentPreviewIframe} />}
+                        {selectedAttachmentDocumentPreview.src!.startsWith("data:")
+                          ? <StudioPdfPreview dataUrl={selectedAttachmentDocumentPreview.src!} title={selectedAttachmentPreview?.name || "PDF"} />
+                          : <iframe title={selectedAttachmentPreview?.name || "PDF"} src={selectedAttachmentDocumentPreview.src!} style={S.documentPreviewIframe} />}
                       </div>
                     ) : null}
                     {selectedAttachmentDocumentPreview?.kind === "office" ? (
                       <div style={S.documentPreviewFrame}>
-                        <iframe title={selectedAttachmentPreview?.name || "Documento"} src={selectedAttachmentDocumentPreview.url} style={S.documentPreviewIframe} />
+                        <iframe title={selectedAttachmentPreview?.name || "Documento"} src={selectedAttachmentDocumentPreview.url!} style={S.documentPreviewIframe} />
                       </div>
                     ) : null}
                     {selectedAttachmentDocumentPreview?.kind === "text" ? (
-                      <pre style={S.attachmentPreviewText}>{selectedAttachmentDocumentPreview.text}</pre>
+                      <div style={S.documentPreviewFrame}>
+                        <pre style={S.attachmentPreviewText}>{selectedAttachmentDocumentPreview.text!}</pre>
+                      </div>
                     ) : null}
                     {!selectedAttachmentDocumentPreview && selectedAttachmentPreviewRemoteStatus === "loading" ? (
                       <PanelState compact tone="loading" title="A carregar documento" description="A preparar o preview do documento selecionado." />

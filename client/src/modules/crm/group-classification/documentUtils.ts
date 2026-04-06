@@ -3,20 +3,11 @@ import {
 } from "@/api";
 import {
   ClassificationMetaDraft, DocumentLifecycleState, LabelDraft, EmailLabelStatus,
-  GroupContactDraft, GroupEntityDraft
+  GroupContactDraft, GroupEntityDraft, StudioParams
 } from "./types";
 import { GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX, EMPTY_CLASSIFICATION_META } from "./constants";
 
-export interface StudioParams {
-  seedKey?: string;
-  itemId?: string;
-  internetMessageId?: string;
-  conversationId?: string;
-  subject?: string;
-  fromEmail?: string;
-  fromName?: string;
-  receivedAtIso?: string;
-}
+// StudioParams definition moved to types.ts
 
 export function readParams(): StudioParams {
   const urlParams = new URLSearchParams(window.location.search);
@@ -344,9 +335,18 @@ export function mergeClassificationMetaDrafts(
   const r = normalizeClassificationMetaDraft(right);
   return {
     principalGroupId: r.principalGroupId || l.principalGroupId,
+    principalCategorize: r.principalCategorize || l.principalCategorize,
+    principalStatusEnabled: r.principalStatusEnabled || l.principalStatusEnabled,
+    principalStatusCategorize: r.principalStatusCategorize || l.principalStatusCategorize,
     ticketId: r.ticketId || l.ticketId,
+    ticketCategorize: r.ticketCategorize || l.ticketCategorize,
+    ticketStatusEnabled: r.ticketStatusEnabled || l.ticketStatusEnabled,
+    ticketStatusCategorize: r.ticketStatusCategorize || l.ticketStatusCategorize,
     categorizedLabelNames: Array.from(new Set([...l.categorizedLabelNames, ...r.categorizedLabelNames])),
     referenceGroupIds: Array.from(new Set([...l.referenceGroupIds, ...r.referenceGroupIds])),
+    referenceCategorize: r.referenceCategorize || l.referenceCategorize,
+    referenceStatusEnabled: r.referenceStatusEnabled || l.referenceStatusEnabled,
+    referenceStatusCategorize: r.referenceStatusCategorize || l.referenceStatusCategorize,
     labelStates: { ...l.labelStates, ...r.labelStates },
   };
 }

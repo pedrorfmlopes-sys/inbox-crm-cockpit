@@ -33,8 +33,17 @@ export const DOCUMENT_STATE_OPTIONS: Array<{ value: string; label: string }> = [
 
 export const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
   principalGroupId: "",
+  principalCategorize: false,
+  principalStatusEnabled: false,
+  principalStatusCategorize: false,
   ticketId: "",
+  ticketCategorize: false,
+  ticketStatusEnabled: false,
+  ticketStatusCategorize: false,
   categorizedLabelNames: [],
   labelStates: {},
   referenceGroupIds: [],
+  referenceCategorize: false,
+  referenceStatusEnabled: false,
+  referenceStatusCategorize: false,
 };

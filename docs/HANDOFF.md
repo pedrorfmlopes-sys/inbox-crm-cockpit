@@ -85,6 +85,24 @@
 (rest of the handoff)
 ...
 
+## Refactoring Estrutural da Classificação (Abril 2026 - Ronda 1)
+- **Extração de Lógica Apátrida**: O módulo `GroupClassificationStudioApp.tsx` (anteriormente com 6.5k linhas) iniciou o processo de sharding.
+- **Novos Módulos CRM**: Criada a diretoria `client/src/modules/crm/group-classification/` contendo:
+  - `types.ts`: Definições de interfaces e tipos específicos do domínio de classificação.
+  - `constants.ts`: Configurações de UI, opções de status e valores padrão.
+  - `documentUtils.ts`: Biblioteca de funções puras para processamento de emails, anexos, referências e metadados.
+- **Desacoplamento UI/Lógica**: O componente principal agora importa helpers e constantes destes módulos, reduzindo a duplicação e facilitando a manutenção futura sem alterar o comportamento funcional (functional parity).
+- **Legendas Unificadas**: Integrado o `UNIFIED_STATUS_LEGEND` em `statusUtils.ts` para garantir consistência visual no Estúdio.
+
+## Refactoring Estrutural da Classificação (Abril 2026 - Ronda 2)
+- **Extração de Componentes UI**: O componente monolítico `GroupClassificationStudioApp.tsx` foi fragmentado com a extração de 3 componentes visuais para `client/src/modules/crm/group-classification/components/`:
+  - `EmailsCard.tsx`: Gere a listagem, pesquisa e seleção múltipla de emails.
+  - `QuickDocumentsCard.tsx`: Gere a listagem de anexos persistidos e controlos de visibilidade/preview.
+  - `StatusLegend.tsx`: Componente partilhado para a legenda de estados e cores do Outlook/Odoo.
+- **Consolidação de Tipos**: O ficheiro `types.ts` foi expandido para incluir todos os tipos de domínio (SectionId, ReadingSuggestionChip, StudioParams, TicketEditorMode, etc.), assegurando que o novo módulo é auto-suficiente e tipado corretamente.
+- **Integridade Funcional**: A extração seguiu o princípio de paridade funcional estrita. Nenhuma lógica de negócio ou estado global foi alterado; a orquestração permanece no componente pai (Studio App), mas a superfície de markup e estilos locais foi significativamente reduzida.
+- **Validação de Build**: Confirmado que o projeto compila (`npm run build`) e passa no check de tipos (`tsc`) para os ficheiros modificados, garantindo que a modularização não quebrou referências internas.
+
 ## Última orientação estratégica
 - Segurança e coerência arquitetural antes de novas features.
 
