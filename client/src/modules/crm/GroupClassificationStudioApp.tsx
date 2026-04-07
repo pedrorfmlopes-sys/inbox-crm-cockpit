@@ -15,143 +15,75 @@ import {
 import { PanelState } from "@/ui/PanelState";
 import { applySkin } from "@/ui/skins";
 import * as Icons from "@/ui/icons";
+import { getStatusDisplayConfig, UNIFIED_STATUS_LEGEND } from "@/statusUtils";
 import "../../global.css";
+
+import {
+  type SectionId, type ScopeMode, type ApplyScopeMode, type ApplyDialogScopeMode, type PreviewMode,
+  type ClassificationLayoutMode, type EmailLabelStatus, type DocumentLifecycleState,
+  type ClassificationFocus, type TicketEditorMode, type AttachmentPreviewState,
+  type LabelDraft, type ReadingSuggestionChip, type GroupContactDraft, type GroupEntityDraft,
+  type ClassificationMetaDraft, type StudioParams
+} from "./group-classification/types";
+
+import {
+  GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX, MENU, LABEL_STATUS_OPTIONS,
+  TICKET_STATUS_OPTIONS, DOCUMENT_STATE_OPTIONS, EMPTY_CLASSIFICATION_META
+} from "./group-classification/constants";
+
+import {
+  readParams, readSeedEmail, buildFallbackEmail, normalizeDocumentLifecycleState,
+  formatDocumentLifecycleState, isRejectedDocumentLifecycleState, normalizeStudioAttachment,
+  normalizeStudioAttachmentMimeType, inferStudioAttachmentKind, isLikelyDecorativeAttachment,
+  isStudioAttachmentHiddenInQuickDocs, formatQuickDocumentMeta, htmlToPlainText,
+  makeEmailKey, makeAttachmentKey, getStudioAttachmentRemoteId, isStudioAttachmentHydrated,
+  hasHydratedAttachmentCollection, mergeUniqueStrings, mergeUniqueBy,
+  scoreStudioAttachment, scoreStudioAttachmentCollection, normalizeClassificationMetaDraft,
+  mergeClassificationMetaDrafts, scoreRelatedEmailEntry, mergeRelatedEmailEntries,
+  dedupeEmails, buildRelevantEmailPayloadFromRelatedEmail, buildAttachmentStorageOptions,
+  persistRelatedEmailsToServer, normalizeSearchValue, normalizeReferenceCandidate,
+  compactReferenceValue, matchReferenceSet, formatDate, buildSnippet,
+  buildEmailPreviewText, buildQuickDocumentPreviewText, buildCompactEmailMeta, buildEmailCorpus, isExternalEmail,
+  isCurrentContextEmail, detectCaseType, inferCompanyName, normalizeGroupContactDraft,
+  normalizeGroupEntityDraft, dedupeGroupContacts, dedupeGroupEntities,
+  detectReferences, splitSuggestions
+} from "./group-classification/documentUtils";
+
+import EmailsCard from "./group-classification/components/EmailsCard";
+import QuickDocumentsCard from "./group-classification/components/QuickDocumentsCard";
+import StatusLegend from "./group-classification/components/StatusLegend";
+import ClassificationEditor from "./group-classification/components/ClassificationEditor";
+import ApplyDialog from "./group-classification/components/ApplyDialog";
+import PreviewPane, { StudioPdfPreview } from "./group-classification/components/PreviewPane";
+import ClassificationSummaryTiles from "./group-classification/components/ClassificationSummaryTiles";
+import ClassificationEditorHeader from "./group-classification/components/ClassificationEditorHeader";
+import { 
+  escapeHtml, sanitizeEmailPreviewHtml, buildEmailPreviewHtml, 
+  decodeBase64Text, stripDataUrlPrefix, canUseOfficeWebViewer, 
+  buildOfficePreviewUrl, dataUrlToUint8Array 
+} from "./group-classification/previewUtils";
+
+type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
-type SectionId = "emails" | "classification" | "labels" | "filters" | "groups";
-type ScopeMode = "related" | "all";
-type ApplyScopeMode = "current" | "selected" | "principal_group";
-type ApplyDialogScopeMode = "current" | "selected" | "case_all";
-type PreviewMode = "email" | "document" | "reply" | "forward";
-type ClassificationLayoutMode = "normal" | "advanced";
-type EmailLabelStatus = GroupLabelStatus;
-type DocumentLifecycleState = "ingested" | "processed" | "accepted" | "rejected" | "reread_requested";
-type ClassificationFocus = "principal" | "references" | "labels" | "ticket" | "summary";
-type TicketEditorMode = "existing" | "new";
-type AttachmentPreviewState =
-  | { kind: "image"; src: string }
-  | { kind: "pdf"; src: string }
-  | { kind: "office"; url: string }
-  | { kind: "text"; text: string }
-  | { kind: "unsupported" };
-type LabelDraft = { categorize: boolean; hasStatus: boolean; status?: EmailLabelStatus };
-type ReadingSuggestionChip = { key: string; label: string; kind: "group" | "ticket" | "label"; value: string };
-type GroupContactDraft = { key: string; name: string; email?: string; company?: string; source?: string };
-type GroupEntityDraft = { key: string; name: string; kind?: string; source?: string };
-type ClassificationMetaDraft = {
-  principalCategorize?: boolean;
-  principalStatusEnabled?: boolean;
-  principalStatusCategorize?: boolean;
-  referenceCategorize?: boolean;
-  referenceStatusEnabled?: boolean;
-  referenceStatusCategorize?: boolean;
-  ticketStatusEnabled?: boolean;
-  ticketStatusCategorize?: boolean;
-  categorizedLabelNames?: string[];
-};
-type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
-type StudioParams = {
-  conversationId?: string;
-  internetMessageId?: string;
-  itemId?: string;
-  subject?: string;
-  fromEmail?: string;
-  fromName?: string;
-  receivedAtIso?: string;
-  seedKey?: string;
-};
-
-const GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX = "iccc_group_classification_seed_v1:";
-
-function isOutlookCategorySyncDebugEnabled(): boolean {
-  try {
-    return window.localStorage?.getItem(OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY) === "1";
-  } catch {
-    return false;
+function logClassificationOutlookCategorySync(phase: string, data: any) {
+  if (typeof localStorage !== "undefined" && localStorage.getItem(OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY)) {
+    clientLog("info", `outlook-category-sync:${phase}`, data);
   }
 }
 
-function logClassificationOutlookCategorySync(event: string, data?: any) {
-  if (!isOutlookCategorySyncDebugEnabled()) return;
-  clientLog.debug(`[outlook-category-sync] classification ${event}`, data);
+function formatEmailLabelStatus(value: string | undefined): string {
+  return getStatusDisplayConfig(value).label;
 }
 
-const MENU: Array<{ id: SectionId; label: string; icon: React.ReactNode; help: string }> = [
-  { id: "emails", label: "Emails", icon: <Icons.MessageSquare size={15} />, help: "Lista e preview base do caso." },
-  { id: "classification", label: "Classificacao", icon: <Icons.Target size={15} />, help: "Grupo principal, referencias e ticket." },
-  { id: "labels", label: "Etiquetas", icon: <Icons.Star size={15} />, help: "Etiquetas e futuras categorias Outlook." },
-  { id: "filters", label: "Filtros", icon: <Icons.Search size={15} />, help: "Reducao da lista e testes de vista." },
-  { id: "groups", label: "Grupos", icon: <Icons.Building size={15} />, help: "Gestao do grupo como dossier." },
-];
+function formatGroupStatusLabel(value: string | undefined): string {
+  return getStatusDisplayConfig(value).label || "--";
+}
 
-const LABEL_STATUS_OPTIONS: Array<{ value: EmailLabelStatus; label: string }> = [
-  { value: "em_analise", label: "Em analise" },
-  { value: "em_progresso", label: "Em progresso" },
-  { value: "concluido", label: "Concluido" },
-];
-
-const TICKET_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "", label: "Sem estado" },
-  { value: "open", label: "Aberto" },
-  { value: "em_analise", label: "Em analise" },
-  { value: "em_progresso", label: "Em progresso" },
-  { value: "concluido", label: "Concluido" },
-  { value: "closed", label: "Fechado" },
-];
-
-const DOCUMENT_STATE_OPTIONS: Array<{ value: DocumentLifecycleState; label: string }> = [
-  { value: "ingested", label: "Recebido" },
-  { value: "processed", label: "Processado" },
-  { value: "accepted", label: "Aceite" },
-  { value: "rejected", label: "Rejeitado" },
-  { value: "reread_requested", label: "Reler" },
-];
-
-type UnifiedStatusColorKey = "blue" | "amber" | "green" | "red";
-
-const UNIFIED_STATUS_COLOR_MAP: Array<{
-  key: UnifiedStatusColorKey;
-  label: string;
-  aliases: string[];
-  style: React.CSSProperties;
-}> = [
-  {
-    key: "blue",
-    label: "Azul = Em analise",
-    aliases: ["em_analise", "aberto", "open"],
-    style: { borderColor: "rgba(59,130,246,0.34)", background: "rgba(219,234,254,0.92)", color: "#1d4ed8" },
-  },
-  {
-    key: "amber",
-    label: "Amarelo = Aguarda",
-    aliases: ["aguarda", "em_progresso", "pending"],
-    style: { borderColor: "rgba(245,158,11,0.3)", background: "rgba(254,243,199,0.95)", color: "#b45309" },
-  },
-  {
-    key: "green",
-    label: "Verde = Concluido",
-    aliases: ["concluido", "resolved", "done"],
-    style: { borderColor: "rgba(34,197,94,0.28)", background: "rgba(220,252,231,0.95)", color: "#15803d" },
-  },
-  {
-    key: "red",
-    label: "Vermelho = Bloqueado",
-    aliases: ["bloqueado", "fechado", "closed", "blocked"],
-    style: { borderColor: "rgba(239,68,68,0.26)", background: "rgba(254,226,226,0.95)", color: "#b91c1c" },
-  },
-];
-
-const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
-  principalCategorize: true,
-  principalStatusEnabled: false,
-  principalStatusCategorize: false,
-  referenceCategorize: true,
-  referenceStatusEnabled: false,
-  referenceStatusCategorize: false,
-  ticketStatusEnabled: false,
-  ticketStatusCategorize: false,
-};
+function formatTicketStatusLabel(value: string | undefined): string {
+  return getStatusDisplayConfig(value).label || "--";
+}
 
 function createLabelDraftFromCatalog(
   entry?: Partial<GroupLabelCatalogEntry> | null,
@@ -169,159 +101,7 @@ function createLabelDraftFromCatalog(
       : undefined,
   };
 }
-
-function formatEmailLabelStatus(value: string | undefined): string {
-  if (value === "concluido") return "Concluido";
-  if (value === "em_progresso") return "Em progresso";
-  return "Em analise";
-}
-
-function formatGroupStatusLabel(value: string | undefined): string {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "concluido") return "Concluido";
-  if (normalized === "em_progresso") return "Em progresso";
-  if (normalized === "em_analise") return "Em analise";
-  return String(value || "").trim() || "--";
-}
-
-function formatTicketStatusLabel(value: string | undefined): string {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "open") return "Aberto";
-  if (normalized === "closed") return "Fechado";
-  return formatGroupStatusLabel(value);
-}
-
-function normalizeDocumentLifecycleState(value: string | undefined, fallback: DocumentLifecycleState = "ingested"): DocumentLifecycleState {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "processed" || normalized === "accepted" || normalized === "rejected" || normalized === "reread_requested") {
-    return normalized;
-  }
-  if (normalized === "ingested") return "ingested";
-  return fallback;
-}
-
-function formatDocumentLifecycleState(value: string | undefined): string {
-  const normalized = normalizeDocumentLifecycleState(value);
-  const match = DOCUMENT_STATE_OPTIONS.find((entry) => entry.value === normalized);
-  return match?.label || "Recebido";
-}
-
-function isRejectedDocumentLifecycleState(value: string | undefined): boolean {
-  return normalizeDocumentLifecycleState(value) === "rejected";
-}
-
-function inferStudioAttachmentKind(
-  attachment: ReturnType<typeof normalizeStudioAttachment>
-): AttachmentPreviewState["kind"] | "none" {
-  if (!attachment) return "none";
-  const name = String(attachment.name || "").toLowerCase();
-  const type = normalizeStudioAttachmentMimeType(attachment.contentType, attachment.name);
-  if (type.startsWith("image/") || /\.(png|jpe?g|gif|bmp|webp|svg)$/.test(name)) return "image";
-  if (type.includes("pdf") || /\.pdf$/.test(name)) return "pdf";
-  if (
-    type === "application/msword"
-    || type === "application/vnd.ms-excel"
-    || type === "application/vnd.ms-powerpoint"
-    || type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    || type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    || type === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    || /\.(docx?|xlsx?|pptx?)$/.test(name)
-  ) {
-    return "office";
-  }
-  if (type.startsWith("text/") || type.includes("json") || type.includes("xml") || type.includes("csv") || /\.(txt|md|json|xml|csv|log|ya?ml)$/.test(name)) return "text";
-  return "unsupported";
-}
-
-function isLikelyDecorativeAttachment(
-  attachment: ReturnType<typeof normalizeStudioAttachment>
-): boolean {
-  if (!attachment) return false;
-  const type = normalizeStudioAttachmentMimeType(attachment.contentType, attachment.name);
-  const name = String(attachment.name || "").trim().toLowerCase();
-  const size = Number(attachment.size || 0) || 0;
-  const hasContentId = Boolean(String(attachment.contentId || "").trim());
-  const signatureLikeName = /\b(signature|assinatura|logo|smime|favicon)\b/.test(name);
-  const genericInlineImageName = /^image\d+\.(png|jpe?g|gif|bmp|webp)$/i.test(name);
-  if (attachment.isHidden === true) return true;
-  if (attachment.isHidden === false) return false;
-  if (attachment.isInline) return true;
-  if (!/^image\//.test(type)) return false;
-  if (signatureLikeName && (hasContentId || size <= 48 * 1024)) return true;
-  if (genericInlineImageName && hasContentId) return true;
-  return Boolean(hasContentId && size > 0 && size <= 48 * 1024);
-}
-
-function isStudioAttachmentHiddenInQuickDocs(
-  attachment: ReturnType<typeof normalizeStudioAttachment>
-): boolean {
-  if (!attachment) return false;
-  if (attachment.isHidden === true) return true;
-  if (attachment.isHidden === false) return false;
-  return isLikelyDecorativeAttachment(attachment);
-}
-
-function formatQuickDocumentMeta(
-  attachment: ReturnType<typeof normalizeStudioAttachment>
-): string {
-  if (!attachment) return "";
-  const name = String(attachment.name || "").trim();
-  const ext = name.includes(".") ? name.split(".").pop() || "" : "";
-  const kind = inferStudioAttachmentKind(attachment);
-  let typeLabel = "";
-  if (kind === "pdf") typeLabel = "PDF";
-  else if (kind === "office") typeLabel = (ext || "office").toUpperCase();
-  else if (kind === "image") typeLabel = (ext || "imagem").toUpperCase();
-  else if (kind === "text") typeLabel = "Texto";
-  else typeLabel = (ext || "ficheiro").toUpperCase();
-  const size = Number(attachment.size || 0) || 0;
-  const sizeLabel = size > 0 ? `${Math.max(1, Math.round(size / 1024))} KB` : "";
-  return [typeLabel, sizeLabel].filter(Boolean).join(" · ");
-}
-
-function buildQuickDocumentPreviewText(
-  attachment: ReturnType<typeof normalizeStudioAttachment>
-): string {
-  if (!attachment) return "";
-  const kind = inferStudioAttachmentKind(attachment);
-  const textContent = String(attachment.content || "").trim();
-  if (kind === "text" && textContent) {
-    return textContent.slice(0, 420).trim();
-  }
-  if (kind === "pdf") {
-    return attachment.hasContent
-      ? "PDF pronto para abrir no preview inferior."
-      : "PDF identificado. O conteudo sera aberto no preview inferior quando estiver disponivel.";
-  }
-  if (kind === "image") {
-    return "Imagem pronta para visualizacao no preview inferior.";
-  }
-  if (kind === "office") {
-    return "Documento Office pronto para abrir no preview inferior.";
-  }
-  const stateLabel = formatDocumentLifecycleState((attachment as any)?.documentState);
-  return stateLabel
-    ? `${stateLabel}. Seleciona este ficheiro para o abrir no preview inferior.`
-    : "Seleciona este ficheiro para o abrir no preview inferior.";
-}
-
-function normalizeClassificationMetaDraft(
-  value?: Partial<ClassificationMetaDraft> | null
-): ClassificationMetaDraft {
-  return {
-    principalCategorize: value?.principalCategorize !== false,
-    principalStatusEnabled: value?.principalStatusEnabled === true,
-    principalStatusCategorize: value?.principalStatusCategorize === true,
-    referenceCategorize: value?.referenceCategorize !== false,
-    referenceStatusEnabled: value?.referenceStatusEnabled === true,
-    referenceStatusCategorize: value?.referenceStatusCategorize === true,
-    ticketStatusEnabled: value?.ticketStatusEnabled === true,
-    ticketStatusCategorize: value?.ticketStatusCategorize === true,
-    categorizedLabelNames: Array.isArray(value?.categorizedLabelNames)
-      ? value.categorizedLabelNames.map((label) => String(label || "").trim()).filter(Boolean)
-      : [],
-  };
-}
+// Handled via imports from documentUtils.ts
 
 function getComparableStringListSignature(values: string[]): string {
   return JSON.stringify(
@@ -346,6 +126,7 @@ function getComparableLabelDraftsSignature(drafts: Record<string, LabelDraft>): 
   );
 }
 
+// Local state comparison helper (derived from extracted types)
 function getComparableClassificationMetaSignature(value?: Partial<ClassificationMetaDraft> | null): string {
   const normalized = normalizeClassificationMetaDraft(value);
   return JSON.stringify({
@@ -354,569 +135,15 @@ function getComparableClassificationMetaSignature(value?: Partial<Classification
   });
 }
 
-function makeEmailKey(email: Partial<RelatedEmailEntry>): string {
-  const emailKey = String(email?.emailKey || "").trim();
-  const emailId = String(email?.id || "").trim();
-  const itemId = String(email?.itemId || "").trim();
-  const internetMessageId = String(email?.internetMessageId || "").trim().replace(/[<>\s]/g, "").toLowerCase();
-  const isSynthetic = (value: string) => /^email_[0-9a-f-]+$/i.test(value);
+// redundant functions removed
 
-  return String(
-    itemId
-    || internetMessageId
-    || (emailKey && !isSynthetic(emailKey) ? emailKey : "")
-    || (emailId && !isSynthetic(emailId) ? emailId : "")
-    || emailKey
-    || emailId
-    || [
-      String(email?.conversationId || "").trim(),
-      String(email?.subject || "").trim().toLowerCase(),
-      String(email?.fromEmail || "").trim().toLowerCase(),
-      String(email?.messageDateIso || email?.receivedAtIso || "").trim(),
-    ].filter(Boolean).join("|")
-  );
-}
+// Moved to documentUtils.ts
 
-function mergeUniqueStrings(values: string[]): string[] {
-  const seen = new Set<string>();
-  const next: string[] = [];
-  for (const value of values || []) {
-    const normalized = String(value || "").trim();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    next.push(normalized);
-  }
-  return next;
-}
+// helpers moved to previewUtils.ts
 
-function mergeUniqueBy<T>(values: T[], getKey: (value: T) => string): T[] {
-  const seen = new Set<string>();
-  const next: T[] = [];
-  for (const value of values || []) {
-    const key = String(getKey(value) || "").trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    next.push(value);
-  }
-  return next;
-}
+// Moved to documentUtils.ts
 
-function scoreStudioAttachment(attachment: any): number {
-  const normalized = normalizeStudioAttachment(attachment);
-  if (!normalized?.name) return 0;
-  let score = 10;
-  if (String(normalized.content || "").trim()) score += 40;
-  if (normalized.hasContent === true) score += 25;
-  if (String(normalized.key || "").trim()) score += 18;
-  if (String(normalized.id || "").trim()) score += 10;
-  if (String(normalized.contentId || "").trim()) score += 6;
-  if (String((attachment as any)?.storagePathHint || "").trim()) score += 12;
-  if (String((attachment as any)?.storageBasePath || "").trim()) score += 8;
-  return score;
-}
-
-function scoreStudioAttachmentCollection(attachments: any[]): number {
-  return (Array.isArray(attachments) ? attachments : []).reduce((total, attachment) => total + scoreStudioAttachment(attachment), 0);
-}
-
-function mergeClassificationMetaDrafts(
-  current?: ClassificationMetaDraft | null,
-  incoming?: ClassificationMetaDraft | null
-): ClassificationMetaDraft | undefined {
-  if (!current && !incoming) return undefined;
-  const fallback = normalizeClassificationMetaDraft(current);
-  const preferred = normalizeClassificationMetaDraft(incoming);
-  return {
-    ...fallback,
-    ...preferred,
-    categorizedLabelNames: mergeUniqueStrings([
-      ...(fallback.categorizedLabelNames || []),
-      ...(preferred.categorizedLabelNames || []),
-    ]),
-  };
-}
-
-function scoreRelatedEmailEntry(email: RelatedEmailEntry | null | undefined): number {
-  if (!email) return 0;
-  return Number(Boolean(String(email.emailKey || email.id || email.itemId || email.internetMessageId || "").trim())) * 40
-    + Number(Boolean(String(email.bodyText || "").trim() || String(email.bodyHtml || "").trim())) * 60
-    + Number(Boolean(String(email.status || "").trim())) * 8
-    + scoreStudioAttachmentCollection(Array.isArray(email.attachments) ? email.attachments : [])
-    + ((Array.isArray(email.labels) ? email.labels.length : 0) * 2)
-    + ((Array.isArray(email.relatedGroups) ? email.relatedGroups.length : 0) * 2)
-    + ((Array.isArray(email.relatedRecords) ? email.relatedRecords.length : 0) * 2);
-}
-
-function mergeRelatedEmailEntries(current: RelatedEmailEntry, incoming: RelatedEmailEntry): RelatedEmailEntry {
-  const preferred = scoreRelatedEmailEntry(incoming) >= scoreRelatedEmailEntry(current) ? incoming : current;
-  const fallback = preferred === incoming ? current : incoming;
-  const preferredAttachments = Array.isArray(preferred.attachments) ? preferred.attachments : [];
-  const fallbackAttachments = Array.isArray(fallback.attachments) ? fallback.attachments : [];
-  return {
-    ...fallback,
-    ...preferred,
-    emailKey: String(preferred.emailKey || fallback.emailKey || "").trim() || undefined,
-    id: String(preferred.id || fallback.id || "").trim() || undefined,
-    itemId: String(preferred.itemId || fallback.itemId || "").trim() || undefined,
-    internetMessageId: String(preferred.internetMessageId || fallback.internetMessageId || "").trim() || undefined,
-    conversationId: String(preferred.conversationId || fallback.conversationId || "").trim(),
-    subject: String(preferred.subject || fallback.subject || "").trim(),
-    fromEmail: String(preferred.fromEmail || fallback.fromEmail || "").trim(),
-    fromName: String(preferred.fromName || fallback.fromName || "").trim(),
-    receivedAtIso: String(preferred.receivedAtIso || fallback.receivedAtIso || preferred.messageDateIso || fallback.messageDateIso || "").trim() || undefined,
-    messageDateIso: String(preferred.messageDateIso || fallback.messageDateIso || preferred.receivedAtIso || fallback.receivedAtIso || "").trim() || undefined,
-    bodyText: String(preferred.bodyText || fallback.bodyText || "").trim(),
-    bodyHtml: String(preferred.bodyHtml || fallback.bodyHtml || "").trim(),
-    status: String(preferred.status || fallback.status || "").trim() || undefined,
-    labels: mergeUniqueStrings([...(fallback.labels || []), ...(preferred.labels || [])]),
-    removedInheritedLabels: mergeUniqueStrings([...(fallback.removedInheritedLabels || []), ...(preferred.removedInheritedLabels || [])]),
-    labelStates: {
-      ...(fallback.labelStates || {}),
-      ...(preferred.labelStates || {}),
-    },
-    classificationMeta: mergeClassificationMetaDrafts(fallback.classificationMeta, preferred.classificationMeta),
-    attachments: scoreStudioAttachmentCollection(preferredAttachments) >= scoreStudioAttachmentCollection(fallbackAttachments)
-      ? preferredAttachments
-      : fallbackAttachments,
-    relatedGroups: mergeUniqueBy(
-      [
-        ...(preferred.relatedGroups || []),
-        ...(fallback.relatedGroups || []),
-      ],
-      (group) => String(group?.id || "").trim()
-    ),
-    relatedRecords: mergeUniqueBy(
-      [
-        ...(preferred.relatedRecords || []),
-        ...(fallback.relatedRecords || []),
-      ],
-      (record) => `${String(record?.model || "").trim()}:${String(record?.recordId || "").trim()}`
-    ),
-    relatedReasons: mergeUniqueBy(
-      [
-        ...(preferred.relatedReasons || []),
-        ...(fallback.relatedReasons || []),
-      ],
-      (reason) => JSON.stringify(reason || {})
-    ),
-  };
-}
-
-function dedupeEmails(emails: RelatedEmailEntry[]): RelatedEmailEntry[] {
-  const seen = new Map<string, RelatedEmailEntry>();
-  for (const email of emails || []) {
-    const key = makeEmailKey(email);
-    if (!key) continue;
-    const current = seen.get(key);
-    seen.set(key, current ? mergeRelatedEmailEntries(current, email) : email);
-  }
-  return Array.from(seen.values());
-}
-
-function htmlToPlainText(html: string): string {
-  return String(html || "")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "- ")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#39;|&#039;/gi, "'")
-    .replace(/&quot;/gi, "\"")
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function escapeHtml(value: string): string {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function sanitizeEmailPreviewHtml(html: string): string {
-  const raw = String(html || "")
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<\?xml[\s\S]*?\?>/gi, " ")
-    .replace(/<\/?(xml|o:[^>\s]+|v:[^>\s]+)[^>]*>/gi, " ")
-    .trim();
-  if (!raw) return "";
-
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(raw, "text/html");
-    doc.querySelectorAll("script, noscript, iframe, object, embed, form, link[rel='stylesheet'], meta[http-equiv], base, svg").forEach((node) => node.remove());
-    doc.querySelectorAll<HTMLElement>("*").forEach((element) => {
-      Array.from(element.attributes).forEach((attribute) => {
-        const name = String(attribute.name || "").toLowerCase();
-        const value = String(attribute.value || "").trim();
-        if (!name) return;
-        if (name.startsWith("on")) {
-          element.removeAttribute(attribute.name);
-          return;
-        }
-        if (name === "style" && /url\s*\(/i.test(value)) {
-          element.removeAttribute(attribute.name);
-          return;
-        }
-        if (!["src", "href", "poster", "background", "data"].includes(name)) return;
-        if (/^(cid|javascript|vbscript|file|ms-appx|about):/i.test(value)) {
-          if (element.tagName === "IMG") {
-            const fallbackLabel = element.getAttribute("alt") || element.getAttribute("title") || "Imagem inline indisponivel neste preview.";
-            element.setAttribute("alt", fallbackLabel);
-          }
-          element.removeAttribute(attribute.name);
-        }
-      });
-    });
-    return String(doc.body?.innerHTML || "")
-      .replace(/<!--[\s\S]*?-->/g, " ")
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .trim();
-  } catch {
-    return raw
-      .replace(/<!--[\s\S]*?-->/g, " ")
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
-      .replace(/<svg[\s\S]*?<\/svg>/gi, "")
-      .replace(/\s(on\w+)=(".*?"|'.*?'|[^\s>]+)/gi, "")
-      .replace(/\s(style)=(".*?url\s*\(.*?\).*?"|'.*?url\s*\(.*?\).*?'|[^\s>]+)/gi, "")
-      .replace(/\s(src|href|poster|background|data)=("cid:[^"]*"|'cid:[^']*'|cid:[^\s>]+)/gi, "");
-  }
-}
-
-function buildEmailPreviewHtml(email: RelatedEmailEntry | null): string {
-  const html = String(email?.bodyHtml || "").trim();
-  if (html) {
-    const sanitizedHtml = sanitizeEmailPreviewHtml(html);
-    if (sanitizedHtml) {
-      return `<div style="padding:18px;color:#172b4d;font:14px/1.5 'Segoe UI',sans-serif;word-break:break-word">${sanitizedHtml}</div>`;
-    }
-  }
-  const text = String(email?.bodyText || "").trim();
-  if (!text) return "";
-  return `<pre style="margin:0;padding:18px;color:#172b4d;background:#fff;font:14px/1.55 'Segoe UI',sans-serif;white-space:pre-wrap;word-break:break-word">${escapeHtml(text)}</pre>`;
-}
-
-function decodeBase64Text(content: string): string {
-  try {
-    const binary = globalThis.atob(String(content || "").trim());
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    return new TextDecoder("utf-8").decode(bytes);
-  } catch {
-    return "";
-  }
-}
-
-function stripDataUrlPrefix(value: string): string {
-  const raw = String(value || "").trim();
-  const separatorIndex = raw.indexOf(",");
-  if (raw.startsWith("data:") && separatorIndex >= 0) return raw.slice(separatorIndex + 1);
-  return raw;
-}
-
-function normalizeStudioAttachmentMimeType(value: string | undefined, name: string | undefined): string {
-  const raw = String(value || "").trim().toLowerCase();
-  const fileName = String(name || "").trim().toLowerCase();
-  if (raw === "application/x-pdf" || (!raw && /\.pdf$/.test(fileName))) return "application/pdf";
-  if (raw === "image/jpg") return "image/jpeg";
-  return raw || "application/octet-stream";
-}
-
-function canUseOfficeWebViewer(): boolean {
-  try {
-    const url = new URL(window.location.origin);
-    const hostname = String(url.hostname || "").trim().toLowerCase();
-    return Boolean(
-      /^https?:$/i.test(url.protocol)
-      && hostname
-      && hostname !== "localhost"
-      && hostname !== "127.0.0.1"
-    );
-  } catch {
-    return false;
-  }
-}
-
-function buildOfficePreviewUrl(sourceUrl: string): string {
-  const normalizedSourceUrl = String(sourceUrl || "").trim();
-  if (!normalizedSourceUrl || !canUseOfficeWebViewer()) return "";
-  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(normalizedSourceUrl)}`;
-}
-
-function dataUrlToUint8Array(dataUrl: string): Uint8Array {
-  const base64 = stripDataUrlPrefix(dataUrl);
-  const binary = globalThis.atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-function StudioPdfPreview({ dataUrl, title }: { dataUrl: string; title: string }) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-
-  useEffect(() => {
-    let cancelled = false;
-    const host = hostRef.current;
-    if (!host || !dataUrl) {
-      setStatus("error");
-      return;
-    }
-
-    host.innerHTML = "";
-    setStatus("loading");
-
-    (async () => {
-      try {
-        const loadingTask = pdfjsLib.getDocument({ data: dataUrlToUint8Array(dataUrl) });
-        const pdf = await loadingTask.promise;
-        if (cancelled) {
-          void loadingTask.destroy();
-          return;
-        }
-
-        const nextPageCount = Number(pdf.numPages || 0);
-
-        for (let pageNumber = 1; pageNumber <= nextPageCount; pageNumber += 1) {
-          if (cancelled) break;
-          const page = await pdf.getPage(pageNumber);
-          const viewport = page.getViewport({ scale: 1.15 });
-          const canvas = document.createElement("canvas");
-          canvas.style.display = "block";
-          canvas.style.width = "100%";
-          canvas.style.maxWidth = `${Math.ceil(viewport.width)}px`;
-          canvas.style.height = "auto";
-          canvas.style.margin = pageNumber === nextPageCount ? "0 auto" : "0 auto 12px auto";
-          canvas.style.background = "#fff";
-          canvas.style.borderRadius = "8px";
-          canvas.style.boxShadow = "0 6px 16px rgba(15,23,42,0.08)";
-          const context = canvas.getContext("2d", { alpha: false });
-          if (!context) continue;
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          host.appendChild(canvas);
-          await page.render({
-            canvasContext: context,
-            viewport,
-            canvas: canvas as any,
-          }).promise;
-        }
-
-        if (!cancelled) setStatus("ready");
-      } catch (error) {
-        console.warn("[classification-studio] pdf preview failed", error);
-        if (!cancelled) setStatus("error");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (hostRef.current) hostRef.current.innerHTML = "";
-    };
-  }, [dataUrl]);
-
-  if (status === "error") {
-    return <div style={S.attachmentPreviewEmpty}>Este PDF foi detetado, mas nao foi possivel renderiza-lo dentro do add-in.</div>;
-  }
-
-  return (
-    <div style={S.attachmentPdfPreviewShell} aria-label={title}>
-      {status === "loading" ? (
-        <div style={S.attachmentPdfPreviewLoading}>A carregar PDF...</div>
-      ) : null}
-      <div
-        ref={hostRef}
-        style={{
-          ...S.attachmentPdfPreviewCanvasHost,
-          display: status === "loading" ? "none" : S.attachmentPdfPreviewCanvasHost.display,
-        }}
-      />
-    </div>
-  );
-}
-
-function buildSnippet(email: RelatedEmailEntry): string {
-  const source = String(email.bodyText || "").trim() || htmlToPlainText(String(email.bodyHtml || ""));
-  return source.length > 180 ? `${source.slice(0, 177).trim()}...` : source;
-}
-
-function buildEmailPreviewText(email: RelatedEmailEntry): string {
-  return String(email.bodyText || htmlToPlainText(String(email.bodyHtml || "")) || buildSnippet(email) || "").trim();
-}
-
-function buildCompactEmailMeta(email: RelatedEmailEntry): string {
-  return [
-    String(email.fromName || email.fromEmail || "").trim(),
-    formatDate(email.messageDateIso || email.receivedAtIso),
-  ]
-    .filter(Boolean)
-    .join(" / ");
-}
-
-function buildEmailCorpus(email: RelatedEmailEntry): string {
-  return [
-    email.subject,
-    email.fromName,
-    email.fromEmail,
-    email.bodyText,
-    htmlToPlainText(String(email.bodyHtml || "")),
-    ...(email.attachments || []).map((attachment) => attachment.name),
-  ]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean)
-    .join(" ");
-}
-
-function matchReferenceSet(text: string, references: string[]): string[] {
-  const compactHaystack = String(text || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
-  return references.filter((reference) => {
-    const compactReference = compactReferenceValue(reference);
-    return Boolean(compactReference && compactHaystack.includes(compactReference));
-  });
-}
-
-function formatDate(value: string | undefined): string {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return raw;
-  return parsed.toLocaleString("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function isExternalEmail(email: RelatedEmailEntry): boolean {
-  const from = String(email.fromEmail || "").toLowerCase();
-  return from ? !from.endsWith("@divitek.pt") : true;
-}
-
-function isCurrentContextEmail(email: Partial<RelatedEmailEntry>, currentContext: Partial<StudioParams>) {
-  const emailItemId = String(email?.itemId || "").trim();
-  const contextItemId = String(currentContext?.itemId || "").trim();
-  if (emailItemId && contextItemId && emailItemId === contextItemId) return true;
-  const emailMessageId = String(email?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
-  const contextMessageId = String(currentContext?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
-  return Boolean(emailMessageId && contextMessageId && emailMessageId === contextMessageId);
-}
-
-function makeAttachmentKey(attachment: { key?: string; id?: string; name?: string; contentId?: string }): string {
-  return String(attachment.key || attachment.id || attachment.contentId || attachment.name || "").trim();
-}
-
-function normalizeStudioAttachment(attachment: any) {
-  if (!attachment || typeof attachment !== "object") return null;
-  return {
-    key: String(attachment.key || "").trim() || undefined,
-    id: String(attachment.id || "").trim() || undefined,
-    name: String(attachment.name || "").trim(),
-    contentType: String(attachment.contentType || "application/octet-stream"),
-    content: String(attachment.content || ""),
-    size: attachment.size,
-    isInline: attachment.isInline,
-    contentId: String(attachment.contentId || "").trim() || undefined,
-    documentState: normalizeDocumentLifecycleState(attachment.documentState, "ingested"),
-    storageProvider: String(attachment.storageProvider || "").trim() || undefined,
-    storageBasePath: String(attachment.storageBasePath || "").trim() || undefined,
-    storagePathHint: String(attachment.storagePathHint || "").trim() || undefined,
-    hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
-    isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
-  };
-}
-
-function getStudioAttachmentRemoteId(attachment: any): string {
-  const normalized = normalizeStudioAttachment(attachment);
-  if (!normalized) return "";
-  return String(normalized.key || normalized.id || normalized.contentId || normalized.name || "").trim();
-}
-
-function isStudioAttachmentHydrated(attachment: any): boolean {
-  const normalized = normalizeStudioAttachment(attachment);
-  if (!normalized?.name) return false;
-  if (String(normalized.content || "").trim()) return true;
-  if (normalized.hasContent !== true) return false;
-  return Boolean(getStudioAttachmentRemoteId(normalized));
-}
-
-function hasHydratedAttachmentCollection(email: RelatedEmailEntry | null): boolean {
-  const attachments = Array.isArray(email?.attachments) ? email.attachments : [];
-  if (!attachments.length) return false;
-  return attachments.every((attachment) => isStudioAttachmentHydrated(attachment));
-}
-
-function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | null): RelevantEmailPayload | null {
-  if (!email) return null;
-  const itemId = String(email.itemId || "").trim();
-  const internetMessageId = String(email.internetMessageId || "").trim();
-  const conversationId = String(email.conversationId || "").trim();
-  const subject = String(email.subject || "").trim();
-  const fromEmail = String(email.fromEmail || "").trim();
-  if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
-  const attachments = Array.isArray(email.attachments)
-    ? email.attachments
-        .map((attachment) => normalizeStudioAttachment(attachment))
-        .filter((attachment): attachment is NonNullable<ReturnType<typeof normalizeStudioAttachment>> => Boolean(attachment))
-        .map((attachment) => ({
-          key: attachment.key,
-          id: attachment.id,
-          name: attachment.name,
-          contentType: attachment.contentType,
-          size: attachment.size,
-          isInline: attachment.isInline,
-          contentId: attachment.contentId,
-          content: attachment.content,
-          storageProvider: (attachment as any).storageProvider,
-          storageBasePath: (attachment as any).storageBasePath,
-          storagePathHint: (attachment as any).storagePathHint,
-          documentState: (attachment as any).documentState,
-          hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
-          isHidden: typeof (attachment as any).isHidden === "boolean" ? (attachment as any).isHidden : undefined,
-        }))
-    : [];
-  return {
-    itemId: itemId || undefined,
-    internetMessageId: internetMessageId || undefined,
-    conversationId: conversationId || undefined,
-    subject: subject || undefined,
-    fromEmail: fromEmail || undefined,
-    fromName: String(email.fromName || "").trim() || undefined,
-    receivedAtIso: String(email.receivedAtIso || email.messageDateIso || "").trim() || undefined,
-    messageDateIso: String(email.messageDateIso || email.receivedAtIso || "").trim() || undefined,
-    bodyText: String(email.bodyText || "").trim() || undefined,
-    bodyHtml: String(email.bodyHtml || "").trim() || undefined,
-    ...(attachments.length ? { attachments } : {}),
-  };
-}
-
-function buildAttachmentStorageOptions(settings?: any): Pick<RelevantEmailPayload, "attachmentStorageProvider" | "attachmentStorageBasePath"> {
-  return {
-    attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
-    attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
-  };
-}
-
-async function persistRelatedEmailsToServer(emails: RelatedEmailEntry[], settings?: any): Promise<void> {
-  const storageOptions = buildAttachmentStorageOptions(settings);
-  const payloads = dedupeEmails(emails)
-    .map((email) => buildRelevantEmailPayloadFromRelatedEmail(email))
-    .filter(Boolean) as RelevantEmailPayload[];
-  if (!payloads.length) return;
-  await Promise.allSettled(
-    payloads.map((payload) => registerRelevantEmail({
-      ...payload,
-      ...storageOptions,
-    }))
-  );
-}
+// Moved to documentUtils.ts
 
 function derivePartnerName(email: RelatedEmailEntry | null): string {
   const fromName = String(email?.fromName || "").trim();
@@ -977,145 +204,17 @@ function updateAttachmentVisibilityOnEmail(
   };
 }
 
-function detectCaseType(text: string): string {
-  const value = text.toLowerCase();
-  if (/(reclam|inciden|nao conforme|defeito)/.test(value)) return "reclamacao";
-  if (/(pedido|encomenda|order|po\b|purchase order|material listo)/.test(value)) return "pedido/encomenda";
-  if (/(proposta|orcamento|quote|quotation)/.test(value)) return "proposta";
-  if (/(projeto|project|obra|worksite)/.test(value)) return "projeto";
-  return "geral";
-}
+// Helpers moved to documentUtils.ts
 
-function inferCompanyName(fromName: string | undefined, fromEmail: string | undefined): string {
-  const rawName = String(fromName || "").trim();
-  if (rawName.includes("|")) {
-    const parts = rawName.split("|").map((part) => part.trim()).filter(Boolean);
-    if (parts.length >= 2) return parts[parts.length - 1];
-  }
-  const email = String(fromEmail || "").trim().toLowerCase();
-  if (!email.includes("@")) return "";
-  const domain = email.split("@")[1] || "";
-  const base = domain.split(".")[0] || "";
-  if (!base) return "";
-  return base
-    .split(/[-_]+/g)
-    .filter(Boolean)
-    .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
-    .join(" ");
-}
-
-function normalizeGroupContactDraft(value: Partial<GroupContactDraft> | null | undefined): GroupContactDraft | null {
-  const name = String(value?.name || "").trim();
-  const email = String(value?.email || "").trim().toLowerCase();
-  const company = String(value?.company || "").trim();
-  const source = String(value?.source || "").trim() || "email";
-  const key = String(value?.key || email || `${normalizeSearchValue(name)}|${normalizeSearchValue(company)}`).trim();
-  if (!key || (!name && !email)) return null;
-  return {
-    key,
-    name: name || email,
-    email: email || undefined,
-    company: company || undefined,
-    source,
-  };
-}
-
-function normalizeGroupEntityDraft(value: Partial<GroupEntityDraft> | null | undefined): GroupEntityDraft | null {
-  const name = String(value?.name || "").trim();
-  const kind = String(value?.kind || "").trim() || "empresa";
-  const source = String(value?.source || "").trim() || "email";
-  const key = String(value?.key || normalizeSearchValue(name)).trim();
-  if (!key || !name) return null;
-  return {
-    key,
-    name,
-    kind,
-    source,
-  };
-}
-
-function dedupeGroupContacts(rows: Array<Partial<GroupContactDraft> | null | undefined>): GroupContactDraft[] {
-  const seen = new Set<string>();
-  const out: GroupContactDraft[] = [];
-  rows.forEach((row) => {
-    const normalized = normalizeGroupContactDraft(row);
-    if (!normalized || seen.has(normalized.key)) return;
-    seen.add(normalized.key);
-    out.push(normalized);
-  });
-  return out;
-}
-
-function dedupeGroupEntities(rows: Array<Partial<GroupEntityDraft> | null | undefined>): GroupEntityDraft[] {
-  const seen = new Set<string>();
-  const out: GroupEntityDraft[] = [];
-  rows.forEach((row) => {
-    const normalized = normalizeGroupEntityDraft(row);
-    if (!normalized || seen.has(normalized.key)) return;
-    seen.add(normalized.key);
-    out.push(normalized);
-  });
-  return out;
-}
-
-function detectReferences(text: string): string[] {
-  const refs = new Set<string>();
-  const patterns = [
-    /\b(?:pedido|encomenda|order|po|proposta|orcamento|obra|projeto|project)\s*(?:n[.oº°]*)?\s*([A-Z]{0,6}[-/]?\d{2,}[A-Z0-9/-]*)/gi,
-    /\b([A-Z]{2,6}[-/]\d{2,})\b/g,
-    /\b(\d{3,}[A-Z0-9/-]{0,10})\b/g,
-  ];
-  for (const pattern of patterns) {
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(text))) {
-      const value = String(match[1] || "").trim();
-      if (value && value.length >= 4) refs.add(value);
-    }
-  }
-  return Array.from(refs).slice(0, 6);
-}
-
-function splitSuggestions(allGroups: LinkGroupEntry[], text: string): LinkGroupEntry[] {
-  const value = text.toLowerCase();
-  return allGroups.filter((group) => {
-    if (String(group?.kind || "").trim().toLowerCase() === "conversation") return false;
-    const name = String(group.name || "").trim().toLowerCase();
-    if (!name || name.length < 4) return false;
-    return value.includes(name);
-  }).slice(0, 8);
-}
-
-function normalizeSearchValue(value: string): string {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
-function normalizeReferenceCandidate(value: string): string {
-  return String(value || "")
-    .replace(/[‐‑–—]/g, "-")
-    .replace(/\s*([/-])\s*/g, "$1")
-    .replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/gi, "")
-    .replace(/[.,;:)\]]+$/g, "")
-    .trim()
-    .toUpperCase();
-}
-
-function compactReferenceValue(value: string): string {
-  return normalizeReferenceCandidate(value).replace(/[\s/-]+/g, "");
-}
+// Moved to documentUtils.ts
 
 function detectReferencesFocused(text: string): string[] {
   const prepared = String(text || "")
-    .replace(/[‐‑–—]/g, "-")
+    .replace(/[â€â€‘â€“â€”]/g, "-")
     .replace(/([A-Z0-9])\s*([/-])\s*(?=[A-Z0-9])/gi, "$1$2");
   const rawMatches: string[] = [];
   const patterns = [
-    /\b(?:pedido|encomenda|order|po|purchase order|proposta|orcamento|obra|projeto|project|ref(?:erencia)?|doc(?:umento)?|fatura|invoice)\s*(?:n(?:o|º|°)?\.?\s*)?([A-Z0-9]+(?:[/-][A-Z0-9]+){1,4})\b/gi,
+    /\b(?:pedido|encomenda|order|po|purchase order|proposta|orcamento|obra|projeto|project|ref(?:erencia)?|doc(?:umento)?|fatura|invoice)\s*(?:n(?:o|Âº|Â°)?\.?\s*)?([A-Z0-9]+(?:[/-][A-Z0-9]+){1,4})\b/gi,
     /\b([A-Z]{0,6}\d{0,6}[A-Z0-9]*(?:[/-][A-Z0-9]+){1,4})\b/g,
     /\b(\d+(?:[/-][A-Z0-9]+){1,4})\b/g,
   ];
@@ -1167,9 +266,9 @@ function classifyDetectedReferences(references: string[], text: string): {
     let classification: "documents" | "articles" | "others" = "others";
     const index = upperText.indexOf(normalized);
     const context = index >= 0 ? upperText.slice(Math.max(0, index - 48), Math.min(upperText.length, index + normalized.length + 48)) : "";
-    if (/(PEDIDO|ENCOMENDA|ORDER|PROPOSTA|ORCAMENTO|ORÇAMENTO|FATURA|INVOICE|GUIA|OBRA|PROJETO|PROJECT|DOC|DOCUMENTO|REF)/.test(context)) {
+    if (/(PEDIDO|ENCOMENDA|ORDER|PROPOSTA|ORCAMENTO|ORÃ‡AMENTO|FATURA|INVOICE|GUIA|OBRA|PROJETO|PROJECT|DOC|DOCUMENTO|REF)/.test(context)) {
       classification = "documents";
-    } else if (/(ARTIGO|ITEM|CODIGO|CÓDIGO|COD |MODELO|SERIE|SÉRIE|PRODUTO|ACABAMENTO|COR |COLOR|TAMANHO|MEDIDA|DIMENSAO|DIMENSÃO)/.test(context)) {
+    } else if (/(ARTIGO|ITEM|CODIGO|CÃ“DIGO|COD |MODELO|SERIE|SÃ‰RIE|PRODUTO|ACABAMENTO|COR |COLOR|TAMANHO|MEDIDA|DIMENSAO|DIMENSÃƒO)/.test(context)) {
       classification = "articles";
     } else if (/[/-]/.test(normalized)) {
       classification = "documents";
@@ -1292,94 +391,9 @@ function mergeTicketEntryLists(left: GroupTicketEntry[], right: GroupTicketEntry
   }, []);
 }
 
-function readParams(): StudioParams {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    conversationId: String(params.get("conversationId") || "").trim() || undefined,
-    internetMessageId: String(params.get("internetMessageId") || "").trim() || undefined,
-    itemId: String(params.get("itemId") || "").trim() || undefined,
-    subject: String(params.get("subject") || "").trim() || undefined,
-    fromEmail: String(params.get("fromEmail") || "").trim() || undefined,
-    fromName: String(params.get("fromName") || "").trim() || undefined,
-    receivedAtIso: String(params.get("receivedAtIso") || "").trim() || undefined,
-    seedKey: String(params.get("seedKey") || "").trim() || undefined,
-  };
-}
+// Moved to documentUtils.ts
 
-function readSeedEmail(params: StudioParams): RelatedEmailEntry | null {
-  const key = String(params.seedKey || "").trim();
-  if (!key || !key.startsWith(GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX)) return null;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const parsed: any = JSON.parse(raw);
-    const itemId = String(parsed?.itemId || "").trim();
-    const internetMessageId = String(parsed?.internetMessageId || "").trim();
-    const conversationId = String(parsed?.conversationId || "").trim();
-    const subject = String(parsed?.subject || "").trim();
-    const fromEmail = String(parsed?.fromEmail || "").trim();
-    const fromName = String(parsed?.fromName || "").trim();
-    const receivedAtIso = String(parsed?.receivedAtIso || parsed?.messageDateIso || "").trim();
-    if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
-    return {
-      emailKey: itemId || internetMessageId || `${conversationId}|${subject || fromEmail}`,
-      itemId: itemId || undefined,
-      internetMessageId: internetMessageId || undefined,
-      conversationId: conversationId || undefined,
-      subject: subject || "(sem assunto)",
-      fromEmail: fromEmail || undefined,
-      fromName: fromName || undefined,
-      receivedAtIso: receivedAtIso || undefined,
-      messageDateIso: receivedAtIso || undefined,
-      bodyText: String(parsed?.bodyText || "").trim(),
-      bodyHtml: String(parsed?.bodyHtml || "").trim(),
-      attachments: Array.isArray(parsed?.attachments)
-        ? parsed.attachments
-          .map((attachment: any) => ({
-            id: String(attachment?.id || "").trim() || undefined,
-            name: String(attachment?.name || "").trim(),
-            contentType: String(attachment?.contentType || "application/octet-stream").trim(),
-            size: Number(attachment?.size || 0) || undefined,
-            isInline: Boolean(attachment?.isInline),
-            contentId: String(attachment?.contentId || "").trim() || undefined,
-            content: String(attachment?.content || "").trim(),
-          }))
-          .filter((attachment: any) => attachment.name)
-        : [],
-      relatedGroups: [],
-      relatedReasons: [],
-    };
-  } catch {
-    return null;
-  }
-}
-
-function buildFallbackEmail(params: StudioParams): RelatedEmailEntry | null {
-  const itemId = String(params.itemId || "").trim();
-  const internetMessageId = String(params.internetMessageId || "").trim();
-  const conversationId = String(params.conversationId || "").trim();
-  const subject = String(params.subject || "").trim();
-  const fromEmail = String(params.fromEmail || "").trim();
-  const fromName = String(params.fromName || "").trim();
-  const receivedAtIso = String(params.receivedAtIso || "").trim();
-  if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
-  return {
-    emailKey: itemId || internetMessageId || `${conversationId}|${subject || fromEmail}`,
-    itemId: itemId || undefined,
-    internetMessageId: internetMessageId || undefined,
-    conversationId: conversationId || undefined,
-    subject: subject || "(sem assunto)",
-    fromEmail: fromEmail || undefined,
-    fromName: fromName || undefined,
-    receivedAtIso: receivedAtIso || undefined,
-    messageDateIso: receivedAtIso || undefined,
-    bodyText: "",
-    bodyHtml: "",
-    attachments: [],
-    relatedGroups: [],
-    relatedReasons: [],
-  };
-}
+// readSeedEmail & buildFallbackEmail moved to documentUtils.ts
 
 function StudioInner() {
   const params = useMemo(() => readParams(), []);
@@ -1434,6 +448,7 @@ function StudioInner() {
   const [applyDialogScopeMode, setApplyDialogScopeMode] = useState<ApplyDialogScopeMode>("current");
   const [applyDialogSection, setApplyDialogSection] = useState<ClassificationFocus>("summary");
   const [applyDialogEmailKeys, setApplyDialogEmailKeys] = useState<string[]>([]);
+  const [applyDialogSelectedEmailKeys, setApplyDialogSelectedEmailKeys] = useState<string[]>([]);
   const [applyDialogExpandedEmailKeys, setApplyDialogExpandedEmailKeys] = useState<string[]>([]);
   const [expandedEmailKeys, setExpandedEmailKeys] = useState<string[]>([]);
   const [expandedQuickDocumentKeys, setExpandedQuickDocumentKeys] = useState<string[]>([]);
@@ -1502,7 +517,7 @@ function StudioInner() {
       ...base,
       itemId: String(currentContext.itemId || base.itemId || "").trim() || undefined,
       internetMessageId: String(currentContext.internetMessageId || base.internetMessageId || "").trim() || undefined,
-      conversationId: String(currentContext.conversationId || base.conversationId || "").trim() || undefined,
+      conversationId: String(currentContext.conversationId || base.conversationId || "").trim(),
       subject: String(currentContext.subject || base.subject || "").trim() || undefined,
       fromEmail: String(currentContext.fromEmail || base.fromEmail || "").trim() || undefined,
       fromName: String(currentContext.fromName || base.fromName || "").trim() || undefined,
@@ -1525,13 +540,13 @@ function StudioInner() {
     void (async () => {
       try {
         const settings = await getSettings();
-        applySkin(settings.skinId || "soft");
+        applySkin((settings.skinId || "soft") as any);
         setLabelCatalogEntries(normalizeGroupLabelCatalog(settings.groupLabelCatalog || []));
         setFavoriteGroupIds(Array.isArray((settings as any)?.groupFavoriteIds)
           ? Array.from(new Set((settings as any).groupFavoriteIds.map((entry: any) => String(entry || "").trim()).filter(Boolean)))
           : []);
       } catch {
-        applySkin("soft");
+        applySkin("soft" as any);
         setLabelCatalogEntries([]);
         setFavoriteGroupIds([]);
       } finally {
@@ -1604,7 +619,7 @@ function StudioInner() {
         } else if (bootstrapEmailPayload) {
           setStatus("O email atual foi enviado para o servidor, mas ainda nao existem relacionados persistidos para mostrar.");
         } else {
-          setStatus("Ainda nao encontrámos um email persistido para este caso.");
+          setStatus("Ainda nao encontrÃ¡mos um email persistido para este caso.");
         }
       } catch (fetchError: any) {
         if (!cancelled) setError(String(fetchError?.message || fetchError || "Falha a preparar o studio de classificacao."));
@@ -3516,14 +2531,15 @@ function StudioInner() {
         .trim()
         .replace(/[\\/:*?"<>|]+/g, "_");
       await saveGroupDocuments(principalGroupId, {
-        documents: docs.map((doc) => ({
+        documents: docs.map((doc: any) => ({
           ...doc,
+          id: doc.id || doc.key || `new_doc_${Date.now()}_${Math.random().toString(36).slice(2)}`,
           storageProvider,
           storageBasePath,
           storagePathHint: safeGroupName && doc.name
             ? `${safeGroupName}/${String(doc.name || "").trim().replace(/[\\/:*?"<>|]+/g, "_")}`
             : undefined,
-        })),
+        } as GroupDocumentEntry)),
       });
       await refreshSelectedEmailContext();
       setStatus(`${docs.length} anexo(s) guardado(s) nos documentos do grupo principal.`);
@@ -4199,12 +3215,16 @@ function StudioInner() {
     setApplyDialogExpandedEmailKeys([]);
     setApplyDialogOpen(true);
     setApplyDialogScopeMode(defaultMode);
-    setApplyDialogEmailKeys(getDefaultApplyDialogEmailKeys(defaultMode));
+    const keys = getDefaultApplyDialogEmailKeys(defaultMode);
+    setApplyDialogEmailKeys(keys);
+    setApplyDialogSelectedEmailKeys(keys);
   }
 
   function toggleApplyDialogEmailKey(emailKey: string) {
     if (!emailKey) return;
-    setApplyDialogEmailKeys((current) => current.includes(emailKey) ? current.filter((entry) => entry !== emailKey) : [...current, emailKey]);
+    const toggle = (current: string[]) => current.includes(emailKey) ? current.filter((entry) => entry !== emailKey) : [...current, emailKey];
+    setApplyDialogEmailKeys(toggle);
+    setApplyDialogSelectedEmailKeys(toggle);
   }
 
   function toggleApplyDialogExpandedEmailKey(emailKey: string) {
@@ -4224,676 +3244,7 @@ function StudioInner() {
     }
   }
 
-  function renderOutlookColorLegend(): React.ReactNode {
-    return (
-      <div style={S.legendRow}>
-        {UNIFIED_STATUS_COLOR_MAP.map((entry) => (
-          <span key={entry.key} style={{ ...S.legendChip, ...entry.style }}>{entry.label}</span>
-        ))}
-      </div>
-    );
-  }
-
-  function renderSuggestionTrayLegacy(
-    kind: "principal" | "labels",
-    title: string,
-    chips: Array<{ key: string; label: string; active?: boolean; onClick: () => void }>,
-    helper: string
-  ) {
-    const visible = chips.slice(0, 3);
-    const hidden = chips.slice(3);
-    const expanded = classificationSuggestionExpanded[kind];
-    return (
-      <div style={S.editorBlock}>
-        <div style={S.editorBlockHeader}>
-          <div style={S.editorBlockTitle}>{title}</div>
-          {hidden.length ? (
-            <button
-              type="button"
-              style={S.chevronBtn}
-              onClick={() => setClassificationSuggestionExpanded((current) => ({ ...current, [kind]: !current[kind] }))}
-            >
-              {expanded ? "⌃" : "⌄"}
-            </button>
-          ) : null}
-        </div>
-        <div style={S.chipGridCompact}>
-          {visible.length ? visible.map((chip) => (
-            <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
-              {chip.label}
-            </button>
-          )) : <span style={S.mutedMini}>Sem sugestoes fortes nesta leitura.</span>}
-        </div>
-        {hidden.length && expanded ? (
-          <div style={S.editorExpandableOpen}>
-            <div style={S.editorExpandableScroll}>
-              {hidden.map((chip) => (
-                <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  function renderSuggestionTray(
-    kind: "principal" | "labels",
-    title: string,
-    chips: Array<{ key: string; label: string; active?: boolean; onClick: () => void }>
-  ) {
-    const visible = chips.slice(0, 3);
-    const hidden = chips.slice(3);
-    const expanded = classificationSuggestionExpanded[kind];
-    return (
-      <div style={S.editorBlock}>
-        <div style={S.editorBlockHeader}>
-          <div style={S.editorBlockTitle}>{title}</div>
-          {hidden.length ? (
-            <button
-              type="button"
-              style={S.chevronBtn}
-              onClick={() => setClassificationSuggestionExpanded((current) => ({ ...current, [kind]: !current[kind] }))}
-            >
-              {expanded ? "\u2303" : "\u2304"}
-            </button>
-          ) : null}
-        </div>
-        <div style={S.chipGridCompact}>
-          {visible.length ? visible.map((chip) => (
-            <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
-              {chip.label}
-            </button>
-          )) : <span style={S.mutedMini}>Sem sugestoes fortes nesta leitura.</span>}
-        </div>
-        {hidden.length && expanded ? (
-          <div style={S.editorExpandableOpen}>
-            <div style={S.editorExpandableScroll}>
-              {hidden.map((chip) => (
-                <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  function renderClassificationEditorHeader() {
-    const focusTitle = classificationFocus === "principal"
-      ? "Grupo principal"
-      : classificationFocus === "labels"
-        ? "Etiquetas"
-        : classificationFocus === "ticket"
-          ? "Ticket"
-          : "Referencias";
-    return (
-      <div style={S.editorHeader}>
-        <div style={S.editorHeaderMeta}>
-          <div style={S.sectionTitle}>Classificacao</div>
-          <div style={S.editorHeaderTitle}>{focusTitle}</div>
-          <div style={S.editorModeText}>{classificationLayoutMode === "advanced" ? "Modo avancado" : "Modo normal"}</div>
-        </div>
-        <div style={S.editorHeaderActions}>
-          <button type="button" style={S.secondaryBtn} onClick={handleCloseClassificationEditor}>Voltar</button>
-          <button type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationFocus)} disabled={actionBusy || !canApplyFromClassificationEditor}>
-            <Icons.Save size={12} />
-            Aplicar
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  function renderPrincipalEditor() {
-    const suggestionChips = suggestedExistingGroups.map((group) => ({
-      key: group.id,
-      label: group.name || group.id,
-      active: group.id === principalGroupId,
-      onClick: () => {
-        if (group.id === principalGroupId) clearPrincipalSelection();
-        else selectPrincipalGroup(group);
-      },
-    }));
-    return (
-      <div style={S.editorPanelStack}>
-        <div style={S.editorModeKicker}>Grupo principal</div>
-        <div style={S.editorLead}>Escolhe ou ajusta o dossier principal do email.</div>
-        {renderSuggestionTray("principal", "Sugestoes", suggestionChips)}
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Pesquisar ou criar</div>
-          <div style={S.searchInlineRow}>
-            <input
-              style={S.input}
-              value={principalSearch}
-              onChange={(event) => setPrincipalSearchValue(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (principalCanCreate) {
-                    void handleCreateGroupAndLink("principal", principalSearch);
-                  } else if (exactPrincipalSearchGroup) {
-                    selectPrincipalGroup(exactPrincipalSearchGroup);
-                  }
-                }
-              }}
-              placeholder="Escreve o nome do grupo..."
-            />
-            <button
-              type="button"
-              style={S.secondaryBtn}
-              onClick={() => {
-                if (exactPrincipalSearchGroup) {
-                  selectPrincipalGroup(exactPrincipalSearchGroup);
-                  return;
-                }
-                if (principalCanCreate) {
-                  void handleCreateGroupAndLink("principal", principalSearch);
-                }
-              }}
-              title={principalCanCreate ? "Criar grupo" : exactPrincipalSearchGroup ? "Selecionar grupo existente" : "Pesquisar grupo"}
-            >
-              {principalCanCreate ? "Criar" : "Pesquisar"}
-            </button>
-          </div>
-          {principalSearchResults.length ? (
-            <div style={S.searchResultListCompact}>
-              {principalSearchResults.map((group) => (
-                <button
-                  key={group.id}
-                  type="button"
-                  style={group.id === principalGroupId ? S.searchResultBtnOn : S.searchResultBtn}
-                  onClick={() => selectPrincipalGroup(group)}
-                >
-                  <span>{group.name}</span>
-                  {group.id === principalGroupId ? <span style={S.resultMiniMeta}>Selecionado</span> : null}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Selecionado</div>
-          <div style={S.editorValueStrong}>{principalGroup?.name || (principalCanCreate ? principalSearch || "--" : "--")}</div>
-        </div>
-        {classificationLayoutMode === "advanced" ? (
-          <div style={S.editorBlock}>
-            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-            <div style={S.editorOptionGrid}>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.principalCategorize} onChange={(event) => updateClassificationMeta({ principalCategorize: event.target.checked })} /> Grupo em categoria Outlook</label>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.principalStatusCategorize} onChange={(event) => updateClassificationMeta({ principalStatusEnabled: event.target.checked, principalStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
-            </div>
-            {renderOutlookColorLegend()}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  function renderLabelsEditor() {
-    const suggestionChips = suggestedLabelSeeds.map((label) => ({
-      key: label,
-      label,
-      active: selectedLabels.includes(label),
-      onClick: () => applySuggestedLabel(label),
-    }));
-    return (
-      <div style={S.editorPanelStack}>
-        <div style={S.editorModeKicker}>Etiquetas</div>
-        <div style={S.editorLead}>Liga ou desliga apenas as etiquetas relevantes.</div>
-        {renderSuggestionTray("labels", "Sugestoes da leitura", suggestionChips)}
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Pesquisar ou criar</div>
-          <div style={S.searchInlineRow}>
-            <input
-              style={S.input}
-              value={classificationLabelInput}
-              onChange={(event) => setClassificationLabelInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  handleClassificationLabelSearchAction();
-                }
-              }}
-              placeholder="Escreve o nome da etiqueta..."
-            />
-            <button
-              type="button"
-              style={S.secondaryBtn}
-              onClick={handleClassificationLabelSearchAction}
-              disabled={!String(classificationLabelInput || "").trim()}
-            >
-              {classificationLabelCanCreate ? "Criar" : "Ligar"}
-            </button>
-          </div>
-          {filteredClassificationLabels.length && String(classificationLabelInput || "").trim() ? (
-            <div style={S.searchResultListCompact}>
-              {filteredClassificationLabels.map((label) => (
-                <button
-                  key={label}
-                  type="button"
-                  style={selectedLabels.includes(label) ? S.searchResultBtnOn : S.searchResultBtn}
-                  onClick={() => {
-                    if (selectedLabels.includes(label)) {
-                      removeLabel(label);
-                    } else {
-                      addLabel(label);
-                    }
-                    setClassificationLabelInput(label);
-                  }}
-                >
-                  <span>{label}</span>
-                  {selectedLabels.includes(label) ? <span style={S.resultMiniMeta}>Ligada</span> : null}
-                </button>
-              ))}
-            </div>
-          ) : String(classificationLabelInput || "").trim() ? (
-            <div style={S.cardMeta}>
-              {classificationLabelCanCreate
-                ? `Ainda nao existe nenhuma etiqueta com este nome. Usa Criar para adicionar "${String(classificationLabelInput || "").trim()}".`
-                : "Etiqueta exata encontrada. Usa Ligar para a associar ou remover."}
-            </div>
-          ) : null}
-        </div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Selecionadas</div>
-          <div style={S.chipGridCompact}>
-            {selectedLabels.length ? selectedLabels.map((label) => (
-              <button key={label} type="button" style={S.groupChipBtnOn} onClick={() => removeLabel(label)}>{label}</button>
-            )) : <span style={S.mutedMini}>Sem etiquetas selecionadas.</span>}
-          </div>
-        </div>
-        {classificationLayoutMode === "advanced" ? (
-          <div style={S.editorBlock}>
-            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-            <div style={S.editorAdvancedFieldGrid}>
-              <label style={S.field}>
-                <span style={S.cardMeta}>Estado da etiqueta</span>
-                <select
-                  style={S.select}
-                  value={selectedLabelSharedStatus}
-                  onChange={(event) => {
-                    const nextValue = String(event.target.value || "").trim() as EmailLabelStatus | "";
-                    selectedLabels.forEach((label) => updateLabelDraft(label, {
-                      hasStatus: Boolean(nextValue),
-                      status: nextValue || undefined,
-                    }));
-                  }}
-                >
-                  <option value="">Sem estado</option>
-                  {LABEL_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-              <label style={S.compactCheckBoxField}><input type="checkbox" checked={selectedLabels.some((label) => labelDrafts[label]?.categorize === true)} onChange={(event) => selectedLabels.forEach((label) => updateLabelDraft(label, { categorize: event.target.checked }))} /> Etiqueta em categoria Outlook</label>
-            </div>
-            <label style={S.compactCheckBoxField}><input type="checkbox" checked={selectedLabels.some((label) => labelDrafts[label]?.hasStatus === true)} onChange={(event) => selectedLabels.forEach((label) => updateLabelDraft(label, { hasStatus: event.target.checked, status: event.target.checked ? (labelDrafts[label]?.status || "em_analise") : undefined }))} /> Refletir estado pela cor da categoria</label>
-            {renderOutlookColorLegend()}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  function renderTicketEditor() {
-    const activeList = normalizedTicketSearch ? ticketSearchResults : availableTicketChoices.slice(0, 8);
-    return (
-      <div style={S.editorPanelStack}>
-        <div style={S.editorModeKicker}>Ticket</div>
-        <div style={S.editorLead}>Liga um ticket so se houver seguimento operacional.</div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Estado atual</div>
-          <div style={S.editorValueStrong}>{selectedTicket?.code || (selectedSeriesId ? "Novo ticket preparado" : "Sem ticket ligado")}</div>
-        </div>
-        <div style={S.editorSplitRow}>
-          <button type="button" style={ticketEditorMode === "existing" ? S.editorModeBtnOn : S.editorModeBtn} onClick={() => setTicketEditorMode("existing")}>Ligar ticket existente</button>
-          <button type="button" style={ticketEditorMode === "new" ? S.editorModeBtnOn : S.editorModeBtn} onClick={() => setTicketEditorMode("new")}>Criar novo ticket</button>
-        </div>
-        {ticketEditorMode === "existing" ? (
-          <div style={S.editorBlock}>
-            <div style={S.searchInlineRow}>
-              <input
-                style={S.input}
-                value={ticketSearch}
-                onChange={(event) => setTicketSearch(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void handleSearchTickets(undefined, { silent: false });
-                  }
-                }}
-                placeholder="Pesquisar por codigo, titulo ou etiqueta..."
-              />
-              <button type="button" style={S.secondaryBtn} onClick={() => void handleSearchTickets(undefined, { silent: false })} disabled={!normalizedTicketSearch}>
-                Procurar
-              </button>
-            </div>
-            <div style={S.searchResultListCompact}>
-              {activeList.length ? activeList.map((ticket) => (
-                <button key={ticket.id} type="button" style={ticket.id === selectedTicketId ? S.searchResultBtnOn : S.searchResultBtn} onClick={() => applySuggestedTicket(ticket.id)}>
-                  <span>{ticket.code || ticket.title || "Ticket"}</span>
-                  {ticket.title && ticket.title !== ticket.code ? <span style={S.resultMiniMeta}>{ticket.title}</span> : null}
-                  {ticket.id === selectedTicketId ? <span style={S.resultMiniMeta}>Ligado</span> : null}
-                </button>
-              )) : (
-                <span style={S.mutedMini}>
-                  {normalizedTicketSearch
-                    ? (ticketSearchBusy ? "A procurar tickets..." : "Nenhum ticket encontrado para esta pesquisa.")
-                    : "Sem tickets disponiveis para ligar."}
-                </span>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div style={S.editorBlock}>
-            <div style={S.editorAdvancedFieldGrid}>
-              <label style={S.field}>
-                <span style={S.cardMeta}>Serie</span>
-                <select style={S.select} value={selectedSeriesId} onChange={(event) => { setSelectedSeriesId(event.target.value); setSelectionTouched((current) => ({ ...current, ticket: true })); }}>
-                  <option value="">Escolher serie...</option>
-                  {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
-                </select>
-              </label>
-              <label style={S.field}>
-                <span style={S.cardMeta}>Titulo</span>
-                <input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do novo ticket" />
-              </label>
-            </div>
-          </div>
-        )}
-        {classificationLayoutMode === "advanced" ? (
-          <div style={S.editorBlock}>
-            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-            <div style={S.editorAdvancedFieldGrid}>
-              <label style={S.field}>
-                <span style={S.cardMeta}>Estado do ticket</span>
-                <select style={S.select} value={ticketStatusDraft} onChange={(event) => setTicketStatusDraft(event.target.value)}>
-                  {TICKET_STATUS_OPTIONS.map((option) => <option key={option.value || "none"} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-              <label style={S.compactCheckBoxField}><input type="checkbox" checked={Boolean(selectedTicketId || selectedSeriesId)} onChange={(event) => { if (!event.target.checked) clearTicketSelection(); }} /> Ticket em categoria Outlook</label>
-            </div>
-            <label style={S.compactCheckBoxField}><input type="checkbox" checked={classificationMetaDraft.ticketStatusCategorize} onChange={(event) => updateClassificationMeta({ ticketStatusEnabled: event.target.checked, ticketStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
-            {renderOutlookColorLegend()}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  function renderReferencesEditor() {
-    if (classificationLayoutMode !== "advanced") {
-      return (
-        <div style={S.editorPanelStack}>
-          <div style={S.editorModeKicker}>Referencias</div>
-          <div style={S.editorLead}>As referencias so aparecem no modo avancado.</div>
-        </div>
-      );
-    }
-    return (
-      <div style={S.editorPanelStack}>
-        <div style={S.editorModeKicker}>Referencias</div>
-        <div style={S.editorLead}>Liga este caso a outros dossiers apenas quando houver ligacao estrutural real.</div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Ligadas</div>
-          <div style={S.chipGridCompact}>
-            {referenceGroups.length ? referenceGroups.map((group) => (
-              <button key={group.id} type="button" style={S.groupChipBtnOn} onClick={() => toggleReferenceGroup(group.id)}>
-                {group.name || group.id}
-              </button>
-            )) : <span style={S.mutedMini}>Sem referencias ligadas.</span>}
-          </div>
-        </div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Pesquisar outro dossier</div>
-          <div style={S.searchInlineRow}>
-            <input
-              style={S.input}
-              value={referenceSearch}
-              onChange={(event) => setReferenceSearchValue(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (referenceCanCreate) {
-                    void handleCreateGroupAndLink("referencia", referenceSearch);
-                  } else if (exactReferenceSearchGroup) {
-                    toggleReferenceGroup(exactReferenceSearchGroup.id);
-                    setReferenceSearchValue(exactReferenceSearchGroup.name);
-                  }
-                }
-              }}
-              placeholder="Escreve para pesquisar..."
-            />
-            <button
-              type="button"
-              style={S.secondaryBtn}
-              onClick={() => {
-                if (referenceCanCreate) {
-                  void handleCreateGroupAndLink("referencia", referenceSearch);
-                  return;
-                }
-                if (exactReferenceSearchGroup) {
-                  toggleReferenceGroup(exactReferenceSearchGroup.id);
-                  setReferenceSearchValue(exactReferenceSearchGroup.name);
-                }
-              }}
-              title={referenceCanCreate ? "Criar referencia" : exactReferenceSearchGroup ? "Ligar ou desligar referencia existente" : "Pesquisar referencia"}
-            >
-              {referenceCanCreate ? "Criar" : "Procurar"}
-            </button>
-          </div>
-          {!referenceSearchResults.length && String(referenceSearch || "").trim() ? (
-            <div style={S.cardMeta}>
-              {referenceCanCreate
-                ? `Ainda nao existe nenhum dossier com este nome. Usa Procurar para criar "${String(referenceSearch || "").trim()}".`
-                : "Referencia exata encontrada. Usa Procurar para a ligar ou desligar."}
-            </div>
-          ) : null}
-          {referenceSearchResults.length ? (
-            <div style={S.searchResultListCompact}>
-              {referenceSearchResults.map((group) => (
-                <button key={group.id} type="button" style={referenceGroupIds.includes(group.id) ? S.searchResultBtnOn : S.searchResultBtn} onClick={() => toggleReferenceGroup(group.id)}>
-                  <span>{group.name}</span>
-                  {referenceGroupIds.includes(group.id) ? <span style={S.resultMiniMeta}>Ligada</span> : null}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-          <div style={S.editorOptionStackLoose}>
-            <div style={S.editorOptionGrid}>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceCategorize} onChange={(event) => updateClassificationMeta({ referenceCategorize: event.target.checked })} /> Referencia em categoria Outlook</label>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceStatusCategorize} onChange={(event) => updateClassificationMeta({ referenceStatusEnabled: event.target.checked, referenceStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
-            </div>
-            <div style={S.editorLegendWrap}>
-              {renderOutlookColorLegend()}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  function renderClassificationEditorContent() {
-    if (classificationFocus === "principal") return renderPrincipalEditor();
-    if (classificationFocus === "labels") return renderLabelsEditor();
-    if (classificationFocus === "ticket") return renderTicketEditor();
-    return renderReferencesEditor();
-  }
-
-  function renderApplyDialogLegacy() {
-    if (!applyDialogOpen) return null;
-    const sectionLabel = applyDialogSection === "principal"
-      ? "Grupo principal"
-      : applyDialogSection === "labels"
-        ? "Etiquetas"
-        : applyDialogSection === "ticket"
-          ? "Ticket"
-          : applyDialogSection === "references"
-            ? "Referencias"
-            : "Classificacao";
-    return (
-      <div style={S.modalBackdrop}>
-        <div style={S.modalSheet}>
-          <div style={S.modalHeader}>
-            <div>
-              <div style={S.kicker}>Aplicar alteracoes</div>
-              <div style={S.modalTitle}>{sectionLabel}</div>
-            </div>
-            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
-          </div>
-          <div style={S.modalScopeRow}>
-            <button type="button" style={applyDialogScopeMode === "current" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("current")}>So este email</button>
-            <button type="button" style={applyDialogScopeMode === "selected" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("selected")}>Emails selecionados</button>
-            <button type="button" style={applyDialogScopeMode === "case_all" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("case_all")}>Todos os emails do caso</button>
-          </div>
-          <div style={S.modalBlock}>
-            <div style={S.modalBlockHeader}>
-              <div style={S.editorBlockTitle}>Escolher emails</div>
-              <button type="button" style={S.linkBtn} onClick={() => setApplyDialogEmailKeys(caseScopeEmails.map((email) => makeEmailKey(email)).filter(Boolean))}>Selecionar todos</button>
-            </div>
-            <div style={S.applyEmailList}>
-              {caseScopeEmails.map((email) => {
-                const emailKey = makeEmailKey(email);
-                const expanded = applyDialogExpandedEmailKeys.includes(emailKey);
-                const checked = applyDialogEmailKeys.includes(emailKey);
-                const previewText = String(email.bodyText || htmlToPlainText(email.bodyHtml || "") || buildSnippet(email) || "").trim();
-                return (
-                  <div key={emailKey} style={checked ? S.applyEmailRowOn : S.applyEmailRow}>
-                    <div style={S.applyEmailRowTop}>
-                      <label style={S.applyEmailMain}>
-                        <input type="checkbox" checked={checked} onChange={() => toggleApplyDialogEmailKey(emailKey)} />
-                        <span style={S.applyEmailSubject}>{email.subject || "(sem assunto)"}</span>
-                        <span style={S.applyEmailMeta}>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</span>
-                      </label>
-                      <button type="button" style={S.chevronBtn} onClick={() => toggleApplyDialogExpandedEmailKey(emailKey)}>{expanded ? "⌃" : "⌄"}</button>
-                    </div>
-                    {expanded ? (
-                      <div style={S.applyEmailPreview}>{previewText || "Sem preview resumido para este email."}</div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div style={S.modalFooter}>
-            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
-            <button type="button" style={S.primaryBtn} onClick={() => void handleConfirmApplyDialog()} disabled={actionBusy || !applyDialogSelectedEmails.length}>
-              Confirmar aplicacao
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  function renderApplyDialog() {
-    if (!applyDialogOpen) return null;
-    const sectionLabel = applyDialogSection === "principal"
-      ? "Grupo principal"
-      : applyDialogSection === "labels"
-        ? "Etiquetas"
-        : applyDialogSection === "ticket"
-          ? "Ticket"
-          : applyDialogSection === "references"
-            ? "Referencias"
-            : "Classificacao";
-    const displayEmails = applyDialogScopeMode === "current"
-      ? (currentScopeEmail ? [currentScopeEmail] : [])
-      : caseScopeEmails;
-    const manualSelectionEnabled = applyDialogScopeMode === "selected";
-    const showEmailList = applyDialogScopeMode !== "current";
-
-    return (
-      <div style={S.modalBackdrop}>
-        <div style={S.modalSheet}>
-          <div style={S.modalHeader}>
-            <div>
-              <div style={S.kicker}>Aplicar alteracoes</div>
-              <div style={S.modalTitle}>{sectionLabel}</div>
-            </div>
-            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)} disabled={actionBusy}>Cancelar</button>
-          </div>
-
-          <div style={S.modalScopeRow}>
-            <button type="button" style={applyDialogScopeMode === "current" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("current")} disabled={actionBusy}>So este email</button>
-            <button type="button" style={applyDialogScopeMode === "selected" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("selected")} disabled={actionBusy}>Emails selecionados</button>
-            <button type="button" style={applyDialogScopeMode === "case_all" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("case_all")} disabled={actionBusy}>Todos os emails do caso</button>
-          </div>
-
-          <div style={S.modalBlock}>
-            <div style={S.modalBlockHeader}>
-              <div style={S.editorBlockTitle}>{applyDialogScopeMode === "current" ? "Email alvo" : "Escolher emails"}</div>
-              {manualSelectionEnabled ? (
-                <button type="button" style={S.linkBtn} onClick={() => setApplyDialogEmailKeys(caseScopeEmails.map((email) => makeEmailKey(email)).filter(Boolean))} disabled={actionBusy}>Selecionar todos</button>
-              ) : null}
-            </div>
-            {!showEmailList && currentScopeEmail ? (
-              <div style={S.applySingleEmailSummary}>
-                <div style={S.applyEmailSummaryHead}>
-                  <div style={S.applyEmailSummaryTitle}>{currentScopeEmail.subject || "(sem assunto)"}</div>
-                  <button type="button" style={S.chevronBtn} onClick={() => toggleApplyDialogExpandedEmailKey(makeEmailKey(currentScopeEmail))}>
-                    {applyDialogExpandedEmailKeys.includes(makeEmailKey(currentScopeEmail)) ? "\u2303" : "\u2304"}
-                  </button>
-                </div>
-                <div style={S.applyEmailSummaryMeta}>{buildCompactEmailMeta(currentScopeEmail)}</div>
-                {applyDialogExpandedEmailKeys.includes(makeEmailKey(currentScopeEmail)) ? (
-                  <div style={S.applyEmailPreview}>{buildEmailPreviewText(currentScopeEmail) || "Sem preview resumido para este email."}</div>
-                ) : null}
-              </div>
-            ) : (
-              <div style={S.applyEmailList}>
-                {displayEmails.map((email) => {
-                  const emailKey = makeEmailKey(email);
-                  const selected = applyDialogSelectedEmailKeys.includes(emailKey);
-                  const expanded = applyDialogExpandedEmailKeys.includes(emailKey);
-                  return (
-                    <div key={emailKey} style={selected ? S.applyEmailRowOn : S.applyEmailRow}>
-                      <div style={S.applyEmailRowTop}>
-                        <div style={S.applyEmailMain}>
-                          {manualSelectionEnabled ? (
-                            <input type="checkbox" checked={selected} onChange={() => toggleApplyDialogEmailKey(emailKey)} disabled={actionBusy} />
-                          ) : (
-                            <span style={selected ? S.applyScopeBadgeOn : S.applyScopeBadge}>{selected ? "Incluido" : "Omitir"}</span>
-                          )}
-                          <span style={S.applyEmailSubject}>{email.subject || "(sem assunto)"}</span>
-                        </div>
-                        <div style={S.applyEmailRowTail}>
-                          <span style={S.applyEmailMeta}>{buildCompactEmailMeta(email)}</span>
-                          <button type="button" style={S.chevronBtn} onClick={() => toggleApplyDialogExpandedEmailKey(emailKey)}>
-                            {expanded ? "\u2303" : "\u2304"}
-                          </button>
-                        </div>
-                      </div>
-                      {expanded ? (
-                        <div style={S.applyEmailPreview}>{buildEmailPreviewText(email) || "Sem preview resumido para este email."}</div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div style={S.modalFooter}>
-            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10 }}>
-              {status ? <div style={{ fontSize: 11, fontWeight: 600, color: "var(--iccc-muted)" }}>{status}</div> : null}
-              {actionBusy ? <span style={{ fontSize: 10, color: "#1d4ed8", fontWeight: 700 }}>A processar...</span> : null}
-            </div>
-            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)} disabled={actionBusy}>Cancelar</button>
-            <button type="button" style={S.primaryBtn} onClick={handleConfirmApplyDialog} disabled={actionBusy || (manualSelectionEnabled && !applyDialogSelectedEmailKeys.length)}>
-              {actionBusy ? "A aplicar..." : "Confirmar e aplicar"}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // legacy renderers removed - handled by modular components
 
   function renderWorkspace() {
     if (loading) return <PanelState compact tone="loading" title="A preparar a janela" description="A carregar emails, grupos e series para o novo studio." />;
@@ -5473,7 +3824,7 @@ function StudioInner() {
               <div style={S.grid2}>
                 <select style={S.select} value={selectedSeriesId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedSeriesId(nextValue); if (nextValue) setSelectedTicketId(""); }}>
                   <option value="">Sem novo ticket</option>
-                  {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
+                  {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} Â· {series.name}</option>)}
                 </select>
                 <input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do ticket" />
               </div>
@@ -5620,7 +3971,7 @@ function StudioInner() {
             <div style={S.grid2}>
               <label style={S.field}><span style={S.label}>Fonte da lista</span><select style={S.select} value={scopeMode} onChange={(event) => setScopeMode(event.target.value as ScopeMode)}><option value="related">So emails relacionados</option><option value="all">Todos os emails conhecidos</option></select></label>
               <label style={S.field}><span style={S.label}>Filtrar por grupo</span><select style={S.select} value={groupFilterId} onChange={(event) => setGroupFilterId(event.target.value)}><option value="">Sem filtro</option>{contextualGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-              <label style={S.field}><span style={S.label}>Filtrar por ticket</span><select style={S.select} value={ticketFilterId} onChange={(event) => setTicketFilterId(event.target.value)}><option value="">Sem filtro</option>{contextualTickets.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} · {ticket.title}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Filtrar por ticket</span><select style={S.select} value={ticketFilterId} onChange={(event) => setTicketFilterId(event.target.value)}><option value="">Sem filtro</option>{contextualTickets.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} Â· {ticket.title}</option>)}</select></label>
               <label style={S.field}><span style={S.label}>Filtrar por etiqueta</span><select style={S.select} value={labelFilterValue} onChange={(event) => setLabelFilterValue(event.target.value)}><option value="">Sem filtro</option>{contextualLabels.map((label) => <option key={label} value={label}>{label}</option>)}</select></label>
             </div>
             <div style={S.inlineChecks}>
@@ -5721,7 +4072,7 @@ function StudioInner() {
                   <div style={S.inlineWrap}>
                     {managedGroupContacts.length ? managedGroupContacts.map((contact) => (
                       <button key={contact.key} type="button" style={S.selectedChipOn} onClick={() => toggleManagedGroupContact(contact)} disabled={!selectedManagedGroup}>
-                        {contact.name}{contact.company ? ` · ${contact.company}` : ""}{contact.email ? ` · ${contact.email}` : ""}
+                        {contact.name}{contact.company ? ` Â· ${contact.company}` : ""}{contact.email ? ` Â· ${contact.email}` : ""}
                       </button>
                     )) : <span style={S.mutedMini}>Sem contactos associados.</span>}
                   </div>
@@ -5730,7 +4081,7 @@ function StudioInner() {
                       const active = managedGroupContacts.some((entry) => entry.key === contact.key);
                       return (
                         <button key={contact.key} type="button" style={active ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleManagedGroupContact(contact)}>
-                          {contact.name}{contact.company ? ` · ${contact.company}` : ""}{contact.email ? ` · ${contact.email}` : ""}
+                          {contact.name}{contact.company ? ` Â· ${contact.company}` : ""}{contact.email ? ` Â· ${contact.email}` : ""}
                         </button>
                       );
                     }) : null}
@@ -5749,7 +4100,7 @@ function StudioInner() {
                   <div style={S.inlineWrap}>
                     {managedGroupEntities.length ? managedGroupEntities.map((entity) => (
                       <button key={entity.key} type="button" style={S.selectedChipOn} onClick={() => toggleManagedGroupEntity(entity)} disabled={!selectedManagedGroup}>
-                        {entity.name}{entity.kind ? ` · ${entity.kind}` : ""}
+                        {entity.name}{entity.kind ? ` Â· ${entity.kind}` : ""}
                       </button>
                     )) : <span style={S.mutedMini}>Sem entidades associadas.</span>}
                   </div>
@@ -5758,7 +4109,7 @@ function StudioInner() {
                       const active = managedGroupEntities.some((entry) => entry.key === entity.key);
                       return (
                         <button key={entity.key} type="button" style={active ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleManagedGroupEntity(entity)}>
-                          {entity.name}{entity.kind ? ` · ${entity.kind}` : ""}
+                          {entity.name}{entity.kind ? ` Â· ${entity.kind}` : ""}
                         </button>
                       );
                     }) : null}
@@ -5784,7 +4135,7 @@ function StudioInner() {
                     <div key={makeEmailKey(email)} style={S.itemRow}>
                       <div style={S.itemMeta}>
                         <strong>{email.subject || "(sem assunto)"}</strong>
-                        <small>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</small>
+                        <small>{email.fromName || email.fromEmail || "--"} Â· {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</small>
                       </div>
                       <div style={S.inline}>
                         {(email.itemId || email.emailWebLink) ? (
@@ -5819,7 +4170,7 @@ function StudioInner() {
                     <div key={document.id} style={S.itemRow}>
                       <div style={S.itemMeta}>
                         <strong>{document.name || "Documento"}</strong>
-                        <small>{document.contentType || "ficheiro"}{document.size ? ` · ${Math.round(Number(document.size || 0) / 1024)} KB` : ""}</small>
+                        <small>{document.contentType || "ficheiro"}{document.size ? ` Â· ${Math.round(Number(document.size || 0) / 1024)} KB` : ""}</small>
                       </div>
                       <div style={S.inline}>
                         <a style={S.secondaryBtn} href={getGroupDocumentContentUrl(selectedManagedGroup.id, document.id)} target="_blank" rel="noreferrer">
@@ -5996,7 +4347,7 @@ function StudioInner() {
   const previewShellStyle = classificationEditorActive ? S.focusPreviewShell : S.previewShellLarge;
 
   return (
-    <div style={S.root}>
+    <div style={S.root} data-testid="studio-root">
       <div style={S.header}>
         <div style={S.headerMain}>
           <div style={S.kicker}>Gestor de Grupos</div>
@@ -6014,7 +4365,7 @@ function StudioInner() {
         <div style={S.headerActions}>
           <button type="button" style={S.secondaryBtn} onClick={() => setSection("groups")} disabled={!manageableGroups.length}>Renomear</button>
           <button type="button" style={S.secondaryBtn} onClick={() => setStatus("Fluxo de fundir preparado para a fase seguinte.")} disabled={!manageableGroups.length}>Fundir</button>
-          <button type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationEditorActive ? classificationFocus : "summary")} disabled={actionBusy || !(classificationEditorActive ? canApplyFromClassificationEditor : canApplyClassification)}>
+          <button data-testid="main-save-button" type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationEditorActive ? classificationFocus : "summary")} disabled={actionBusy || !(classificationEditorActive ? canApplyFromClassificationEditor : canApplyClassification)}>
             <Icons.Save size={12} />
             Guardar
           </button>
@@ -6032,182 +4383,37 @@ function StudioInner() {
       <div style={dashboardStyle}>
         <div style={topCardsGridStyle}>
 
-          <section style={emailsCardStyle}>
-            <div style={S.sectionHeaderCompact}>
-              <div>
-                <div style={S.sectionTitle}>Emails</div>
-                <div style={S.sectionSubtitle}>Exploracao do caso</div>
-              </div>
-              <span style={S.cardMeta}>Selecionados: {selectedTargetCount}</span>
-            </div>
-            <div style={S.emailControlsRow}>
-              <input style={S.input} value={emailSearch} onChange={(event) => setEmailSearch(event.target.value)} placeholder="Pesquisar por assunto, remetente ou texto..." />
-              <div style={S.emailToolsInline}>
-                <button type="button" style={S.linkBtn} onClick={selectAllVisibleEmails}>Todos visiveis</button>
-                <button type="button" style={S.linkBtn} onClick={clearSelectedTargets}>Limpar</button>
-              </div>
-            </div>
-            <div style={S.topCardScroll}>
-              {loading ? <PanelState compact tone="loading" title="A carregar emails" description="A preparar a lista desta nova janela." /> : null}
-              {!loading && !visibleEmails.length ? <PanelState compact tone="info" title="Sem emails visiveis" description="Ajusta os filtros ou muda a fonte da lista." /> : null}
-              {!loading && visibleEmails.map((email) => {
-                const emailKey = makeEmailKey(email);
-                const expanded = expandedEmailKeys.includes(emailKey);
-                const active = emailKey === makeEmailKey(selectedEmail || {});
-                return (
-                  <div
-                    key={`compact-${emailKey}`}
-                    style={active ? S.emailOn : S.email}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setSelectedEmailKey(emailKey)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        setSelectedEmailKey(emailKey);
-                      }
-                    }}
-                  >
-                    <div style={S.emailTop}>
-                      <label style={S.emailPick} onClick={(event) => event.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={selectedTargetEmailKeys.includes(emailKey)}
-                          onChange={() => toggleTargetEmailKey(emailKey)}
-                        />
-                        <span style={S.emailSubject}>{email.subject || "(sem assunto)"}</span>
-                      </label>
-                      <div style={S.emailTopRight}>
-                        <span style={S.emailMeta}>{buildCompactEmailMeta(email) || "--"}</span>
-                        {Array.isArray(email.attachments) && email.attachments.length ? <span style={S.counter}>{email.attachments.length}</span> : null}
-                        <button
-                          type="button"
-                          style={S.chevronBtn}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleExpandedEmailKey(emailKey);
-                          }}
-                        >
-                          {expanded ? "\u2303" : "\u2304"}
-                        </button>
-                      </div>
-                    </div>
-                    {expanded ? (
-                      <div style={S.emailSnippet}>{buildEmailPreviewText(email) || "Sem preview curto disponivel."}</div>
-                    ) : null}
-                  </div>
-                );
-              })}
-              {false && !loading && visibleEmails.map((email) => (
-                <button key={makeEmailKey(email)} type="button" style={makeEmailKey(email) === makeEmailKey(selectedEmail || {}) ? S.emailOn : S.email} onClick={() => setSelectedEmailKey(makeEmailKey(email))}>
-                  <div style={S.emailTop}>
-                    <label style={S.emailPick} onClick={(event) => event.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selectedTargetEmailKeys.includes(makeEmailKey(email))}
-                        onChange={() => toggleTargetEmailKey(makeEmailKey(email))}
-                      />
-                      <span style={S.emailSubject}>{email.subject || "(sem assunto)"}</span>
-                    </label>
-                    {Array.isArray(email.attachments) && email.attachments.length ? <span style={S.counter}>{email.attachments.length}</span> : null}
-                  </div>
-                  <div style={S.emailMeta}>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</div>
-                  <div style={S.emailSnippet}>{buildSnippet(email) || "Sem preview curto disponivel."}</div>
-                </button>
-              ))}
-            </div>
-          </section>
+          <EmailsCard
+            style={emailsCardStyle}
+            loading={loading}
+            visibleEmails={visibleEmails}
+            selectedEmail={selectedEmail}
+            emailSearch={emailSearch}
+            setEmailSearch={setEmailSearch}
+            selectAllVisibleEmails={selectAllVisibleEmails}
+            clearSelectedTargets={clearSelectedTargets}
+            selectedTargetCount={selectedTargetCount}
+            selectedTargetEmailKeys={selectedTargetEmailKeys}
+            toggleTargetEmailKey={toggleTargetEmailKey}
+            expandedEmailKeys={expandedEmailKeys}
+            toggleExpandedEmailKey={toggleExpandedEmailKey}
+            setSelectedEmailKey={setSelectedEmailKey}
+          />
 
-          <section style={quickDocumentsCardStyle}>
-            <div style={S.sectionHeaderCompact}>
-              <div>
-                <div style={S.sectionTitle}>Documentos rapidos</div>
-                <div style={S.sectionSubtitle}>Do email selecionado</div>
-              </div>
-              <div style={S.emailToolsInline}>
-                {quickDocumentHiddenCount ? (
-                  <button
-                    type="button"
-                    style={showHiddenQuickDocuments ? S.quietToggleBtnOn : S.quietToggleBtn}
-                    onClick={() => setShowHiddenQuickDocuments((current) => !current)}
-                  >
-                    {showHiddenQuickDocuments ? `Ocultar ocultos (${quickDocumentHiddenCount})` : `Mostrar ocultos (${quickDocumentHiddenCount})`}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div style={S.topCardScroll}>
-              {!quickDocumentAttachments.length ? (
-                <PanelState compact tone="info" title="Sem documentos rapidos" description="Este email ainda nao tem anexos persistidos para abrir aqui." />
-              ) : (
-                <div style={S.quickDocList}>
-                  {quickDocumentAttachments.map((attachment) => {
-                    const key = makeAttachmentKey(attachment);
-                    const active = key === selectedAttachmentPreviewKey && previewMode === "document";
-                    const expanded = expandedQuickDocumentKeys.includes(key);
-                    const hidden = isStudioAttachmentHiddenInQuickDocs(attachment);
-                    const previewText = buildQuickDocumentPreviewText(attachment);
-                    const rowStyle = active
-                      ? hidden
-                        ? { ...S.emailOn, ...S.quickDocRowHiddenTone }
-                        : S.emailOn
-                      : hidden
-                        ? { ...S.email, ...S.quickDocRowHiddenTone }
-                        : S.email;
-                    return (
-                      <div
-                        key={key}
-                        style={rowStyle}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => handleOpenQuickAttachment(attachment)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            handleOpenQuickAttachment(attachment);
-                          }
-                        }}
-                      >
-                        <div style={S.emailTop}>
-                          <div style={S.quickDocLineMain}>
-                            <span style={S.emailSubject}>{attachment.name || "Anexo"}</span>
-                          </div>
-                          <div style={S.emailTopRight}>
-                            <span style={S.emailMeta}>{formatQuickDocumentMeta(attachment)}</span>
-                            {hidden ? <span style={S.quickDocStateBadge}>Oculto</span> : null}
-                            <button
-                              type="button"
-                              style={hidden ? S.quickDocActionBtnOn : S.quickDocActionBtn}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void handleSetQuickAttachmentHidden(attachment, hidden ? false : true);
-                              }}
-                              disabled={actionBusy}
-                            >
-                              {hidden ? "Mostrar" : "Ocultar"}
-                            </button>
-                            {previewText ? (
-                              <button
-                                type="button"
-                                style={S.chevronBtn}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  toggleExpandedQuickDocumentKey(key);
-                                }}
-                              >
-                                {expanded ? "\u2303" : "\u2304"}
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                        {expanded && previewText ? <div style={S.emailSnippet}>{previewText}</div> : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
+          <QuickDocumentsCard
+            style={quickDocumentsCardStyle}
+            quickDocumentAttachments={quickDocumentAttachments}
+            selectedAttachmentPreviewKey={selectedAttachmentPreviewKey}
+            previewMode={previewMode}
+            expandedQuickDocumentKeys={expandedQuickDocumentKeys}
+            quickDocumentHiddenCount={quickDocumentHiddenCount}
+            showHiddenQuickDocuments={showHiddenQuickDocuments}
+            setShowHiddenQuickDocuments={setShowHiddenQuickDocuments}
+            handleOpenQuickAttachment={handleOpenQuickAttachment}
+            handleSetQuickAttachmentHidden={handleSetQuickAttachmentHidden}
+            toggleExpandedQuickDocumentKey={toggleExpandedQuickDocumentKey}
+            actionBusy={actionBusy}
+          />
 
           <section style={classificationCardStyle}>
             <div style={S.sectionHeaderCompact}>
@@ -6216,8 +4422,8 @@ function StudioInner() {
                 <div style={S.sectionSubtitle}>{classificationEditorActive ? "Editor aberto" : "Resumo do que esta atribuido"}</div>
               </div>
               <div style={S.segmentedControl}>
-                <button type="button" style={classificationLayoutMode === "normal" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("normal")}>Normal</button>
-                <button type="button" style={classificationLayoutMode === "advanced" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("advanced")}>Avancado</button>
+                <button data-testid="mode-normal-button" type="button" style={classificationLayoutMode === "normal" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("normal")}>Normal</button>
+                <button data-testid="mode-advanced-button" type="button" style={classificationLayoutMode === "advanced" ? S.segmentBtnActive : S.segmentBtn} onClick={() => setClassificationLayoutMode("advanced")}>Avancado</button>
               </div>
             </div>
             {auxiliaryEditorActive ? (
@@ -6241,110 +4447,129 @@ function StudioInner() {
                 <div style={S.classificationEditorBody}>{renderWorkspace()}</div>
               </div>
             ) : !classificationEditorActive ? (
-              <div style={S.classificationSummary}>
-                {classificationSummaryTiles
-                  .filter((item) => classificationLayoutMode === "advanced" || item.key !== "references")
-                  .map((item) => (
-                    <button key={item.key} type="button" style={S.classificationTile} onClick={item.onClick}>
-                      <span style={S.classificationTileLabel}>{item.title}</span>
-                      <span style={S.classificationTileValue}>{item.value}</span>
-                      <span style={S.classificationTileMeta}>{item.description}</span>
-                    </button>
-                  ))}
-                <div style={S.classificationModeHint}>
-                  {classificationLayoutMode === "normal"
-                    ? "Modo normal: grupo principal, etiquetas e ticket."
-                    : "Modo avancado: inclui referencias e opcoes finas."}
-                </div>
-              </div>
+              <ClassificationSummaryTiles
+                tiles={classificationSummaryTiles}
+                classificationLayoutMode={classificationLayoutMode}
+                style={S.classificationSummary}
+              />
             ) : (
               <div style={S.classificationEditorShell}>
-                {renderClassificationEditorHeader()}
-                <div style={S.classificationEditorBody}>{renderClassificationEditorContent()}</div>
+                <ClassificationEditorHeader
+                  classificationFocus={classificationFocus}
+                  classificationLayoutMode={classificationLayoutMode}
+                  onBack={handleCloseClassificationEditor}
+                  onApply={openApplyDialog}
+                  canApply={canApplyFromClassificationEditor}
+                  actionBusy={actionBusy}
+                />
+                <div style={S.classificationEditorBody}>
+                  <ClassificationEditor
+                    data-testid="classification-editor"
+                    classificationFocus={classificationFocus}
+                    classificationLayoutMode={classificationLayoutMode}
+                    classificationSuggestionExpanded={classificationSuggestionExpanded}
+                    setClassificationSuggestionExpanded={setClassificationSuggestionExpanded}
+                    suggestedExistingGroups={suggestedExistingGroups}
+                    principalGroupId={principalGroupId}
+                    clearPrincipalSelection={clearPrincipalSelection}
+                    selectPrincipalGroup={selectPrincipalGroup}
+                    principalSearch={principalSearch}
+                    setPrincipalSearchValue={setPrincipalSearchValue}
+                    principalCanCreate={principalCanCreate}
+                    handleCreateGroupAndLink={handleCreateGroupAndLink}
+                    exactPrincipalSearchGroup={exactPrincipalSearchGroup}
+                    principalSearchResults={principalSearchResults}
+                    principalGroup={principalGroup}
+                    classificationMetaDraft={classificationMetaDraft}
+                    updateClassificationMeta={updateClassificationMeta}
+                    suggestedLabelSeeds={suggestedLabelSeeds}
+                    selectedLabels={selectedLabels}
+                    applySuggestedLabel={applySuggestedLabel}
+                    classificationLabelInput={classificationLabelInput}
+                    setClassificationLabelInput={setClassificationLabelInput}
+                    handleClassificationLabelSearchAction={handleClassificationLabelSearchAction}
+                    classificationLabelCanCreate={classificationLabelCanCreate}
+                    filteredClassificationLabels={filteredClassificationLabels}
+                    removeLabel={removeLabel}
+                    addLabel={addLabel}
+                    selectedLabelSharedStatus={selectedLabelSharedStatus}
+                    updateLabelDraft={updateLabelDraft}
+                    labelDrafts={labelDrafts}
+                    LABEL_STATUS_OPTIONS={LABEL_STATUS_OPTIONS}
+                    normalizedTicketSearch={normalizedTicketSearch}
+                    ticketSearchResults={ticketSearchResults}
+                    availableTicketChoices={availableTicketChoices}
+                    selectedTicket={selectedTicket}
+                    selectedSeriesId={selectedSeriesId}
+                    ticketEditorMode={ticketEditorMode}
+                    setTicketEditorMode={setTicketEditorMode}
+                    ticketSearch={ticketSearch}
+                    setTicketSearch={setTicketSearch}
+                    handleSearchTickets={handleSearchTickets}
+                    ticketSearchBusy={ticketSearchBusy}
+                    setSelectedSeriesId={setSelectedSeriesId}
+                    setSelectionTouched={setSelectionTouched}
+                    ticketSeries={ticketSeries}
+                    createTicketTitle={createTicketTitle}
+                    setCreateTicketTitle={setCreateTicketTitle}
+                    ticketStatusDraft={ticketStatusDraft}
+                    setTicketStatusDraft={setTicketStatusDraft}
+                    TICKET_STATUS_OPTIONS={TICKET_STATUS_OPTIONS}
+                    effectiveTicketStatus={effectiveTicketStatus}
+                    ticketStatusLabel={ticketStatusLabel}
+                    selectedTicketId={selectedTicketId}
+                    applySuggestedTicket={applySuggestedTicket}
+                    clearTicketSelection={clearTicketSelection}
+                    referenceGroups={referenceGroups}
+                    toggleReferenceGroup={toggleReferenceGroup}
+                    referenceSearch={referenceSearch}
+                    setReferenceSearchValue={setReferenceSearchValue}
+                    referenceCanCreate={referenceCanCreate}
+                    exactReferenceSearchGroup={exactReferenceSearchGroup}
+                    referenceSearchResults={referenceSearchResults}
+                    referenceGroupIds={referenceGroupIds}
+                    actionBusy={actionBusy}
+                  />
+                </div>
               </div>
             )}
           </section>
         </div>
 
-        <section style={previewShellStyle}>
-            <div style={S.previewToolbar}>
-              <button type="button" style={previewMode === "email" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("email")} disabled={!previewHtml}>Email</button>
-              <button type="button" style={previewMode === "document" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("document")} disabled={!previewHasDocument}>Documento</button>
-              <button type="button" style={previewMode === "reply" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("reply")} disabled={!selectedEmail}>Responder</button>
-              <button type="button" style={previewMode === "forward" ? S.previewTabOn : S.previewTab} onClick={() => setPreviewMode("forward")} disabled={!selectedEmail}>Reencaminhar</button>
-            </div>
-            <div style={S.previewBody}>
-              {previewMode === "email" ? (
-                previewHtml ? (
-                  <div style={S.previewHtml} dangerouslySetInnerHTML={{ __html: previewHtml }} />
-                ) : (
-                  <PanelState compact tone="info" title="Preview indisponivel" description="Este email ainda nao tem corpo guardado suficiente para preview." />
-                )
-              ) : null}
-              {previewMode === "document" ? (
-                selectedAttachmentPreview ? (
-                  <div style={S.documentPreviewShell}>
-                    {selectedAttachmentDocumentPreview?.kind === "image" ? (
-                      <div style={S.documentPreviewFrame}>
-                        <img src={selectedAttachmentDocumentPreview.src} alt={selectedAttachmentPreview?.name || "Imagem"} style={S.attachmentPreviewImage} />
-                      </div>
-                    ) : null}
-                    {selectedAttachmentDocumentPreview?.kind === "pdf" ? (
-                      <div style={S.documentPreviewFrame}>
-                        {selectedAttachmentDocumentPreview.src.startsWith("data:")
-                          ? <StudioPdfPreview dataUrl={selectedAttachmentDocumentPreview.src} title={selectedAttachmentPreview?.name || "PDF"} />
-                          : <iframe title={selectedAttachmentPreview?.name || "PDF"} src={selectedAttachmentDocumentPreview.src} style={S.documentPreviewIframe} />}
-                      </div>
-                    ) : null}
-                    {selectedAttachmentDocumentPreview?.kind === "office" ? (
-                      <div style={S.documentPreviewFrame}>
-                        <iframe title={selectedAttachmentPreview?.name || "Documento"} src={selectedAttachmentDocumentPreview.url} style={S.documentPreviewIframe} />
-                      </div>
-                    ) : null}
-                    {selectedAttachmentDocumentPreview?.kind === "text" ? (
-                      <pre style={S.attachmentPreviewText}>{selectedAttachmentDocumentPreview.text}</pre>
-                    ) : null}
-                    {!selectedAttachmentDocumentPreview && selectedAttachmentPreviewRemoteStatus === "loading" ? (
-                      <PanelState compact tone="loading" title="A carregar documento" description="A preparar o preview do documento selecionado." />
-                    ) : null}
-                    {selectedAttachmentDocumentPreview?.kind === "unsupported" ? (
-                      <PanelState compact tone="info" title="Preview nao disponivel" description="Este documento pode exigir download ou URL publica para preview." />
-                    ) : null}
-                    {!selectedAttachmentDocumentPreview && selectedAttachmentPreviewRemoteStatus !== "loading" && selectedAttachmentPreviewMode !== "none" ? (
-                      <PanelState compact tone="info" title="Preview nao disponivel" description="Nao foi possivel abrir este documento com a mesma base de preview da aba Grupos." />
-                    ) : null}
-                    {selectedAttachmentPreviewMode === "none" ? (
-                      <PanelState compact tone="info" title="Escolhe um documento" description="Seleciona um documento rapido para abrir o preview." />
-                    ) : null}
-                  </div>
-                ) : (
-                  <PanelState compact tone="info" title="Sem documento selecionado" description="Escolhe primeiro um documento rapido para abrir o preview." />
-                )
-              ) : null}
-              {previewMode === "reply" ? (
-                <div style={S.previewPlaceholder}>
-                  <div style={S.cardTitle}>Responder</div>
-                  <div style={S.cardMeta}>Estrutura pronta para editor, IA e selecao de anexos numa fase seguinte.</div>
-                  <button type="button" style={S.primaryBtn} onClick={() => void handlePreviewReply()} disabled={!selectedEmail}>
-                    <Icons.MessageSquare size={12} />
-                    Abrir resposta
-                  </button>
-                </div>
-              ) : null}
-              {previewMode === "forward" ? (
-                <div style={S.previewPlaceholder}>
-                  <div style={S.cardTitle}>Reencaminhar</div>
-                  <div style={S.cardMeta}>Estrutura pronta para editor, IA e composicao de envio numa fase seguinte.</div>
-                  <button type="button" style={S.primaryBtn} onClick={() => void handlePreviewForward()} disabled={!selectedEmail}>
-                    <Icons.ExternalLink size={12} />
-                    Abrir reencaminhamento
-                  </button>
-                </div>
-              ) : null}
-            </div>
-        </section>
+        <PreviewPane
+          data-testid="preview-pane"
+          previewShellStyle={previewShellStyle}
+          previewMode={previewMode}
+          setPreviewMode={setPreviewMode}
+          previewHtml={previewHtml}
+          previewHasDocument={previewHasDocument}
+          selectedEmail={selectedEmail}
+          selectedAttachmentPreview={selectedAttachmentPreview}
+          selectedAttachmentDocumentPreview={selectedAttachmentDocumentPreview}
+          selectedAttachmentPreviewRemoteStatus={selectedAttachmentPreviewRemoteStatus}
+          selectedAttachmentPreviewMode={selectedAttachmentPreviewMode}
+          handlePreviewReply={handlePreviewReply}
+          handlePreviewForward={handlePreviewForward}
+        />
       </div>
-      {renderApplyDialog()}
+      <ApplyDialog
+        data-testid="apply-dialog"
+        isOpen={applyDialogOpen}
+        onClose={() => setApplyDialogOpen(false)}
+        section={applyDialogSection}
+        scopeMode={applyDialogScopeMode}
+        setScopeMode={setApplyDialogScope}
+        currentScopeEmail={currentScopeEmail}
+        caseScopeEmails={caseScopeEmails}
+        selectedEmailKeys={applyDialogSelectedEmailKeys}
+        setSelectedEmailKeys={setApplyDialogEmailKeys}
+        expandedEmailKeys={applyDialogExpandedEmailKeys}
+        toggleExpandedEmailKey={toggleApplyDialogExpandedEmailKey}
+        toggleEmailKey={toggleApplyDialogEmailKey}
+        status={status}
+        actionBusy={actionBusy}
+        handleConfirm={() => void handleConfirmApplyDialog()}
+      />
     </div>
   );
 }
@@ -6424,14 +4649,8 @@ const S: Record<string, React.CSSProperties> = {
   segmentBtn: { height: 24, padding: "0 9px", border: "none", background: "transparent", color: "#475569", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
   segmentBtnActive: { height: 24, padding: "0 9px", border: "none", background: "rgba(37,99,235,0.14)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
   classificationSummary: { minHeight: 0, display: "grid", gap: 6, alignContent: "start", overflowY: "auto", paddingRight: 1 },
-  classificationTile: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.76)", padding: "8px 9px", display: "grid", gap: 2, cursor: "pointer" },
-  classificationTileMuted: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(191,219,254,0.52)", background: "rgba(239,246,255,0.62)", padding: "8px 9px", display: "grid", gap: 2, cursor: "pointer" },
-  classificationTileLabel: { fontSize: 8.5, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--iccc-muted)" },
-  classificationTileValue: { fontSize: 11.25, fontWeight: 550, color: "var(--iccc-text)", lineHeight: 1.2 },
-  classificationTileMeta: { fontSize: 9.5, lineHeight: 1.25, color: "var(--iccc-muted)" },
   legendRow: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 },
   legendChip: { padding: "3px 8px", borderRadius: 6, fontSize: 9.5, fontWeight: 700, border: "1px solid" },
-  classificationModeHint: { padding: "7px 9px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.82)", color: "var(--iccc-muted)", fontSize: 9.75, lineHeight: 1.35 },
   advancedHintBox: { display: "flex", flexWrap: "wrap", gap: 8 },
   advancedHintChip: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(239,246,255,0.72)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 700 },
   classificationExtraGrid: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
