@@ -55,6 +55,8 @@ import StatusLegend from "./group-classification/components/StatusLegend";
 import ClassificationEditor from "./group-classification/components/ClassificationEditor";
 import ApplyDialog from "./group-classification/components/ApplyDialog";
 import PreviewPane, { StudioPdfPreview } from "./group-classification/components/PreviewPane";
+import ClassificationSummaryTiles from "./group-classification/components/ClassificationSummaryTiles";
+import ClassificationEditorHeader from "./group-classification/components/ClassificationEditorHeader";
 import { 
   escapeHtml, sanitizeEmailPreviewHtml, buildEmailPreviewHtml, 
   decodeBase64Text, stripDataUrlPrefix, canUseOfficeWebViewer, 
@@ -208,11 +210,11 @@ function updateAttachmentVisibilityOnEmail(
 
 function detectReferencesFocused(text: string): string[] {
   const prepared = String(text || "")
-    .replace(/[‐‑–—]/g, "-")
+    .replace(/[â€â€‘â€“â€”]/g, "-")
     .replace(/([A-Z0-9])\s*([/-])\s*(?=[A-Z0-9])/gi, "$1$2");
   const rawMatches: string[] = [];
   const patterns = [
-    /\b(?:pedido|encomenda|order|po|purchase order|proposta|orcamento|obra|projeto|project|ref(?:erencia)?|doc(?:umento)?|fatura|invoice)\s*(?:n(?:o|º|°)?\.?\s*)?([A-Z0-9]+(?:[/-][A-Z0-9]+){1,4})\b/gi,
+    /\b(?:pedido|encomenda|order|po|purchase order|proposta|orcamento|obra|projeto|project|ref(?:erencia)?|doc(?:umento)?|fatura|invoice)\s*(?:n(?:o|Âº|Â°)?\.?\s*)?([A-Z0-9]+(?:[/-][A-Z0-9]+){1,4})\b/gi,
     /\b([A-Z]{0,6}\d{0,6}[A-Z0-9]*(?:[/-][A-Z0-9]+){1,4})\b/g,
     /\b(\d+(?:[/-][A-Z0-9]+){1,4})\b/g,
   ];
@@ -264,9 +266,9 @@ function classifyDetectedReferences(references: string[], text: string): {
     let classification: "documents" | "articles" | "others" = "others";
     const index = upperText.indexOf(normalized);
     const context = index >= 0 ? upperText.slice(Math.max(0, index - 48), Math.min(upperText.length, index + normalized.length + 48)) : "";
-    if (/(PEDIDO|ENCOMENDA|ORDER|PROPOSTA|ORCAMENTO|ORÇAMENTO|FATURA|INVOICE|GUIA|OBRA|PROJETO|PROJECT|DOC|DOCUMENTO|REF)/.test(context)) {
+    if (/(PEDIDO|ENCOMENDA|ORDER|PROPOSTA|ORCAMENTO|ORÃ‡AMENTO|FATURA|INVOICE|GUIA|OBRA|PROJETO|PROJECT|DOC|DOCUMENTO|REF)/.test(context)) {
       classification = "documents";
-    } else if (/(ARTIGO|ITEM|CODIGO|CÓDIGO|COD |MODELO|SERIE|SÉRIE|PRODUTO|ACABAMENTO|COR |COLOR|TAMANHO|MEDIDA|DIMENSAO|DIMENSÃO)/.test(context)) {
+    } else if (/(ARTIGO|ITEM|CODIGO|CÃ“DIGO|COD |MODELO|SERIE|SÃ‰RIE|PRODUTO|ACABAMENTO|COR |COLOR|TAMANHO|MEDIDA|DIMENSAO|DIMENSÃƒO)/.test(context)) {
       classification = "articles";
     } else if (/[/-]/.test(normalized)) {
       classification = "documents";
@@ -617,7 +619,7 @@ function StudioInner() {
         } else if (bootstrapEmailPayload) {
           setStatus("O email atual foi enviado para o servidor, mas ainda nao existem relacionados persistidos para mostrar.");
         } else {
-          setStatus("Ainda nao encontrámos um email persistido para este caso.");
+          setStatus("Ainda nao encontrÃ¡mos um email persistido para este caso.");
         }
       } catch (fetchError: any) {
         if (!cancelled) setError(String(fetchError?.message || fetchError || "Falha a preparar o studio de classificacao."));
@@ -3242,669 +3244,7 @@ function StudioInner() {
     }
   }
 
-   // StatusLegend extracted to a separate file
-
-  function renderSuggestionTrayLegacy(
-    kind: "principal" | "labels",
-    title: string,
-    chips: Array<{ key: string; label: string; active?: boolean; onClick: () => void }>,
-    helper: string
-  ) {
-    const visible = chips.slice(0, 3);
-    const hidden = chips.slice(3);
-    const expanded = classificationSuggestionExpanded[kind];
-    return (
-      <div style={S.editorBlock}>
-        <div style={S.editorBlockHeader}>
-          <div style={S.editorBlockTitle}>{title}</div>
-          {hidden.length ? (
-            <button
-              type="button"
-              style={S.chevronBtn}
-              onClick={() => setClassificationSuggestionExpanded((current) => ({ ...current, [kind]: !current[kind] }))}
-            >
-              {expanded ? "⌃" : "⌄"}
-            </button>
-          ) : null}
-        </div>
-        <div style={S.chipGridCompact}>
-          {visible.length ? visible.map((chip) => (
-            <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
-              {chip.label}
-            </button>
-          )) : <span style={S.mutedMini}>Sem sugestoes fortes nesta leitura.</span>}
-        </div>
-        {hidden.length && expanded ? (
-          <div style={S.editorExpandableOpen}>
-            <div style={S.editorExpandableScroll}>
-              {hidden.map((chip) => (
-                <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  function renderSuggestionTray(
-    kind: "principal" | "labels",
-    title: string,
-    chips: Array<{ key: string; label: string; active?: boolean; onClick: () => void }>
-  ) {
-    const visible = chips.slice(0, 3);
-    const hidden = chips.slice(3);
-    const expanded = classificationSuggestionExpanded[kind];
-    return (
-      <div style={S.editorBlock}>
-        <div style={S.editorBlockHeader}>
-          <div style={S.editorBlockTitle}>{title}</div>
-          {hidden.length ? (
-            <button
-              type="button"
-              style={S.chevronBtn}
-              onClick={() => setClassificationSuggestionExpanded((current) => ({ ...current, [kind]: !current[kind] }))}
-            >
-              {expanded ? "\u2303" : "\u2304"}
-            </button>
-          ) : null}
-        </div>
-        <div style={S.chipGridCompact}>
-          {visible.length ? visible.map((chip) => (
-            <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
-              {chip.label}
-            </button>
-          )) : <span style={S.mutedMini}>Sem sugestoes fortes nesta leitura.</span>}
-        </div>
-        {hidden.length && expanded ? (
-          <div style={S.editorExpandableOpen}>
-            <div style={S.editorExpandableScroll}>
-              {hidden.map((chip) => (
-                <button key={chip.key} type="button" style={chip.active ? S.miniChipOn : S.miniChip} onClick={chip.onClick}>
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  function renderClassificationEditorHeader() {
-    const focusTitle = classificationFocus === "principal"
-      ? "Grupo principal"
-      : classificationFocus === "labels"
-        ? "Etiquetas"
-        : classificationFocus === "ticket"
-          ? "Ticket"
-          : "Referencias";
-    return (
-      <div style={S.editorHeader}>
-        <div style={S.editorHeaderMeta}>
-          <div style={S.sectionTitle}>Classificacao</div>
-          <div style={S.editorHeaderTitle}>{focusTitle}</div>
-          <div style={S.editorModeText}>{classificationLayoutMode === "advanced" ? "Modo avancado" : "Modo normal"}</div>
-        </div>
-        <div style={S.editorHeaderActions}>
-          <button type="button" style={S.secondaryBtn} onClick={handleCloseClassificationEditor}>Voltar</button>
-          <button type="button" style={S.primaryBtn} onClick={() => openApplyDialog(classificationFocus)} disabled={actionBusy || !canApplyFromClassificationEditor}>
-            <Icons.Save size={12} />
-            Aplicar
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  function renderPrincipalEditor() {
-    const suggestionChips = suggestedExistingGroups.map((group) => ({
-      key: group.id,
-      label: group.name || group.id,
-      active: group.id === principalGroupId,
-      onClick: () => {
-        if (group.id === principalGroupId) clearPrincipalSelection();
-        else selectPrincipalGroup(group);
-      },
-    }));
-    return (
-      <div style={S.editorPanelStack}>
-        <div style={S.editorModeKicker}>Grupo principal</div>
-        <div style={S.editorLead}>Escolhe ou ajusta o dossier principal do email.</div>
-        {renderSuggestionTray("principal", "Sugestoes", suggestionChips)}
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Pesquisar ou criar</div>
-          <div style={S.searchInlineRow}>
-            <input
-              data-testid="principal-search-input"
-              style={S.input}
-              value={principalSearch}
-              onChange={(event) => setPrincipalSearchValue(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (principalCanCreate) {
-                    void handleCreateGroupAndLink("principal", principalSearch);
-                  } else if (exactPrincipalSearchGroup) {
-                    selectPrincipalGroup(exactPrincipalSearchGroup);
-                  }
-                }
-              }}
-              placeholder="Escreve o nome do grupo..."
-            />
-            <button
-              type="button"
-              style={S.secondaryBtn}
-              onClick={() => {
-                if (exactPrincipalSearchGroup) {
-                  selectPrincipalGroup(exactPrincipalSearchGroup);
-                  return;
-                }
-                if (principalCanCreate) {
-                  void handleCreateGroupAndLink("principal", principalSearch);
-                }
-              }}
-              title={principalCanCreate ? "Criar grupo" : exactPrincipalSearchGroup ? "Selecionar grupo existente" : "Pesquisar grupo"}
-            >
-              {principalCanCreate ? "Criar" : "Pesquisar"}
-            </button>
-          </div>
-          {principalSearchResults.length ? (
-            <div style={S.searchResultListCompact}>
-              {principalSearchResults.map((group) => (
-                <button
-                  key={group.id}
-                  type="button"
-                  style={group.id === principalGroupId ? S.searchResultBtnOn : S.searchResultBtn}
-                  onClick={() => selectPrincipalGroup(group)}
-                >
-                  <span>{group.name}</span>
-                  {group.id === principalGroupId ? <span style={S.resultMiniMeta}>Selecionado</span> : null}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Selecionado</div>
-          <div style={S.editorValueStrong}>{principalGroup?.name || (principalCanCreate ? principalSearch || "--" : "--")}</div>
-        </div>
-        {classificationLayoutMode === "advanced" ? (
-          <div style={S.editorBlock}>
-            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-            <div style={S.editorOptionGrid}>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.principalCategorize} onChange={(event) => updateClassificationMeta({ principalCategorize: event.target.checked })} /> Grupo em categoria Outlook</label>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.principalStatusCategorize} onChange={(event) => updateClassificationMeta({ principalStatusEnabled: event.target.checked, principalStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
-            </div>
-              <StatusLegend />
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  function renderLabelsEditor() {
-    const suggestionChips = suggestedLabelSeeds.map((label) => ({
-      key: label,
-      label,
-      active: selectedLabels.includes(label),
-      onClick: () => applySuggestedLabel(label),
-    }));
-    return (
-      <div style={S.editorPanelStack}>
-        <div style={S.editorModeKicker}>Etiquetas</div>
-        <div style={S.editorLead}>Liga ou desliga apenas as etiquetas relevantes.</div>
-        {renderSuggestionTray("labels", "Sugestoes da leitura", suggestionChips)}
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Pesquisar ou criar</div>
-          <div style={S.searchInlineRow}>
-            <input
-              style={S.input}
-              value={classificationLabelInput}
-              onChange={(event) => setClassificationLabelInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  handleClassificationLabelSearchAction();
-                }
-              }}
-              placeholder="Escreve o nome da etiqueta..."
-            />
-            <button
-              type="button"
-              style={S.secondaryBtn}
-              onClick={handleClassificationLabelSearchAction}
-              disabled={!String(classificationLabelInput || "").trim()}
-            >
-              {classificationLabelCanCreate ? "Criar" : "Ligar"}
-            </button>
-          </div>
-          {filteredClassificationLabels.length && String(classificationLabelInput || "").trim() ? (
-            <div style={S.searchResultListCompact}>
-              {filteredClassificationLabels.map((label) => (
-                <button
-                  key={label}
-                  type="button"
-                  style={selectedLabels.includes(label) ? S.searchResultBtnOn : S.searchResultBtn}
-                  onClick={() => {
-                    if (selectedLabels.includes(label)) {
-                      removeLabel(label);
-                    } else {
-                      addLabel(label);
-                    }
-                    setClassificationLabelInput(label);
-                  }}
-                >
-                  <span>{label}</span>
-                  {selectedLabels.includes(label) ? <span style={S.resultMiniMeta}>Ligada</span> : null}
-                </button>
-              ))}
-            </div>
-          ) : String(classificationLabelInput || "").trim() ? (
-            <div style={S.cardMeta}>
-              {classificationLabelCanCreate
-                ? `Ainda nao existe nenhuma etiqueta com este nome. Usa Criar para adicionar "${String(classificationLabelInput || "").trim()}".`
-                : "Etiqueta exata encontrada. Usa Ligar para a associar ou remover."}
-            </div>
-          ) : null}
-        </div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Selecionadas</div>
-          <div style={S.chipGridCompact}>
-            {selectedLabels.length ? selectedLabels.map((label) => (
-              <button key={label} type="button" style={S.groupChipBtnOn} onClick={() => removeLabel(label)}>{label}</button>
-            )) : <span style={S.mutedMini}>Sem etiquetas selecionadas.</span>}
-          </div>
-        </div>
-        {classificationLayoutMode === "advanced" ? (
-          <div style={S.editorBlock}>
-            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-            <div style={S.editorAdvancedFieldGrid}>
-              <label style={S.field}>
-                <span style={S.cardMeta}>Estado da etiqueta</span>
-                <select
-                  style={S.select}
-                  value={selectedLabelSharedStatus}
-                  onChange={(event) => {
-                    const nextValue = String(event.target.value || "").trim() as EmailLabelStatus | "";
-                    selectedLabels.forEach((label) => updateLabelDraft(label, {
-                      hasStatus: Boolean(nextValue),
-                      status: nextValue || undefined,
-                    }));
-                  }}
-                >
-                  <option value="">Sem estado</option>
-                  {LABEL_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-              <label style={S.compactCheckBoxField}><input type="checkbox" checked={selectedLabels.some((label) => labelDrafts[label]?.categorize === true)} onChange={(event) => selectedLabels.forEach((label) => updateLabelDraft(label, { categorize: event.target.checked }))} /> Etiqueta em categoria Outlook</label>
-            </div>
-            <label style={S.compactCheckBoxField}><input type="checkbox" checked={selectedLabels.some((label) => labelDrafts[label]?.hasStatus === true)} onChange={(event) => selectedLabels.forEach((label) => updateLabelDraft(label, { hasStatus: event.target.checked, status: event.target.checked ? (labelDrafts[label]?.status || "em_analise") : undefined }))} /> Refletir estado pela cor da categoria</label>
-              <StatusLegend />
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  function renderTicketEditor() {
-    const activeList = normalizedTicketSearch ? ticketSearchResults : availableTicketChoices.slice(0, 8);
-    return (
-      <div style={S.editorPanelStack}>
-        <div style={S.editorModeKicker}>Ticket</div>
-        <div style={S.editorLead}>Liga um ticket so se houver seguimento operacional.</div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Estado atual</div>
-          <div style={S.editorValueStrong}>{selectedTicket?.code || (selectedSeriesId ? "Novo ticket preparado" : "Sem ticket ligado")}</div>
-        </div>
-        <div style={S.editorSplitRow}>
-          <button type="button" style={ticketEditorMode === "existing" ? S.editorModeBtnOn : S.editorModeBtn} onClick={() => setTicketEditorMode("existing")}>Ligar ticket existente</button>
-          <button type="button" style={ticketEditorMode === "new" ? S.editorModeBtnOn : S.editorModeBtn} onClick={() => setTicketEditorMode("new")}>Criar novo ticket</button>
-        </div>
-        {ticketEditorMode === "existing" ? (
-          <div style={S.editorBlock}>
-            <div style={S.searchInlineRow}>
-              <input
-                style={S.input}
-                value={ticketSearch}
-                onChange={(event) => setTicketSearch(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void handleSearchTickets(undefined, { silent: false });
-                  }
-                }}
-                placeholder="Pesquisar por codigo, titulo ou etiqueta..."
-              />
-              <button type="button" style={S.secondaryBtn} onClick={() => void handleSearchTickets(undefined, { silent: false })} disabled={!normalizedTicketSearch}>
-                Procurar
-              </button>
-            </div>
-            <div style={S.searchResultListCompact}>
-              {activeList.length ? activeList.map((ticket) => (
-                <button key={ticket.id} type="button" style={ticket.id === selectedTicketId ? S.searchResultBtnOn : S.searchResultBtn} onClick={() => applySuggestedTicket(ticket.id)}>
-                  <span>{ticket.code || ticket.title || "Ticket"}</span>
-                  {ticket.title && ticket.title !== ticket.code ? <span style={S.resultMiniMeta}>{ticket.title}</span> : null}
-                  {ticket.id === selectedTicketId ? <span style={S.resultMiniMeta}>Ligado</span> : null}
-                </button>
-              )) : (
-                <span style={S.mutedMini}>
-                  {normalizedTicketSearch
-                    ? (ticketSearchBusy ? "A procurar tickets..." : "Nenhum ticket encontrado para esta pesquisa.")
-                    : "Sem tickets disponiveis para ligar."}
-                </span>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div style={S.editorBlock}>
-            <div style={S.editorAdvancedFieldGrid}>
-              <label style={S.field}>
-                <span style={S.cardMeta}>Serie</span>
-                <select style={S.select} value={selectedSeriesId} onChange={(event) => { setSelectedSeriesId(event.target.value); setSelectionTouched((current) => ({ ...current, ticket: true })); }}>
-                  <option value="">Escolher serie...</option>
-                  {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
-                </select>
-              </label>
-              <label style={S.field}>
-                <span style={S.cardMeta}>Titulo</span>
-                <input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do novo ticket" />
-              </label>
-            </div>
-          </div>
-        )}
-        {classificationLayoutMode === "advanced" ? (
-          <div style={S.editorBlock}>
-            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-            <div style={S.editorAdvancedFieldGrid}>
-              <label style={S.field}>
-                <span style={S.cardMeta}>Estado do ticket</span>
-                <select style={S.select} value={ticketStatusDraft} onChange={(event) => setTicketStatusDraft(event.target.value)}>
-                  {TICKET_STATUS_OPTIONS.map((option) => <option key={option.value || "none"} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-              <label style={S.compactCheckBoxField}><input type="checkbox" checked={Boolean(selectedTicketId || selectedSeriesId)} onChange={(event) => { if (!event.target.checked) clearTicketSelection(); }} /> Ticket em categoria Outlook</label>
-            </div>
-            <label style={S.compactCheckBoxField}><input type="checkbox" checked={classificationMetaDraft.ticketStatusCategorize} onChange={(event) => updateClassificationMeta({ ticketStatusEnabled: event.target.checked, ticketStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
-              <StatusLegend />
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  function renderReferencesEditor() {
-    if (classificationLayoutMode !== "advanced") {
-      return (
-        <div style={S.editorPanelStack}>
-          <div style={S.editorModeKicker}>Referencias</div>
-          <div style={S.editorLead}>As referencias so aparecem no modo avancado.</div>
-        </div>
-      );
-    }
-    return (
-      <div style={S.editorPanelStack}>
-        <div style={S.editorModeKicker}>Referencias</div>
-        <div style={S.editorLead}>Liga este caso a outros dossiers apenas quando houver ligacao estrutural real.</div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Ligadas</div>
-          <div style={S.chipGridCompact}>
-            {referenceGroups.length ? referenceGroups.map((group) => (
-              <button key={group.id} type="button" style={S.groupChipBtnOn} onClick={() => toggleReferenceGroup(group.id)}>
-                {group.name || group.id}
-              </button>
-            )) : <span style={S.mutedMini}>Sem referencias ligadas.</span>}
-          </div>
-        </div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Pesquisar outro dossier</div>
-          <div style={S.searchInlineRow}>
-            <input
-              style={S.input}
-              value={referenceSearch}
-              onChange={(event) => setReferenceSearchValue(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (referenceCanCreate) {
-                    void handleCreateGroupAndLink("referencia", referenceSearch);
-                  } else if (exactReferenceSearchGroup) {
-                    toggleReferenceGroup(exactReferenceSearchGroup.id);
-                    setReferenceSearchValue(exactReferenceSearchGroup.name);
-                  }
-                }
-              }}
-              placeholder="Escreve para pesquisar..."
-            />
-            <button
-              type="button"
-              style={S.secondaryBtn}
-              onClick={() => {
-                if (referenceCanCreate) {
-                  void handleCreateGroupAndLink("referencia", referenceSearch);
-                  return;
-                }
-                if (exactReferenceSearchGroup) {
-                  toggleReferenceGroup(exactReferenceSearchGroup.id);
-                  setReferenceSearchValue(exactReferenceSearchGroup.name);
-                }
-              }}
-              title={referenceCanCreate ? "Criar referencia" : exactReferenceSearchGroup ? "Ligar ou desligar referencia existente" : "Pesquisar referencia"}
-            >
-              {referenceCanCreate ? "Criar" : "Procurar"}
-            </button>
-          </div>
-          {!referenceSearchResults.length && String(referenceSearch || "").trim() ? (
-            <div style={S.cardMeta}>
-              {referenceCanCreate
-                ? `Ainda nao existe nenhum dossier com este nome. Usa Procurar para criar "${String(referenceSearch || "").trim()}".`
-                : "Referencia exata encontrada. Usa Procurar para a ligar ou desligar."}
-            </div>
-          ) : null}
-          {referenceSearchResults.length ? (
-            <div style={S.searchResultListCompact}>
-              {referenceSearchResults.map((group) => (
-                <button key={group.id} type="button" style={referenceGroupIds.includes(group.id) ? S.searchResultBtnOn : S.searchResultBtn} onClick={() => toggleReferenceGroup(group.id)}>
-                  <span>{group.name}</span>
-                  {referenceGroupIds.includes(group.id) ? <span style={S.resultMiniMeta}>Ligada</span> : null}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-          <div style={S.editorOptionStackLoose}>
-            <div style={S.editorOptionGrid}>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceCategorize} onChange={(event) => updateClassificationMeta({ referenceCategorize: event.target.checked })} /> Referencia em categoria Outlook</label>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceStatusCategorize} onChange={(event) => updateClassificationMeta({ referenceStatusEnabled: event.target.checked, referenceStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
-            </div>
-            <div style={S.editorLegendWrap}>
-              <StatusLegend />
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  function renderClassificationEditorContent() {
-    if (classificationFocus === "principal") return renderPrincipalEditor();
-    if (classificationFocus === "labels") return renderLabelsEditor();
-    if (classificationFocus === "ticket") return renderTicketEditor();
-    return renderReferencesEditor();
-  }
-
-  function renderApplyDialogLegacy() {
-    if (!applyDialogOpen) return null;
-    const sectionLabel = applyDialogSection === "principal"
-      ? "Grupo principal"
-      : applyDialogSection === "labels"
-        ? "Etiquetas"
-        : applyDialogSection === "ticket"
-          ? "Ticket"
-          : applyDialogSection === "references"
-            ? "Referencias"
-            : "Classificacao";
-    return (
-      <div style={S.modalBackdrop}>
-        <div style={S.modalSheet}>
-          <div style={S.modalHeader}>
-            <div>
-              <div style={S.kicker}>Aplicar alteracoes</div>
-              <div style={S.modalTitle}>{sectionLabel}</div>
-            </div>
-            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
-          </div>
-          <div style={S.modalScopeRow}>
-            <button type="button" style={applyDialogScopeMode === "current" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("current")}>So este email</button>
-            <button type="button" style={applyDialogScopeMode === "selected" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("selected")}>Emails selecionados</button>
-            <button type="button" style={applyDialogScopeMode === "case_all" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("case_all")}>Todos os emails do caso</button>
-          </div>
-          <div style={S.modalBlock}>
-            <div style={S.modalBlockHeader}>
-              <div style={S.editorBlockTitle}>Escolher emails</div>
-              <button type="button" style={S.linkBtn} onClick={() => setApplyDialogEmailKeys(caseScopeEmails.map((email) => makeEmailKey(email)).filter(Boolean))}>Selecionar todos</button>
-            </div>
-            <div style={S.applyEmailList}>
-              {caseScopeEmails.map((email) => {
-                const emailKey = makeEmailKey(email);
-                const expanded = applyDialogExpandedEmailKeys.includes(emailKey);
-                const checked = applyDialogEmailKeys.includes(emailKey);
-                const previewText = String(email.bodyText || htmlToPlainText(email.bodyHtml || "") || buildSnippet(email) || "").trim();
-                return (
-                  <div key={emailKey} style={checked ? S.applyEmailRowOn : S.applyEmailRow}>
-                    <div style={S.applyEmailRowTop}>
-                      <label style={S.applyEmailMain}>
-                        <input type="checkbox" checked={checked} onChange={() => toggleApplyDialogEmailKey(emailKey)} />
-                        <span style={S.applyEmailSubject}>{email.subject || "(sem assunto)"}</span>
-                        <span style={S.applyEmailMeta}>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</span>
-                      </label>
-                      <button type="button" style={S.chevronBtn} onClick={() => toggleApplyDialogExpandedEmailKey(emailKey)}>{expanded ? "⌃" : "⌄"}</button>
-                    </div>
-                    {expanded ? (
-                      <div style={S.applyEmailPreview}>{previewText || "Sem preview resumido para este email."}</div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div style={S.modalFooter}>
-            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)}>Cancelar</button>
-            <button type="button" style={S.primaryBtn} onClick={() => void handleConfirmApplyDialog()} disabled={actionBusy || !applyDialogSelectedEmails.length}>
-              Confirmar aplicacao
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  function renderApplyDialog() {
-    if (!applyDialogOpen) return null;
-    const sectionLabel = applyDialogSection === "principal"
-      ? "Grupo principal"
-      : applyDialogSection === "labels"
-        ? "Etiquetas"
-        : applyDialogSection === "ticket"
-          ? "Ticket"
-          : applyDialogSection === "references"
-            ? "Referencias"
-            : "Classificacao";
-    const displayEmails = applyDialogScopeMode === "current"
-      ? (currentScopeEmail ? [currentScopeEmail] : [])
-      : caseScopeEmails;
-    const manualSelectionEnabled = applyDialogScopeMode === "selected";
-    const showEmailList = applyDialogScopeMode !== "current";
-
-    return (
-      <div style={S.modalBackdrop}>
-        <div style={S.modalSheet}>
-          <div style={S.modalHeader}>
-            <div>
-              <div style={S.kicker}>Aplicar alteracoes</div>
-              <div style={S.modalTitle}>{sectionLabel}</div>
-            </div>
-            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)} disabled={actionBusy}>Cancelar</button>
-          </div>
-
-          <div style={S.modalScopeRow}>
-            <button type="button" style={applyDialogScopeMode === "current" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("current")} disabled={actionBusy}>So este email</button>
-            <button type="button" style={applyDialogScopeMode === "selected" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("selected")} disabled={actionBusy}>Emails selecionados</button>
-            <button type="button" style={applyDialogScopeMode === "case_all" ? S.scopeChipOn : S.scopeChip} onClick={() => setApplyDialogScope("case_all")} disabled={actionBusy}>Todos os emails do caso</button>
-          </div>
-
-          <div style={S.modalBlock}>
-            <div style={S.modalBlockHeader}>
-              <div style={S.editorBlockTitle}>{applyDialogScopeMode === "current" ? "Email alvo" : "Escolher emails"}</div>
-              {manualSelectionEnabled ? (
-                <button type="button" style={S.linkBtn} onClick={() => setApplyDialogEmailKeys(caseScopeEmails.map((email) => makeEmailKey(email)).filter(Boolean))} disabled={actionBusy}>Selecionar todos</button>
-              ) : null}
-            </div>
-            {!showEmailList && currentScopeEmail ? (
-              <div style={S.applySingleEmailSummary}>
-                <div style={S.applyEmailSummaryHead}>
-                  <div style={S.applyEmailSummaryTitle}>{currentScopeEmail.subject || "(sem assunto)"}</div>
-                  <button type="button" style={S.chevronBtn} onClick={() => toggleApplyDialogExpandedEmailKey(makeEmailKey(currentScopeEmail))}>
-                    {applyDialogExpandedEmailKeys.includes(makeEmailKey(currentScopeEmail)) ? "\u2303" : "\u2304"}
-                  </button>
-                </div>
-                <div style={S.applyEmailSummaryMeta}>{buildCompactEmailMeta(currentScopeEmail)}</div>
-                {applyDialogExpandedEmailKeys.includes(makeEmailKey(currentScopeEmail)) ? (
-                  <div style={S.applyEmailPreview}>{buildEmailPreviewText(currentScopeEmail) || "Sem preview resumido para este email."}</div>
-                ) : null}
-              </div>
-            ) : (
-              <div style={S.applyEmailList}>
-                {displayEmails.map((email) => {
-                  const emailKey = makeEmailKey(email);
-                  const selected = applyDialogSelectedEmailKeys.includes(emailKey);
-                  const expanded = applyDialogExpandedEmailKeys.includes(emailKey);
-                  return (
-                    <div key={emailKey} style={selected ? S.applyEmailRowOn : S.applyEmailRow}>
-                      <div style={S.applyEmailRowTop}>
-                        <div style={S.applyEmailMain}>
-                          {manualSelectionEnabled ? (
-                            <input type="checkbox" checked={selected} onChange={() => toggleApplyDialogEmailKey(emailKey)} disabled={actionBusy} />
-                          ) : (
-                            <span style={selected ? S.applyScopeBadgeOn : S.applyScopeBadge}>{selected ? "Incluido" : "Omitir"}</span>
-                          )}
-                          <span style={S.applyEmailSubject}>{email.subject || "(sem assunto)"}</span>
-                        </div>
-                        <div style={S.applyEmailRowTail}>
-                          <span style={S.applyEmailMeta}>{buildCompactEmailMeta(email)}</span>
-                          <button type="button" style={S.chevronBtn} onClick={() => toggleApplyDialogExpandedEmailKey(emailKey)}>
-                            {expanded ? "\u2303" : "\u2304"}
-                          </button>
-                        </div>
-                      </div>
-                      {expanded ? (
-                        <div style={S.applyEmailPreview}>{buildEmailPreviewText(email) || "Sem preview resumido para este email."}</div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div style={S.modalFooter}>
-            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10 }}>
-              {status ? <div style={{ fontSize: 11, fontWeight: 600, color: "var(--iccc-muted)" }}>{status}</div> : null}
-              {actionBusy ? <span style={{ fontSize: 10, color: "#1d4ed8", fontWeight: 700 }}>A processar...</span> : null}
-            </div>
-            <button type="button" style={S.secondaryBtn} onClick={() => setApplyDialogOpen(false)} disabled={actionBusy}>Cancelar</button>
-            <button type="button" style={S.primaryBtn} onClick={handleConfirmApplyDialog} disabled={actionBusy || (manualSelectionEnabled && !applyDialogSelectedEmailKeys.length)}>
-              {actionBusy ? "A aplicar..." : "Confirmar e aplicar"}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // legacy renderers removed - handled by modular components
 
   function renderWorkspace() {
     if (loading) return <PanelState compact tone="loading" title="A preparar a janela" description="A carregar emails, grupos e series para o novo studio." />;
@@ -4484,7 +3824,7 @@ function StudioInner() {
               <div style={S.grid2}>
                 <select style={S.select} value={selectedSeriesId} onChange={(event) => { const nextValue = event.target.value; setSelectionTouched((current) => ({ ...current, ticket: true })); setSelectedSeriesId(nextValue); if (nextValue) setSelectedTicketId(""); }}>
                   <option value="">Sem novo ticket</option>
-                  {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} · {series.name}</option>)}
+                  {ticketSeries.map((series) => <option key={series.id} value={series.id}>{series.prefix} Â· {series.name}</option>)}
                 </select>
                 <input style={S.input} value={createTicketTitle} onChange={(event) => setCreateTicketTitle(event.target.value)} placeholder="Titulo do ticket" />
               </div>
@@ -4631,7 +3971,7 @@ function StudioInner() {
             <div style={S.grid2}>
               <label style={S.field}><span style={S.label}>Fonte da lista</span><select style={S.select} value={scopeMode} onChange={(event) => setScopeMode(event.target.value as ScopeMode)}><option value="related">So emails relacionados</option><option value="all">Todos os emails conhecidos</option></select></label>
               <label style={S.field}><span style={S.label}>Filtrar por grupo</span><select style={S.select} value={groupFilterId} onChange={(event) => setGroupFilterId(event.target.value)}><option value="">Sem filtro</option>{contextualGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-              <label style={S.field}><span style={S.label}>Filtrar por ticket</span><select style={S.select} value={ticketFilterId} onChange={(event) => setTicketFilterId(event.target.value)}><option value="">Sem filtro</option>{contextualTickets.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} · {ticket.title}</option>)}</select></label>
+              <label style={S.field}><span style={S.label}>Filtrar por ticket</span><select style={S.select} value={ticketFilterId} onChange={(event) => setTicketFilterId(event.target.value)}><option value="">Sem filtro</option>{contextualTickets.map((ticket) => <option key={ticket.id} value={ticket.id}>{ticket.code} Â· {ticket.title}</option>)}</select></label>
               <label style={S.field}><span style={S.label}>Filtrar por etiqueta</span><select style={S.select} value={labelFilterValue} onChange={(event) => setLabelFilterValue(event.target.value)}><option value="">Sem filtro</option>{contextualLabels.map((label) => <option key={label} value={label}>{label}</option>)}</select></label>
             </div>
             <div style={S.inlineChecks}>
@@ -4732,7 +4072,7 @@ function StudioInner() {
                   <div style={S.inlineWrap}>
                     {managedGroupContacts.length ? managedGroupContacts.map((contact) => (
                       <button key={contact.key} type="button" style={S.selectedChipOn} onClick={() => toggleManagedGroupContact(contact)} disabled={!selectedManagedGroup}>
-                        {contact.name}{contact.company ? ` · ${contact.company}` : ""}{contact.email ? ` · ${contact.email}` : ""}
+                        {contact.name}{contact.company ? ` Â· ${contact.company}` : ""}{contact.email ? ` Â· ${contact.email}` : ""}
                       </button>
                     )) : <span style={S.mutedMini}>Sem contactos associados.</span>}
                   </div>
@@ -4741,7 +4081,7 @@ function StudioInner() {
                       const active = managedGroupContacts.some((entry) => entry.key === contact.key);
                       return (
                         <button key={contact.key} type="button" style={active ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleManagedGroupContact(contact)}>
-                          {contact.name}{contact.company ? ` · ${contact.company}` : ""}{contact.email ? ` · ${contact.email}` : ""}
+                          {contact.name}{contact.company ? ` Â· ${contact.company}` : ""}{contact.email ? ` Â· ${contact.email}` : ""}
                         </button>
                       );
                     }) : null}
@@ -4760,7 +4100,7 @@ function StudioInner() {
                   <div style={S.inlineWrap}>
                     {managedGroupEntities.length ? managedGroupEntities.map((entity) => (
                       <button key={entity.key} type="button" style={S.selectedChipOn} onClick={() => toggleManagedGroupEntity(entity)} disabled={!selectedManagedGroup}>
-                        {entity.name}{entity.kind ? ` · ${entity.kind}` : ""}
+                        {entity.name}{entity.kind ? ` Â· ${entity.kind}` : ""}
                       </button>
                     )) : <span style={S.mutedMini}>Sem entidades associadas.</span>}
                   </div>
@@ -4769,7 +4109,7 @@ function StudioInner() {
                       const active = managedGroupEntities.some((entry) => entry.key === entity.key);
                       return (
                         <button key={entity.key} type="button" style={active ? S.groupChipBtnOn : S.groupChipBtn} onClick={() => toggleManagedGroupEntity(entity)}>
-                          {entity.name}{entity.kind ? ` · ${entity.kind}` : ""}
+                          {entity.name}{entity.kind ? ` Â· ${entity.kind}` : ""}
                         </button>
                       );
                     }) : null}
@@ -4795,7 +4135,7 @@ function StudioInner() {
                     <div key={makeEmailKey(email)} style={S.itemRow}>
                       <div style={S.itemMeta}>
                         <strong>{email.subject || "(sem assunto)"}</strong>
-                        <small>{email.fromName || email.fromEmail || "--"} · {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</small>
+                        <small>{email.fromName || email.fromEmail || "--"} Â· {formatDate(email.messageDateIso || email.receivedAtIso) || "--"}</small>
                       </div>
                       <div style={S.inline}>
                         {(email.itemId || email.emailWebLink) ? (
@@ -4830,7 +4170,7 @@ function StudioInner() {
                     <div key={document.id} style={S.itemRow}>
                       <div style={S.itemMeta}>
                         <strong>{document.name || "Documento"}</strong>
-                        <small>{document.contentType || "ficheiro"}{document.size ? ` · ${Math.round(Number(document.size || 0) / 1024)} KB` : ""}</small>
+                        <small>{document.contentType || "ficheiro"}{document.size ? ` Â· ${Math.round(Number(document.size || 0) / 1024)} KB` : ""}</small>
                       </div>
                       <div style={S.inline}>
                         <a style={S.secondaryBtn} href={getGroupDocumentContentUrl(selectedManagedGroup.id, document.id)} target="_blank" rel="noreferrer">
@@ -5107,25 +4447,21 @@ function StudioInner() {
                 <div style={S.classificationEditorBody}>{renderWorkspace()}</div>
               </div>
             ) : !classificationEditorActive ? (
-              <div style={S.classificationSummary} data-testid="classification-summary">
-                {classificationSummaryTiles
-                  .filter((item) => classificationLayoutMode === "advanced" || item.key !== "references")
-                  .map((item) => (
-                    <button key={item.key} data-testid={`summary-tile-${item.key}`} type="button" style={S.classificationTile} onClick={item.onClick}>
-                      <span style={S.classificationTileLabel}>{item.title}</span>
-                      <span style={S.classificationTileValue}>{item.value}</span>
-                      <span style={S.classificationTileMeta}>{item.description}</span>
-                    </button>
-                  ))}
-                <div style={S.classificationModeHint}>
-                  {classificationLayoutMode === "normal"
-                    ? "Modo normal: grupo principal, etiquetas e ticket."
-                    : "Modo avancado: inclui referencias e opcoes finas."}
-                </div>
-              </div>
+              <ClassificationSummaryTiles
+                tiles={classificationSummaryTiles}
+                classificationLayoutMode={classificationLayoutMode}
+                style={S.classificationSummary}
+              />
             ) : (
               <div style={S.classificationEditorShell}>
-                {renderClassificationEditorHeader()}
+                <ClassificationEditorHeader
+                  classificationFocus={classificationFocus}
+                  classificationLayoutMode={classificationLayoutMode}
+                  onBack={handleCloseClassificationEditor}
+                  onApply={openApplyDialog}
+                  canApply={canApplyFromClassificationEditor}
+                  actionBusy={actionBusy}
+                />
                 <div style={S.classificationEditorBody}>
                   <ClassificationEditor
                     data-testid="classification-editor"
@@ -5313,14 +4649,8 @@ const S: Record<string, React.CSSProperties> = {
   segmentBtn: { height: 24, padding: "0 9px", border: "none", background: "transparent", color: "#475569", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
   segmentBtnActive: { height: 24, padding: "0 9px", border: "none", background: "rgba(37,99,235,0.14)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
   classificationSummary: { minHeight: 0, display: "grid", gap: 6, alignContent: "start", overflowY: "auto", paddingRight: 1 },
-  classificationTile: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(148,163,184,0.16)", background: "rgba(255,255,255,0.76)", padding: "8px 9px", display: "grid", gap: 2, cursor: "pointer" },
-  classificationTileMuted: { width: "100%", textAlign: "left", borderRadius: 10, border: "1px solid rgba(191,219,254,0.52)", background: "rgba(239,246,255,0.62)", padding: "8px 9px", display: "grid", gap: 2, cursor: "pointer" },
-  classificationTileLabel: { fontSize: 8.5, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--iccc-muted)" },
-  classificationTileValue: { fontSize: 11.25, fontWeight: 550, color: "var(--iccc-text)", lineHeight: 1.2 },
-  classificationTileMeta: { fontSize: 9.5, lineHeight: 1.25, color: "var(--iccc-muted)" },
   legendRow: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 },
   legendChip: { padding: "3px 8px", borderRadius: 6, fontSize: 9.5, fontWeight: 700, border: "1px solid" },
-  classificationModeHint: { padding: "7px 9px", borderRadius: 10, border: "1px dashed rgba(148,163,184,0.22)", background: "rgba(248,250,252,0.82)", color: "var(--iccc-muted)", fontSize: 9.75, lineHeight: 1.35 },
   advancedHintBox: { display: "flex", flexWrap: "wrap", gap: 8 },
   advancedHintChip: { display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(239,246,255,0.72)", color: "#1d4ed8", fontSize: 9.5, fontWeight: 700 },
   classificationExtraGrid: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 },
