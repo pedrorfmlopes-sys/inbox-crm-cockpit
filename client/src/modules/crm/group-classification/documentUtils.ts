@@ -183,6 +183,7 @@ export function isStudioAttachmentHiddenInQuickDocs(
 ): boolean {
   if (!attachment) return true;
   if (attachment.isHidden === true) return true;
+  if (isLikelyDecorativeAttachment(attachment)) return true;
   const kind = inferStudioAttachmentKind(attachment.contentType, attachment.name);
   if (kind === "unsupported") return true;
   const key = attachment.key || attachment.id || attachment.contentId || attachment.name;

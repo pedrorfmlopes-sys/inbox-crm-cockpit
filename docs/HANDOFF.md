@@ -126,7 +126,6 @@
   - `ClassificationSummaryTiles.tsx`: Encapsula a visualização resumida dos dados atribuídos (Grupo, Referências, Etiquetas, Ticket) quando o editor está fechado.
 - **Remoção de Dead Code**: Eliminadas as funções de rendering inline (`renderPrincipalEditor`, `renderLabelsEditor`, `renderSuggestionTrayLegacy`, etc.) que agora são responsabilidade total do componente `ClassificationEditor`.
 - **Integridade de Estado e Fluxos**: Estrita manutenção de todos os estados funcionais (`attachmentPlan`, `manageableGroups`, etc.) e handlers de negócio no shell. O shell atua agora estritamente como orquestrador, passando estado e callbacks para os sub-componentes.
-- **Correção de Estrutura e Export**: Resolvidos erros sintáticos de fechamento de blocos e exportação redundante introduzidos durante o sharding massivo, garantindo que o ficheiro é válido e cumpre os padrões TypeScript.
 - **Validação de Build**: Confirmada a compilação do projeto e integridade das referências entre o shell e os novos componentes modulares.
 
 ## Hotfix: Crash de Lançamento da Ronda 5 (Abril 2026)
@@ -141,6 +140,18 @@
 - **Validação Executada**: 
   - Build bem-sucedido (`npm run build`).
   - Playwright Tests (6/6 passing) confirmam que o Studio abre sem erros e os cards carregam corretamente.
+
+## Hotfix: Ocultação de Decorativos e Visibilidade do Modal (Abril 2026)
+- **Causa dos Problemas**: 
+  1. **Documentos Rápidos**: A lógica de filtragem automática de anexos decorativos (assinaturas, ícones sociais, imagens < 15KB) foi perdida ou desativada durante o sharding do Studio, poluindo a lista de documentos úteis.
+  2. **Modal Invisível**: O componente `ApplyDialog.tsx` dependia exclusivamente de variáveis de CSS (`--skin-bg-main`) que, em certos contextos (Outlook sem tema injetado ou browser sem cockpit ativo), resultavam em cores transparentes ou indefinidas, tornando o modal ilegível.
+- **Correções Aplicadas**:
+  - **Heurística Restaurada**: Atualizada a função `isStudioAttachmentHiddenInQuickDocs` em `documentUtils.ts` para integrar a verificação `isLikelyDecorativeAttachment`. Agora, anexos irrelevantes são escondidos por defeito (mas acessíveis via "Ver silenciados").
+  - **Fallbacks de UI**: Adicionados fallbacks de cor e border explícitos (ex: `#ffffff`, `#000000`, `#e5e7eb`) em todos os estilos do `ApplyDialog.tsx`, garantindo legibilidade universal.
+- **Ficheiros Alterados**:
+  - `client/src/modules/crm/group-classification/documentUtils.ts`
+  - `client/src/modules/crm/group-classification/components/ApplyDialog.tsx`
+- **Validação**: Build bem-sucedido e verificação de tipos garantida.
 
 ## Última orientação estratégica
 - Segurança e coerência arquitetural antes de novas features.
