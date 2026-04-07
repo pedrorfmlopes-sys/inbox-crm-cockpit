@@ -153,6 +153,17 @@
   - `client/src/modules/crm/group-classification/components/ApplyDialog.tsx`
 - **Validação**: Build bem-sucedido e verificação de tipos garantida.
 
+## Hotfix: Estabilização do Studio de Classificação (Abril 2026)
+- **Deduplicação e Idempotência**: Implementada a assinatura de classificação (`getClassificationSignature`) e o `lastAppliedSignatureRef` para evitar gravações redundantes tanto no Odoo como no Outlook. Se o estado não mudar, o fluxo de aplicação é abortado silenciosamente com sucesso.
+- **In-flight Guard**: Adicionado o `applyInProgressRef` para garantir que apenas uma operação de classificação está ativa por vez, bloqueando cliques repetidos no botão "Confirmar".
+- **Sincronização Outlook (Hotfix)**: Resolvido o problema de falha na escrita de categorias do Outlook. O fluxo agora garante a reidratação do email final, obtém as definições de armazenamento atualizadas (`getSettings`) e executa o `applyOutlookCategoryPlan` de forma síncrona com o estado do servidor.
+- **Tipagem Outlook (Office.js)**: Corrigidos erros de linting em `client/src/office.ts` relacionados com a tipagem `unknown` de anexos, utilizando casting explícito para garantir acesso seguro a propriedades e métodos das APIs Microsoft Office.
+- **Ficheiros Alterados**:
+  - `client/src/modules/crm/GroupClassificationStudioApp.tsx` (Reimplementação robusta do `handleApplyClassification`)
+  - `client/src/office.ts` (Correção de tipagem de anexos)
+  - `client/src/outlookCategories.ts` (Exposição de helpers de assinatura)
+- **Validação**: Run `tsc --noEmit` bem-sucedido (sem erros reportados no módulo CRM) e merge limpo para `main`.
+
 ## Última orientação estratégica
 - Segurança e coerência arquitetural antes de novas features.
 
