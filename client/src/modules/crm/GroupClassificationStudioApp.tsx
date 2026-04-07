@@ -966,17 +966,41 @@ function StudioInner() {
       .filter((attachment): attachment is NonNullable<typeof attachment> => Boolean(attachment))
       .filter((attachment) => String(attachment.name || "").trim());
   }, [selectedEmail?.attachments]);
-  const quickDocumentAttachments = useMemo(
-    () => selectedEmailAttachments.filter((attachment) => showHiddenQuickDocuments || !isStudioAttachmentHiddenInQuickDocs(attachment)),
-    [selectedEmailAttachments, showHiddenQuickDocuments]
-  );
-  const quickDocumentHiddenCount = useMemo(
-    () => selectedEmailAttachments.filter((attachment) => isStudioAttachmentHiddenInQuickDocs(attachment)).length,
-    [selectedEmailAttachments]
-  );
+
+  const quickDocumentAttachments = useMemo(() => {
+    const emails = dedupeEmails([selectedEmail, ...relatedEmails].filter(Boolean) as RelatedEmailEntry[]);
+    const list: Array<{ email: RelatedEmailEntry; attachment: any }> = [];
+    emails.forEach((email) => {
+      const attachments = (email?.attachments || [])
+        .map((att) => normalizeStudioAttachment(att))
+        .filter((att): att is NonNullable<typeof att> => Boolean(att))
+        .filter((att) => String(att.name || "").trim());
+      
+      attachments.forEach((attachment) => {
+        if (showHiddenQuickDocuments || !isStudioAttachmentHiddenInQuickDocs(attachment)) {
+          list.push({ email, attachment });
+        }
+      });
+    });
+    return list;
+  }, [selectedEmail, relatedEmails, showHiddenQuickDocuments]);
+
+  const quickDocumentHiddenCount = useMemo(() => {
+    const emails = dedupeEmails([selectedEmail, ...relatedEmails].filter(Boolean) as RelatedEmailEntry[]);
+    let count = 0;
+    emails.forEach((email) => {
+      (email?.attachments || []).forEach((att) => {
+        const normalized = normalizeStudioAttachment(att);
+        if (normalized && isStudioAttachmentHiddenInQuickDocs(normalized)) {
+          count++;
+        }
+      });
+    });
+    return count;
+  }, [selectedEmail, relatedEmails]);
   useEffect(() => {
     setExpandedQuickDocumentKeys((current) =>
-      current.filter((key) => quickDocumentAttachments.some((attachment) => makeAttachmentKey(attachment) === key))
+      current.filter((key) => quickDocumentAttachments.some((item) => makeAttachmentKey(item.attachment) === key))
     );
   }, [quickDocumentAttachments]);
   const activeSelectedEmailAttachments = useMemo(
@@ -1101,8 +1125,8 @@ function StudioInner() {
 
   useEffect(() => {
     if (!selectedAttachmentPreviewKey || showHiddenQuickDocuments) return;
-    if (quickDocumentAttachments.some((attachment) => makeAttachmentKey(attachment) === selectedAttachmentPreviewKey)) return;
-    const nextKey = quickDocumentAttachments[0] ? makeAttachmentKey(quickDocumentAttachments[0]) : "";
+    if (quickDocumentAttachments.some((item) => makeAttachmentKey(item.attachment) === selectedAttachmentPreviewKey)) return;
+    const nextKey = quickDocumentAttachments[0] ? makeAttachmentKey(quickDocumentAttachments[0].attachment) : "";
     setSelectedAttachmentPreviewKey(nextKey);
     if (!nextKey && previewMode === "document") {
       setPreviewMode("email");
@@ -3066,29 +3090,31 @@ function StudioInner() {
     }
   }
 
-  function handleOpenQuickAttachment(attachment: NonNullable<ReturnType<typeof normalizeStudioAttachment>>) {
+  function handleOpenQuickAttachment(email: RelatedEmailEntry, attachment: NonNullable<ReturnType<typeof normalizeStudioAttachment>>) {
     const key = makeAttachmentKey(attachment);
     if (!key) return;
     setSelectedAttachmentPreviewKey(key);
     setPreviewMode("document");
+    // Optionally focus the email too? (No, stay on current selected email but show document)
   }
 
   async function handleSetQuickAttachmentHidden(
+    email: RelatedEmailEntry,
     attachment: NonNullable<ReturnType<typeof normalizeStudioAttachment>>,
     nextHidden: boolean
   ) {
-    if (!selectedEmail || !attachment) return;
+    if (!email || !attachment) return;
     const attachmentKey = makeAttachmentKey(attachment);
     if (!attachmentKey) return;
-    const updatedEmail = updateAttachmentVisibilityOnEmail(selectedEmail, attachmentKey, nextHidden);
+    const updatedEmail = updateAttachmentVisibilityOnEmail(email, attachmentKey, nextHidden);
     if (!updatedEmail) {
       setStatus("Nao foi possivel atualizar a visibilidade deste documento.");
       return;
     }
     setActionBusy(true);
     try {
-      setRelatedEmails((current) => current.map((email) => makeEmailKey(email) === makeEmailKey(updatedEmail) ? updatedEmail : email));
-      setKnownEmails((current) => current.map((email) => makeEmailKey(email) === makeEmailKey(updatedEmail) ? updatedEmail : email));
+      setRelatedEmails((current) => current.map((e) => makeEmailKey(e) === makeEmailKey(updatedEmail) ? updatedEmail : e));
+      setKnownEmails((current) => current.map((e) => makeEmailKey(e) === makeEmailKey(updatedEmail) ? updatedEmail : e));
       const latestSettings = await getSettings().catch(() => null);
       const payload = buildRelevantEmailPayloadFromRelatedEmail(updatedEmail);
       if (payload) {

@@ -129,6 +129,19 @@
 - **Correção de Estrutura e Export**: Resolvidos erros sintáticos de fechamento de blocos e exportação redundante introduzidos durante o sharding massivo, garantindo que o ficheiro é válido e cumpre os padrões TypeScript.
 - **Validação de Build**: Confirmada a compilação do projeto e integridade das referências entre o shell e os novos componentes modulares.
 
+## Hotfix: Crash de Lançamento da Ronda 5 (Abril 2026)
+- **Causa Raiz**: Após a modularização do Studio (Ronda 5), o array `quickDocumentAttachments` passou a ser fornecido como uma lista plana de anexos (`attachment[]`), enquanto o componente `QuickDocumentsCard.tsx` esperava pares `{ email, attachment }`. A tentativa de aceder a `email.attachments` sem validação resultava em crash de runtime.
+- **Correção Aplicada**: 
+  - No `GroupClassificationStudioApp.tsx`, a coleção foi refatorada para reconstruir a estrutura de pares `{ email, attachment }` percorrendo todos os emails relacionados.
+  - No `QuickDocumentsCard.tsx`, foram adicionados guards defensivos rigorosos e optional chaining para evitar falhas com entradas nulas ou incompletas.
+  - Restaurada a compatibilidade do estado `selectedEmailAttachments` para manter fluxos legados funcionais.
+- **Ficheiros Alterados**:
+  - `client/src/modules/crm/GroupClassificationStudioApp.tsx`
+  - `client/src/modules/crm/group-classification/components/QuickDocumentsCard.tsx`
+- **Validação Executada**: 
+  - Build bem-sucedido (`npm run build`).
+  - Playwright Tests (6/6 passing) confirmam que o Studio abre sem erros e os cards carregam corretamente.
+
 ## Última orientação estratégica
 - Segurança e coerência arquitetural antes de novas features.
 
