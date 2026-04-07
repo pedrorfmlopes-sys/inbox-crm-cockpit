@@ -60,19 +60,30 @@ const QuickDocumentsCard: React.FC<QuickDocumentsCardProps> = ({
             <div style={S.panelStateDesc}>Nao foram encontrados anexos relevantes nestes emails.</div>
           </div>
         ) : null}
-        {quickDocumentAttachments.map((entry) => {
-          const { email, attachment } = entry;
+        {quickDocumentAttachments.map((entry, idx) => {
+          if (!entry) return null;
+          // Handle both {email, attachment} structure and direct attachment structures safely
+          const email = entry.email;
+          const attachment = entry.attachment || (entry.key || entry.id ? entry : null);
+          
+          if (!attachment) return null;
+          
           const attachmentKey = makeAttachmentKey(attachment);
           const remoteId = getStudioAttachmentRemoteId(attachment);
-          const hydrated = isStudioAttachmentHydrated(attachment) || isStudioAttachmentHydratedInCollection((email.attachments as any[]) || [], attachmentKey);
+          
+          // Guard against missing email when checking hydration in collection
+          const emailAttachments = Array.isArray(email?.attachments) ? email.attachments : [];
+          const hydrated = isStudioAttachmentHydrated(attachment) || 
+                          isStudioAttachmentHydratedInCollection(emailAttachments, attachmentKey);
+          
           const active = attachmentKey === selectedAttachmentPreviewKey && previewMode === "document";
           const expanded = expandedQuickDocumentKeys.includes(attachmentKey);
           
           return (
             <div 
-              key={`quick-doc-${attachmentKey}`} 
+              key={`quick-doc-${attachmentKey}-${idx}`} 
               style={active ? S.quickDocOn : S.quickDoc}
-              onClick={() => handleOpenQuickAttachment(email, attachment)}
+              onClick={() => email && handleOpenQuickAttachment(email, attachment)}
             >
               <div style={S.quickDocTop}>
                 <div style={S.quickDocName}>{attachment.name || "Sem nome"}</div>
@@ -84,7 +95,7 @@ const QuickDocumentsCard: React.FC<QuickDocumentsCardProps> = ({
                     disabled={actionBusy} 
                     onClick={(event) => {
                       event.stopPropagation();
-                      handleSetQuickAttachmentHidden(email, attachment, !attachment.isHidden);
+                      if (email) handleSetQuickAttachmentHidden(email, attachment, !attachment.isHidden);
                     }}
                   >
                     {attachment.isHidden ? "Restaurar" : "Silenciar"}

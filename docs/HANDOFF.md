@@ -129,6 +129,13 @@
 - **Correção de Estrutura e Export**: Resolvidos erros sintáticos de fechamento de blocos e exportação redundante introduzidos durante o sharding massivo, garantindo que o ficheiro é válido e cumpre os padrões TypeScript.
 - **Validação de Build**: Confirmada a compilação do projeto e integridade das referências entre o shell e os novos componentes modulares.
 
+## Hotfix: Crash de Lançamento da Ronda 5 (Abril 2026)
+- **Causa Raiz**: Identificado crash de runtime `Cannot read properties of undefined (reading 'attachments')` no componente `QuickDocumentsCard.tsx`. O erro era causado por um desfasamento entre a estrutura de dados esperada (`{ email, attachment }[]`) e a estrutura passada pelo shell (`attachment[]`), aliado à falta de guards defensivos no componente extraído.
+- **Correção no Orchestrator**: Refatorado o `useMemo` de `quickDocumentAttachments` no Studio App para corretamente parear cada anexo com o seu respetivo email de origem, percorrendo todo o universo de emails relacionados do caso.
+- **Defesa no Componente**: Adicionadas guardas defensivas no rendering do `QuickDocumentsCard` para nunca assumir a existência do objeto `email` ou `attachment`, utilizando optional chaining e fallbacks seguros (`[]`).
+- **Resolução de Regressão**: Restaurado o estado `selectedEmailAttachments` no shell para manter compatibilidade com outras centenas de linhas de lógica dependente que esperavam este array plano para o email selecionado.
+- **Validação**: Testes Playwright (6/6) confirmam a reabertura do Studio sem crashes e o funcionamento correto da orquestração de documentos.
+
 ## Última orientação estratégica
 - Segurança e coerência arquitetural antes de novas features.
 
