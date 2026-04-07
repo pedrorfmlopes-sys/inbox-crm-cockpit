@@ -3112,7 +3112,12 @@ function StudioInner() {
             }
 
             if (writerResult.result !== "success" && writerResult.result !== "duplicate") {
-              throw new Error("A classificacao foi guardada, mas o Outlook nao confirmou a aplicacao das categorias.");
+              const writerDetail = String(writerResult.detail || "").trim();
+              throw new Error(
+                writerDetail
+                  ? `A classificacao foi guardada, mas o Outlook nao confirmou a aplicacao das categorias (${writerDetail}).`
+                  : "A classificacao foi guardada, mas o Outlook nao confirmou a aplicacao das categorias."
+              );
             }
           } else if (activeCategoryOperationId) {
             completeOutlookCategoryOperation(activeCategoryOperationId, {

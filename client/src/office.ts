@@ -178,6 +178,27 @@ type PreparedOutlookCategorySyncWriterRequest = OutlookCategorySyncWriterRequest
   planSignature: string;
 };
 
+type OutlookCategoryMutationResult = {
+  ok: boolean;
+  error?: string;
+};
+
+type OutlookCategoryPlanDiff = {
+  currentCategories: string[];
+  currentManagedCategories: string[];
+  desiredCategories: string[];
+  toAdd: string[];
+  toRemove: string[];
+  missingManagedCategories: string[];
+  unexpectedManagedCategories: string[];
+};
+
+type ApplyOutlookCategoryPlanResult = {
+  result: "success" | "noop" | "failed" | "stale" | "item-mismatch";
+  detail?: string;
+  diff: OutlookCategoryPlanDiff;
+};
+
 type OutlookCategoryWriterFreshness = {
   requestedAtMs: number;
   order: number;
@@ -650,6 +671,52 @@ function getOutlookCategoryValueSignature(values: readonly string[]): string {
       String(left || "").trim().toLowerCase().localeCompare(String(right || "").trim().toLowerCase(), "pt")
     )
   );
+}
+
+function formatOutlookAsyncError(error: any): string {
+  const code = String(error?.code || "").trim();
+  const message = String(error?.message || "").trim();
+  if (code && message) return `${code}: ${message}`;
+  return code || message || "unknown";
+}
+
+function buildOutlookCategoryPlanDiff(currentCategories: string[], plan: OutlookCategoryPlan): OutlookCategoryPlanDiff {
+  const normalizedCurrentCategories = normalizeUniqueCategoryValues(currentCategories);
+  const desiredCategories = normalizeUniqueCategoryValues(plan.desiredCategories);
+  const currentManagedCategories = getCurrentManagedCategoryNames(normalizedCurrentCategories, plan);
+  const desiredCategorySet = new Set(desiredCategories);
+  const currentManagedSet = new Set(currentManagedCategories);
+  return {
+    currentCategories: normalizedCurrentCategories,
+    currentManagedCategories,
+    desiredCategories,
+    toAdd: desiredCategories.filter((name) => !normalizedCurrentCategories.includes(name)),
+    toRemove: Array.from(new Set(currentManagedCategories.filter((name) => !desiredCategorySet.has(name)))),
+    missingManagedCategories: desiredCategories.filter((name) => !currentManagedSet.has(name)),
+    unexpectedManagedCategories: currentManagedCategories.filter((name) => !desiredCategorySet.has(name)),
+  };
+}
+
+function isOutlookCategoryPlanDiffSatisfied(diff: OutlookCategoryPlanDiff): boolean {
+  return getOutlookCategoryValueSignature(diff.currentManagedCategories)
+    === getOutlookCategoryValueSignature(diff.desiredCategories);
+}
+
+function formatOutlookCategoryPlanDiffDetail(
+  diff: OutlookCategoryPlanDiff,
+  errors: string[] = []
+): string {
+  const parts: string[] = [];
+  if (diff.missingManagedCategories.length) {
+    parts.push(`missing=${diff.missingManagedCategories.join(", ")}`);
+  }
+  if (diff.unexpectedManagedCategories.length) {
+    parts.push(`unexpected=${diff.unexpectedManagedCategories.join(", ")}`);
+  }
+  if (errors.length) {
+    parts.push(`errors=${errors.join(" | ")}`);
+  }
+  return parts.join("; ") || "managed categories did not converge";
 }
 
 function compareOutlookCategoryWriterFreshness(
@@ -1360,38 +1427,51 @@ export async function getCurrentItemToken(): Promise<string> {
   }
 }
 
-async function ensureMasterCategory(displayName: string, preferredStatus?: string): Promise<void> {
+async function ensureMasterCategory(displayName: string, preferredStatus?: string): Promise<OutlookCategoryMutationResult> {
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
-  if (!OfficeAny?.context?.mailbox?.masterCategories) return;
+  if (!OfficeAny?.context?.mailbox?.masterCategories) {
+    return { ok: true };
+  }
   const categoryColor = resolveManagedCategoryColor(displayName, OfficeAny.MailboxEnums?.CategoryColor, preferredStatus);
 
-  await new Promise<void>((resolve) => {
+  return await new Promise<OutlookCategoryMutationResult>((resolve) => {
     try {
       OfficeAny.context.mailbox.masterCategories.getAsync((res: any) => {
-        if (res.status !== OfficeAny.AsyncResultStatus.Succeeded) return resolve();
+        if (res.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+          const error = formatOutlookAsyncError(res?.error);
+          clientLog.warn("[office] masterCategories.getAsync failed", { displayName, error });
+          return resolve({ ok: false, error: `masterCategories.getAsync failed for ${displayName}: ${error}` });
+        }
         const list = Array.isArray(res.value) ? res.value : [];
         const existing = list.find((c: any) => (c.displayName || c.name) === displayName);
         const addCategory = () =>
           OfficeAny.context.mailbox.masterCategories.addAsync([{ displayName, color: categoryColor }], (addResult: any) => {
             if (addResult?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+              const error = formatOutlookAsyncError(addResult?.error);
               clientLog.warn("[office] masterCategories.addAsync failed", {
                 displayName,
-                error: addResult?.error?.message || addResult?.error?.code || "unknown",
+                error,
               });
+              return resolve({ ok: false, error: `masterCategories.addAsync failed for ${displayName}: ${error}` });
             }
-            resolve();
+            resolve({ ok: true });
           });
 
         if (existing) {
-          if (!categoryColor || String(existing?.color || "") === String(categoryColor)) return resolve();
-          if (typeof OfficeAny.context.mailbox.masterCategories.removeAsync !== "function") return resolve();
+          if (!categoryColor || String(existing?.color || "") === String(categoryColor)) {
+            return resolve({ ok: true });
+          }
+          if (typeof OfficeAny.context.mailbox.masterCategories.removeAsync !== "function") {
+            return resolve({ ok: true });
+          }
           return OfficeAny.context.mailbox.masterCategories.removeAsync([displayName], (removeResult: any) => {
             if (removeResult?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+              const error = formatOutlookAsyncError(removeResult?.error);
               clientLog.warn("[office] masterCategories.removeAsync failed", {
                 displayName,
-                error: removeResult?.error?.message || removeResult?.error?.code || "unknown",
+                error,
               });
-              return resolve();
+              return resolve({ ok: false, error: `masterCategories.removeAsync failed for ${displayName}: ${error}` });
             }
             addCategory();
           });
@@ -1400,7 +1480,7 @@ async function ensureMasterCategory(displayName: string, preferredStatus?: strin
         addCategory();
       });
     } catch {
-      resolve();
+      resolve({ ok: false, error: `master category preparation threw for ${displayName}` });
     }
   });
 }
@@ -1582,25 +1662,29 @@ async function getAttachmentsViaEmlForCurrentItem(): Promise<OutlookAttachment[]
   }
 }
 
-async function addCategoriesToCurrentItem(displayNames: string[]): Promise<void> {
+async function addCategoriesToCurrentItem(displayNames: string[]): Promise<OutlookCategoryMutationResult> {
   const uniqueNames = Array.from(new Set((displayNames || []).map((name) => String(name || "").trim()).filter(Boolean)));
-  if (!uniqueNames.length) return;
+  if (!uniqueNames.length) return { ok: true };
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
-  if (!OfficeAny?.context?.mailbox?.item?.categories?.addAsync) return;
+  if (!OfficeAny?.context?.mailbox?.item?.categories?.addAsync) {
+    return { ok: false, error: "item.categories.addAsync unavailable" };
+  }
 
-  await new Promise<void>((resolve) => {
+  return await new Promise<OutlookCategoryMutationResult>((resolve) => {
     try {
       OfficeAny.context.mailbox.item.categories.addAsync(uniqueNames, (result: any) => {
         if (result?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+          const error = formatOutlookAsyncError(result?.error);
           clientLog.warn("[office] item.categories.addAsync failed", {
             categories: uniqueNames,
-            error: result?.error?.message || result?.error?.code || "unknown",
+            error,
           });
+          return resolve({ ok: false, error: `item.categories.addAsync failed for ${uniqueNames.join(", ")}: ${error}` });
         }
-        resolve();
+        resolve({ ok: true });
       });
     } catch {
-      resolve();
+      resolve({ ok: false, error: `item.categories.addAsync threw for ${uniqueNames.join(", ")}` });
     }
   });
 }
@@ -1618,25 +1702,29 @@ async function removeCategoryFromCurrentItem(displayName: string): Promise<void>
   });
 }
 
-async function removeCategoriesFromCurrentItem(displayNames: string[]): Promise<void> {
+async function removeCategoriesFromCurrentItem(displayNames: string[]): Promise<OutlookCategoryMutationResult> {
   const uniqueNames = Array.from(new Set((displayNames || []).map((name) => String(name || "").trim()).filter(Boolean)));
-  if (!uniqueNames.length) return;
+  if (!uniqueNames.length) return { ok: true };
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
-  if (!OfficeAny?.context?.mailbox?.item?.categories?.removeAsync) return;
+  if (!OfficeAny?.context?.mailbox?.item?.categories?.removeAsync) {
+    return { ok: false, error: "item.categories.removeAsync unavailable" };
+  }
 
-  await new Promise<void>((resolve) => {
+  return await new Promise<OutlookCategoryMutationResult>((resolve) => {
     try {
       OfficeAny.context.mailbox.item.categories.removeAsync(uniqueNames, (result: any) => {
         if (result?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+          const error = formatOutlookAsyncError(result?.error);
           clientLog.warn("[office] item.categories.removeAsync failed", {
             categories: uniqueNames,
-            error: result?.error?.message || result?.error?.code || "unknown",
+            error,
           });
+          return resolve({ ok: false, error: `item.categories.removeAsync failed for ${uniqueNames.join(", ")}: ${error}` });
         }
-        resolve();
+        resolve({ ok: true });
       });
     } catch {
-      resolve();
+      resolve({ ok: false, error: `item.categories.removeAsync threw for ${uniqueNames.join(", ")}` });
     }
   });
 }
@@ -1704,9 +1792,7 @@ async function doesCurrentItemMatchOutlookCategoryPlan(
 ): Promise<boolean> {
   if (!(await hasExpectedCurrentItemToken(String(options?.expectedItemToken || "").trim()))) return false;
   const currentCategories = await getCurrentItemCategoryNames();
-  const currentManagedCategories = getCurrentManagedCategoryNames(currentCategories, plan);
-  return getOutlookCategoryValueSignature(currentManagedCategories)
-    === getOutlookCategoryValueSignature(plan.desiredCategories);
+  return isOutlookCategoryPlanDiffSatisfied(buildOutlookCategoryPlanDiff(currentCategories, plan));
 }
 
 export async function applyOutlookCategoryPlan(
@@ -1725,80 +1811,155 @@ export async function applyOutlookCategoryPlan(
       target?: OutlookCategorySyncTarget;
     };
   }
-): Promise<boolean> {
+): Promise<ApplyOutlookCategoryPlanResult> {
   const expectedItemToken = String(options?.expectedItemToken || "").trim();
   const syncMeta = options?.syncMeta;
   const isExecutionCurrent = options?.isExecutionCurrent;
+  const emptyDiff = buildOutlookCategoryPlanDiff([], plan);
 
   if (isExecutionCurrent && !isExecutionCurrent()) {
     logOutlookCategorySync("debug", "writer-skip-stale-before-read", syncMeta);
-    return false;
+    return { result: "stale", detail: "stale-before-read", diff: emptyDiff };
   }
-  if (!(await hasExpectedCurrentItemToken(expectedItemToken))) return false;
+  if (!(await hasExpectedCurrentItemToken(expectedItemToken))) {
+    return { result: "item-mismatch", detail: "item-token-before-read", diff: emptyDiff };
+  }
 
-  const currentCategories = await getCurrentItemCategoryNames();
-  const desiredCategories = normalizeUniqueCategoryValues(plan.desiredCategories);
-  const currentManagedCategories = getCurrentManagedCategoryNames(currentCategories, plan);
-  const desiredCategorySet = new Set(desiredCategories);
-  const toAdd = desiredCategories.filter((name) => !currentCategories.includes(name));
-  const toRemove = Array.from(new Set(currentManagedCategories.filter((name) => !desiredCategorySet.has(name))));
+  let diff = buildOutlookCategoryPlanDiff(await getCurrentItemCategoryNames(), plan);
 
   logOutlookCategorySync("debug", "writer-plan-diff", {
     ...syncMeta,
-    currentCategories,
-    currentManagedCategories,
-    desiredCategories,
-    toAdd,
-    toRemove,
+    currentCategories: diff.currentCategories,
+    currentManagedCategories: diff.currentManagedCategories,
+    desiredCategories: diff.desiredCategories,
+    toAdd: diff.toAdd,
+    toRemove: diff.toRemove,
   });
 
-  if (!toAdd.length && !toRemove.length) {
+  if (isOutlookCategoryPlanDiffSatisfied(diff)) {
     logOutlookCategorySync("info", "writer-noop", {
       ...syncMeta,
-      currentCategories,
-      desiredCategories,
+      currentCategories: diff.currentCategories,
+      desiredCategories: diff.desiredCategories,
     });
-    return true;
+    return { result: "noop", diff };
   }
 
-  for (const categoryName of desiredCategories) {
-    await ensureMasterCategory(categoryName, plan.desiredCategoryColors?.[categoryName]);
+  const preparationErrors: string[] = [];
+  for (const categoryName of diff.desiredCategories) {
+    const masterCategoryResult = await ensureMasterCategory(categoryName, plan.desiredCategoryColors?.[categoryName]);
+    if (!masterCategoryResult.ok && masterCategoryResult.error) {
+      preparationErrors.push(masterCategoryResult.error);
+    }
   }
 
   if (isExecutionCurrent && !isExecutionCurrent()) {
     logOutlookCategorySync("debug", "writer-skip-stale-after-prepare", syncMeta);
-    return false;
+    return { result: "stale", detail: "stale-after-prepare", diff };
   }
   if (!(await hasExpectedCurrentItemToken(expectedItemToken))) {
     clientLog.warn("[office] applyOutlookCategoryPlan aborted after category preparation because the item changed", {
       expectedItemToken,
     });
     logOutlookCategorySync("warn", "writer-skip-item-mismatch-after-prepare", syncMeta);
-    return false;
+    return { result: "item-mismatch", detail: "item-token-after-prepare", diff };
   }
 
-  await addCategoriesToCurrentItem(toAdd);
+  const writeErrors = [...preparationErrors];
+  const maxAttempts = 3;
 
-  if (isExecutionCurrent && !isExecutionCurrent()) {
-    logOutlookCategorySync("debug", "writer-skip-stale-after-add", syncMeta);
-    return false;
-  }
-  if (!(await hasExpectedCurrentItemToken(expectedItemToken))) {
-    clientLog.warn("[office] applyOutlookCategoryPlan skipped removals because the item changed", {
-      expectedItemToken,
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(180);
+      diff = buildOutlookCategoryPlanDiff(await getCurrentItemCategoryNames(), plan);
+    }
+
+    if (isOutlookCategoryPlanDiffSatisfied(diff)) {
+      logOutlookCategorySync("info", "writer-applied", {
+        ...syncMeta,
+        desiredCategories: diff.desiredCategories,
+        currentCategories: diff.currentCategories,
+        currentManagedCategories: diff.currentManagedCategories,
+        toAdd: diff.toAdd,
+        toRemove: diff.toRemove,
+        attempt,
+      });
+      return { result: "success", diff };
+    }
+
+    if (diff.toAdd.length) {
+      const addResult = await addCategoriesToCurrentItem(diff.toAdd);
+      if (!addResult.ok && addResult.error) {
+        writeErrors.push(addResult.error);
+      }
+    }
+
+    if (isExecutionCurrent && !isExecutionCurrent()) {
+      logOutlookCategorySync("debug", "writer-skip-stale-after-add", syncMeta);
+      return { result: "stale", detail: "stale-after-add", diff };
+    }
+    if (!(await hasExpectedCurrentItemToken(expectedItemToken))) {
+      clientLog.warn("[office] applyOutlookCategoryPlan skipped removals because the item changed", {
+        expectedItemToken,
+      });
+      logOutlookCategorySync("warn", "writer-skip-item-mismatch-before-remove", syncMeta);
+      return { result: "item-mismatch", detail: "item-token-before-remove", diff };
+    }
+
+    diff = buildOutlookCategoryPlanDiff(await getCurrentItemCategoryNames(), plan);
+    if (diff.toRemove.length) {
+      const removeResult = await removeCategoriesFromCurrentItem(diff.toRemove);
+      if (!removeResult.ok && removeResult.error) {
+        writeErrors.push(removeResult.error);
+      }
+    }
+
+    await sleep(120);
+    diff = buildOutlookCategoryPlanDiff(await getCurrentItemCategoryNames(), plan);
+
+    logOutlookCategorySync("debug", "writer-attempt-finished", {
+      ...syncMeta,
+      attempt,
+      currentCategories: diff.currentCategories,
+      currentManagedCategories: diff.currentManagedCategories,
+      desiredCategories: diff.desiredCategories,
+      toAdd: diff.toAdd,
+      toRemove: diff.toRemove,
+      missingManagedCategories: diff.missingManagedCategories,
+      unexpectedManagedCategories: diff.unexpectedManagedCategories,
+      writeErrors,
     });
-    logOutlookCategorySync("warn", "writer-skip-item-mismatch-before-remove", syncMeta);
-    return false;
+
+    if (isOutlookCategoryPlanDiffSatisfied(diff)) {
+      logOutlookCategorySync("info", "writer-applied", {
+        ...syncMeta,
+        desiredCategories: diff.desiredCategories,
+        currentCategories: diff.currentCategories,
+        currentManagedCategories: diff.currentManagedCategories,
+        attempt,
+      });
+      return { result: "success", diff };
+    }
+
+    for (const categoryName of diff.missingManagedCategories) {
+      const masterCategoryResult = await ensureMasterCategory(categoryName, plan.desiredCategoryColors?.[categoryName]);
+      if (!masterCategoryResult.ok && masterCategoryResult.error) {
+        writeErrors.push(masterCategoryResult.error);
+      }
+    }
   }
 
-  await removeCategoriesFromCurrentItem(toRemove);
-  logOutlookCategorySync("info", "writer-applied", {
+  const detail = formatOutlookCategoryPlanDiffDetail(diff, writeErrors);
+  logOutlookCategorySync("warn", "writer-verify-failed", {
     ...syncMeta,
-    desiredCategories,
-    toAdd,
-    toRemove,
+    currentCategories: diff.currentCategories,
+    currentManagedCategories: diff.currentManagedCategories,
+    desiredCategories: diff.desiredCategories,
+    missingManagedCategories: diff.missingManagedCategories,
+    unexpectedManagedCategories: diff.unexpectedManagedCategories,
+    detail,
   });
-  return true;
+  return { result: "failed", detail, diff };
 }
 
 function createOutlookCategorySyncResult(
@@ -2142,10 +2303,11 @@ async function runOutlookCategoryWriterRequest(
       syncMeta,
     });
     rememberOutlookCategoryWriterRequestId(state, prepared.requestId);
-    if (!applied) {
+    if (applied.result !== "success" && applied.result !== "noop") {
       const failedResult = createOutlookCategorySyncResult(request, {
         itemIdentity: prepared.itemIdentity,
-        result: isExecutionCurrent() ? "failed" : "stale",
+        result: applied.result,
+        detail: applied.detail,
         target: prepared.target,
         sourceSignature: prepared.sourceSignature,
         planSignature: prepared.planSignature,
@@ -2154,6 +2316,7 @@ async function runOutlookCategoryWriterRequest(
       logOutlookCategorySync(failedResult.result === "failed" ? "warn" : "info", "request-finished-without-apply", {
         ...syncMeta,
         result: failedResult.result,
+        detail: failedResult.detail,
       });
       return failedResult;
     }
