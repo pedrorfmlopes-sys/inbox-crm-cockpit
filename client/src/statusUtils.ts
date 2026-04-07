@@ -9,6 +9,13 @@ export const UNIFIED_STATUS_COLOR_MAP: Record<UnifiedStatusColorKey, React.CSSPr
   red: { borderColor: "rgba(239,68,68,0.26)", background: "rgba(254,226,226,0.95)", color: "#b91c1c" },
 };
 
+export const UNIFIED_STATUS_LEGEND: Array<{ key: UnifiedStatusColorKey; label: string; style: React.CSSProperties }> = [
+  { key: "blue", label: "Azul = Em analise", style: UNIFIED_STATUS_COLOR_MAP.blue },
+  { key: "amber", label: "Amarelo = Aguarda", style: UNIFIED_STATUS_COLOR_MAP.amber },
+  { key: "green", label: "Verde = Concluido", style: UNIFIED_STATUS_COLOR_MAP.green },
+  { key: "red", label: "Vermelho = Bloqueado", style: UNIFIED_STATUS_COLOR_MAP.red },
+];
+
 /**
  * Retorna a configuracao de apresentacao (label e cor) para um status,
  * suportando aliases legados mas mantendo a apresentacao unificada.
