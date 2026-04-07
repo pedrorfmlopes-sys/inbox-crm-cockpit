@@ -62,6 +62,7 @@ export type LegacyManagedOutlookCategoryInput = {
 export type OutlookCategoryPlan = {
   source: OutlookCategorySource;
   desiredCategories: string[];
+  desiredCategoryColors?: Record<string, string>; // name -> status (color key)
   managedLabelNames: string[];
   managedSpecialCategories: string[];
   manageClassificationFamilies: boolean;
@@ -160,18 +161,24 @@ export function buildOutlookCategoryPlan(
   options?: { manageClassificationFamilies?: boolean }
 ): OutlookCategoryPlan {
   const normalizedSource = normalizeOutlookCategorySource(source);
+  const desiredCategoryColors: Record<string, string> = {};
+
   const desiredCategories = [
-    ...normalizedSource.principalGroupNames.map((name) => `${GROUP_CATEGORY_PREFIX}${name}`),
+    ...normalizedSource.principalGroupNames.map((name) => {
+      const categoryName = `${GROUP_CATEGORY_PREFIX}${name}`;
+      if (normalizedSource.groupStatuses.length === 1) {
+        desiredCategoryColors[categoryName] = normalizedSource.groupStatuses[0];
+      }
+      return categoryName;
+    }),
     ...normalizedSource.referenceGroupNames.map((name) => `${REFERENCE_CATEGORY_PREFIX}${name}`),
-    ...normalizedSource.ticketCodes.map((code) => `${TICKET_CATEGORY_PREFIX}${code}`),
-    ...normalizedSource.groupStatuses
-      .map((status) => normalizeGroupStatusCategoryLabel(status))
-      .filter(Boolean)
-      .map((status) => `${GROUP_STATUS_CATEGORY_PREFIX}${status}`),
-    ...normalizedSource.ticketStatuses
-      .map((status) => normalizeTicketStatusCategoryLabel(status))
-      .filter(Boolean)
-      .map((status) => `${TICKET_STATUS_CATEGORY_PREFIX}${status}`),
+    ...normalizedSource.ticketCodes.map((code) => {
+      const categoryName = `${TICKET_CATEGORY_PREFIX}${code}`;
+      if (normalizedSource.ticketStatuses.length === 1) {
+        desiredCategoryColors[categoryName] = normalizedSource.ticketStatuses[0];
+      }
+      return categoryName;
+    }),
     ...normalizedSource.labelStatuses
       .map((status) => normalizeGroupStatusCategoryLabel(status))
       .filter(Boolean)
@@ -182,6 +189,7 @@ export function buildOutlookCategoryPlan(
   return {
     source: normalizedSource,
     desiredCategories: normalizeUniqueCategoryValues(desiredCategories),
+    desiredCategoryColors,
     managedLabelNames: normalizedSource.managedLabelNames,
     managedSpecialCategories: normalizedSource.managedSpecialCategories,
     manageClassificationFamilies: options?.manageClassificationFamilies !== false,
@@ -191,6 +199,7 @@ export function buildOutlookCategoryPlan(
 export function getOutlookCategoryPlanSignature(plan: OutlookCategoryPlan): string {
   return JSON.stringify({
     desiredCategories: sortNormalizedCategoryValues(normalizeUniqueCategoryValues(plan.desiredCategories)),
+    desiredCategoryColors: plan.desiredCategoryColors,
     managedLabelNames: sortNormalizedCategoryValues(normalizeUniqueCategoryValues(plan.managedLabelNames)),
     managedSpecialCategories: sortNormalizedCategoryValues(normalizeUniqueCategoryValues(plan.managedSpecialCategories)),
     manageClassificationFamilies: plan.manageClassificationFamilies !== false,
