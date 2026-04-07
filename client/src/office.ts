@@ -1145,9 +1145,13 @@ function resolveStatusCategoryColor(label: string, colors: any): any {
   return firstCategoryColor(colors, ["Preset12", "Preset0"]);
 }
 
-function resolveManagedCategoryColor(displayName: string, colors: any): any {
+function resolveManagedCategoryColor(displayName: string, colors: any, preferredStatus?: string): any {
   const label = String(displayName || "").trim();
   if (!label || !colors) return colors?.Preset0;
+
+  if (preferredStatus) {
+    return resolveStatusCategoryColor(preferredStatus, colors);
+  }
 
   if (label === ODOO_LINKED_CATEGORY) {
     return firstCategoryColor(colors, ["Preset22", "Preset7", "Preset0"]);
@@ -1356,10 +1360,10 @@ export async function getCurrentItemToken(): Promise<string> {
   }
 }
 
-async function ensureMasterCategory(displayName: string): Promise<void> {
+async function ensureMasterCategory(displayName: string, preferredStatus?: string): Promise<void> {
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
   if (!OfficeAny?.context?.mailbox?.masterCategories) return;
-  const categoryColor = resolveManagedCategoryColor(displayName, OfficeAny.MailboxEnums?.CategoryColor);
+  const categoryColor = resolveManagedCategoryColor(displayName, OfficeAny.MailboxEnums?.CategoryColor, preferredStatus);
 
   await new Promise<void>((resolve) => {
     try {
@@ -1758,7 +1762,7 @@ export async function applyOutlookCategoryPlan(
   }
 
   for (const categoryName of desiredCategories) {
-    await ensureMasterCategory(categoryName);
+    await ensureMasterCategory(categoryName, plan.desiredCategoryColors?.[categoryName]);
   }
 
   if (isExecutionCurrent && !isExecutionCurrent()) {
@@ -3193,7 +3197,7 @@ export async function getAttachments(): Promise<OutlookAttachment[]> {
       // Only process file attachments
       try {
         const content = await new Promise<string>((resolve, reject) => {
-          item.getAttachmentContentAsync(att.id, async (result: any) => {
+          item.getAttachmentContentAsync((att as any).id, async (result: any) => {
             if (result.status !== OfficeAny.AsyncResultStatus.Succeeded) {
               reject(new Error(result.error?.message));
               return;
@@ -3232,16 +3236,16 @@ export async function getAttachments(): Promise<OutlookAttachment[]> {
         });
 
         results.push({
-          id: String(att.id || "").trim() || undefined,
-          name: String(att.name || "").trim(),
-          contentType: String(att.contentType || "").trim(),
-          size: Number(att.size || 0) || undefined,
+          id: String((att as any).id || "").trim() || undefined,
+          name: String((att as any).name || "").trim(),
+          contentType: String((att as any).contentType || "").trim(),
+          size: Number((att as any).size || 0) || undefined,
           isInline: Boolean((att as any).isInline),
           contentId: String((att as any).contentId || "").trim() || undefined,
           content: content,
         });
       } catch (e) {
-        clientLog.error(`[office] Failed to download attachment ${att.name}`, e);
+        clientLog.error(`[office] Failed to download attachment ${(att as any).name}`, e);
       }
     }
 
