@@ -180,6 +180,14 @@ type PreparedOutlookCategorySyncWriterRequest = OutlookCategorySyncWriterRequest
 
 type OutlookCategoryMutationResult = {
   ok: boolean;
+  rawStatus?: string;
+  error?: string;
+};
+
+type OutlookCategoryReadbackResult = {
+  categories: string[];
+  source: "getAsync" | "array-fallback" | "unavailable";
+  rawStatus?: string;
   error?: string;
 };
 
@@ -702,6 +710,13 @@ function isOutlookCategoryPlanDiffSatisfied(diff: OutlookCategoryPlanDiff): bool
     === getOutlookCategoryValueSignature(diff.desiredCategories);
 }
 
+function isOutlookCategoryPlanHostConfirmed(
+  diff: OutlookCategoryPlanDiff,
+  readback: OutlookCategoryReadbackResult
+): boolean {
+  return readback.source === "getAsync" && isOutlookCategoryPlanDiffSatisfied(diff);
+}
+
 function formatOutlookCategoryPlanDiffDetail(
   diff: OutlookCategoryPlanDiff,
   errors: string[] = []
@@ -717,6 +732,26 @@ function formatOutlookCategoryPlanDiffDetail(
     parts.push(`errors=${errors.join(" | ")}`);
   }
   return parts.join("; ") || "managed categories did not converge";
+}
+
+function getOutlookCategoryApplyLogItemId(syncMeta?: {
+  itemIdentity?: string;
+  target?: OutlookCategorySyncTarget;
+}): string {
+  return String(syncMeta?.target?.itemId || syncMeta?.target?.internetMessageId || syncMeta?.itemIdentity || "").trim();
+}
+
+function logOutlookCategoryApplyDiagnostic(
+  level: "log" | "warn",
+  event: string,
+  data?: Record<string, unknown>
+) {
+  const message = `[TEMP][outlook-category-apply] ${event}`;
+  if (level === "warn") {
+    clientLog.warn(message, data);
+    return;
+  }
+  clientLog.log(message, data);
 }
 
 function compareOutlookCategoryWriterFreshness(
@@ -1667,24 +1702,33 @@ async function addCategoriesToCurrentItem(displayNames: string[]): Promise<Outlo
   if (!uniqueNames.length) return { ok: true };
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
   if (!OfficeAny?.context?.mailbox?.item?.categories?.addAsync) {
-    return { ok: false, error: "item.categories.addAsync unavailable" };
+    return { ok: false, rawStatus: "unavailable", error: "item.categories.addAsync unavailable" };
   }
 
   return await new Promise<OutlookCategoryMutationResult>((resolve) => {
     try {
       OfficeAny.context.mailbox.item.categories.addAsync(uniqueNames, (result: any) => {
+        const rawStatus = String(result?.status || "").trim() || "unknown";
         if (result?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
           const error = formatOutlookAsyncError(result?.error);
           clientLog.warn("[office] item.categories.addAsync failed", {
             categories: uniqueNames,
             error,
           });
-          return resolve({ ok: false, error: `item.categories.addAsync failed for ${uniqueNames.join(", ")}: ${error}` });
+          return resolve({
+            ok: false,
+            rawStatus,
+            error: `item.categories.addAsync failed for ${uniqueNames.join(", ")}: ${error}`,
+          });
         }
-        resolve({ ok: true });
+        resolve({ ok: true, rawStatus });
       });
     } catch {
-      resolve({ ok: false, error: `item.categories.addAsync threw for ${uniqueNames.join(", ")}` });
+      resolve({
+        ok: false,
+        rawStatus: "throw",
+        error: `item.categories.addAsync threw for ${uniqueNames.join(", ")}`,
+      });
     }
   });
 }
@@ -1707,58 +1751,111 @@ async function removeCategoriesFromCurrentItem(displayNames: string[]): Promise<
   if (!uniqueNames.length) return { ok: true };
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
   if (!OfficeAny?.context?.mailbox?.item?.categories?.removeAsync) {
-    return { ok: false, error: "item.categories.removeAsync unavailable" };
+    return { ok: false, rawStatus: "unavailable", error: "item.categories.removeAsync unavailable" };
   }
 
   return await new Promise<OutlookCategoryMutationResult>((resolve) => {
     try {
       OfficeAny.context.mailbox.item.categories.removeAsync(uniqueNames, (result: any) => {
+        const rawStatus = String(result?.status || "").trim() || "unknown";
         if (result?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
           const error = formatOutlookAsyncError(result?.error);
           clientLog.warn("[office] item.categories.removeAsync failed", {
             categories: uniqueNames,
             error,
           });
-          return resolve({ ok: false, error: `item.categories.removeAsync failed for ${uniqueNames.join(", ")}: ${error}` });
+          return resolve({
+            ok: false,
+            rawStatus,
+            error: `item.categories.removeAsync failed for ${uniqueNames.join(", ")}: ${error}`,
+          });
         }
-        resolve({ ok: true });
+        resolve({ ok: true, rawStatus });
       });
     } catch {
-      resolve({ ok: false, error: `item.categories.removeAsync threw for ${uniqueNames.join(", ")}` });
+      resolve({
+        ok: false,
+        rawStatus: "throw",
+        error: `item.categories.removeAsync threw for ${uniqueNames.join(", ")}`,
+      });
     }
   });
 }
 
-async function getCurrentItemCategoryNames(): Promise<string[]> {
+async function readCurrentItemCategoryNamesFromHost(): Promise<OutlookCategoryReadbackResult> {
   const OfficeAny: any = await ensureOfficeReady().catch(() => null);
   const categoriesApi = OfficeAny?.context?.mailbox?.item?.categories;
-  if (!categoriesApi) return [];
-
-  if (Array.isArray(categoriesApi)) {
-    return categoriesApi
-      .map((entry: any) => String(entry?.displayName || entry?.name || entry || "").trim())
-      .filter(Boolean);
-  }
+  if (!categoriesApi) return { categories: [], source: "unavailable", rawStatus: "unavailable", error: "item.categories unavailable" };
 
   if (typeof categoriesApi.getAsync === "function") {
-    return await new Promise<string[]>((resolve) => {
+    const asyncRead = await new Promise<OutlookCategoryReadbackResult | null>((resolve) => {
       try {
         categoriesApi.getAsync((result: any) => {
-          if (result?.status !== OfficeAny.AsyncResultStatus.Succeeded) return resolve([]);
+          const rawStatus = String(result?.status || "").trim() || "unknown";
+          if (result?.status !== OfficeAny.AsyncResultStatus.Succeeded) {
+            const error = formatOutlookAsyncError(result?.error);
+            return resolve({
+              categories: [],
+              source: "unavailable",
+              rawStatus,
+              error: `item.categories.getAsync failed: ${error}`,
+            });
+          }
           const value = Array.isArray(result.value) ? result.value : [];
-          resolve(
-            value
+          resolve({
+            categories: normalizeUniqueCategoryValues(
+              value
               .map((entry: any) => String(entry?.displayName || entry?.name || entry || "").trim())
               .filter(Boolean)
-          );
+            ),
+            source: "getAsync",
+            rawStatus,
+          });
         });
       } catch {
-        resolve([]);
+        resolve({
+          categories: [],
+          source: "unavailable",
+          rawStatus: "throw",
+          error: "item.categories.getAsync threw",
+        });
       }
     });
+    if (asyncRead?.source === "getAsync") return asyncRead;
+    if (Array.isArray(categoriesApi)) {
+      return {
+        categories: normalizeUniqueCategoryValues(
+          categoriesApi
+            .map((entry: any) => String(entry?.displayName || entry?.name || entry || "").trim())
+            .filter(Boolean)
+        ),
+        source: "array-fallback",
+        rawStatus: asyncRead?.rawStatus || "fallback",
+        error: asyncRead?.error,
+      };
+    }
+    return asyncRead || { categories: [], source: "unavailable", rawStatus: "unknown", error: "item.categories.getAsync returned no result" };
   }
 
-  return [];
+  if (Array.isArray(categoriesApi)) {
+    return {
+      categories: normalizeUniqueCategoryValues(
+        categoriesApi
+          .map((entry: any) => String(entry?.displayName || entry?.name || entry || "").trim())
+          .filter(Boolean)
+      ),
+      source: "array-fallback",
+      rawStatus: "array",
+      error: "item.categories.getAsync unavailable",
+    };
+  }
+
+  return { categories: [], source: "unavailable", rawStatus: "unavailable", error: "item.categories.getAsync unavailable" };
+}
+
+async function getCurrentItemCategoryNames(): Promise<string[]> {
+  const readback = await readCurrentItemCategoryNamesFromHost();
+  return readback.categories;
 }
 
 async function hasExpectedCurrentItemToken(expectedItemToken?: string): Promise<boolean> {
@@ -1791,8 +1888,8 @@ async function doesCurrentItemMatchOutlookCategoryPlan(
   options?: { expectedItemToken?: string }
 ): Promise<boolean> {
   if (!(await hasExpectedCurrentItemToken(String(options?.expectedItemToken || "").trim()))) return false;
-  const currentCategories = await getCurrentItemCategoryNames();
-  return isOutlookCategoryPlanDiffSatisfied(buildOutlookCategoryPlanDiff(currentCategories, plan));
+  const readback = await readCurrentItemCategoryNamesFromHost();
+  return isOutlookCategoryPlanHostConfirmed(buildOutlookCategoryPlanDiff(readback.categories, plan), readback);
 }
 
 export async function applyOutlookCategoryPlan(
@@ -1816,6 +1913,23 @@ export async function applyOutlookCategoryPlan(
   const syncMeta = options?.syncMeta;
   const isExecutionCurrent = options?.isExecutionCurrent;
   const emptyDiff = buildOutlookCategoryPlanDiff([], plan);
+  const diagnosticItemId = getOutlookCategoryApplyLogItemId(syncMeta);
+
+  const readbackCurrentCategories = async (reason: string): Promise<OutlookCategoryReadbackResult> => {
+    const readback = await readCurrentItemCategoryNamesFromHost();
+    if (readback.source !== "getAsync") {
+      logOutlookCategoryApplyDiagnostic("warn", "readback-fallback", {
+        itemId: diagnosticItemId,
+        reason,
+        categoriesRequested: plan.desiredCategories,
+        categoriesReadback: readback.categories,
+        readbackSource: readback.source,
+        readbackRawStatus: readback.rawStatus,
+        fallbackReason: readback.error,
+      });
+    }
+    return readback;
+  };
 
   if (isExecutionCurrent && !isExecutionCurrent()) {
     logOutlookCategorySync("debug", "writer-skip-stale-before-read", syncMeta);
@@ -1825,7 +1939,8 @@ export async function applyOutlookCategoryPlan(
     return { result: "item-mismatch", detail: "item-token-before-read", diff: emptyDiff };
   }
 
-  let diff = buildOutlookCategoryPlanDiff(await getCurrentItemCategoryNames(), plan);
+  let readback = await readbackCurrentCategories("pre-apply");
+  let diff = buildOutlookCategoryPlanDiff(readback.categories, plan);
 
   logOutlookCategorySync("debug", "writer-plan-diff", {
     ...syncMeta,
@@ -1835,12 +1950,25 @@ export async function applyOutlookCategoryPlan(
     toAdd: diff.toAdd,
     toRemove: diff.toRemove,
   });
+  logOutlookCategoryApplyDiagnostic("log", "resolved-plan", {
+    itemId: diagnosticItemId,
+    categoriesRequested: diff.desiredCategories,
+    categoriesReadback: readback.categories,
+    readbackSource: readback.source,
+    readbackRawStatus: readback.rawStatus,
+  });
 
-  if (isOutlookCategoryPlanDiffSatisfied(diff)) {
+  if (isOutlookCategoryPlanHostConfirmed(diff, readback)) {
     logOutlookCategorySync("info", "writer-noop", {
       ...syncMeta,
       currentCategories: diff.currentCategories,
       desiredCategories: diff.desiredCategories,
+    });
+    logOutlookCategoryApplyDiagnostic("log", "confirmed-noop-readback", {
+      itemId: diagnosticItemId,
+      categoriesRequested: diff.desiredCategories,
+      categoriesReadback: readback.categories,
+      readbackSource: readback.source,
     });
     return { result: "noop", diff };
   }
@@ -1870,11 +1998,12 @@ export async function applyOutlookCategoryPlan(
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (attempt > 0) {
-      await sleep(180);
-      diff = buildOutlookCategoryPlanDiff(await getCurrentItemCategoryNames(), plan);
+      await sleep(250);
+      readback = await readbackCurrentCategories(`retry-pre-attempt-${attempt}`);
+      diff = buildOutlookCategoryPlanDiff(readback.categories, plan);
     }
 
-    if (isOutlookCategoryPlanDiffSatisfied(diff)) {
+    if (isOutlookCategoryPlanHostConfirmed(diff, readback)) {
       logOutlookCategorySync("info", "writer-applied", {
         ...syncMeta,
         desiredCategories: diff.desiredCategories,
@@ -1884,11 +2013,26 @@ export async function applyOutlookCategoryPlan(
         toRemove: diff.toRemove,
         attempt,
       });
+      logOutlookCategoryApplyDiagnostic("log", "confirmed-readback", {
+        itemId: diagnosticItemId,
+        attempt,
+        categoriesRequested: diff.desiredCategories,
+        categoriesReadback: readback.categories,
+        readbackSource: readback.source,
+      });
       return { result: "success", diff };
     }
 
     if (diff.toAdd.length) {
       const addResult = await addCategoriesToCurrentItem(diff.toAdd);
+      logOutlookCategoryApplyDiagnostic(addResult.ok ? "log" : "warn", "apply-add-result", {
+        itemId: diagnosticItemId,
+        attempt,
+        categoriesRequested: diff.desiredCategories,
+        categoriesApplied: diff.toAdd,
+        applyRawStatus: addResult.rawStatus,
+        applyError: addResult.error,
+      });
       if (!addResult.ok && addResult.error) {
         writeErrors.push(addResult.error);
       }
@@ -1906,16 +2050,26 @@ export async function applyOutlookCategoryPlan(
       return { result: "item-mismatch", detail: "item-token-before-remove", diff };
     }
 
-    diff = buildOutlookCategoryPlanDiff(await getCurrentItemCategoryNames(), plan);
+    readback = await readbackCurrentCategories(`post-add-attempt-${attempt}`);
+    diff = buildOutlookCategoryPlanDiff(readback.categories, plan);
     if (diff.toRemove.length) {
       const removeResult = await removeCategoriesFromCurrentItem(diff.toRemove);
+      logOutlookCategoryApplyDiagnostic(removeResult.ok ? "log" : "warn", "apply-remove-result", {
+        itemId: diagnosticItemId,
+        attempt,
+        categoriesRequested: diff.desiredCategories,
+        categoriesRemoved: diff.toRemove,
+        applyRawStatus: removeResult.rawStatus,
+        applyError: removeResult.error,
+      });
       if (!removeResult.ok && removeResult.error) {
         writeErrors.push(removeResult.error);
       }
     }
 
-    await sleep(120);
-    diff = buildOutlookCategoryPlanDiff(await getCurrentItemCategoryNames(), plan);
+    await sleep(200);
+    readback = await readbackCurrentCategories(`post-remove-attempt-${attempt}`);
+    diff = buildOutlookCategoryPlanDiff(readback.categories, plan);
 
     logOutlookCategorySync("debug", "writer-attempt-finished", {
       ...syncMeta,
@@ -1929,14 +2083,36 @@ export async function applyOutlookCategoryPlan(
       unexpectedManagedCategories: diff.unexpectedManagedCategories,
       writeErrors,
     });
+    logOutlookCategoryApplyDiagnostic(
+      isOutlookCategoryPlanHostConfirmed(diff, readback) ? "log" : "warn",
+      "attempt-readback",
+      {
+        itemId: diagnosticItemId,
+        attempt,
+        categoriesRequested: diff.desiredCategories,
+        categoriesReadback: readback.categories,
+        readbackSource: readback.source,
+        readbackRawStatus: readback.rawStatus,
+        fallbackReason: readback.error,
+        missingManagedCategories: diff.missingManagedCategories,
+        unexpectedManagedCategories: diff.unexpectedManagedCategories,
+      }
+    );
 
-    if (isOutlookCategoryPlanDiffSatisfied(diff)) {
+    if (isOutlookCategoryPlanHostConfirmed(diff, readback)) {
       logOutlookCategorySync("info", "writer-applied", {
         ...syncMeta,
         desiredCategories: diff.desiredCategories,
         currentCategories: diff.currentCategories,
         currentManagedCategories: diff.currentManagedCategories,
         attempt,
+      });
+      logOutlookCategoryApplyDiagnostic("log", "confirmed-readback", {
+        itemId: diagnosticItemId,
+        attempt,
+        categoriesRequested: diff.desiredCategories,
+        categoriesReadback: readback.categories,
+        readbackSource: readback.source,
       });
       return { result: "success", diff };
     }
@@ -1957,6 +2133,15 @@ export async function applyOutlookCategoryPlan(
     desiredCategories: diff.desiredCategories,
     missingManagedCategories: diff.missingManagedCategories,
     unexpectedManagedCategories: diff.unexpectedManagedCategories,
+    detail,
+  });
+  logOutlookCategoryApplyDiagnostic("warn", "final-confirmation-failed", {
+    itemId: diagnosticItemId,
+    categoriesRequested: diff.desiredCategories,
+    categoriesReadback: readback.categories,
+    readbackSource: readback.source,
+    readbackRawStatus: readback.rawStatus,
+    fallbackReason: readback.error || detail,
     detail,
   });
   return { result: "failed", detail, diff };
