@@ -3091,6 +3091,12 @@ function StudioInner() {
             });
 
             if (!writerResult) {
+              clientLog.warn("[TEMP][outlook-category-apply] writer-timeout", {
+                itemId: currentTargetIdentity.itemId,
+                requestId: categoryRequestId,
+                categoriesRequested: categoryPlan.desiredCategories,
+                reason: "waitForOutlookCategorySyncResult timeout",
+              });
               if (activeCategoryOperationId) {
                 completeOutlookCategoryOperation(activeCategoryOperationId, {
                   result: "timeout",
@@ -3113,6 +3119,13 @@ function StudioInner() {
 
             if (writerResult.result !== "success" && writerResult.result !== "duplicate") {
               const writerDetail = String(writerResult.detail || "").trim();
+              clientLog.warn("[TEMP][outlook-category-apply] writer-degraded-result", {
+                itemId: currentTargetIdentity.itemId,
+                requestId: categoryRequestId,
+                categoriesRequested: categoryPlan.desiredCategories,
+                writerResult: writerResult.result,
+                detail: writerDetail || undefined,
+              });
               throw new Error(
                 writerDetail
                   ? `A classificacao foi guardada, mas o Outlook nao confirmou a aplicacao das categorias (${writerDetail}).`
