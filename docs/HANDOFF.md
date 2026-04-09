@@ -365,5 +365,27 @@
 - Validar comportamento, risco e impacto lateral
 - Rever segurança, persistência, Odoo, IA e Outlook add-in na zona tocada
 - Atualizar `docs/HANDOFF.md` com o novo estado operacional
+
+## Grupos v1: stack Fase 0-4 integrada em `main` (Abril 2026)
+- **Integracao Executada**: A stack `Grupos v1` ate Fase 4 foi integrada em `main` por merges `--no-ff`, sem squash e sem rebase, preservando o historico por fase.
+- **Checkpoint Pre-Merge**: criada a tag `pre-merge-groups-v1-phase4-stack-2026-04-09` antes de tocar em `main`.
+- **Estado Atual em `main`**:
+  - baseline documental e contratos de Fase 0/1 ja estao em `main`
+  - `Preparar` da Fase 2 ja esta em `main`
+  - politica de sessao/cache e save-before-exit da Fase 3 ja estao em `main`
+  - ponte minima `Preparar -> Classificar` da Fase 4 ja esta em `main`
+- **Guardas Mantidas na Integracao**:
+  - nao entrou implementacao de `Explorar`, `Explorador de Grupos`, `Gestor do Grupo` nem aba principal `Tarefas`
+  - nao entrou viewer novo
+  - nao entrou persistencia remota pesada
+  - o seed de `Preparar -> Classificar` continua temporario, unidirecional e nao canonico
+- **Proximo Gate Obrigatorio**:
+  - o proximo passo ja depende de teste real no host Outlook com utilizador real
+  - validar fluxo completo `Preparar -> Classificar`
+  - validar comportamento de sessao/cache em contexto real do add-in
+  - confirmar que nao ha regressao de UX operacional antes de abrir fases seguintes
+- **Nota Operacional**:
+  - se os testes reais encontrarem problema, o rollback preferido continua a ser `git revert -m 1 <merge_commit>` pela ordem inversa dos merges desta stack
+  - nao usar `reset --hard` em `main`
 - Atualizar `docs/DECISIONS.md` se alguma norma ou decisão mudou
 - Registar no output final: alterações, riscos, validações e próximos passos
