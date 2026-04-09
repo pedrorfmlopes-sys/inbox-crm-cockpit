@@ -391,5 +391,6 @@
   - hotfix de compactacao e fidelidade ao mockup em `client/src/modules/crm/GroupsPrepareCockpit.tsx`
   - sem novas features, sem reabrir seed/cache/persistencia e sem tocar em `Explorar` / `Explorador` / `Gestor`
   - switches `Grupo` e `Filtros` redesenhados como controlo compacto real; tabs, cards, badges e footer compactados
+  - ajuste visual seguinte apertou ainda mais header, rails, card `Email ancora`, lista e footer para aproximar `Groups > Preparar` do mockup aprovado, sem mexer em logica
 - Atualizar `docs/DECISIONS.md` se alguma norma ou decisão mudou
 - Registar no output final: alterações, riscos, validações e próximos passos
