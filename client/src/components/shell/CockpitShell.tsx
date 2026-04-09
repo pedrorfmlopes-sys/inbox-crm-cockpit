@@ -1,5 +1,5 @@
 import React from "react";
-import { CockpitProvider, useCockpit } from "./CockpitProvider";
+import { CockpitProvider, useCockpit, type CockpitContextType } from "./CockpitProvider";
 import { Navigation } from "./Navigation";
 import { GlobalHeader } from "./GlobalHeader";
 import { StartupSplash } from "./StartupSplash";
@@ -10,7 +10,7 @@ import { AiCockpit } from "../../modules/ai/AiCockpit";
 import { CrmCockpit } from "../../modules/crm/CrmCockpit";
 import { CrmCockpit2 } from "../../modules/crm/CrmCockpit2";
 import { RelatedCockpit } from "../../modules/crm/RelatedCockpit";
-import { GroupManagerCockpit } from "../../modules/crm/GroupManagerCockpit";
+import { GroupsPrepareCockpit } from "../../modules/crm/GroupsPrepareCockpit";
 import { FileCockpit } from "../../modules/files/FileCockpit";
 import { SettingsPanel } from "../../ui/SettingsPanel";
 
@@ -19,7 +19,7 @@ import { LoginCockpit } from "../../modules/auth/LoginCockpit";
 function ShellContent() {
     const cockpit = useCockpit();
     if (!cockpit) return null;
-    const { tab, isAuthenticated, isLoading, startupChecks, startupNotice, dismissStartupNotice, settings, openSettingsSection } = cockpit as any;
+    const { tab, isAuthenticated, isLoading, startupChecks, startupNotice, dismissStartupNotice, settings, openSettingsSection } = cockpit as CockpitContextType;
     const hasOdooSetup = Boolean(
         String(settings?.odooUrl || "").trim()
         || String(settings?.odooDb || "").trim()
@@ -77,7 +77,7 @@ function ShellContent() {
                         {tab === "crm" && <CrmCockpit />}
                         {tab === "crm2" && <CrmCockpit2 />}
                         {tab === "related" && <RelatedCockpit />}
-                        {tab === "groups" && <GroupManagerCockpit />}
+                        {tab === "groups" && <GroupsPrepareCockpit />}
                         {tab === "files" && <FileCockpit />}
                         {tab === "settings" && <SettingsPanel />}
                     </>

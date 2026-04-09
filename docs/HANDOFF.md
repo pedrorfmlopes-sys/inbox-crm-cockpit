@@ -224,6 +224,46 @@
   - `docs/Grupos_08042026.html` existe localmente mas é duplicado byte-a-byte de `docs/Relatorio_Aba_Grupos_Implementacao_2026-04-08.html`; não foi promovido para evitar redundância.
   - A enforcement runtime total do contrato `1 email = 0 ou 1 grupo principal` no backend continua futura; nesta ronda ficou fechado o contrato partilhado e a sua adoção nos pontos cliente já existentes.
 
+## Grupos v1: Fase 2 - Preparar (Abril 2026)
+- **Base da Ronda**: A branch desta ronda partiu de `origin/codex/groups-v1-phase0-phase1` porque o commit `1c5540460f50e72b680d4664969adce3cb4cc55f` ainda não estava mergeado em `main`.
+- **Revisão Obrigatória da Ronda Anterior**:
+  - `client/src/api.ts` ficou limitado a contratos/tipos partilhados e plumbing de export.
+  - `client/src/modules/crm/GroupClassificationStudioApp.tsx` reutiliza helpers de contratos para principal/referências sem alterar layout ou abrir novos fluxos.
+  - `client/src/modules/crm/GroupManagerCockpit.tsx` reutiliza os mesmos helpers no quick-link, sem drift visual e sem duplicar responsabilidades.
+  - Conclusão: a ronda anterior ficou aprovada como base segura para avançar para Fase 2.
+- **Implementação Introduzida em Fase 2**:
+  - A aba `Groups` no task pane passou a renderizar uma superfície dedicada a `Preparar` através de `client/src/modules/crm/GroupsPrepareCockpit.tsx`.
+  - O shell foi ajustado em `client/src/components/shell/CockpitShell.tsx` para apontar a tab `groups` para essa nova superfície compacta.
+  - Foi criado `client/src/modules/crm/groups-v1/prepareSession.ts` para guardar progresso de sessão local de `Preparar` e um seed mínimo de passagem para `Classificar`, sem abrir persistência remota pesada.
+  - `Preparar` ficou com:
+    - card de Email Âncora
+    - switches compactos `Grupo` e `Filtros`, ambos OFF por defeito
+    - sub-vistas `Lista`, `Anexos` e `Resumo`
+    - lista de emails selecionáveis com cards expansíveis
+    - painel de grupo em trabalho, sem edição rica
+    - painel de filtros de pesquisa, sem classificação final
+    - preparação local de anexos
+    - resumo antes da passagem a `Classificar`
+- **Guardas Mantidas**:
+  - `Preparar` não substitui `Classificar`.
+  - Não foi criado viewer novo.
+  - Não foi aberta UI pesada de `Explorar`, `Explorador de Grupos` ou `Gestor do Grupo`.
+  - A semântica `grupo` / `referência` / `ticket` / `etiqueta` e a regra `1 email = 0 ou 1 grupo principal` mantiveram-se intactas.
+- **Scaffolding Deliberadamente Mínimo**:
+  - A ponte para `Classificar` escreve apenas um seed local com seleção, grupo em trabalho, anexos preparados e filtros ativos.
+  - A passagem integral do conjunto preparado e a persistência remota aprofundada continuam reservadas para fases seguintes.
+- **Validação Executada**:
+  - `npm.cmd -w client run build`
+  - `git diff --check`
+- **Fora do Scope / Não Tocado Propositadamente**:
+  - Fase 3 completa de persistência.
+  - Fase 4 completa de integração entre `Preparar` e `Classificar`.
+  - `Explorar` do add-in, `Explorador de Grupos`, `Gestor do Grupo` e a aba principal `Tarefas`.
+  - `client/src/modules/crm/GroupManagerCockpit.tsx`, `client/src/modules/crm/GroupClassificationStudioApp.tsx` e `client/src/api.ts` nesta ronda, para evitar scope drift depois da revisão da base.
+- **Resíduos / Riscos**:
+  - O seed local para `Classificar` nesta fase é scaffolding e ainda não representa uma transferência integral de estado.
+  - Continua pendente validação funcional integrada quando a Fase 4 ligar a passagem completa para o fluxo de classificação.
+
 ## Última orientação estratégica
 - Segurança e coerência arquitetural antes de novas features.
 
