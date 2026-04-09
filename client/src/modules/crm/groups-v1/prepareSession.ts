@@ -346,6 +346,16 @@ export function consumeGroupPreparationSeed(seedKey: string | null | undefined):
   return seed;
 }
 
+export function clearGroupPreparationSeed(seedKey: string | null | undefined): void {
+  const key = normalizeToken(seedKey);
+  if (!key || typeof localStorage === "undefined") return;
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
 export function writeGroupPreparationSeed(seed: GroupPreparationSeed | null): string {
   if (!seed || typeof localStorage === "undefined") return "";
   const key = `${GROUPS_PREPARE_CLASSIFY_SEED_STORAGE_PREFIX}${Date.now()}:${seed.anchorEmailKey}`;
