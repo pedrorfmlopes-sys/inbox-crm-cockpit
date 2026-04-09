@@ -52,6 +52,14 @@ Durante edicao normal, existe apenas um save diferido curto para reduzir perda a
 - esse seed e temporario, com TTL, e nao substitui persistencia remota
 - o seed existe apenas para a futura integracao completa da Fase 4
 
+## Consumo minimo em Fase 4
+
+- `Preparar` escreve o seed e passa apenas a chave por URL
+- `Classificar` le o seed de forma controlada, valida conteudo e expiracao, e arranca com bootstrap local quando o seed e valido
+- o consumo e unidirecional: nao existe sync continuo entre `Preparar` e `Classificar`
+- depois de bootstrap bem-sucedido, o seed e limpo para evitar reconsumos fantasmas
+- se o seed estiver expirado, invalido ou nao corresponder ao conjunto atual, `Classificar` cai para o fluxo normal
+
 ## Fora desta fase
 
 - persistencia remota pesada
