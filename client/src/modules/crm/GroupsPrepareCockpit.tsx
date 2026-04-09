@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createLinkGroup,
   getRelatedEmailContext,
@@ -18,12 +18,17 @@ import {
   buildGroupChangeRequest,
 } from "@/modules/crm/groups-v1/contracts";
 import {
+  buildGroupsPrepareSessionSnapshot,
   DEFAULT_GROUPS_PREPARE_SESSION_STATE,
   GROUPS_PREPARE_CLASSIFY_PARAM,
+  GROUPS_PREPARE_SESSION_SAVE_DEBOUNCE_MS,
   buildGroupPreparationSeed,
+  getGroupsPrepareSessionSignature,
   readGroupsPrepareSession,
   type GroupsPrepareAttachmentMode,
   type GroupsPrepareGroupMode,
+  type GroupsPrepareSessionSaveReason,
+  type GroupsPrepareSessionState,
   type GroupsPrepareSubview,
   writeGroupPreparationSeed,
   writeGroupsPrepareSession,
@@ -318,6 +323,50 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const [emailTicketMap, setEmailTicketMap] = useState<Record<string, GroupTicketEntry[]>>({});
   const [busy, setBusy] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
+  const [sessionScopeKey, setSessionScopeKey] = useState("");
+
+  const sessionSnapshot = useMemo<GroupsPrepareSessionState>(() => buildGroupsPrepareSessionSnapshot({
+    subview,
+    showGroupPanel,
+    showFiltersPanel,
+    workingGroupId,
+    workingGroupQuery,
+    filterQuery,
+    attachmentMode,
+    groupMode,
+    selectedEmailKeys,
+    expandedEmailKeys,
+    selectedAttachmentKeys,
+  }), [
+    attachmentMode,
+    expandedEmailKeys,
+    filterQuery,
+    groupMode,
+    selectedAttachmentKeys,
+    selectedEmailKeys,
+    showFiltersPanel,
+    showGroupPanel,
+    subview,
+    workingGroupId,
+    workingGroupQuery,
+  ]);
+  const sessionSignature = useMemo(
+    () => getGroupsPrepareSessionSignature(sessionSnapshot),
+    [sessionSnapshot]
+  );
+  const renderedSessionRef = useRef<{
+    emailKey: string;
+    snapshot: GroupsPrepareSessionState;
+    signature: string;
+  }>({
+    emailKey: "",
+    snapshot: { ...DEFAULT_GROUPS_PREPARE_SESSION_STATE },
+    signature: getGroupsPrepareSessionSignature(DEFAULT_GROUPS_PREPARE_SESSION_STATE),
+  });
+  const lastPersistedSessionRef = useRef<{ emailKey: string; signature: string }>({
+    emailKey: "",
+    signature: getGroupsPrepareSessionSignature(DEFAULT_GROUPS_PREPARE_SESSION_STATE),
+  });
 
   const currentEmailBootstrapPayload = useMemo<RelevantEmailPayload>(() => ({
     itemId: String(ctx.itemId || "").trim(),
@@ -423,6 +472,30 @@ export const GroupsPrepareCockpit: React.FC = () => {
     || currentEmailBootstrapLinkPayload.conversationId
     || currentEmailBootstrapLinkPayload.subject
   );
+
+  const flushSession = useCallback((
+    reason: GroupsPrepareSessionSaveReason,
+    options?: {
+      force?: boolean;
+      emailKey?: string | null;
+      snapshot?: GroupsPrepareSessionState;
+      signature?: string;
+    }
+  ): boolean => {
+    const emailKey = String(options?.emailKey ?? renderedSessionRef.current.emailKey ?? "").trim();
+    if (!emailKey) return false;
+    const snapshot = buildGroupsPrepareSessionSnapshot(options?.snapshot ?? renderedSessionRef.current.snapshot);
+    const signature = String(options?.signature || getGroupsPrepareSessionSignature(snapshot));
+    const lastPersisted = lastPersistedSessionRef.current;
+    if (!options?.force && lastPersisted.emailKey === emailKey && lastPersisted.signature === signature) {
+      return true;
+    }
+    const saved = writeGroupsPrepareSession(emailKey, snapshot, { reason });
+    if (saved) {
+      lastPersistedSessionRef.current = { emailKey, signature };
+    }
+    return saved;
+  }, []);
 
   useEffect(() => {
     setPersistedCurrentEmail(null);
@@ -569,9 +642,28 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [filterQuery, setMsg, showFiltersPanel]);
 
   useEffect(() => {
-    const sessionState = currentEmailKey
-      ? readGroupsPrepareSession(currentEmailKey)
+    const previousSession = renderedSessionRef.current;
+    if (
+      previousSession.emailKey
+      && previousSession.emailKey !== currentEmailKey
+      && previousSession.emailKey === sessionScopeKey
+    ) {
+      flushSession("before_context_change", {
+        emailKey: previousSession.emailKey,
+        snapshot: previousSession.snapshot,
+        signature: previousSession.signature,
+      });
+    }
+  }, [currentEmailKey, flushSession, sessionScopeKey]);
+
+  useEffect(() => {
+    setSessionReady(false);
+    setSessionScopeKey("");
+    const sessionKey = String(currentEmailKey || "").trim();
+    const sessionState = sessionKey
+      ? buildGroupsPrepareSessionSnapshot(readGroupsPrepareSession(sessionKey))
       : { ...DEFAULT_GROUPS_PREPARE_SESSION_STATE };
+    const sessionStateSignature = getGroupsPrepareSessionSignature(sessionState);
     setSubview(sessionState.subview);
     setShowGroupPanel(sessionState.showGroupPanel);
     setShowFiltersPanel(sessionState.showFiltersPanel);
@@ -583,7 +675,10 @@ export const GroupsPrepareCockpit: React.FC = () => {
     setSelectedEmailKeys(sessionState.selectedEmailKeys);
     setExpandedEmailKeys(sessionState.expandedEmailKeys);
     setSelectedAttachmentKeys(sessionState.selectedAttachmentKeys);
-    setSessionReady(true);
+    lastPersistedSessionRef.current = { emailKey: sessionKey, signature: sessionStateSignature };
+    renderedSessionRef.current = { emailKey: sessionKey, snapshot: sessionState, signature: sessionStateSignature };
+    setSessionScopeKey(sessionKey);
+    setSessionReady(Boolean(sessionKey));
   }, [currentEmailKey]);
 
   const preferredWorkingGroupId = useMemo(() => {
@@ -609,38 +704,61 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [groups, preferredWorkingGroupId, sessionReady, workingGroupId]);
 
   useEffect(() => {
-    if (!sessionReady || !currentEmailKey) return;
+    renderedSessionRef.current = {
+      emailKey: String(sessionScopeKey || currentEmailKey || "").trim(),
+      snapshot: sessionSnapshot,
+      signature: sessionSignature,
+    };
+  }, [currentEmailKey, sessionScopeKey, sessionSignature, sessionSnapshot]);
+
+  useEffect(() => {
+    if (!sessionReady || !currentEmailKey || sessionScopeKey !== currentEmailKey) return;
+    const lastPersisted = lastPersistedSessionRef.current;
+    if (lastPersisted.emailKey === currentEmailKey && lastPersisted.signature === sessionSignature) {
+      return;
+    }
     const timer = window.setTimeout(() => {
-      writeGroupsPrepareSession(currentEmailKey, {
-        subview,
-        showGroupPanel,
-        showFiltersPanel,
-        workingGroupId,
-        workingGroupQuery,
-        filterQuery,
-        attachmentMode,
-        groupMode,
-        selectedEmailKeys,
-        expandedEmailKeys,
-        selectedAttachmentKeys,
+      flushSession("debounced", {
+        emailKey: currentEmailKey,
+        snapshot: sessionSnapshot,
+        signature: sessionSignature,
       });
-    }, 160);
+    }, GROUPS_PREPARE_SESSION_SAVE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [
-    attachmentMode,
     currentEmailKey,
-    expandedEmailKeys,
-    filterQuery,
-    groupMode,
-    selectedAttachmentKeys,
-    selectedEmailKeys,
+    flushSession,
     sessionReady,
-    showFiltersPanel,
-    showGroupPanel,
-    subview,
-    workingGroupId,
-    workingGroupQuery,
+    sessionScopeKey,
+    sessionSignature,
+    sessionSnapshot,
   ]);
+
+  useEffect(() => {
+    const handleSaveBeforeExit = () => {
+      const currentSession = renderedSessionRef.current;
+      if (!currentSession.emailKey) return;
+      flushSession("before_exit", {
+        emailKey: currentSession.emailKey,
+        snapshot: currentSession.snapshot,
+        signature: currentSession.signature,
+      });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        handleSaveBeforeExit();
+      }
+    };
+    window.addEventListener("pagehide", handleSaveBeforeExit);
+    window.addEventListener("beforeunload", handleSaveBeforeExit);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      handleSaveBeforeExit();
+      window.removeEventListener("pagehide", handleSaveBeforeExit);
+      window.removeEventListener("beforeunload", handleSaveBeforeExit);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [flushSession]);
 
   useEffect(() => {
     if (!sessionReady) return;
@@ -890,6 +1008,11 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }
 
   async function handleOpenClassificationFromPrepare() {
+    flushSession("before_classify", {
+      emailKey: currentEmailKey,
+      snapshot: sessionSnapshot,
+      signature: sessionSignature,
+    });
     const params: Record<string, string> = {};
     if (currentEmailLinkPayload.itemId) params.itemId = currentEmailLinkPayload.itemId;
     if (currentEmailLinkPayload.internetMessageId) params.internetMessageId = currentEmailLinkPayload.internetMessageId;
@@ -950,20 +1073,23 @@ export const GroupsPrepareCockpit: React.FC = () => {
       setMsg("Sem email ancora para guardar sessao.");
       return;
     }
-    const saved = writeGroupsPrepareSession(currentEmailKey, {
-      subview,
-      showGroupPanel,
-      showFiltersPanel,
-      workingGroupId,
-      workingGroupQuery,
-      filterQuery,
-      attachmentMode,
-      groupMode,
-      selectedEmailKeys,
-      expandedEmailKeys,
-      selectedAttachmentKeys,
+    const saved = flushSession("manual", {
+      force: true,
+      emailKey: currentEmailKey,
+      snapshot: sessionSnapshot,
+      signature: sessionSignature,
     });
     setMsg(saved ? "Sessao de Preparar guardada localmente." : "Nao foi possivel guardar a sessao local.");
+  }
+
+  function handleSubviewChange(nextSubview: GroupsPrepareSubview) {
+    if (nextSubview === subview) return;
+    flushSession("before_subview_change", {
+      emailKey: currentEmailKey,
+      snapshot: sessionSnapshot,
+      signature: sessionSignature,
+    });
+    setSubview(nextSubview);
   }
 
   function toggleEmailSelection(emailKey: string) {
@@ -1156,9 +1282,9 @@ export const GroupsPrepareCockpit: React.FC = () => {
       ) : null}
 
       <div style={S.segmentBar}>
-        <button type="button" style={subview === "list" ? S.segmentActive : S.segment} onClick={() => setSubview("list")}>Lista</button>
-        <button type="button" style={subview === "attachments" ? S.segmentActive : S.segment} onClick={() => setSubview("attachments")}>Anexos</button>
-        <button type="button" style={subview === "summary" ? S.segmentActive : S.segment} onClick={() => setSubview("summary")}>Resumo</button>
+        <button type="button" style={subview === "list" ? S.segmentActive : S.segment} onClick={() => handleSubviewChange("list")}>Lista</button>
+        <button type="button" style={subview === "attachments" ? S.segmentActive : S.segment} onClick={() => handleSubviewChange("attachments")}>Anexos</button>
+        <button type="button" style={subview === "summary" ? S.segmentActive : S.segment} onClick={() => handleSubviewChange("summary")}>Resumo</button>
       </div>
 
       {subview === "list" ? (

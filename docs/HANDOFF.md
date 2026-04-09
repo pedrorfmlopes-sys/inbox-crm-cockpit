@@ -264,6 +264,52 @@
   - O seed local para `Classificar` nesta fase é scaffolding e ainda não representa uma transferência integral de estado.
   - Continua pendente validação funcional integrada quando a Fase 4 ligar a passagem completa para o fluxo de classificação.
 
+## Grupos v1: Fase 3 - Persistencia segura / cache de sessao / save before exit (Abril 2026)
+- **Base da Ronda**: Esta branch partiu de `origin/codex/groups-v1-phase2-preparar` porque nem `1c5540460f50e72b680d4664969adce3cb4cc55f` nem `f426ec7c026f7e66264a94137737373d3115b281` estavam mergeados em `main`.
+- **Auditoria Obrigatoria da Fase 2**:
+  - `client/src/modules/crm/groups-v1/prepareSession.ts` estava limitado a progresso de sessao local, mas ainda sem politica explicita suficiente e sem disciplina de flush em saidas/context switches.
+  - `client/src/components/shell/CockpitShell.tsx` continuou limpo: a tab `groups` abre `GroupsPrepareCockpit` e nao houve impacto funcional observado nas restantes tabs.
+  - `client/src/modules/crm/GroupsPrepareCockpit.tsx` manteve o papel de `Preparar` e nao derivou para editor rico nem para `Classificar 2`, mas dependia de um debounce curto para quase todo o save.
+  - Conclusao: Fase 2 ficou aprovada como base segura; a unica correcao necessaria para Fase 3 era fechar a politica de sessao e os flushes de saida.
+- **Politica de Sessao Fechada**:
+  - Criado `docs/grupos_v1_fase3_sessao_cache.md` como referencia curta da politica.
+  - `prepareSession.ts` passou a distinguir explicitamente:
+    - sessao local de `Preparar` em `sessionStorage`
+    - seed temporario de ponte para `Classificar` em `localStorage`
+  - O record de sessao passou a ser auto-descritivo (`kind`, `version`, `storage`, `isCanonical`, `lastReason`) para evitar deriva para pseudo-truth-store.
+  - O seed local para `Classificar` ganhou TTL e limpeza de seeds stale, para continuar a ser apenas bridge temporaria.
+- **Save before exit / context change**:
+  - `GroupsPrepareCockpit.tsx` passou a fazer flush local:
+    - antes de mudar de sub-vista relevante
+    - antes de mudar de email/contexto ancora
+    - antes de abrir `Classificar`
+    - ao sair da superficie (`unmount`)
+    - em `pagehide`, `beforeunload` e `visibilitychange(hidden)`
+  - O save diferido durante edicao continua a existir, mas ficou controlado por `sessionScopeKey` + assinatura de snapshot, para nao gravar estado do email errado nem comportar-se como autosave histerico.
+- **Rehidratacao e limites**:
+  - A sessao continua a reidratar apenas dados de trabalho local: selecao, grupo em trabalho, filtros, anexos preparados e sub-vista.
+  - Nao sobe HTML/binarios/resultados de pesquisa/catalogos para sessao.
+  - Nao ha promocao remota nova nesta fase.
+- **Ficheiros Tocados**:
+  - `client/src/modules/crm/groups-v1/prepareSession.ts`
+  - `client/src/modules/crm/GroupsPrepareCockpit.tsx`
+  - `docs/grupos_v1_fase3_sessao_cache.md`
+  - `docs/HANDOFF.md`
+  - `docs/DECISIONS.md`
+- **Validacao Executada**:
+  - `npm.cmd -w client run build`
+  - `git diff --check`
+  - `npx.cmd eslint src/modules/crm/GroupsPrepareCockpit.tsx src/modules/crm/groups-v1/prepareSession.ts`
+- **Fora do Scope / Nao Tocado Propositadamente**:
+  - Fase 4 completa de integracao `Preparar -> Classificar`
+  - qualquer persistencia remota pesada / backend novo
+  - `Explorar`, `Explorador de Grupos`, `Gestor do Grupo` e aba principal `Tarefas`
+  - `client/src/components/shell/CockpitShell.tsx` nesta ronda, para nao reabrir shell sensivel sem necessidade
+- **Residuos / Riscos**:
+  - O lint global do client continua historicamente ruidoso fora do scope; a validacao limpa desta ronda ficou direcionada aos ficheiros tocados.
+  - A sessao de `Preparar` continua deliberadamente local e nao resolve ainda a promocao remota/final do conjunto preparado.
+  - O consumo do seed de `Preparar` por `Classificar` continua para Fase 4; nesta ronda ficou apenas mais seguro e mais bem delimitado.
+
 ## Última orientação estratégica
 - Segurança e coerência arquitetural antes de novas features.
 
