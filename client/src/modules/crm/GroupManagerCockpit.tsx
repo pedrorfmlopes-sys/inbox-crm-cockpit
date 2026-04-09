@@ -39,6 +39,12 @@ import {
   type GroupLabelCatalogEntry,
   type GroupLabelStatus,
 } from "@/settings";
+import {
+  createEmailGroupSelectionState,
+  setPrincipalGroupSelection,
+  toggleReferenceGroupSelection,
+  type GroupMembershipKind,
+} from "@/modules/crm/groups-v1/contracts";
 import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
@@ -46,7 +52,7 @@ import * as Icons from "@/ui/icons";
 type GroupManagerView = "groups" | "detail" | "library" | "quicklink" | "settings" | "labels" | "tickets";
 type GroupStatusFilter = "all" | "em_analise" | "em_progresso" | "concluido";
 type GroupArchiveFilter = "active" | "archived" | "all";
-type MembershipKind = "principal" | "referencia";
+type MembershipKind = GroupMembershipKind;
 type ManagedLabelDraft = {
   categorize: boolean;
   hasStatus: boolean;
@@ -426,25 +432,33 @@ function buildTicketEmailSubject(baseSubject: string | undefined, ticketCode: st
 }
 
 function createQuickLinkDraft(partial: Partial<QuickLinkDraft> = {}): QuickLinkDraft {
+  const normalizedSelection = createEmailGroupSelectionState({
+    principalGroupId: partial.principalGroupId,
+    referenceGroupIds: partial.secondaryGroupIds,
+  });
   return {
     ticketMode: partial.ticketMode === "existing" || partial.ticketMode === "new" ? partial.ticketMode : "none",
     ticketId: String(partial.ticketId || "").trim(),
     ticketSeriesId: String(partial.ticketSeriesId || "").trim(),
     ticketStatus: String(partial.ticketStatus || "").trim() || "open",
-    principalGroupId: String(partial.principalGroupId || "").trim(),
-    secondaryGroupIds: Array.from(new Set((partial.secondaryGroupIds || []).map((entry) => String(entry || "").trim()).filter(Boolean))),
+    principalGroupId: normalizedSelection.principalGroupId,
+    secondaryGroupIds: normalizedSelection.referenceGroupIds,
     labelsText: String(partial.labelsText || "").trim(),
   };
 }
 
 function createQuickLinkDraftFromTicket(ticket: GroupTicketEntry | null): QuickLinkDraft {
   const groupIds = Array.from(new Set((ticket?.groupIds || []).map((entry) => String(entry || "").trim()).filter(Boolean)));
+  const normalizedSelection = createEmailGroupSelectionState({
+    principalGroupId: groupIds[0] || "",
+    referenceGroupIds: groupIds.slice(1),
+  });
   return createQuickLinkDraft({
     ticketMode: ticket ? "existing" : "none",
     ticketId: String(ticket?.id || "").trim(),
     ticketStatus: String(ticket?.status || "").trim() || "open",
-    principalGroupId: groupIds[0] || "",
-    secondaryGroupIds: groupIds.slice(1),
+    principalGroupId: normalizedSelection.principalGroupId,
+    secondaryGroupIds: normalizedSelection.referenceGroupIds,
     labelsText: labelsToText(ticket?.labels),
   });
 }
@@ -1465,13 +1479,20 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
 
   function setQuickLinkPrimaryGroup(groupId: string) {
     const normalizedId = String(groupId || "").trim();
-    setQuickLinkDraft((current) =>
-      createQuickLinkDraft({
+    setQuickLinkDraft((current) => {
+      const normalizedSelection = setPrincipalGroupSelection(
+        {
+          principalGroupId: current.principalGroupId,
+          referenceGroupIds: current.secondaryGroupIds,
+        },
+        normalizedId
+      );
+      return createQuickLinkDraft({
         ...current,
-        principalGroupId: normalizedId,
-        secondaryGroupIds: current.secondaryGroupIds.filter((entry) => entry !== normalizedId),
-      })
-    );
+        principalGroupId: normalizedSelection.principalGroupId,
+        secondaryGroupIds: normalizedSelection.referenceGroupIds,
+      });
+    });
     setQuickLinkPrimaryQuery("");
   }
 
@@ -1479,12 +1500,16 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     const normalizedId = String(groupId || "").trim();
     if (!normalizedId) return;
     setQuickLinkDraft((current) => {
-      const nextSecondary = current.secondaryGroupIds.includes(normalizedId)
-        ? current.secondaryGroupIds.filter((entry) => entry !== normalizedId)
-        : [...current.secondaryGroupIds, normalizedId];
+      const normalizedSelection = toggleReferenceGroupSelection(
+        {
+          principalGroupId: current.principalGroupId,
+          referenceGroupIds: current.secondaryGroupIds,
+        },
+        normalizedId
+      );
       return createQuickLinkDraft({
         ...current,
-        secondaryGroupIds: nextSecondary.filter((entry) => entry !== current.principalGroupId),
+        secondaryGroupIds: normalizedSelection.referenceGroupIds,
       });
     });
     setQuickLinkSecondaryQuery("");

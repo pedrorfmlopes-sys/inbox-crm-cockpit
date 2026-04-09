@@ -1,5 +1,16 @@
 // Goal: keep UI stable even if server endpoints evolve.
 import { getSettings, saveSettings, type CockpitSettingsV1 } from "./settings";
+import type {
+  GroupMembershipKind,
+  GroupTaskEntry,
+} from "./modules/crm/groups-v1/contracts";
+
+export type {
+  GroupMembershipKind,
+  GroupTaskEntry,
+  GroupTaskPriority,
+  GroupTaskStatus,
+} from "./modules/crm/groups-v1/contracts";
 
 let _sessionToken: string | null = null;
 let _sessionBootstrapPromise: Promise<string | null> | null = null;
@@ -167,7 +178,7 @@ export type RelevantEmailPayload = {
   attachmentStorageProvider?: "cloud" | "local" | "onedrive" | string;
   attachmentStorageBasePath?: string;
   replaceAttachments?: boolean;
-  membershipKind?: "principal" | "referencia" | string;
+  membershipKind?: GroupMembershipKind | string;
   attachments?: Array<{
     key?: string;
     id?: string;
@@ -219,6 +230,7 @@ export type LinkGroupEntry = {
   archivedAt?: string;
   memberCount?: number;
   documentCount?: number;
+  tasks?: GroupTaskEntry[];
   documentsEnabled?: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -331,9 +343,9 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
     ticketStatusCategorize?: boolean;
     categorizedLabelNames?: string[];
   };
-  membershipKind?: "principal" | "referencia" | string;
+  membershipKind?: GroupMembershipKind | string;
   relatedRecords?: Array<{ model: string; recordId: number; recordName: string }>;
-  relatedGroups?: Array<{ id: string; name?: string; kind?: string; relationKind?: "principal" | "referencia" | string }>;
+  relatedGroups?: Array<{ id: string; name?: string; kind?: string; relationKind?: GroupMembershipKind | string }>;
   relatedReasons?: RelatedReason[];
   groupId?: string;
   groupName?: string;

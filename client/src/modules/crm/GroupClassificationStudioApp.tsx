@@ -16,6 +16,12 @@ import { PanelState } from "@/ui/PanelState";
 import { applySkin } from "@/ui/skins";
 import * as Icons from "@/ui/icons";
 import { getStatusDisplayConfig, UNIFIED_STATUS_LEGEND } from "@/statusUtils";
+import {
+  addReferenceGroupSelection,
+  createEmailGroupSelectionState,
+  setPrincipalGroupSelection,
+  toggleReferenceGroupSelection,
+} from "@/modules/crm/groups-v1/contracts";
 import "../../global.css";
 
 import {
@@ -845,18 +851,31 @@ function StudioInner() {
 
   useEffect(() => {
     if (!selectedEmail) return;
+    const principal = selectedEmailGroups.find((group) => String(group.relationKind || "").toLowerCase() === "principal");
+    const normalizedSelection = createEmailGroupSelectionState({
+      principalGroupId: principal?.id,
+      referenceGroupIds: selectedEmailGroups
+        .filter((group) => String(group.relationKind || "").toLowerCase() !== "principal")
+        .map((group) => group.id),
+    });
     if (!selectionTouched.principal) {
-      const principal = selectedEmailGroups.find((group) => String(group.relationKind || "").toLowerCase() === "principal");
-      setPrincipalGroupId(principal?.id || "");
+      setPrincipalGroupId(normalizedSelection.principalGroupId);
     }
     if (!selectionTouched.references) {
-      setReferenceGroupIds(selectedEmailGroups.filter((group) => String(group.relationKind || "").toLowerCase() !== "principal").map((group) => group.id));
+      setReferenceGroupIds(normalizedSelection.referenceGroupIds);
     }
   }, [selectedEmail, selectedEmailGroups, selectionTouched.principal, selectionTouched.references]);
 
   useEffect(() => {
-    if (!principalGroupId) return;
-    setReferenceGroupIds((current) => current.filter((groupId) => groupId !== principalGroupId));
+    setReferenceGroupIds((current) => {
+      const normalizedSelection = createEmailGroupSelectionState({
+        principalGroupId,
+        referenceGroupIds: current,
+      });
+      return getComparableStringListSignature(current) === getComparableStringListSignature(normalizedSelection.referenceGroupIds)
+        ? current
+        : normalizedSelection.referenceGroupIds;
+    });
   }, [principalGroupId]);
 
   useEffect(() => {
@@ -2116,7 +2135,15 @@ function StudioInner() {
   function toggleReferenceGroup(groupId: string) {
     if (!groupId || groupId === principalGroupId) return;
     setSelectionTouched((current) => ({ ...current, references: true }));
-    setReferenceGroupIds((current) => current.includes(groupId) ? current.filter((entry) => entry !== groupId) : [...current, groupId]);
+    setReferenceGroupIds((current) =>
+      toggleReferenceGroupSelection(
+        {
+          principalGroupId,
+          referenceGroupIds: current,
+        },
+        groupId
+      ).referenceGroupIds
+    );
   }
 
   function clearPrincipalSelection() {
@@ -2136,9 +2163,16 @@ function StudioInner() {
 
   function selectPrincipalGroup(group: LinkGroupEntry | null) {
     if (!group?.id) return;
+    const normalizedSelection = setPrincipalGroupSelection(
+      {
+        principalGroupId,
+        referenceGroupIds,
+      },
+      group.id
+    );
     setSelectionTouched((current) => ({ ...current, principal: true }));
-    setPrincipalGroupId(group.id);
-    setReferenceGroupIds((current) => current.filter((entry) => entry !== group.id));
+    setPrincipalGroupId(normalizedSelection.principalGroupId);
+    setReferenceGroupIds(normalizedSelection.referenceGroupIds);
     setPrincipalSearchValue(group.name);
   }
 
@@ -2203,7 +2237,15 @@ function StudioInner() {
     }
     if (classificationFocus === "references") {
       setSelectionTouched((current) => ({ ...current, references: true }));
-      setReferenceGroupIds((current) => current.includes(groupId) ? current : [...current, groupId]);
+      setReferenceGroupIds((current) =>
+        addReferenceGroupSelection(
+          {
+            principalGroupId,
+            referenceGroupIds: current,
+          },
+          groupId
+        ).referenceGroupIds
+      );
       return;
     }
     if (!principalGroupId || classificationFocus === "principal") {
@@ -2215,7 +2257,15 @@ function StudioInner() {
       return;
     }
     setSelectionTouched((current) => ({ ...current, references: true }));
-    setReferenceGroupIds((current) => current.includes(groupId) ? current : [...current, groupId]);
+    setReferenceGroupIds((current) =>
+      addReferenceGroupSelection(
+        {
+          principalGroupId,
+          referenceGroupIds: current,
+        },
+        groupId
+      ).referenceGroupIds
+    );
   }
 
   function applySuggestedTicket(ticketId: string) {
@@ -2399,7 +2449,15 @@ function StudioInner() {
         setPrincipalGroupId(created.id);
         setPrincipalSearchValue(created.name);
       } else {
-        setReferenceGroupIds((current) => current.includes(created.id) ? current : [...current, created.id]);
+        setReferenceGroupIds((current) =>
+          addReferenceGroupSelection(
+            {
+              principalGroupId,
+              referenceGroupIds: current,
+            },
+            created.id
+          ).referenceGroupIds
+        );
         setReferenceSearchValue(created.name);
       }
       setManagedGroupId(created.id);
@@ -3261,9 +3319,13 @@ function StudioInner() {
   function restoreClassificationDraftSnapshot() {
     const snapshot = classificationDraftSnapshotRef.current;
     if (!snapshot) return;
-    setPrincipalGroupId(snapshot.principalGroupId);
+    const normalizedSelection = createEmailGroupSelectionState({
+      principalGroupId: snapshot.principalGroupId,
+      referenceGroupIds: snapshot.referenceGroupIds,
+    });
+    setPrincipalGroupId(normalizedSelection.principalGroupId);
     setPrincipalSearch(snapshot.principalSearch);
-    setReferenceGroupIds([...snapshot.referenceGroupIds]);
+    setReferenceGroupIds(normalizedSelection.referenceGroupIds);
     setReferenceSearch(snapshot.referenceSearch);
     setSelectedLabels([...snapshot.selectedLabels]);
     setLabelDrafts(structuredClone(snapshot.labelDrafts));
