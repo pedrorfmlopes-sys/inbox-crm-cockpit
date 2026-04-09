@@ -290,9 +290,17 @@ function CompactToggle({
   onClick: () => void;
 }) {
   return (
-    <button type="button" style={active ? S.compactToggleOn : S.compactToggleOff} onClick={onClick}>
-      <span style={active ? S.compactToggleDotOn : S.compactToggleDotOff} />
-      {label}
+    <button
+      type="button"
+      style={S.compactToggleButton}
+      onClick={onClick}
+      aria-pressed={active}
+      aria-label={`${label}: ${active ? "ativo" : "inativo"}`}
+    >
+      <span style={S.compactToggleLabel}>{label}</span>
+      <span style={active ? S.compactToggleTrackOn : S.compactToggleTrackOff}>
+        <span style={S.compactToggleThumb} />
+      </span>
     </button>
   );
 }
@@ -1137,7 +1145,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   return (
     <div style={S.root}>
       <div style={S.header}>
-        <div>
+        <div style={S.headerMain}>
           <div style={S.kicker}>Gestor de grupos</div>
           <div style={S.title}>Grupos</div>
           <div style={S.headerHint}>Preparar monta o conjunto de trabalho. Classificar continua a fechar.</div>
@@ -1167,17 +1175,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
             />
           </div>
           <div style={S.anchorSubject}>{currentEmailEntry.subject || "(sem assunto)"}</div>
-          <div style={S.anchorMeta}>
-            {currentEmailEntry.fromName || currentEmailEntry.fromEmail || "Sem remetente"}
+          <div style={S.anchorInfoChips}>
+            <span style={S.mutedBadge}>{currentEmailEntry.fromName || currentEmailEntry.fromEmail || "Sem remetente"}</span>
             {formatDate(currentEmailEntry.messageDateIso || currentEmailEntry.receivedAtIso)
-              ? ` / ${formatDate(currentEmailEntry.messageDateIso || currentEmailEntry.receivedAtIso)}`
-              : ""}
-          </div>
-          <div style={S.badgeWrap}>
-            <span style={S.anchorBadge}>Ancora</span>
+              ? <span style={S.mutedBadge}>{formatDate(currentEmailEntry.messageDateIso || currentEmailEntry.receivedAtIso)}</span>
+              : null}
             {statusLabel(currentEmailEntry.status) ? <span style={S.statusBadge}>{statusLabel(currentEmailEntry.status)}</span> : null}
-            {extractPrincipalGroup(currentEmailEntry) ? <span style={S.primaryBadge}>Grupo: {extractPrincipalGroup(currentEmailEntry)?.name}</span> : null}
-            <span style={S.mutedBadge}>{Array.isArray(currentEmailEntry.attachments) ? currentEmailEntry.attachments.length : 0} anexo(s)</span>
+            {extractPrincipalGroup(currentEmailEntry) ? <span style={S.labelBadge}>Grupo: {extractPrincipalGroup(currentEmailEntry)?.name}</span> : null}
+            <span style={S.anchorBadge}>{Array.isArray(currentEmailEntry.attachments) ? currentEmailEntry.attachments.length : 0} anexo(s)</span>
           </div>
         </div>
         <div style={S.anchorActions}>
@@ -1333,8 +1338,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
                           </div>
                         </div>
                         <div style={S.emailHeadBadges}>
-                          {principalGroup ? <span style={S.primaryBadge}>Grupo</span> : null}
-                          <span style={S.mutedBadge}>{attachmentCount}</span>
+                          {attachmentCount ? <span style={S.countBadge}>{attachmentCount}</span> : null}
                           {expanded ? <Icons.ArrowUp size={12} /> : <Icons.ArrowDown size={12} />}
                         </div>
                       </button>
@@ -1343,17 +1347,25 @@ export const GroupsPrepareCockpit: React.FC = () => {
                     {expanded ? (
                       <>
                         {(email.labels || []).length ? (
-                          <div style={S.badgeWrap}>
+                          <div style={S.detailBadgeStack}>
                             {(email.labels || []).slice(0, 6).map((label) => (
                               <span key={`${emailKey}:${label}`} style={S.labelBadge}>{label}</span>
                             ))}
                           </div>
                         ) : null}
-                        <div style={S.detailGrid}>
-                          <div style={S.detailRow}><span style={S.detailLabel}>Grupo</span><span style={S.detailValuePrimary}>{principalGroup?.name || "Sem grupo principal"}</span></div>
-                          <div style={S.detailRow}><span style={S.detailLabel}>Referencias</span><span style={S.detailValue}>{referenceGroups.map((group) => group.name).join(", ") || "Sem referencias"}</span></div>
-                          <div style={S.detailRow}><span style={S.detailLabel}>Ticket</span><span style={S.detailValue}>{tickets[0]?.code || (emailKey === currentEmailKey ? "Sem ticket no contexto atual" : "Sem ticket conhecido")}</span></div>
-                          <div style={S.detailRow}><span style={S.detailLabel}>Anexos</span><span style={S.detailValue}>{attachmentCount} no email / {selectedAttachmentCountByEmail.get(emailKey) || 0} preparado(s)</span></div>
+                        <div style={S.detailBadgeStack}>
+                          <span style={principalGroup ? S.primaryBadge : S.mutedBadge}>
+                            Grupo: {principalGroup?.name || "Sem grupo principal"}
+                          </span>
+                          <span style={referenceGroups.length ? S.labelBadge : S.mutedBadge}>
+                            Ref: {referenceGroups.map((group) => group.name).join(", ") || "Sem referencias"}
+                          </span>
+                          <span style={tickets[0]?.code ? S.readyBadge : S.mutedBadge}>
+                            Ticket: {tickets[0]?.code || (emailKey === currentEmailKey ? "Sem ticket no contexto atual" : "Sem ticket conhecido")}
+                          </span>
+                          <span style={S.mutedBadge}>
+                            Anexos: {attachmentCount} / {selectedAttachmentCountByEmail.get(emailKey) || 0}
+                          </span>
                         </div>
                         {pendingChange ? (
                           <div style={S.warningSubtle}>
@@ -1450,8 +1462,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
       ) : null}
 
       <div style={S.footerBar}>
-        <div style={S.footerCopy}>
-          A sessao local de Preparar fica separada da persistencia remota. O seed da ponte para o Classificar fica guardado localmente; a passagem integral do conjunto continua faseada para a Fase 4.
+        <div style={S.footerMain}>
+          <div style={S.footerStats}>
+            <span style={S.footerStat}>{selectedEmails.length} email(s)</span>
+            <span style={S.footerStat}>{selectedAttachments.length} anexo(s)</span>
+          </div>
+          <div style={S.footerCopy}>
+            Sessao local separada da persistencia remota.
+          </div>
         </div>
         <div style={S.inlineActions}>
           <button type="button" style={S.secondaryBtn} onClick={handleManualSessionSave}>
@@ -1483,98 +1501,106 @@ function dedupeGroupEntries(rows: LinkGroupEntry[]): LinkGroupEntry[] {
 }
 
 const baseButton: React.CSSProperties = {
-  borderRadius: 10,
+  borderRadius: 999,
   border: "1px solid var(--iccc-card-border)",
-  padding: "7px 10px",
-  fontSize: 11,
+  padding: "6px 10px",
+  fontSize: 10,
   fontWeight: 700,
   cursor: "pointer",
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  gap: 6,
+  gap: 5,
+  lineHeight: 1.1,
 };
 
 const S: Record<string, React.CSSProperties> = {
-  root: { display: "grid", gap: 8, alignContent: "start" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, padding: 10, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "var(--iccc-card-bg)", boxShadow: "var(--iccc-shadow)" },
-  kicker: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--iccc-text-muted)" },
-  title: { fontSize: 16, fontWeight: 800, color: "var(--iccc-text)" },
-  headerHint: { marginTop: 2, fontSize: 11, color: "var(--iccc-text-muted)" },
-  segmentBar: { display: "inline-flex", gap: 6, padding: 4, borderRadius: 999, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.84)", width: "fit-content", maxWidth: "100%", flexWrap: "wrap" },
-  segment: { border: "none", background: "transparent", color: "var(--iccc-text-muted)", padding: "6px 12px", borderRadius: 999, fontSize: 11, fontWeight: 700, cursor: "pointer" },
-  segmentActive: { border: "none", background: "rgba(37,99,235,0.12)", color: "#1d4ed8", padding: "6px 12px", borderRadius: 999, fontSize: 11, fontWeight: 800, cursor: "pointer" },
-  segmentDisabled: { border: "none", background: "transparent", color: "rgba(100,116,139,0.68)", padding: "6px 12px", borderRadius: 999, fontSize: 11, fontWeight: 700, cursor: "not-allowed" },
-  anchorCard: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10, alignItems: "start", padding: 10, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.82)" },
-  anchorCopy: { display: "grid", gap: 5, minWidth: 0 },
-  anchorSubject: { fontSize: 13, fontWeight: 800, color: "var(--iccc-text)", wordBreak: "break-word" },
-  anchorMeta: { fontSize: 11, color: "var(--iccc-text-muted)" },
-  anchorActions: { display: "grid", gap: 6, justifyItems: "end" },
-  compactToggleOff: { ...baseButton, minWidth: 92, justifyContent: "flex-start", background: "rgba(254,242,242,0.84)", color: "#991b1b", border: "1px solid rgba(239,68,68,0.18)" },
-  compactToggleOn: { ...baseButton, minWidth: 92, justifyContent: "flex-start", background: "rgba(220,252,231,0.88)", color: "#166534", border: "1px solid rgba(34,197,94,0.22)" },
-  compactToggleDotOff: { width: 8, height: 8, borderRadius: 999, background: "#ef4444", flexShrink: 0 },
-  compactToggleDotOn: { width: 8, height: 8, borderRadius: 999, background: "#16a34a", flexShrink: 0 },
-  panelCard: { display: "grid", gap: 8, padding: 10, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.74)" },
+  root: { display: "grid", gap: 6, alignContent: "start" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, padding: 8, borderRadius: 18, border: "1px solid var(--iccc-card-border)", background: "var(--iccc-card-bg)", boxShadow: "var(--iccc-shadow)" },
+  headerMain: { display: "grid", gap: 1, minWidth: 0 },
+  kicker: { fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--iccc-text-muted)" },
+  title: { fontSize: 14, fontWeight: 800, color: "var(--iccc-text)" },
+  headerHint: { marginTop: 1, fontSize: 10, lineHeight: 1.35, color: "var(--iccc-text-muted)" },
+  segmentBar: { display: "flex", gap: 3, padding: 3, borderRadius: 999, border: "1px solid var(--iccc-card-border)", background: "rgba(241,245,249,0.92)", width: "100%", boxSizing: "border-box" },
+  segment: { flex: "1 1 0", border: "none", background: "transparent", color: "var(--iccc-text-muted)", padding: "6px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600, cursor: "pointer" },
+  segmentActive: { flex: "1 1 0", border: "1px solid rgba(148,163,184,0.18)", background: "#fff", color: "var(--iccc-text)", padding: "6px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, cursor: "pointer", boxShadow: "0 1px 2px rgba(15,23,42,0.06)" },
+  segmentDisabled: { flex: "1 1 0", border: "none", background: "transparent", color: "rgba(100,116,139,0.68)", padding: "6px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600, cursor: "not-allowed" },
+  anchorCard: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, alignItems: "start", padding: 9, borderRadius: 18, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.88)" },
+  anchorCopy: { display: "grid", gap: 4, minWidth: 0 },
+  anchorSubject: { fontSize: 12.5, fontWeight: 800, color: "var(--iccc-text)", wordBreak: "break-word", lineHeight: 1.25 },
+  anchorMeta: { fontSize: 10, color: "var(--iccc-text-muted)" },
+  anchorActions: { display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" },
+  anchorInfoChips: { display: "flex", gap: 4, flexWrap: "wrap" },
+  compactToggleButton: { border: "none", background: "transparent", padding: 0, display: "inline-flex", alignItems: "center", gap: 5, color: "var(--iccc-text-muted)", fontSize: 9.5, fontWeight: 700, cursor: "pointer" },
+  compactToggleLabel: { lineHeight: 1 },
+  compactToggleTrackOff: { width: 18, height: 11, borderRadius: 999, background: "#fb7185", display: "inline-flex", alignItems: "center", justifyContent: "flex-start", padding: 1, boxSizing: "border-box", flexShrink: 0 },
+  compactToggleTrackOn: { width: 18, height: 11, borderRadius: 999, background: "#22c55e", display: "inline-flex", alignItems: "center", justifyContent: "flex-end", padding: 1, boxSizing: "border-box", flexShrink: 0 },
+  compactToggleThumb: { width: 7, height: 7, borderRadius: 999, background: "#fff", boxShadow: "0 0 0 1px rgba(15,23,42,0.05), 0 1px 1px rgba(15,23,42,0.18)" },
+  panelCard: { display: "grid", gap: 6, padding: 8, borderRadius: 18, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.8)" },
   sectionTitleRow: { display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
-  fieldLabel: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--iccc-text-muted)" },
+  fieldLabel: { fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--iccc-text-muted)" },
   compactRow: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" },
   filterGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 6 },
-  input: { width: "100%", borderRadius: 10, border: "1px solid var(--iccc-card-border)", padding: "8px 10px", background: "#fff", fontSize: 12, color: "var(--iccc-text)", boxSizing: "border-box" },
-  select: { width: "100%", borderRadius: 10, border: "1px solid var(--iccc-card-border)", padding: "8px 10px", background: "#fff", fontSize: 12, color: "var(--iccc-text)" },
+  input: { width: "100%", borderRadius: 999, border: "1px solid var(--iccc-card-border)", padding: "7px 10px", background: "#fff", fontSize: 11, color: "var(--iccc-text)", boxSizing: "border-box" },
+  select: { width: "100%", borderRadius: 999, border: "1px solid var(--iccc-card-border)", padding: "7px 10px", background: "#fff", fontSize: 11, color: "var(--iccc-text)" },
   primaryBtn: { ...baseButton, background: "linear-gradient(180deg, rgba(96,165,250,0.95) 0%, rgba(37,99,235,0.95) 100%)", color: "#fff", border: "1px solid rgba(37,99,235,0.35)" },
   secondaryBtn: { ...baseButton, background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)" },
-  iconGhostBtn: { ...baseButton, width: 34, height: 34, padding: 0, background: "rgba(255,255,255,0.9)", color: "var(--iccc-text)" },
-  selectedGroupCard: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, alignItems: "center", borderRadius: 12, border: "1px solid rgba(37,99,235,0.16)", background: "rgba(239,246,255,0.9)", padding: 8 },
+  iconGhostBtn: { ...baseButton, width: 28, height: 28, padding: 0, background: "rgba(255,255,255,0.9)", color: "var(--iccc-text)" },
+  selectedGroupCard: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, alignItems: "center", borderRadius: 14, border: "1px solid rgba(37,99,235,0.16)", background: "rgba(239,246,255,0.82)", padding: 7 },
   selectedGroupMain: { display: "grid", gap: 2, minWidth: 0 },
-  selectedGroupTitle: { fontSize: 12, fontWeight: 800, color: "var(--iccc-text)" },
+  selectedGroupTitle: { fontSize: 11, fontWeight: 800, color: "var(--iccc-text)" },
   listWrap: { display: "grid", gap: 6 },
-  listRow: { width: "100%", borderRadius: 10, border: "1px solid var(--iccc-card-border)", background: "#fff", padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer", color: "var(--iccc-text)", fontSize: 12, fontWeight: 700 },
-  listRowActive: { width: "100%", borderRadius: 10, border: "1px solid rgba(37,99,235,0.22)", background: "rgba(219,234,254,0.72)", padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer", color: "#1d4ed8", fontSize: 12, fontWeight: 800 },
-  countBadge: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, borderRadius: 999, background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 10, fontWeight: 800 },
-  warningBox: { padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(245,158,11,0.24)", background: "rgba(255,247,237,0.9)", color: "#9a3412", fontSize: 11, lineHeight: 1.45 },
-  smallMeta: { fontSize: 10, color: "var(--iccc-text-muted)" },
-  viewStack: { display: "grid", gap: 8 },
+  listRow: { width: "100%", borderRadius: 12, border: "1px solid var(--iccc-card-border)", background: "#fff", padding: "7px 9px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer", color: "var(--iccc-text)", fontSize: 11, fontWeight: 700 },
+  listRowActive: { width: "100%", borderRadius: 12, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.78)", padding: "7px 9px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer", color: "#1d4ed8", fontSize: 11, fontWeight: 800 },
+  countBadge: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, borderRadius: 999, background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 9, fontWeight: 800 },
+  warningBox: { padding: "7px 9px", borderRadius: 12, border: "1px solid rgba(245,158,11,0.22)", background: "rgba(255,247,237,0.9)", color: "#9a3412", fontSize: 10, lineHeight: 1.4 },
+  smallMeta: { fontSize: 9.5, color: "var(--iccc-text-muted)", lineHeight: 1.35 },
+  viewStack: { display: "grid", gap: 6 },
   inlineMetaRow: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" },
-  tinyBtn: { ...baseButton, padding: "4px 8px", fontSize: 10, background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)" },
-  emailList: { display: "grid", gap: 8 },
-  emailCard: { display: "grid", gap: 0, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.78)", overflow: "hidden" },
-  emailCardExpanded: { display: "grid", gap: 8, borderRadius: 14, border: "1px solid rgba(37,99,235,0.22)", background: "rgba(239,246,255,0.72)", paddingBottom: 8, overflow: "hidden" },
-  emailCardHead: { display: "grid", gridTemplateColumns: "28px minmax(0, 1fr)", gap: 6, alignItems: "start", padding: "8px 8px 0 8px" },
-  checkboxCell: { display: "inline-flex", alignItems: "center", justifyContent: "center", paddingTop: 4 },
+  tinyBtn: { ...baseButton, padding: "3px 8px", fontSize: 9.5, background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)" },
+  emailList: { display: "grid", gap: 6 },
+  emailCard: { display: "grid", gap: 0, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.92)", overflow: "hidden" },
+  emailCardExpanded: { display: "grid", gap: 5, borderRadius: 14, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(255,255,255,0.96)", paddingBottom: 6, overflow: "hidden" },
+  emailCardHead: { display: "grid", gridTemplateColumns: "24px minmax(0, 1fr)", gap: 4, alignItems: "start", padding: "7px 8px" },
+  checkboxCell: { display: "inline-flex", alignItems: "center", justifyContent: "center", paddingTop: 2 },
   emailCardMain: { border: "none", background: "transparent", padding: 0, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, cursor: "pointer", textAlign: "left", minWidth: 0 },
-  emailCardCopy: { display: "grid", gap: 3, minWidth: 0 },
-  emailSubject: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 12, fontWeight: 800, color: "var(--iccc-text)" },
-  emailMeta: { fontSize: 10, color: "var(--iccc-text-muted)" },
-  emailHeadBadges: { display: "inline-flex", alignItems: "center", gap: 6, color: "var(--iccc-text-muted)" },
-  badgeWrap: { display: "flex", gap: 6, flexWrap: "wrap" },
-  anchorBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(16,185,129,0.12)", color: "#047857", fontSize: 9, fontWeight: 800, textTransform: "uppercase" },
-  statusBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(245,158,11,0.12)", color: "#b45309", fontSize: 9, fontWeight: 800, textTransform: "uppercase" },
-  primaryBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(37,99,235,0.1)", color: "#1d4ed8", fontSize: 9, fontWeight: 800, textTransform: "uppercase" },
-  mutedBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(15,23,42,0.06)", color: "var(--iccc-text)", fontSize: 9, fontWeight: 800, textTransform: "uppercase" },
-  selectedBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(124,58,237,0.1)", color: "#6d28d9", fontSize: 9, fontWeight: 800, textTransform: "uppercase" },
-  warningBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(245,158,11,0.14)", color: "#b45309", fontSize: 9, fontWeight: 800, textTransform: "uppercase" },
-  labelBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(37,99,235,0.08)", color: "#1d4ed8", fontSize: 10, fontWeight: 700 },
-  readyBadge: { display: "inline-flex", alignItems: "center", padding: "3px 7px", borderRadius: 999, background: "rgba(16,185,129,0.12)", color: "#047857", fontSize: 9, fontWeight: 800, textTransform: "uppercase" },
+  emailCardCopy: { display: "grid", gap: 2, minWidth: 0 },
+  emailSubject: { display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", fontSize: 11.5, fontWeight: 800, color: "var(--iccc-text)", lineHeight: 1.25 },
+  emailMeta: { fontSize: 9.5, color: "var(--iccc-text-muted)", lineHeight: 1.3 },
+  emailHeadBadges: { display: "inline-flex", alignItems: "center", gap: 4, color: "var(--iccc-text-muted)", paddingTop: 1 },
+  badgeWrap: { display: "flex", gap: 4, flexWrap: "wrap" },
+  detailBadgeStack: { display: "flex", flexWrap: "wrap", gap: 4, padding: "0 8px 0 28px" },
+  anchorBadge: { display: "inline-flex", alignItems: "center", padding: "2px 6px", borderRadius: 999, background: "rgba(37,99,235,0.08)", color: "#1d4ed8", fontSize: 8.5, fontWeight: 700 },
+  statusBadge: { display: "inline-flex", alignItems: "center", padding: "2px 6px", borderRadius: 999, background: "rgba(249,115,22,0.12)", color: "#c2410c", fontSize: 8.5, fontWeight: 700 },
+  primaryBadge: { display: "inline-flex", alignItems: "center", padding: "2px 6px", borderRadius: 999, background: "rgba(59,130,246,0.08)", color: "#2563eb", fontSize: 8.5, fontWeight: 700 },
+  mutedBadge: { display: "inline-flex", alignItems: "center", padding: "2px 6px", borderRadius: 999, background: "rgba(148,163,184,0.14)", color: "var(--iccc-text-muted)", fontSize: 8.5, fontWeight: 700 },
+  selectedBadge: { display: "inline-flex", alignItems: "center", padding: "2px 6px", borderRadius: 999, background: "rgba(30,64,175,0.1)", color: "#1d4ed8", fontSize: 8.5, fontWeight: 700 },
+  warningBadge: { display: "inline-flex", alignItems: "center", padding: "2px 6px", borderRadius: 999, background: "rgba(245,158,11,0.12)", color: "#b45309", fontSize: 8.5, fontWeight: 700 },
+  labelBadge: { display: "inline-flex", alignItems: "center", padding: "2px 6px", borderRadius: 999, background: "rgba(34,197,94,0.12)", color: "#15803d", fontSize: 8.5, fontWeight: 700 },
+  readyBadge: { display: "inline-flex", alignItems: "center", padding: "2px 6px", borderRadius: 999, background: "rgba(16,185,129,0.12)", color: "#047857", fontSize: 8.5, fontWeight: 700 },
   detailGrid: { display: "grid", gap: 5, padding: "0 12px" },
   detailRow: { display: "grid", gridTemplateColumns: "88px minmax(0, 1fr)", gap: 8, alignItems: "start" },
   detailLabel: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--iccc-text-muted)" },
   detailValue: { fontSize: 11, color: "var(--iccc-text)" },
   detailValuePrimary: { fontSize: 11, color: "#1d4ed8", fontWeight: 700 },
-  warningSubtle: { margin: "0 12px", padding: "7px 8px", borderRadius: 10, background: "rgba(255,247,237,0.86)", color: "#9a3412", fontSize: 10, lineHeight: 1.4 },
+  warningSubtle: { margin: "0 8px 0 28px", padding: "6px 8px", borderRadius: 12, background: "rgba(255,247,237,0.86)", color: "#9a3412", fontSize: 9.5, lineHeight: 1.35 },
   attachmentList: { display: "grid", gap: 6 },
-  attachmentRow: { display: "grid", gridTemplateColumns: "18px minmax(0, 1fr) auto", gap: 8, alignItems: "center", padding: "8px 10px", borderRadius: 12, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.86)" },
-  attachmentRowActive: { display: "grid", gridTemplateColumns: "18px minmax(0, 1fr) auto", gap: 8, alignItems: "center", padding: "8px 10px", borderRadius: 12, border: "1px solid rgba(37,99,235,0.24)", background: "rgba(239,246,255,0.82)" },
-  attachmentCopy: { display: "grid", gap: 3, minWidth: 0 },
-  attachmentName: { fontSize: 12, fontWeight: 800, color: "var(--iccc-text)", wordBreak: "break-word" },
-  metricGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(94px, 1fr))", gap: 8 },
-  metricCard: { display: "grid", gap: 4, padding: 10, borderRadius: 12, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.82)" },
-  metricLabel: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: "var(--iccc-text-muted)" },
-  metricValue: { fontSize: 22, fontWeight: 800, color: "var(--iccc-text)" },
-  metricMeta: { fontSize: 10, color: "var(--iccc-text-muted)", lineHeight: 1.4 },
-  summaryList: { display: "grid", gap: 5, fontSize: 11, color: "var(--iccc-text)" },
-  footerBar: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10, alignItems: "center", padding: 10, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.82)" },
-  footerCopy: { fontSize: 10, color: "var(--iccc-text-muted)", lineHeight: 1.45 },
-  inlineActions: { display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" },
+  attachmentRow: { display: "grid", gridTemplateColumns: "18px minmax(0, 1fr) auto", gap: 8, alignItems: "center", padding: "7px 9px", borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.9)" },
+  attachmentRowActive: { display: "grid", gridTemplateColumns: "18px minmax(0, 1fr) auto", gap: 8, alignItems: "center", padding: "7px 9px", borderRadius: 14, border: "1px solid rgba(37,99,235,0.2)", background: "rgba(239,246,255,0.84)" },
+  attachmentCopy: { display: "grid", gap: 2, minWidth: 0 },
+  attachmentName: { fontSize: 11, fontWeight: 800, color: "var(--iccc-text)", wordBreak: "break-word" },
+  metricGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(86px, 1fr))", gap: 6 },
+  metricCard: { display: "grid", gap: 3, padding: 9, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.88)" },
+  metricLabel: { fontSize: 9, fontWeight: 800, textTransform: "uppercase", color: "var(--iccc-text-muted)" },
+  metricValue: { fontSize: 18, fontWeight: 800, color: "var(--iccc-text)" },
+  metricMeta: { fontSize: 9.5, color: "var(--iccc-text-muted)", lineHeight: 1.3 },
+  summaryList: { display: "grid", gap: 4, fontSize: 10.5, color: "var(--iccc-text)" },
+  footerBar: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, alignItems: "center", padding: 8, borderRadius: 18, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.88)" },
+  footerMain: { display: "grid", gap: 4, minWidth: 0 },
+  footerStats: { display: "flex", gap: 4, flexWrap: "wrap" },
+  footerStat: { display: "inline-flex", alignItems: "center", padding: "2px 7px", borderRadius: 999, background: "rgba(15,23,42,0.06)", color: "var(--iccc-text-muted)", fontSize: 8.5, fontWeight: 700 },
+  footerCopy: { fontSize: 9, color: "var(--iccc-text-muted)", lineHeight: 1.3 },
+  inlineActions: { display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" },
 };
 
 export default GroupsPrepareCockpit;

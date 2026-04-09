@@ -387,5 +387,9 @@
 - **Nota Operacional**:
   - se os testes reais encontrarem problema, o rollback preferido continua a ser `git revert -m 1 <merge_commit>` pela ordem inversa dos merges desta stack
   - nao usar `reset --hard` em `main`
+- **Ronda Visual Mais Recente**:
+  - hotfix de compactacao e fidelidade ao mockup em `client/src/modules/crm/GroupsPrepareCockpit.tsx`
+  - sem novas features, sem reabrir seed/cache/persistencia e sem tocar em `Explorar` / `Explorador` / `Gestor`
+  - switches `Grupo` e `Filtros` redesenhados como controlo compacto real; tabs, cards, badges e footer compactados
 - Atualizar `docs/DECISIONS.md` se alguma norma ou decisão mudou
 - Registar no output final: alterações, riscos, validações e próximos passos
