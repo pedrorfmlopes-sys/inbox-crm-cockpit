@@ -4,6 +4,7 @@ import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, check
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
+import { getGroupAttachmentStorageOptions } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import {
     areOutlookCategorySourcesEqual,
     buildOutlookCategoryPlan,
@@ -919,6 +920,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
             let emailRegistryOk = false;
             try {
+                const attachmentStorage = getGroupAttachmentStorageOptions(s);
                 await registerRelevantEmail({
                     itemId: c.itemId || "",
                     internetMessageId: c.internetMessageId || "",
@@ -930,8 +932,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     messageDateIso: c.receivedDateTimeIso || "",
                     bodyText: b,
                     bodyHtml: bh,
-                    attachmentStorageProvider: s?.groupStorage?.provider || "cloud",
-                    attachmentStorageBasePath: s?.groupStorage?.baseFolderPath || "",
+                    ...attachmentStorage,
                     attachments: (atts || []).map((attachment) => ({
                         key: String((attachment as any)?.key || "").trim() || undefined,
                         name: attachment.name,

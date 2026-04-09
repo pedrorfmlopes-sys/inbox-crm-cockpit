@@ -4,6 +4,7 @@ import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiCl
 import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubjectInComposeDraft, openAiSettings, addBase64AttachmentToCompose, openAiReplyTargetPicker, syncLinkCategoriesToComposeDraft, type AiReplyTargetSelection } from "@/office";
 import { getSettings } from "@/settings";
 import { getEmailAttachmentContentBase64, getRelatedEmailContext, logLearningInteraction, registerRelevantEmail, type RelevantEmailPayload, type RelatedEmailEntry } from "@/api";
+import { getGroupAttachmentStorageOptions } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { buildOutlookCategorySourceFromRelatedContext, mergeOutlookCategorySources, ODOO_LINKED_CATEGORY, type OutlookCategorySource } from "@/outlookCategories";
 import { buildAiContextBundle, type AiContextBundle } from "./contextBundle";
 import * as Icons from "@/ui/icons";
@@ -500,8 +501,7 @@ export const AiCockpit: React.FC = () => {
             if (needsRegistration) {
                 await registerRelevantEmail({
                     ...currentEmailBootstrapPayload,
-                    attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
-                    attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
+                    ...getGroupAttachmentStorageOptions(settings),
                 }).catch(() => null);
                 related = await loadRelated();
                 email = pickBestEmail(related);
@@ -525,6 +525,7 @@ export const AiCockpit: React.FC = () => {
         currentEmailBootstrapPayload,
         ctx,
         settings?.groupStorage?.baseFolderPath,
+        settings?.groupStorage?.mode,
         settings?.groupStorage?.provider,
     ]);
 
@@ -3459,7 +3460,7 @@ export const AiCockpit: React.FC = () => {
                                         >
                                             <Icons.RotateCcw size={15} />
                                         </button>
-                                        {false && (activeMenu === "rollback" as any) && (
+                                        {String(activeMenu || "") === "rollback_hidden" && (
                                             <div style={{ ...S.cascadeMenu, width: "220px", right: 0, left: "auto", top: "24px" }}>
                                                 {history.slice(1).map((h, _i) => (
                                                     <button

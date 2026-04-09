@@ -45,6 +45,7 @@ import {
   toggleReferenceGroupSelection,
   type GroupMembershipKind,
 } from "@/modules/crm/groups-v1/contracts";
+import { getGroupAttachmentStorageOptions } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
@@ -802,8 +803,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       if (needsRegistration) {
         await registerRelevantEmail({
           ...currentEmailBootstrapPayload,
-          attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
-          attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
+          ...getGroupAttachmentStorageOptions(settings),
         }).catch(() => null);
         related = await loadRelated();
         email = pickBestEmail(related);
@@ -830,6 +830,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     currentEmailBootstrapPayload,
     currentEmailKey,
     settings?.groupStorage?.baseFolderPath,
+    settings?.groupStorage?.mode,
     settings?.groupStorage?.provider,
   ]);
 
@@ -879,8 +880,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       ) {
         await registerRelevantEmail({
           ...studioSeedPayload,
-          attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
-          attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
+          ...getGroupAttachmentStorageOptions(settings),
         });
       }
     } catch {
@@ -1810,8 +1810,9 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     }
     setBusy(true);
     try {
-      const storageProvider = String(settings?.groupStorage.provider || "cloud").trim();
-      const storageBasePath = String(settings?.groupStorage.baseFolderPath || "").trim();
+      const storageOptions = getGroupAttachmentStorageOptions(settings);
+      const storageProvider = String(storageOptions.attachmentStorageProvider || "cloud").trim();
+      const storageBasePath = String(storageOptions.attachmentStorageBasePath || "").trim();
       const docs = [];
       for (const attachment of selectedCurrentAttachments) {
         let contentBase64 = String(attachment.content || "").trim();
