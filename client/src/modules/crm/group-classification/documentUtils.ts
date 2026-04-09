@@ -13,6 +13,7 @@ export function readParams(): StudioParams {
   const urlParams = new URLSearchParams(window.location.search);
   return {
     seedKey: urlParams.get("seedKey") || undefined,
+    prepareSeedKey: urlParams.get("prepareSeedKey") || undefined,
     itemId: urlParams.get("itemId") || undefined,
     internetMessageId: urlParams.get("internetMessageId") || undefined,
     conversationId: urlParams.get("conversationId") || undefined,

@@ -22,6 +22,11 @@ import {
   setPrincipalGroupSelection,
   toggleReferenceGroupSelection,
 } from "@/modules/crm/groups-v1/contracts";
+import {
+  clearGroupPreparationSeed,
+  readGroupPreparationSeed,
+  type GroupPreparationSeed,
+} from "@/modules/crm/groups-v1/prepareSession";
 import "../../global.css";
 
 import {
@@ -70,6 +75,11 @@ import {
 } from "./group-classification/previewUtils";
 
 type CaseGroupEntry = LinkGroupEntry & { relationKind?: string };
+type PrepareSeedBootstrapState = {
+  key: string;
+  seed: GroupPreparationSeed | null;
+  status: "idle" | "invalid" | "ready" | "applied" | "skipped";
+};
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -500,6 +510,12 @@ function StudioInner() {
 
   const applyInProgressRef = useRef<Promise<any> | null>(null);
   const lastAppliedSignatureRef = useRef<string | null>(null);
+  const prepareSeedHandledKeyRef = useRef("");
+  const [prepareSeedBootstrap, setPrepareSeedBootstrap] = useState<PrepareSeedBootstrapState>({
+    key: "",
+    seed: null,
+    status: "idle",
+  });
 
   const currentSeed = useMemo(() => readSeedEmail(params), [params]);
   const fallbackIdentity = useMemo(() => buildFallbackEmail(params), [params]);
@@ -544,6 +560,21 @@ function StudioInner() {
     currentSeed,
     fallbackIdentity,
   ]);
+
+  useEffect(() => {
+    const key = String(params.prepareSeedKey || "").trim();
+    if (!key) {
+      setPrepareSeedBootstrap({ key: "", seed: null, status: "idle" });
+      return;
+    }
+    const seed = readGroupPreparationSeed(key);
+    if (!seed) {
+      clearGroupPreparationSeed(key);
+      setPrepareSeedBootstrap({ key, seed: null, status: "invalid" });
+      return;
+    }
+    setPrepareSeedBootstrap({ key, seed, status: "ready" });
+  }, [params.prepareSeedKey]);
 
   useEffect(() => {
     void (async () => {
@@ -638,6 +669,13 @@ function StudioInner() {
     })();
     return () => { cancelled = true; };
   }, [bootstrapEmailPayload, currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject]);
+
+  useEffect(() => {
+    if (loading || prepareSeedBootstrap.status !== "invalid" || !prepareSeedBootstrap.key) return;
+    if (prepareSeedHandledKeyRef.current === prepareSeedBootstrap.key) return;
+    prepareSeedHandledKeyRef.current = prepareSeedBootstrap.key;
+    setStatus("O contexto vindo de Preparar expirou ou estava invalido. O Classificar abriu em modo normal.");
+  }, [loading, prepareSeedBootstrap.key, prepareSeedBootstrap.status]);
 
   const groupMap = useMemo(() => new Map(allGroups.map((group) => [group.id, group])), [allGroups]);
   const businessGroups = useMemo(
@@ -813,6 +851,103 @@ function StudioInner() {
     () => dedupeEmails([...(selectedEmail ? [selectedEmail] : []), ...relatedEmails]),
     [relatedEmails, selectedEmail]
   );
+
+  useEffect(() => {
+    if (loading || prepareSeedBootstrap.status !== "ready" || !prepareSeedBootstrap.seed) return;
+    if (prepareSeedHandledKeyRef.current === prepareSeedBootstrap.key) return;
+
+    const bootstrapSeed = prepareSeedBootstrap.seed;
+    const availableEmails = dedupeEmails([...relatedEmails, ...knownEmails]);
+    const availableEmailKeys = new Set(availableEmails.map((email) => makeEmailKey(email)).filter(Boolean));
+    const relatedEmailKeys = new Set(relatedEmails.map((email) => makeEmailKey(email)).filter(Boolean));
+    const selectedSeedKeys = bootstrapSeed.selectedEmailKeys.filter((key) => availableEmailKeys.has(key));
+    const anchorAvailable = Boolean(
+      bootstrapSeed.anchorEmailKey
+      && availableEmailKeys.has(bootstrapSeed.anchorEmailKey)
+    );
+
+    if (!anchorAvailable && bootstrapSeed.selectedEmailKeys.length > 0 && selectedSeedKeys.length === 0) {
+      prepareSeedHandledKeyRef.current = prepareSeedBootstrap.key;
+      clearGroupPreparationSeed(prepareSeedBootstrap.key);
+      setPrepareSeedBootstrap((current) => current.status === "ready" ? { ...current, status: "skipped" } : current);
+      setStatus("O contexto vindo de Preparar ja nao corresponde a este conjunto. O Classificar abriu em modo normal.");
+      return;
+    }
+
+    const effectiveTargetKeys = selectedSeedKeys.length
+      ? selectedSeedKeys
+      : (anchorAvailable && bootstrapSeed.anchorEmailKey ? [bootstrapSeed.anchorEmailKey] : []);
+
+    if (effectiveTargetKeys.length > 0) {
+      const requiresAllScope = effectiveTargetKeys.some((key) => !relatedEmailKeys.has(key));
+      if (requiresAllScope) setScopeMode("all");
+      setSelectedTargetEmailKeys(effectiveTargetKeys);
+      const preferredSelectedEmailKey = effectiveTargetKeys.includes(bootstrapSeed.anchorEmailKey)
+        ? bootstrapSeed.anchorEmailKey
+        : effectiveTargetKeys[0];
+      if (preferredSelectedEmailKey) {
+        setSelectedEmailKey((current) => current && effectiveTargetKeys.includes(current) ? current : preferredSelectedEmailKey);
+      }
+      setApplyScopeMode(effectiveTargetKeys.length > 1 ? "selected" : "current");
+    }
+
+    if (bootstrapSeed.workingGroupId) {
+      setSelectionTouched((current) => current.principal ? current : { ...current, principal: true });
+      setPrincipalGroupId(bootstrapSeed.workingGroupId);
+      setReferenceGroupIds((current) => current.filter((groupId) => groupId !== bootstrapSeed.workingGroupId));
+    }
+
+    if (bootstrapSeed.filterQuery) {
+      setEmailSearch((current) => current || bootstrapSeed.filterQuery);
+    }
+
+    if (bootstrapSeed.attachmentMode === "with") {
+      setOnlyWithAttachments(true);
+    }
+
+    if (bootstrapSeed.selectedAttachmentKeys.length > 0) {
+      setAttachmentPlan((current) => {
+        let changed = false;
+        const next = { ...current };
+        bootstrapSeed.selectedAttachmentKeys.forEach((attachmentKey) => {
+          const key = String(attachmentKey || "").trim();
+          if (!key) return;
+          const previous = current[key];
+          const nextEntry = {
+            analyze: previous?.analyze ?? false,
+            save: true,
+            forward: previous?.forward ?? false,
+          };
+          if (
+            !previous
+            || previous.analyze !== nextEntry.analyze
+            || previous.save !== nextEntry.save
+            || previous.forward !== nextEntry.forward
+          ) {
+            next[key] = nextEntry;
+            changed = true;
+          }
+        });
+        return changed ? next : current;
+      });
+    }
+
+    prepareSeedHandledKeyRef.current = prepareSeedBootstrap.key;
+    clearGroupPreparationSeed(prepareSeedBootstrap.key);
+    setPrepareSeedBootstrap((current) => current.status === "ready" ? { ...current, status: "applied" } : current);
+
+    const bootstrapSummary = [
+      effectiveTargetKeys.length > 0 ? `${effectiveTargetKeys.length} email(s)` : "",
+      bootstrapSeed.workingGroupId ? "grupo em trabalho" : "",
+      bootstrapSeed.selectedAttachmentKeys.length > 0 ? `${bootstrapSeed.selectedAttachmentKeys.length} anexo(s) preparado(s)` : "",
+      bootstrapSeed.filterQuery ? `filtro "${bootstrapSeed.filterQuery}"` : "",
+    ].filter(Boolean).join(" / ");
+    setStatus(
+      bootstrapSummary
+        ? `Contexto importado de Preparar: ${bootstrapSummary}.`
+        : "Contexto de Preparar consumido. O Classificar abriu com bootstrap local."
+    );
+  }, [knownEmails, loading, prepareSeedBootstrap, relatedEmails]);
 
   const principalScopeEmails = useMemo(() => {
     if (!principalAnchorGroupId) return [];
@@ -1037,6 +1172,17 @@ function StudioInner() {
     });
   }, [selectedEmailAttachments]);
 
+  useEffect(() => {
+    if (prepareSeedBootstrap.status !== "applied" || !prepareSeedBootstrap.seed?.selectedAttachmentKeys.length) return;
+    setSelectedAttachmentPreviewKey((current) => {
+      if (current && selectedEmailAttachments.some((attachment) => makeAttachmentKey(attachment) === current)) return current;
+      const seededAttachment = selectedEmailAttachments.find((attachment) =>
+        prepareSeedBootstrap.seed?.selectedAttachmentKeys.includes(makeAttachmentKey(attachment))
+      );
+      return seededAttachment ? makeAttachmentKey(seededAttachment) : current;
+    });
+  }, [prepareSeedBootstrap, selectedEmailAttachments]);
+
   const selectedAttachmentPreview = useMemo(
     () => selectedEmailAttachments.find((attachment) => makeAttachmentKey(attachment) === selectedAttachmentPreviewKey) || null,
     [selectedAttachmentPreviewKey, selectedEmailAttachments]
@@ -1224,18 +1370,29 @@ function StudioInner() {
   useEffect(() => {
     setAttachmentPlan((current) => {
       const next = { ...current };
+      let changed = false;
       for (const attachment of selectedEmailAttachments) {
         const key = makeAttachmentKey(attachment);
-        if (!key || next[key]) continue;
+        if (!key) continue;
         const contentType = String(attachment.contentType || "").toLowerCase();
         const isDocument = /pdf|image|excel|spreadsheet|word|officedocument|text|csv/.test(contentType) || /\.(pdf|png|jpe?g|xlsx?|docx?|csv|txt)$/i.test(String(attachment.name || ""));
-        next[key] = {
-          analyze: isRejectedDocumentLifecycleState((attachment as any)?.documentState) ? false : isDocument,
-          save: false,
-          forward: false,
+        const previous = current[key];
+        const nextEntry = {
+          analyze: previous?.analyze ?? (isRejectedDocumentLifecycleState((attachment as any)?.documentState) ? false : isDocument),
+          save: previous?.save ?? false,
+          forward: previous?.forward ?? false,
         };
+        if (
+          !previous
+          || previous.analyze !== nextEntry.analyze
+          || previous.save !== nextEntry.save
+          || previous.forward !== nextEntry.forward
+        ) {
+          next[key] = nextEntry;
+          changed = true;
+        }
       }
-      return next;
+      return changed ? next : current;
     });
   }, [selectedEmailAttachments]);
 

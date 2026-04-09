@@ -310,6 +310,38 @@
   - A sessao de `Preparar` continua deliberadamente local e nao resolve ainda a promocao remota/final do conjunto preparado.
   - O consumo do seed de `Preparar` por `Classificar` continua para Fase 4; nesta ronda ficou apenas mais seguro e mais bem delimitado.
 
+## Grupos v1: Fase 4 minima - ligacao limpa `Preparar -> Classificar` (Abril 2026)
+- **Base da Ronda**: Esta branch partiu de `origin/codex/groups-v1-phase3-session-cache` porque os commits `1c5540460f50e72b680d4664969adce3cb4cc55f`, `f426ec7c026f7e66264a94137737373d3115b281` e `2fa369a72d9516d4480b2e35ab71cbdd8dbccc9a` ainda nao estavam mergeados em `main`.
+- **Auditoria Obrigatoria da Fase 3**:
+  - `client/src/modules/crm/groups-v1/prepareSession.ts` continuou limitado a progresso de sessao e seed temporario, com TTL e cleanup adequados.
+  - `client/src/modules/crm/GroupsPrepareCockpit.tsx` continuou a usar o seed apenas como ponte de arranque, sem persistencia canonica nem sync continuo.
+  - `client/src/modules/crm/GroupClassificationStudioApp.tsx` era o ponto certo para consumir o seed, no bootstrap inicial do Studio, sem reabrir o fluxo inteiro.
+  - Conclusao: Fase 3 ficou aprovada como base segura para a ponte minima desta ronda.
+- **Implementacao Introduzida em Fase 4**:
+  - `client/src/modules/crm/group-classification/types.ts` e `documentUtils.ts` passaram a reconhecer o parametro `prepareSeedKey` na abertura do Studio.
+  - `client/src/modules/crm/GroupClassificationStudioApp.tsx` passou a:
+    - ler o seed de `Preparar` de forma controlada
+    - validar conteudo/TTL com fallback limpo
+    - bootstrapar selecao de emails, `applyScopeMode`, grupo em trabalho e filtro textual relevante
+    - promover anexos preparados para `attachmentPlan.save` sem criar storage canonico novo
+    - limpar o seed depois de bootstrap valido ou mismatch claro, evitando reconsumo fantasma
+  - `client/src/modules/crm/groups-v1/prepareSession.ts` ganhou helper explicito para limpeza do seed, mantendo o modulo leve e focado em sessao/bridge temporaria.
+- **Boundaries Mantidas**:
+  - O seed continua a ser apenas bootstrap temporario e unidirecional.
+  - `Classificar` consome o contexto e segue com o seu estado proprio; nao fica "ligado" ao seed.
+  - Nao houve persistencia remota nova, backend novo, viewer novo ou abertura de `Explorar` / `Explorador` / `Gestor`.
+- **Validacao Executada**:
+  - `npm.cmd -w client run build`
+  - `git diff --check`
+  - `npx.cmd eslint src/modules/crm/GroupClassificationStudioApp.tsx src/modules/crm/group-classification/documentUtils.ts src/modules/crm/group-classification/types.ts src/modules/crm/groups-v1/prepareSession.ts`
+- **Fora do Scope / Nao Tocado Propositadamente**:
+  - integracao final completa de persistencia/promocao remota
+  - qualquer sync bidirecional `Preparar <-> Classificar`
+  - `Explorar`, `Explorador de Grupos`, `Gestor do Grupo` e aba principal `Tarefas`
+- **Residuos / Riscos**:
+  - o seed continua limitado ao bootstrap local; nao cobre ainda promocao final para backend nem transferencia integral de todos os estados futuros
+  - o lint global do client pode continuar vermelho por divida antiga fora do scope, pelo que a validacao limpa desta ronda deve continuar direcionada
+
 ## Última orientação estratégica
 - Segurança e coerência arquitetural antes de novas features.
 
