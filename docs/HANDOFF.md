@@ -195,6 +195,35 @@
   - `npm -w client run build` bem-sucedido.
   - Continua em falta validação real no staging/Outlook para confirmar que o host devolve `getAsync` consistente após a aplicação.
 
+## Grupos v1: Sync Documental + Fase 0/1 (Abril 2026)
+- **Âmbito Delimitado**: Apenas sincronização documental para GitHub, congelamento da baseline (Fase 0) e contratos/fundações de baixo risco (Fase 1). Não houve abertura de Fase 2+ nem UI pesada nova.
+- **Baseline Canonica Introduzida**:
+  - `docs/plano_implementacao_grupos_v1.md` ficou como documento-base com nome canónico.
+  - Criado `docs/grupos_v1_index.md` para apontar a ordem de precedência entre plano, mockups/exportações mais recentes e docs de suporte.
+  - Criado `docs/grupos_v1_fase1_contratos.md` para fixar semântica, cardinalidade, contrato de mudança de grupo, tarefas mínimas e política de persistência/cache.
+  - Os relatórios `docs/Relatorio_Aba_Grupos_Implementacao_2026-04-09_com_Explorador_e_Screenshots.md` e `docs/Relatorio_Gestor_do_Grupo_Mockup_2026-04-09_v2_embedded.md` foram alinhados com a guarda conceptual: o Explorador consulta e abre o Gestor; o Gestor é o único editor rico.
+  - Criada a pasta `docs/groups_report_assets/` com screenshots extraídos dos HTML aprovados para que os `.md` renderizem no GitHub sem links partidos.
+- **Contratos de Código Introduzidos**:
+  - Novo módulo `client/src/modules/crm/groups-v1/contracts.ts` com:
+    - semântica `principal` / `referencia`
+    - helpers para manter `1 email = 0 ou 1 grupo principal`
+    - contrato mínimo de mudança de grupo por email
+    - contrato mínimo de tarefas
+    - contrato de persistência/cache (`GROUPS_PERSISTENCE_CONTRACT`)
+  - `client/src/api.ts` passou a expor os tipos partilhados e a aceitar tarefas opcionais em `LinkGroupEntry`.
+  - `client/src/modules/crm/GroupClassificationStudioApp.tsx` deixou de gerir a exclusão de principal/referências em vários pontos ad hoc e passou a reutilizar os helpers partilhados.
+  - `client/src/modules/crm/GroupManagerCockpit.tsx` passou a reutilizar os mesmos helpers no fluxo de quick-link.
+- **Validação Executada**:
+  - `npm.cmd -w client run build` bem-sucedido.
+  - `git diff --check` sem erros de whitespace; apenas avisos de LF/CRLF no Windows.
+- **Fora do Scope / Não Tocado Propositadamente**:
+  - Fases 2+ (`Preparar`, `Explorar` add-in, `Explorador de Grupos`, `Gestor do Grupo` em UI completa).
+  - Backend `server/src/linkStore.js`, `server/src/index.js`, `client/src/office.ts` e restantes zonas sensíveis.
+  - Nova área grande de settings.
+- **Resíduos / Riscos**:
+  - `docs/Grupos_08042026.html` existe localmente mas é duplicado byte-a-byte de `docs/Relatorio_Aba_Grupos_Implementacao_2026-04-08.html`; não foi promovido para evitar redundância.
+  - A enforcement runtime total do contrato `1 email = 0 ou 1 grupo principal` no backend continua futura; nesta ronda ficou fechado o contrato partilhado e a sua adoção nos pontos cliente já existentes.
+
 ## Última orientação estratégica
 - Segurança e coerência arquitetural antes de novas features.
 
