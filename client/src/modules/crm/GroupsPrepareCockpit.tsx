@@ -283,12 +283,12 @@ function CompactToggle({
   return (
     <button
       type="button"
-      style={{ ...S.compactToggleButton, ...(active ? S.compactToggleButtonOn : S.compactToggleButtonOff) }}
+      style={S.compactToggleButton}
       onClick={onClick}
       aria-pressed={active}
       aria-label={`${label}: ${active ? "ativo" : "inativo"}`}
     >
-      <span style={{ ...S.compactToggleLabel, ...(active ? S.compactToggleLabelOn : S.compactToggleLabelOff) }}>{label}</span>
+      <span style={S.compactToggleLabel}>{label}</span>
       <span style={active ? S.compactToggleTrackOn : S.compactToggleTrackOff}>
         <span style={S.compactToggleThumb} />
       </span>
@@ -957,6 +957,11 @@ export const GroupsPrepareCockpit: React.FC = () => {
     });
   }, [attachmentMode, filterQuery, groupMode, mergedCandidateEmails, showFiltersPanel]);
 
+  const visibleListEmails = useMemo(
+    () => visibleEmails.filter((email) => makeEmailKey(email) !== currentEmailKey && !emailMatchesCurrentContext(email, ctx)),
+    [ctx, currentEmailKey, visibleEmails]
+  );
+
   useEffect(() => {
     if (!sessionReady) return;
     const validKeys = new Set(mergedCandidateEmails.map((email) => makeEmailKey(email)).filter(Boolean));
@@ -1168,8 +1173,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [attachmentMode, filterQuery, groupMode, showFiltersPanel]);
 
   const expandedEmailRows = useMemo(
-    () => visibleEmails.filter((email) => expandedEmailKeys.includes(makeEmailKey(email))),
-    [expandedEmailKeys, visibleEmails]
+    () => visibleListEmails.filter((email) => expandedEmailKeys.includes(makeEmailKey(email))),
+    [expandedEmailKeys, visibleListEmails]
   );
 
   useEffect(() => {
@@ -1353,18 +1358,15 @@ export const GroupsPrepareCockpit: React.FC = () => {
     { label: "Anexos", value: String(selectedAttachments.length), meta: selectedAttachments.filter((attachment) => attachment.hasContent).length ? `${selectedAttachments.filter((attachment) => attachment.hasContent).length} com conteudo local` : "Sem upload remoto nesta fase" },
     { label: "Filtros", value: String(activeFilterSummary.length), meta: activeFilterSummary.length ? activeFilterSummary.join(" / ") : "Sem filtros ativos" },
   ];
-  const storageModeChip = useMemo(() => {
-    if (runtime.mode === "hybrid") return { label: "Hibrido", style: S.hybridBadge };
-    if (runtime.mode === "supabase") return { label: "Remoto", style: S.remoteBadge };
-    return { label: "Local", style: S.localBadge };
-  }, [runtime.mode]);
-  const worksetStateChip = useMemo(() => {
-    if (!canPersistWorkset) return { label: "Sessao", style: S.sessionBadge };
-    if (lastPersistedWorksetRef.current.worksetKey) return { label: "Persistido", style: S.persistedBadge };
-    if (worksetManifest) return { label: "Pendente", style: S.pendingBadge };
-    return { label: "Draft", style: S.draftBadge };
-  }, [canPersistWorkset, worksetManifest]);
-  const anchorStatusConfig = getStatusDisplayConfig(currentEmailEntry.status);
+  const hasPersistedWorkset = Boolean(lastPersistedWorksetRef.current.worksetKey || persistedWorksetRef.current);
+  const visibleInformationState: "draft" | "local" | "server" = hasPersistedWorkset
+    ? (runtime.mode === "supabase" || runtime.mode === "hybrid" ? "server" : "local")
+    : "draft";
+  const visibleInformationStateChip = visibleInformationState === "server"
+    ? { label: "Servidor", style: S.serverBadge, dot: S.infoDotServer }
+    : visibleInformationState === "local"
+      ? { label: "Local", style: S.localBadge, dot: S.infoDotLocal }
+      : { label: "Rascunho", style: S.draftBadge, dot: S.infoDotDraft };
 
   if (!hasCurrentIdentity) {
     return (
@@ -1418,9 +1420,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
               {formatDate(currentEmailEntry.messageDateIso || currentEmailEntry.receivedAtIso)
                 ? <span style={S.mutedBadge}>{formatDate(currentEmailEntry.messageDateIso || currentEmailEntry.receivedAtIso)}</span>
                 : null}
-              <span style={storageModeChip.style}>{storageModeChip.label}</span>
-              <span style={worksetStateChip.style}>{worksetStateChip.label}</span>
-              <span style={{ ...S.statusBadge, ...anchorStatusConfig.style }}>{anchorStatusConfig.label}</span>
+              <span style={visibleInformationStateChip.style}>{visibleInformationStateChip.label}</span>
             </div>
           </div>
         </div>
@@ -1527,15 +1527,15 @@ export const GroupsPrepareCockpit: React.FC = () => {
         <div style={S.viewStack}>
           <div style={S.inlineMetaRow}>
             <span style={S.smallMeta}>{selectedEmails.length} email(s) no conjunto de trabalho</span>
-            <button type="button" style={S.tinyBtn} onClick={() => setSelectedEmailKeys(visibleEmails.map((email) => makeEmailKey(email)))}>Todos os visiveis</button>
+            <button type="button" style={S.tinyBtn} onClick={() => setSelectedEmailKeys(Array.from(new Set([currentEmailKey, ...visibleListEmails.map((email) => makeEmailKey(email))].filter(Boolean))))}>Todos os visiveis</button>
             <button type="button" style={S.tinyBtn} onClick={() => setSelectedEmailKeys(currentEmailKey ? [currentEmailKey] : [])}>So ancora</button>
           </div>
           {contextLoading ? <PanelState compact tone="loading" title="A carregar emails" description="A montar o conjunto base a partir do email ancora." /> : null}
-          {!contextLoading && !visibleEmails.length ? (
+          {!contextLoading && !visibleListEmails.length ? (
             <PanelState compact tone="info" title="Sem emails visiveis" description="Liga o painel de filtros ou alarga a pesquisa para trazer emails para o conjunto." />
           ) : (
             <div style={S.emailList}>
-              {visibleEmails.map((email) => {
+              {visibleListEmails.map((email) => {
                 const emailKey = makeEmailKey(email);
                 const expanded = expandedEmailKeys.includes(emailKey);
                 const selected = selectedEmailKeys.includes(emailKey);
@@ -1555,15 +1555,13 @@ export const GroupsPrepareCockpit: React.FC = () => {
                   <div key={emailKey} style={expanded ? S.emailCardExpanded : S.emailCard}>
                     <div style={S.emailCardHead}>
                       <label style={S.checkboxCell}>
+                        <span style={visibleInformationStateChip.dot} title={visibleInformationStateChip.label} />
                         <input type="checkbox" checked={selected} onChange={() => toggleEmailSelection(emailKey)} />
                       </label>
                       <button type="button" style={S.emailCardMain} onClick={() => toggleEmailExpanded(emailKey)}>
                         <div style={S.emailCardCopy}>
                           <div style={S.emailSubject}>
-                            <span style={emailKey === currentEmailKey ? S.subjectDotActive : S.subjectDot} />
                             <span style={S.emailSubjectText}>{email.subject || "(sem assunto)"}</span>
-                            {emailKey === currentEmailKey ? <span style={S.anchorBadge}>Ancora</span> : null}
-                            <span style={{ ...S.statusBadge, ...emailStatusConfig.style }}>{emailStatusConfig.label}</span>
                           </div>
                           <div style={S.emailMeta}>
                             {email.fromName || email.fromEmail || "Sem remetente"}
@@ -1571,9 +1569,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
                           </div>
                         </div>
                         <div style={S.emailHeadBadges}>
-                          {selected ? <span style={worksetStateChip.style}>{worksetStateChip.label}</span> : null}
-                          {emailKey === currentEmailKey ? <span style={storageModeChip.style}>{storageModeChip.label}</span> : null}
-                          {attachmentCount ? <span style={S.countBadge}>{attachmentCount}</span> : null}
                           {expanded ? <Icons.ArrowUp size={12} /> : <Icons.ArrowDown size={12} />}
                         </div>
                       </button>
@@ -1581,13 +1576,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
                     {expanded ? (
                       <>
-                        {(email.labels || []).length ? (
-                          <div style={S.detailBadgeStack}>
-                            {(email.labels || []).slice(0, 3).map((label) => (
-                              <span key={`${emailKey}:${label}`} style={S.labelBadge}>{label}</span>
-                            ))}
-                          </div>
-                        ) : null}
                         <div style={S.detailBadgeStack}>
                           <span style={principalGroup ? S.primaryBadge : S.mutedBadge}>
                             Grupo: {principalGroup?.name || "Sem grupo principal"}
@@ -1601,11 +1589,11 @@ export const GroupsPrepareCockpit: React.FC = () => {
                           <span style={S.mutedBadge}>
                             Anexos: {attachmentCount} / {selectedAttachmentCountByEmail.get(emailKey) || 0}
                           </span>
-                          <span style={storageModeChip.style}>
-                            Storage: {storageModeChip.label}
+                          <span style={{ ...S.statusBadge, ...emailStatusConfig.style }}>
+                            Estado: {emailStatusConfig.label}
                           </span>
-                          <span style={selected ? worksetStateChip.style : S.mutedBadge}>
-                            Workset: {selected ? worksetStateChip.label : "Fora da selecao"}
+                          <span style={selected ? visibleInformationStateChip.style : S.mutedBadge}>
+                            Local: {selected ? visibleInformationStateChip.label : "Fora da selecao"}
                           </span>
                         </div>
                         {pendingChange ? (
@@ -1702,7 +1690,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
             <span style={S.footerStat}>{selectedEmails.length} email(s)</span>
             <span style={S.footerStat}>{selectedAttachments.length} anexo(s)</span>
           </div>
-          <div style={S.footerCopy}>{canPersistWorkset ? `${worksetStateChip.label} / ${storageModeChip.label}` : "Sessao local."}</div>
+          <div style={S.footerCopy}>{visibleInformationStateChip.label}</div>
         </div>
         <div style={S.inlineActions}>
           <button type="button" style={{ ...S.secondaryBtn, minWidth: 92 }} onClick={handleManualSessionSave}>
@@ -1760,18 +1748,14 @@ const S: Record<string, React.CSSProperties> = {
   segmentDisabled: { flex: "1 1 0", border: "none", background: "transparent", color: "rgba(100,116,139,0.68)", padding: "4px 7px", borderRadius: 999, fontSize: 9, fontWeight: 600, cursor: "not-allowed" },
   anchorCard: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 6, alignItems: "start", padding: 7, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.9)" },
   anchorLead: { display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 },
-  anchorIcon: { width: 22, height: 22, borderRadius: 8, background: "#27425f", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 },
+  anchorIcon: { width: 22, height: 22, borderRadius: 8, background: "linear-gradient(180deg,#3b82f6 0%, #2563eb 100%)", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 },
   anchorCopy: { display: "grid", gap: 2, minWidth: 0 },
-  anchorSubject: { fontSize: 11, fontWeight: 650, color: "#26364a", wordBreak: "break-word", lineHeight: 1.18 },
+  anchorSubject: { fontSize: 10.8, fontWeight: 600, color: "#334155", wordBreak: "break-word", lineHeight: 1.18 },
   anchorMeta: { fontSize: 10, color: "var(--iccc-text-muted)" },
   anchorActions: { display: "flex", gap: 6, alignItems: "center", justifyContent: "flex-end", flexWrap: "nowrap", paddingTop: 1 },
   anchorInfoChips: { display: "flex", gap: 3, flexWrap: "wrap" },
-  compactToggleButton: { border: "none", background: "transparent", padding: 0, display: "inline-flex", alignItems: "center", gap: 4, color: "var(--iccc-text-muted)", fontSize: 8, fontWeight: 700, cursor: "pointer" },
-  compactToggleButtonOn: { color: "#15803d" },
-  compactToggleButtonOff: { color: "#b91c1c" },
-  compactToggleLabel: { lineHeight: 1 },
-  compactToggleLabelOn: { color: "#15803d" },
-  compactToggleLabelOff: { color: "#b91c1c" },
+  compactToggleButton: { border: "none", background: "transparent", padding: 0, display: "inline-flex", alignItems: "center", gap: 4, color: "#64748b", fontSize: 8, fontWeight: 650, cursor: "pointer" },
+  compactToggleLabel: { lineHeight: 1, color: "#64748b" },
   compactToggleTrackOff: { width: 15, height: 9, borderRadius: 999, background: "rgba(239,68,68,0.72)", display: "inline-flex", alignItems: "center", justifyContent: "flex-start", padding: 1, boxSizing: "border-box", flexShrink: 0 },
   compactToggleTrackOn: { width: 15, height: 9, borderRadius: 999, background: "rgba(34,197,94,0.78)", display: "inline-flex", alignItems: "center", justifyContent: "flex-end", padding: 1, boxSizing: "border-box", flexShrink: 0 },
   compactToggleThumb: { width: 5, height: 5, borderRadius: 999, background: "#fff" },
@@ -1786,7 +1770,7 @@ const S: Record<string, React.CSSProperties> = {
   filterGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))", gap: 5 },
   input: { width: "100%", borderRadius: 11, border: "1px solid rgba(148,163,184,0.32)", padding: "5px 8px", background: "rgba(255,255,255,0.94)", fontSize: 9.5, color: "#26364a", boxSizing: "border-box" },
   select: { width: "100%", borderRadius: 11, border: "1px solid rgba(148,163,184,0.32)", padding: "5px 8px", background: "rgba(255,255,255,0.94)", fontSize: 9.5, color: "#26364a" },
-  primaryBtn: { ...baseButton, background: "#27425f", color: "#fff", border: "1px solid #27425f" },
+  primaryBtn: { ...baseButton, background: "linear-gradient(180deg,#3b82f6 0%, #2563eb 100%)", color: "#fff", border: "1px solid rgba(37,99,235,0.18)", boxShadow: "0 4px 10px rgba(37,99,235,0.14)" },
   secondaryBtn: { ...baseButton, background: "rgba(255,255,255,0.88)", color: "#334155" },
   iconGhostBtn: { ...baseButton, width: 22, height: 22, padding: 0, background: "rgba(255,255,255,0.9)", color: "#526173" },
   selectedGroupCard: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 6, alignItems: "center", borderRadius: 11, border: "1px solid rgba(39,66,95,0.16)", background: "rgba(248,250,252,0.95)", padding: 6 },
@@ -1808,18 +1792,15 @@ const S: Record<string, React.CSSProperties> = {
   emailCard: { display: "grid", gap: 0, borderRadius: 12, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.94)", overflow: "hidden" },
   emailCardExpanded: { display: "grid", gap: 4, borderRadius: 12, border: "1px solid rgba(39,66,95,0.18)", background: "rgba(255,255,255,0.98)", paddingBottom: 4, overflow: "hidden" },
   emailCardHead: { display: "grid", gridTemplateColumns: "18px minmax(0, 1fr)", gap: 4, alignItems: "start", padding: "5px 6px" },
-  checkboxCell: { display: "inline-flex", alignItems: "center", justifyContent: "center", paddingTop: 1 },
+  checkboxCell: { display: "grid", gridTemplateColumns: "5px 12px", gap: 3, alignItems: "center", justifyContent: "center", paddingTop: 1 },
   emailCardMain: { border: "none", background: "transparent", padding: 0, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, cursor: "pointer", textAlign: "left", minWidth: 0 },
   emailCardCopy: { display: "grid", gap: 1, minWidth: 0 },
-  emailSubject: { display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", color: "var(--iccc-text)", lineHeight: 1.15 },
-  subjectDot: { width: 5, height: 5, borderRadius: 999, background: "rgba(100,116,139,0.42)", flexShrink: 0 },
-  subjectDotActive: { width: 5, height: 5, borderRadius: 999, background: "#27425f", flexShrink: 0 },
-  emailSubjectText: { fontSize: 10.5, fontWeight: 650, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#26364a" },
-  emailMeta: { fontSize: 8.5, color: "#526173", lineHeight: 1.2 },
+  emailSubject: { display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", color: "var(--iccc-text)", lineHeight: 1.15, minWidth: 0 },
+  emailSubjectText: { fontSize: 10.25, fontWeight: 590, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#334155" },
+  emailMeta: { fontSize: 8.5, color: "#64748b", lineHeight: 1.2 },
   emailHeadBadges: { display: "inline-flex", alignItems: "center", gap: 3, color: "var(--iccc-text-muted)", paddingTop: 1 },
   badgeWrap: { display: "flex", gap: 4, flexWrap: "wrap" },
   detailBadgeStack: { display: "flex", flexWrap: "wrap", gap: 3, padding: "0 6px 0 20px" },
-  anchorBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(71,85,105,0.08)", color: "#526173", fontSize: 7.5, fontWeight: 700 },
   statusBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, border: "1px solid transparent", background: "rgba(249,115,22,0.1)", color: "#c2410c", fontSize: 7.5, fontWeight: 700 },
   primaryBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(39,66,95,0.08)", color: "#26364a", fontSize: 7.5, fontWeight: 700 },
   mutedBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(148,163,184,0.12)", color: "#526173", fontSize: 7.5, fontWeight: 700 },
@@ -1828,12 +1809,11 @@ const S: Record<string, React.CSSProperties> = {
   labelBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(34,197,94,0.09)", color: "#15803d", fontSize: 7.5, fontWeight: 700 },
   readyBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(16,185,129,0.1)", color: "#047857", fontSize: 7.5, fontWeight: 700 },
   localBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(220,252,231,0.78)", color: "#15803d", border: "1px solid rgba(34,197,94,0.18)", fontSize: 7.5, fontWeight: 700 },
-  remoteBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(219,234,254,0.82)", color: "#1d4ed8", border: "1px solid rgba(59,130,246,0.2)", fontSize: 7.5, fontWeight: 700 },
-  hybridBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(237,233,254,0.82)", color: "#6d28d9", border: "1px solid rgba(124,58,237,0.18)", fontSize: 7.5, fontWeight: 700 },
-  sessionBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(241,245,249,0.86)", color: "#475569", border: "1px solid rgba(148,163,184,0.18)", fontSize: 7.5, fontWeight: 700 },
+  serverBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(219,234,254,0.82)", color: "#1d4ed8", border: "1px solid rgba(59,130,246,0.2)", fontSize: 7.5, fontWeight: 700 },
   draftBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(255,247,237,0.82)", color: "#c2410c", border: "1px solid rgba(249,115,22,0.18)", fontSize: 7.5, fontWeight: 700 },
-  pendingBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(254,243,199,0.82)", color: "#b45309", border: "1px solid rgba(245,158,11,0.18)", fontSize: 7.5, fontWeight: 700 },
-  persistedBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(220,252,231,0.88)", color: "#15803d", border: "1px solid rgba(34,197,94,0.2)", fontSize: 7.5, fontWeight: 700 },
+  infoDotDraft: { width: 5, height: 5, borderRadius: 999, background: "#f97316", boxShadow: "0 0 0 2px rgba(249,115,22,0.12)" },
+  infoDotLocal: { width: 5, height: 5, borderRadius: 999, background: "#22c55e", boxShadow: "0 0 0 2px rgba(34,197,94,0.12)" },
+  infoDotServer: { width: 5, height: 5, borderRadius: 999, background: "#2563eb", boxShadow: "0 0 0 2px rgba(37,99,235,0.12)" },
   detailGrid: { display: "grid", gap: 5, padding: "0 12px" },
   detailRow: { display: "grid", gridTemplateColumns: "88px minmax(0, 1fr)", gap: 8, alignItems: "start" },
   detailLabel: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--iccc-text-muted)" },
