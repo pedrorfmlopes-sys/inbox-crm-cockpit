@@ -24,7 +24,6 @@ import {
   GROUPS_PREPARE_SESSION_SAVE_DEBOUNCE_MS,
   buildGroupPreparationSeed,
   getGroupsPrepareSessionSignature,
-  hasGroupsPrepareSession,
   readGroupsPrepareSession,
   type GroupsPrepareAttachmentMode,
   type GroupsPrepareGroupMode,
@@ -34,15 +33,10 @@ import {
   writeGroupPreparationSeed,
   writeGroupsPrepareSession,
 } from "@/modules/crm/groups-v1/prepareSession";
-import { buildPrepareWorksetManifest } from "@/modules/crm/groups-v1/storage/buildPrepareWorksetManifest";
-import { loadPrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/loadWorkset";
-import { resolveGroupStorageRuntime, getGroupAttachmentStorageOptions } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
-import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWorkset";
-import { getGroupWorksetManifestSignature } from "@/modules/crm/groups-v1/storage/worksetManifest";
+import { getGroupAttachmentStorageOptions } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { openGroupClassificationStudio } from "@/office";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
-import type { GroupWorksetManifest } from "@/modules/crm/groups-v1/storage/types";
 
 type PrepareAttachmentRow = {
   key: string;
@@ -381,23 +375,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
     emailKey: "",
     signature: getGroupsPrepareSessionSignature(DEFAULT_GROUPS_PREPARE_SESSION_STATE),
   });
-  const runtime = useMemo(
-    () => resolveGroupStorageRuntime(settings),
-    [settings]
-  );
-  const canPersistWorkset = Boolean(settings) && (runtime.mode === "supabase" || runtime.mode === "hybrid");
-  const hasStoredSessionRef = useRef(false);
-  const persistedWorksetRef = useRef<GroupWorksetManifest | null>(null);
-  const renderedWorksetRef = useRef<{ worksetKey: string; manifest: GroupWorksetManifest | null; signature: string }>({
-    worksetKey: "",
-    manifest: null,
-    signature: "",
-  });
-  const lastPersistedWorksetRef = useRef<{ worksetKey: string; signature: string }>({
-    worksetKey: "",
-    signature: "",
-  });
-  const hydratedWorksetScopeRef = useRef("");
 
   const currentEmailBootstrapPayload = useMemo<RelevantEmailPayload>(() => ({
     itemId: String(ctx.itemId || "").trim(),
@@ -528,50 +505,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
     return saved;
   }, []);
 
-  const flushWorkset = useCallback(async (
-    reason: GroupsPrepareSessionSaveReason,
-    options?: {
-      force?: boolean;
-      keepalive?: boolean;
-      reportError?: boolean;
-      manifest?: GroupWorksetManifest | null;
-      signature?: string;
-    }
-  ): Promise<boolean> => {
-    if (!canPersistWorkset) return false;
-    const manifest = options?.manifest ?? renderedWorksetRef.current.manifest;
-    const signature = String(options?.signature || (manifest ? getGroupWorksetManifestSignature(manifest) : ""));
-    const worksetKey = String(manifest?.worksetKey || renderedWorksetRef.current.worksetKey || "").trim();
-    if (!manifest || !worksetKey || !signature) return false;
-    const lastPersisted = lastPersistedWorksetRef.current;
-    if (!options?.force && lastPersisted.worksetKey === worksetKey && lastPersisted.signature === signature) {
-      return true;
-    }
-    try {
-      const saved = await savePrimaryGroupWorkset({
-        runtime,
-        manifest,
-        current: persistedWorksetRef.current,
-        keepalive: options?.keepalive === true || reason === "before_exit",
-      });
-      if (saved) {
-        persistedWorksetRef.current = saved;
-        const savedSignature = getGroupWorksetManifestSignature(saved);
-        lastPersistedWorksetRef.current = { worksetKey: saved.worksetKey, signature: savedSignature };
-        renderedWorksetRef.current = { worksetKey: saved.worksetKey, manifest: saved, signature: savedSignature };
-        return true;
-      }
-      return false;
-    } catch (error: unknown) {
-      if (options?.reportError) {
-        setMsg(getErrorMessage(error, `Nao foi possivel guardar o workset principal (${reason}).`));
-      } else {
-        console.warn("[GroupsPrepareCockpit] Workset save skipped:", error);
-      }
-      return false;
-    }
-  }, [canPersistWorkset, runtime, setMsg]);
-
   useEffect(() => {
     setPersistedCurrentEmail(null);
   }, [currentEmailKey]);
@@ -628,7 +561,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
     currentEmailBootstrapPayload,
     currentEmailKey,
     hasCurrentIdentity,
-    settings,
     settings?.groupStorage?.baseFolderPath,
     settings?.groupStorage?.mode,
     settings?.groupStorage?.provider,
@@ -719,7 +651,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
   useEffect(() => {
     const previousSession = renderedSessionRef.current;
-    const previousWorkset = renderedWorksetRef.current;
     if (
       previousSession.emailKey
       && previousSession.emailKey !== currentEmailKey
@@ -731,26 +662,12 @@ export const GroupsPrepareCockpit: React.FC = () => {
         signature: previousSession.signature,
       });
     }
-    if (
-      previousWorkset.worksetKey
-      && previousSession.emailKey
-      && previousSession.emailKey !== currentEmailKey
-      && previousSession.emailKey === sessionScopeKey
-    ) {
-      void flushWorkset("before_context_change", {
-        force: true,
-        manifest: previousWorkset.manifest,
-        signature: previousWorkset.signature,
-      });
-    }
-  }, [currentEmailKey, flushSession, flushWorkset, sessionScopeKey]);
+  }, [currentEmailKey, flushSession, sessionScopeKey]);
 
   useEffect(() => {
     setSessionReady(false);
     setSessionScopeKey("");
     const sessionKey = String(currentEmailKey || "").trim();
-    const hasStoredSession = hasGroupsPrepareSession(sessionKey);
-    hasStoredSessionRef.current = hasStoredSession;
     const sessionState = sessionKey
       ? buildGroupsPrepareSessionSnapshot(readGroupsPrepareSession(sessionKey))
       : { ...DEFAULT_GROUPS_PREPARE_SESSION_STATE };
@@ -768,10 +685,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
     setSelectedAttachmentKeys(sessionState.selectedAttachmentKeys);
     lastPersistedSessionRef.current = { emailKey: sessionKey, signature: sessionStateSignature };
     renderedSessionRef.current = { emailKey: sessionKey, snapshot: sessionState, signature: sessionStateSignature };
-    persistedWorksetRef.current = null;
-    renderedWorksetRef.current = { worksetKey: "", manifest: null, signature: "" };
-    lastPersistedWorksetRef.current = { worksetKey: "", signature: "" };
-    hydratedWorksetScopeRef.current = "";
     setSessionScopeKey(sessionKey);
     setSessionReady(Boolean(sessionKey));
   }, [currentEmailKey]);
@@ -807,63 +720,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [currentEmailKey, sessionScopeKey, sessionSignature, sessionSnapshot]);
 
   useEffect(() => {
-    renderedWorksetRef.current = {
-      worksetKey: String(worksetManifest?.worksetKey || "").trim(),
-      manifest: worksetManifest,
-      signature: worksetSignature,
-    };
-  }, [worksetManifest, worksetSignature]);
-
-  useEffect(() => {
-    if (!canPersistWorkset || !sessionReady || !currentEmailKey || hydratedWorksetScopeRef.current === currentEmailKey) return;
-    let cancelled = false;
-    void loadPrimaryGroupWorkset({
-      anchorEmailKey: currentEmailKey,
-      runtime,
-    })
-      .then((manifest) => {
-        if (cancelled || !manifest) return;
-        persistedWorksetRef.current = manifest;
-        const persistedSignature = getGroupWorksetManifestSignature(manifest);
-        lastPersistedWorksetRef.current = {
-          worksetKey: manifest.worksetKey,
-          signature: persistedSignature,
-        };
-        if (hasStoredSessionRef.current) {
-          hydratedWorksetScopeRef.current = currentEmailKey;
-          return;
-        }
-        hydratedWorksetScopeRef.current = currentEmailKey;
-        setWorkingGroupId((current) => current || manifest.workingGroupId || "");
-        setWorkingGroupQuery((current) => current || manifest.workingGroupName || "");
-        setFilterQuery((current) => current || String(manifest.filters?.query || "").trim());
-        setAttachmentMode(manifest.filters?.attachmentMode || "all");
-        setGroupMode(manifest.filters?.groupMode || "all");
-        if (manifest.workingGroupId || manifest.workingGroupName) setShowGroupPanel(true);
-        if (manifest.filters?.query || manifest.filters?.attachmentMode !== "all" || manifest.filters?.groupMode !== "all") {
-          setShowFiltersPanel(true);
-        }
-        if (Array.isArray(manifest.includedEmailKeys) && manifest.includedEmailKeys.length) {
-          setSelectedEmailKeys(manifest.includedEmailKeys);
-        }
-        const selectedAttachments = (manifest.attachments || [])
-          .filter((attachment) => attachment.selection === "selected")
-          .map((attachment) => attachment.key);
-        if (selectedAttachments.length) {
-          setSelectedAttachmentKeys(selectedAttachments);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          console.warn("[GroupsPrepareCockpit] Persisted workset load skipped:", error);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [canPersistWorkset, currentEmailKey, runtime, sessionReady]);
-
-  useEffect(() => {
     if (!sessionReady || !currentEmailKey || sessionScopeKey !== currentEmailKey) return;
     const lastPersisted = lastPersistedSessionRef.current;
     if (lastPersisted.emailKey === currentEmailKey && lastPersisted.signature === sessionSignature) {
@@ -887,21 +743,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
   ]);
 
   useEffect(() => {
-    if (!sessionReady || !currentEmailKey || !worksetManifest) return;
-    const lastPersisted = lastPersistedWorksetRef.current;
-    if (lastPersisted.worksetKey === worksetManifest.worksetKey && lastPersisted.signature === worksetSignature) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void flushWorkset("debounced", {
-        manifest: worksetManifest,
-        signature: worksetSignature,
-      });
-    }, 2200);
-    return () => window.clearTimeout(timer);
-  }, [currentEmailKey, flushWorkset, sessionReady, worksetManifest, worksetSignature]);
-
-  useEffect(() => {
     const handleSaveBeforeExit = () => {
       const currentSession = renderedSessionRef.current;
       if (!currentSession.emailKey) return;
@@ -909,12 +750,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
         emailKey: currentSession.emailKey,
         snapshot: currentSession.snapshot,
         signature: currentSession.signature,
-      });
-      void flushWorkset("before_exit", {
-        force: true,
-        keepalive: true,
-        manifest: renderedWorksetRef.current.manifest,
-        signature: renderedWorksetRef.current.signature,
       });
     };
     const handleVisibilityChange = () => {
@@ -931,7 +766,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       window.removeEventListener("beforeunload", handleSaveBeforeExit);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [flushSession, flushWorkset]);
+  }, [flushSession]);
 
   useEffect(() => {
     if (!sessionReady) return;
@@ -1104,42 +939,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
     [selectedEmails, workingGroupId]
   );
 
-  const worksetManifest = useMemo(
-    () => !canPersistWorkset ? null : buildPrepareWorksetManifest({
-      anchorEmailKey: currentEmailKey,
-      settings: runtime.settings,
-      runtime,
-      selectedEmailKeys,
-      selectedAttachmentKeys,
-      attachmentRows,
-      workingGroupId,
-      workingGroupName: String(workingGroup?.name || workingGroupQuery || "").trim() || undefined,
-      filterQuery,
-      attachmentMode,
-      groupMode,
-      previous: persistedWorksetRef.current,
-    }),
-    [
-      attachmentMode,
-      attachmentRows,
-      canPersistWorkset,
-      currentEmailKey,
-      filterQuery,
-      groupMode,
-      runtime,
-      selectedAttachmentKeys,
-      selectedEmailKeys,
-      workingGroup,
-      workingGroupId,
-      workingGroupQuery,
-    ]
-  );
-
-  const worksetSignature = useMemo(
-    () => getGroupWorksetManifestSignature(worksetManifest),
-    [worksetManifest]
-  );
-
   const activeFilterSummary = useMemo(() => {
     const summary: string[] = [];
     if (showFiltersPanel && String(filterQuery || "").trim()) summary.push(`Pesquisa: ${String(filterQuery || "").trim()}`);
@@ -1222,12 +1021,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
       snapshot: sessionSnapshot,
       signature: sessionSignature,
     });
-    await flushWorkset("before_classify", {
-      force: true,
-      reportError: true,
-      manifest: worksetManifest,
-      signature: worksetSignature,
-    });
     const params: Record<string, string> = {};
     if (currentEmailLinkPayload.itemId) params.itemId = currentEmailLinkPayload.itemId;
     if (currentEmailLinkPayload.internetMessageId) params.internetMessageId = currentEmailLinkPayload.internetMessageId;
@@ -1293,12 +1086,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
       emailKey: currentEmailKey,
       snapshot: sessionSnapshot,
       signature: sessionSignature,
-    });
-    void flushWorkset("manual", {
-      force: true,
-      reportError: false,
-      manifest: worksetManifest,
-      signature: worksetSignature,
     });
     setMsg(saved ? "Sessao de Preparar guardada localmente." : "Nao foi possivel guardar a sessao local.");
   }

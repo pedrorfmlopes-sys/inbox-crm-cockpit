@@ -18,8 +18,6 @@ export type GroupWorksetFilterSnapshot = {
   labels?: string[];
   dateFromIso?: string;
   dateToIso?: string;
-  attachmentMode?: "all" | "with" | "without";
-  groupMode?: "all" | "with_group" | "without_group";
 };
 
 export type GroupPreparedAttachmentDescriptor = {

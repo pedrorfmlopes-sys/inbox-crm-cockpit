@@ -16,8 +16,6 @@ function normalizeFilters(input: GroupWorksetFilterSnapshot | null | undefined):
     labels: normalizeStringArray(input?.labels),
     dateFromIso: String(input?.dateFromIso || "").trim() || undefined,
     dateToIso: String(input?.dateToIso || "").trim() || undefined,
-    attachmentMode: input?.attachmentMode === "with" || input?.attachmentMode === "without" ? input.attachmentMode : "all",
-    groupMode: input?.groupMode === "with_group" || input?.groupMode === "without_group" ? input.groupMode : "all",
   };
 }
 

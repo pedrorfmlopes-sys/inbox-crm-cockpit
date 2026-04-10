@@ -4,7 +4,6 @@ import type {
   GroupMembershipKind,
   GroupTaskEntry,
 } from "./modules/crm/groups-v1/contracts";
-import type { GroupWorksetManifest } from "./modules/crm/groups-v1/storage/types";
 
 export type {
   GroupMembershipKind,
@@ -969,36 +968,6 @@ export async function deleteGroupDocument(groupId: string, documentId: string): 
     method: "DELETE",
   });
   return { ok: true };
-}
-
-export async function getGroupWorksetManifest(worksetKey: string): Promise<GroupWorksetManifest | null> {
-  const normalizedWorksetKey = String(worksetKey || "").trim();
-  if (!normalizedWorksetKey) return null;
-  const params = new URLSearchParams();
-  params.set("_ts", String(Date.now()));
-  try {
-    const response: any = await requestJSON(
-      `/api/links/groups/worksets/${encodeURIComponent(normalizedWorksetKey)}?${params.toString()}`
-    );
-    return response?.manifest || null;
-  } catch (error: any) {
-    if (/HTTP 404/i.test(String(error?.message || ""))) return null;
-    throw error;
-  }
-}
-
-export async function saveGroupWorksetManifest(payload: {
-  manifest: GroupWorksetManifest;
-  keepalive?: boolean;
-}): Promise<GroupWorksetManifest | null> {
-  const response: any = await requestJSON(`/api/links/groups/worksets`, {
-    method: "POST",
-    keepalive: payload.keepalive === true,
-    body: JSON.stringify({
-      manifest: payload.manifest,
-    }),
-  });
-  return response?.manifest || null;
 }
 
 export async function listGroupTicketSeries(): Promise<GroupTicketSeriesEntry[]> {
