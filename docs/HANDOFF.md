@@ -524,3 +524,24 @@
   - sem transformar sessao/cache/seed em persistencia canonica
 - **Proximo passo recomendado**:
   - testar no Outlook real: save de settings apos historico antigo possivelmente poluido, abertura de `Preparar`, pesquisa de grupos e leitura dos estados visuais
+
+## Grupos v1: afinação fina de `Preparar` (Abril 2026)
+- **Objetivo desta ronda**:
+  - remover poluicao visual remanescente em `Groups > Preparar`
+  - corrigir a duplicacao visual do email ancora
+  - alinhar estados visiveis e leitura com a semantica aprovada
+- **Ajustes feitos**:
+  - o email ancora continua a entrar internamente no conjunto de trabalho, mas deixou de aparecer como card normal na Lista
+  - o card fechado da Lista mostra apenas assunto, remetente e data/hora, com o indicador de origem reduzido a um ponto discreto junto da checkbox
+  - informacao extra como grupo, referencia, ticket, anexos, estado e localizacao ficou limitada ao card expandido
+  - os toggles `Grupo` e `Filtros` mantem verde/vermelho apenas no switch; o texto voltou a ficar neutro
+  - `Hibrido`, `Remoto`, `Draft`, `Sessao`, `Pendente` e `Persistido` deixaram de ser badges visiveis de utilizador em `Preparar`
+  - estados visiveis de localizacao ficaram limitados a `Rascunho`, `Local` e `Servidor`
+  - assunto, iconografia primaria e botoes foram suavizados para aproximar a leitura da aba `Classificar`
+- **Guardas mantidas**:
+  - sem backend
+  - sem mexer na arquitetura de storage
+  - sem novas features ou novas superficies de Grupos
+  - sem transformar `Preparar` em `Classificar 2`
+- **Proximo passo recomendado**:
+  - validar no Outlook real se a Lista ja deixa de duplicar o ancora e se a leitura dos cards fechados ficou limpa no task pane estreito
