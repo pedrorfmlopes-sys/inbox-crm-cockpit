@@ -392,5 +392,46 @@
   - sem novas features, sem reabrir seed/cache/persistencia e sem tocar em `Explorar` / `Explorador` / `Gestor`
   - switches `Grupo` e `Filtros` redesenhados como controlo compacto real; tabs, cards, badges e footer compactados
   - ajuste visual seguinte apertou ainda mais header, rails, card `Email ancora`, lista e footer para aproximar `Groups > Preparar` do mockup aprovado, sem mexer em logica
+
+## Grupos v1: arquitetura de storage / settings / promocao (Abril 2026)
+- **Objetivo desta ronda**:
+  - fechar a base tecnica de storage que faltava desde o inicio
+  - separar sessao temporaria, persistencia principal e promocao remota
+  - reduzir risco de egress prematuro para Supabase
+- **Auditoria inicial confirmada**:
+  - a sessao/cache atual de `Preparar` continua em `client/src/modules/crm/groups-v1/prepareSession.ts`
+  - o repo ainda tinha pressupostos antigos `cloud/local/onedrive` espalhados pelo client
+  - o storage principal ainda nao estava descrito de forma canonica nem modular
+  - o backend atual (`server/src/linkStore.js`) continua a aceitar sobretudo `cloud/local/onedrive`, pelo que esta ronda introduziu uma bridge de compatibilidade no client sem reabrir o backend
+- **Implementacao feita**:
+  - nova camada modular em `client/src/modules/crm/groups-v1/storage/`
+  - contratos/tipos para:
+    - storage mode
+    - storage settings
+    - session draft
+    - workset manifest
+    - promotion policy
+    - attachment policy
+    - storage locations / pointers
+  - providers pequenos separados:
+    - `supabaseProvider.ts`
+    - `localDeviceProvider.ts`
+    - `chosenFolderProvider.ts`
+    - `hybridProvider.ts`
+  - `client/src/settings.ts` passou a normalizar `groupStorage` pelo modelo canonico novo, mantendo compatibilidade com o modelo antigo
+  - os fluxos atuais passaram a resolver `attachmentStorageProvider` / `attachmentStorageBasePath` pelo resolver central em vez de ler diretamente `groupStorage.provider/baseFolderPath`
+- **Politica fechada nesta fase**:
+  - cache do add-in = sessao / rascunho
+  - persistencia principal = destino ativo escolhido pelo utilizador
+  - Supabase = promocao remota separada
+  - binarios grandes pedem decisao
+  - promocao binaria automatica para Supabase fica desligada por defeito
+  - save before context change / exit continua local; nao foi promovido a sync remoto
+- **Doc canonico novo**:
+  - `docs/grupos_v1_storage_architecture.md`
+- **Limites atuais assumidos**:
+  - `local_device` e `chosen_folder` ainda dependem de caminho base explicito; ainda nao existe picker final nesta fase
+  - URLs web de OneDrive/SharePoint nao funcionam como destino final no `linkStore`; e preciso pasta sincronizada local ou UNC
+  - a promocao final completa de worksets para Supabase continua para fase posterior
 - Atualizar `docs/DECISIONS.md` se alguma norma ou decisão mudou
 - Registar no output final: alterações, riscos, validações e próximos passos

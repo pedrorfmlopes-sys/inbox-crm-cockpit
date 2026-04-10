@@ -605,8 +605,7 @@ function StudioInner() {
         if (bootstrapEmailPayload) {
           await registerRelevantEmail({
             ...bootstrapEmailPayload,
-            attachmentStorageProvider: latestSettings?.groupStorage?.provider || "cloud",
-            attachmentStorageBasePath: latestSettings?.groupStorage?.baseFolderPath || "",
+            ...buildAttachmentStorageOptions(latestSettings),
           }).catch(() => null);
         }
         const payload = {
@@ -2767,8 +2766,9 @@ function StudioInner() {
     setActionBusy(true);
     try {
       const settings = await getSettings().catch(() => null);
-      const storageProvider = String(settings?.groupStorage?.provider || "cloud").trim();
-      const storageBasePath = String(settings?.groupStorage?.baseFolderPath || "").trim();
+      const storageOptions = buildAttachmentStorageOptions(settings);
+      const storageProvider = String(storageOptions.attachmentStorageProvider || "cloud").trim();
+      const storageBasePath = String(storageOptions.attachmentStorageBasePath || "").trim();
       const safeGroupName = String(principalGroup?.name || principalGroupId || "grupo")
         .trim()
         .replace(/[\\/:*?"<>|]+/g, "_");
@@ -3154,8 +3154,7 @@ function StudioInner() {
 
           await registerRelevantEmail({
             ...classifiedEmailPayload,
-            attachmentStorageProvider: latestSettings?.groupStorage?.provider || "cloud",
-            attachmentStorageBasePath: latestSettings?.groupStorage?.baseFolderPath || "",
+            ...buildAttachmentStorageOptions(latestSettings),
           });
 
           const targetTicketId = finalTicket?.id || selectedTicketId;

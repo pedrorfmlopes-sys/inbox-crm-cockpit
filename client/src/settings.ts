@@ -2,6 +2,13 @@
 // Settings storage (RoamingSettings preferred; localStorage fallback for non-Office contexts)
 
 import type { AiTone } from "./ai/aiClient";
+import {
+  DEFAULT_GROUP_STORAGE_SETTINGS,
+  normalizeGroupStorageSettings,
+  type GroupStorageMode,
+  type GroupStorageLegacyProvider as GroupStorageProvider,
+  type GroupStorageSettings,
+} from "./modules/crm/groups-v1/storage/settings";
 
 export type AppLocale = "pt-PT" | "es-ES" | "en-GB" | "it-IT" | "de-DE";
 export type LangOption = AppLocale | "auto";
@@ -57,10 +64,10 @@ export type AiFontPreference = {
 export type ReferenceEntityKey = "lead" | "project" | "task" | "ticket";
 export type ReferenceCounterMode = "per_type" | "global";
 export type ReferenceCodePosition = "prefix" | "suffix";
-export type GroupStorageProvider = "cloud" | "local" | "onedrive" | "disabled";
 export type Crm2OdooLayoutMode = "description_only" | "structured_project";
 export type Crm2OdooLayoutTarget = "project" | "lead" | "task" | "ticket";
 export type GroupTicketAutoLinkMode = "confirm" | "auto";
+export type { GroupStorageMode, GroupStorageProvider, GroupStorageSettings };
 
 export type ReferenceCodeSettings = {
   enabled: boolean;
@@ -72,14 +79,6 @@ export type ReferenceCodeSettings = {
     global: number;
     perType: Record<ReferenceEntityKey, number>;
   };
-};
-
-export type GroupStorageSettings = {
-  provider: GroupStorageProvider;
-  baseFolderPath: string;
-  autoCreateFolderOnGroupCreate: boolean;
-  ignoreInlineAttachments: boolean;
-  suggestedViewer: "system" | "inline";
 };
 
 export type GroupTicketUiSettings = {
@@ -373,11 +372,7 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     },
   },
   groupStorage: {
-    provider: "cloud",
-    baseFolderPath: "",
-    autoCreateFolderOnGroupCreate: true,
-    ignoreInlineAttachments: true,
-    suggestedViewer: "inline",
+    ...DEFAULT_GROUP_STORAGE_SETTINGS,
   },
   groupLabelsManagerEnabled: true,
   groupLabelCatalog: [],
@@ -451,17 +446,6 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     },
   },
 };
-
-function normalizeGroupStorageProvider(value: unknown): GroupStorageProvider {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "local" || normalized === "onedrive" || normalized === "cloud") {
-    return normalized;
-  }
-  if (normalized === "disabled" || !normalized) {
-    return "cloud";
-  }
-  return "cloud";
-}
 
 function normalizeCrm2OdooLayoutMode(value: unknown): Crm2OdooLayoutMode {
   const normalized = String(value || "").trim().toLowerCase();
@@ -702,9 +686,10 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
       },
     },
     groupStorage: {
-      ...base.groupStorage,
-      ...((incoming as any).groupStorage || {}),
-      provider: normalizeGroupStorageProvider(((incoming as any).groupStorage || {}).provider ?? base.groupStorage.provider),
+      ...normalizeGroupStorageSettings({
+        ...base.groupStorage,
+        ...((incoming as any).groupStorage || {}),
+      }),
     },
     groupLabelsManagerEnabled: typeof (incoming as any).groupLabelsManagerEnabled === "boolean"
       ? Boolean((incoming as any).groupLabelsManagerEnabled)

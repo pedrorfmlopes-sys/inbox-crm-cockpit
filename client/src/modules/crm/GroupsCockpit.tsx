@@ -23,6 +23,7 @@ import {
     updateLinkGroup,
 } from "@/api";
 import { useCockpit } from "@/components/shell/CockpitProvider";
+import { getGroupAttachmentStorageOptions, resolveGroupStorageRuntime } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { addBase64AttachmentToCompose, openGroupExplorer, openLinkedOutlookEmail } from "@/office";
 import { HelpHint } from "@/ui/HelpHint";
 import { PanelState } from "@/ui/PanelState";
@@ -155,12 +156,6 @@ function emailMatchesCurrentContext(email: Partial<RelatedEmailEntry>, ctx: Retu
         && (!currentFrom || !emailFrom || currentFrom === emailFrom)
         && (!currentDate || !emailDate || currentDate === emailDate)
     );
-}
-
-function normalizeGroupStorageProvider(value: string | undefined): "cloud" | "local" | "onedrive" {
-    const normalized = String(value || "").trim().toLowerCase();
-    if (normalized === "local" || normalized === "onedrive") return normalized;
-    return "cloud";
 }
 
 function isLikelyInlineAttachment(name: string | undefined, contentType: string | undefined): boolean {
@@ -337,7 +332,9 @@ export const GroupsCockpit: React.FC = () => {
         );
     }, [groups, showAllAlphabetically, trimmedQuery]);
     const documentsEnabled = selectedGroup?.documentsEnabled !== false;
-    const groupStorageProvider = normalizeGroupStorageProvider(settings?.groupStorage.provider);
+    const groupStorageRuntime = useMemo(() => resolveGroupStorageRuntime(settings), [settings]);
+    const groupStorageProvider = groupStorageRuntime.legacyBridge.provider;
+    const groupStorageBasePath = groupStorageRuntime.legacyBridge.baseFolderPath;
 
     const currentEmailBootstrapPayload = useMemo(
         () => ({
@@ -455,8 +452,7 @@ export const GroupsCockpit: React.FC = () => {
             if (needsRegistration) {
                 await registerRelevantEmail({
                     ...currentEmailBootstrapPayload,
-                    attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
-                    attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
+                    ...getGroupAttachmentStorageOptions(settings),
                 }).catch(() => null);
                 related = await loadRelated();
                 email = pickBestEmail(related);
@@ -482,6 +478,7 @@ export const GroupsCockpit: React.FC = () => {
         currentEmailBootstrapLinkPayload.subject,
         currentEmailBootstrapPayload,
         settings?.groupStorage?.baseFolderPath,
+        settings?.groupStorage?.mode,
         settings?.groupStorage?.provider,
     ]);
 
@@ -831,13 +828,13 @@ export const GroupsCockpit: React.FC = () => {
     const attachmentListKey = `${attachmentSource}:${currentEmailIdentity}:${selectedEmailKey}`;
 
     const groupFolderHint = useMemo(() => {
-        const base = String(settings?.groupStorage.baseFolderPath || "").trim();
+        const base = String(groupStorageBasePath || "").trim();
         const groupName = String(selectedGroup?.name || "").trim();
         if (!groupName || !documentsEnabled) return "";
         if (!base) return sanitizePathSegment(groupName);
         const separator = /^https?:\/\//i.test(base) || base.endsWith("/") ? "/" : base.includes("\\") ? "\\" : "/";
         return `${base.replace(/[\\/]+$/, "")}${separator}${sanitizePathSegment(groupName)}`;
-    }, [documentsEnabled, selectedGroup?.name, settings?.groupStorage.baseFolderPath]);
+    }, [documentsEnabled, groupStorageBasePath, selectedGroup?.name]);
 
     useEffect(() => {
         setAttachmentSource("current");
@@ -1019,7 +1016,7 @@ export const GroupsCockpit: React.FC = () => {
         setBusyAction(true);
         try {
             const storageProvider = groupStorageProvider;
-            const storageBasePath = String(settings?.groupStorage.baseFolderPath || "").trim();
+            const storageBasePath = String(groupStorageBasePath || "").trim();
             const payloadDocs: GroupDocumentEntry[] = [];
             for (const attachment of candidates) {
                 let contentBase64 = String(attachment.content || "").trim();

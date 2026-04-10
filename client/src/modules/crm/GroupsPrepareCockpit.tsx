@@ -33,6 +33,7 @@ import {
   writeGroupPreparationSeed,
   writeGroupsPrepareSession,
 } from "@/modules/crm/groups-v1/prepareSession";
+import { getGroupAttachmentStorageOptions } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { openGroupClassificationStudio } from "@/office";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
@@ -538,8 +539,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       if (needsRegistration) {
         await registerRelevantEmail({
           ...currentEmailBootstrapPayload,
-          attachmentStorageProvider: settings?.groupStorage?.provider || "cloud",
-          attachmentStorageBasePath: settings?.groupStorage?.baseFolderPath || "",
+          ...getGroupAttachmentStorageOptions(settings),
         }).catch(() => null);
         response = await loadRelated();
         email = pickBestEmail(response);
@@ -562,6 +562,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     currentEmailKey,
     hasCurrentIdentity,
     settings?.groupStorage?.baseFolderPath,
+    settings?.groupStorage?.mode,
     settings?.groupStorage?.provider,
   ]);
 

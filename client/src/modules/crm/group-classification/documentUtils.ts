@@ -6,6 +6,7 @@ import {
   GroupContactDraft, GroupEntityDraft, StudioParams
 } from "./types";
 import { GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX, EMPTY_CLASSIFICATION_META } from "./constants";
+import { getGroupAttachmentStorageOptions } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 
 // StudioParams definition moved to types.ts
 
@@ -440,10 +441,7 @@ export function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEnt
 }
 
 export function buildAttachmentStorageOptions(settings?: any): Pick<RelevantEmailPayload, "attachmentStorageProvider" | "attachmentStorageBasePath"> {
-  return {
-    attachmentStorageProvider: String(settings?.groupStorage?.provider || "cloud").trim(),
-    attachmentStorageBasePath: String(settings?.groupStorage?.baseFolderPath || "").trim(),
-  };
+  return getGroupAttachmentStorageOptions(settings);
 }
 
 export async function persistRelatedEmailsToServer(emails: RelatedEmailEntry[], settings?: any): Promise<void> {

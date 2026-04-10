@@ -9,7 +9,7 @@ import {
   type AppLocale,
   type CockpitSettingsV1,
   type Crm2OdooLayoutTarget,
-  type GroupStorageProvider,
+  type GroupStorageMode,
   type LangOption,
   type ReferenceEntityKey,
   type ReplyLength,
@@ -19,6 +19,8 @@ import { applySkin } from "./skins";
 import * as Icons from "./icons";
 import { useCockpit } from "../components/shell/CockpitProvider";
 import { aiListModels, validateCrm2OdooLayout, type Crm2LayoutValidationResult } from "../api";
+import { GROUP_STORAGE_MODE_LABELS, GROUP_STORAGE_MODE_OPTIONS } from "../modules/crm/groups-v1/storage/modes";
+import { resolveGroupStorageRuntime } from "../modules/crm/groups-v1/storage/resolveStorageMode";
 import { PanelState, type PanelStateTone } from "./PanelState";
 import { previewReferenceCode } from "../referenceCodes";
 
@@ -70,22 +72,6 @@ const REFERENCE_ENTITY_LABELS: Record<ReferenceEntityKey, string> = {
   task: "Tarefa",
   ticket: "Ticket",
 };
-
-const GROUP_STORAGE_PROVIDER_LABELS: Record<GroupStorageProvider, string> = {
-  cloud: "Cockpit Cloud (armazenamento central)",
-  disabled: "Cockpit Cloud (armazenamento central)",
-  local: "Pasta local",
-  onedrive: "OneDrive / Share",
-};
-
-const GROUP_STORAGE_PROVIDER_LABELS_UI = {
-  ...GROUP_STORAGE_PROVIDER_LABELS,
-  cloud: "Cockpit Cloud (armazenamento central)",
-  disabled: "Cockpit Cloud (armazenamento central)",
-  local: "Pasta local do utilizador",
-  onedrive: "OneDrive / SharePoint",
-} satisfies Record<GroupStorageProvider, string>;
-const GROUP_STORAGE_PROVIDER_OPTIONS: GroupStorageProvider[] = ["cloud", "local", "onedrive"];
 
 function localeShort(loc: AppLocale): string {
   if (loc === "pt-PT") return "PT";
@@ -166,6 +152,11 @@ export function SettingsPanel(): JSX.Element {
     if (section === "crm2layout") return "CRM2 / Odoo Layout";
     return "Proteção (O Moat)";
   }, [section]);
+
+  const resolvedGroupStorage = useMemo(
+    () => (model ? resolveGroupStorageRuntime(model) : null),
+    [model]
+  );
 
   async function onSave() {
     if (!model) return;
@@ -1136,20 +1127,20 @@ export function SettingsPanel(): JSX.Element {
               <Field label="Modo de armazenamento">
                 <select
                   style={S.select}
-                  value={model.groupStorage.provider}
+                  value={model.groupStorage.mode}
                   onChange={(e) =>
                     setModel({
                       ...model,
                       groupStorage: {
                         ...model.groupStorage,
-                        provider: e.target.value as GroupStorageProvider,
+                        mode: e.target.value as GroupStorageMode,
                       },
                     })
                   }
                 >
-                  {GROUP_STORAGE_PROVIDER_OPTIONS.map((value) => (
+                  {GROUP_STORAGE_MODE_OPTIONS.map((value) => (
                     <option key={value} value={value}>
-                      {GROUP_STORAGE_PROVIDER_LABELS_UI[value]}
+                      {GROUP_STORAGE_MODE_LABELS[value]}
                     </option>
                   ))}
                 </select>
@@ -1171,13 +1162,43 @@ export function SettingsPanel(): JSX.Element {
                       groupStorage: {
                         ...model.groupStorage,
                         baseFolderPath: e.target.value,
+                        chosenFolder: {
+                          ...model.groupStorage.chosenFolder,
+                          path: e.target.value,
+                        },
+                        localDevice: {
+                          ...model.groupStorage.localDevice,
+                          rootPath: model.groupStorage.mode === "local_device" ? e.target.value : model.groupStorage.localDevice.rootPath,
+                        },
                       },
                     })
                   }
-                  placeholder={model.groupStorage.provider === "onedrive" ? "URL ou caminho da biblioteca/document library" : "C:\\Documentos\\InboxCockpit\\Grupos"}
+                  placeholder={model.groupStorage.mode === "supabase" ? "Nao aplicavel neste modo" : model.groupStorage.provider === "onedrive" ? "URL ou caminho da biblioteca/document library" : "C:\\Documentos\\InboxCockpit\\Grupos"}
                 />
                 <div style={S.hint}>
                   Cada grupo poderá usar esta localização como raiz para criar ou localizar a sua própria pasta.
+                </div>
+              </Field>
+
+              <Field label="Limiar para decisao de anexos (MB)">
+                <input
+                  style={S.input}
+                  type="number"
+                  min={1}
+                  max={250}
+                  value={model.groupStorage.attachmentPromptThresholdMb || 10}
+                  onChange={(e) =>
+                    setModel({
+                      ...model,
+                      groupStorage: {
+                        ...model.groupStorage,
+                        attachmentPromptThresholdMb: Number(e.target.value || 10) || 10,
+                      },
+                    })
+                  }
+                />
+                <div style={S.hint}>
+                  Acima deste limiar os anexos devem pedir decisao do utilizador antes de qualquer promocao binaria.
                 </div>
               </Field>
 
@@ -1244,7 +1265,7 @@ export function SettingsPanel(): JSX.Element {
                 <div style={S.fieldLabel}>Resumo atual</div>
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={S.hint}>
-                    Origem escolhida: <b>{GROUP_STORAGE_PROVIDER_LABELS_UI[model.groupStorage.provider]}</b>
+                    Modo escolhido: <b>{resolvedGroupStorage?.modeLabel || GROUP_STORAGE_MODE_LABELS[model.groupStorage.mode]}</b>
                   </div>
                   <div style={S.hint}>
                     Localização base: <b>{model.groupStorage.baseFolderPath || "Por definir"}</b>
