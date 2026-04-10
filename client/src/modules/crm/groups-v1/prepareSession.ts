@@ -205,6 +205,16 @@ export function readGroupsPrepareSession(anchorEmailKey: string | null | undefin
   }
 }
 
+export function hasGroupsPrepareSession(anchorEmailKey: string | null | undefined): boolean {
+  const storageKey = buildGroupsPrepareSessionKey(anchorEmailKey);
+  if (!storageKey || typeof sessionStorage === "undefined") return false;
+  try {
+    return Boolean(sessionStorage.getItem(storageKey));
+  } catch {
+    return false;
+  }
+}
+
 export function writeGroupsPrepareSession(
   anchorEmailKey: string | null | undefined,
   state: Partial<GroupsPrepareSessionState>,
