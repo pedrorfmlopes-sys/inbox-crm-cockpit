@@ -43,6 +43,10 @@ import {
   updateGroupTicketSeries,
   updateCustomGroup,
 } from "./linkStore.js";
+import {
+  getGroupWorksetManifest,
+  saveGroupWorksetManifest,
+} from "./groupWorksetStore.js";
 import { extractTextFromPdfBuffer } from "./ai/pdfHelper.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
 import { createLearningRouter } from "./routes/learningRoutes.js";
@@ -1969,6 +1973,29 @@ app.post("/api/links/groups/:groupId/documents", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_documents_save_failed", details: String(e?.message || e) });
+  }
+});
+
+app.get("/api/links/groups/worksets/:worksetKey", async (req, res) => {
+  try {
+    const manifest = await getGroupWorksetManifest(req.params.worksetKey);
+    if (!manifest) {
+      return res.status(404).json({ ok: false, error: "group_workset_not_found" });
+    }
+    return res.json({ ok: true, manifest });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_workset_load_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/worksets", async (req, res) => {
+  try {
+    const manifest = await saveGroupWorksetManifest(req.body?.manifest || req.body || {});
+    return res.json({ ok: true, manifest });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_workset_save_failed", details: String(e?.message || e) });
   }
 });
 

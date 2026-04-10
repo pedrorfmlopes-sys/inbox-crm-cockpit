@@ -128,6 +128,31 @@
 - Os fluxos atuais de `Preparar`, `Classificar`, `Gestor`, `GroupsCockpit`, `AI` e bootstrap do cockpit passaram a ler o destino de anexos atraves do resolver central.
 - O backend nao foi reaberto nesta ronda.
 
+## Estado funcional atual
+- `supabase`
+  - ja consegue servir como persistencia principal funcional do workset
+  - o manifesto e salvo/carregado por backend pequeno dedicado
+  - continua sem promocao binaria agressiva
+- `hybrid`
+  - ja consegue servir como persistencia principal funcional do manifesto/workset
+  - o manifesto guarda pointers locais e politica remote-first/controlada
+  - a execucao final do destino local continua parcial
+- `local_device`
+  - continua parcial
+  - falta fechar picker/caminho final e escrita principal fora do manifesto
+- `chosen_folder`
+  - continua parcial
+  - falta fechar picker/caminho final e escrita principal fora do manifesto
+
+## Persistencia principal minima introduzida
+- O manifesto de workset passou a ter save/load real via:
+  - `server/src/groupWorksetStore.js`
+  - `server/src/groupWorksetManifest.js`
+  - `/api/links/groups/worksets`
+- Em `Preparar`, a sessao continua a ser o draft local.
+- Quando o modo ativo e `supabase` ou `hybrid`, o workset passa a ter checkpoint principal persistido.
+- A reabertura de `Preparar` pode rehidratar do workset persistido quando nao existe sessao local.
+
 ## Fora do scope
 - Picker final de pasta
 - sincronizacao remota pesada
