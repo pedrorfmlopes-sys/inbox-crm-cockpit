@@ -477,3 +477,19 @@
 - **Proximo passo recomendado**:
   - fechar a escrita principal executora para `local_device` / `chosen_folder`
   - depois disso, rever a promocao remota controlada por policy sem abrir egress agressivo
+
+## Grupos v1: storage + worksets integrados em `main` (Abril 2026)
+- **Estado pos-merge**:
+  - PR #14 (`codex/groups-v1-storage-architecture`) integrada em `main` por merge commit explicito
+  - PR #15 (`codex/groups-v1-workset-persistence-supabase-hybrid`) integrada em `main` por merge commit explicito
+  - checkpoint pre-merge publicado em `pre-merge-groups-storage-worksets-2026-04-10`
+- **O que passou a estar em `main`**:
+  - arquitetura canonica de storage de Grupos v1
+  - primeira persistencia principal funcional de worksets para modos `supabase` e `hybrid`
+  - `local_device` e `chosen_folder` continuam parciais/scaffold, sem promessa de completude
+- **Gate seguinte**:
+  - teste real em host Outlook/app com foco em `Preparar`, save/load de worksets e regressao de arranque/health
+- **Rollback preferido**:
+  - reverter primeiro o merge da PR #15 se o problema estiver na persistencia funcional
+  - reverter depois o merge da PR #14 se o problema estiver na arquitetura base
+  - usar sempre `git revert -m 1 <merge_commit_hash>`, nunca `reset --hard` em `main`
