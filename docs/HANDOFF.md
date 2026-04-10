@@ -435,3 +435,45 @@
   - a promocao final completa de worksets para Supabase continua para fase posterior
 - Atualizar `docs/DECISIONS.md` se alguma norma ou decisão mudou
 - Registar no output final: alterações, riscos, validações e próximos passos
+## Grupos v1: primeira persistencia principal funcional de worksets (Abril 2026)
+- **Objetivo desta ronda**:
+  - tirar `Preparar` da dependencia exclusiva da sessao local
+  - fechar a primeira gravacao principal real do workset
+  - manter metadata/manifests first e evitar promocao binaria prematura
+- **Implementacao feita**:
+  - novo backend pequeno dedicado:
+    - `server/src/groupWorksetManifest.js`
+    - `server/src/groupWorksetStore.js`
+    - rotas `/api/links/groups/worksets`
+  - novo conjunto modular no client para save/load e construcao do manifesto:
+    - `client/src/modules/crm/groups-v1/storage/buildPrepareWorksetManifest.ts`
+    - `client/src/modules/crm/groups-v1/storage/guards.ts`
+    - `client/src/modules/crm/groups-v1/storage/loadWorkset.ts`
+    - `client/src/modules/crm/groups-v1/storage/mergeWorksetPayload.ts`
+    - `client/src/modules/crm/groups-v1/storage/saveWorkset.ts`
+  - `GroupsPrepareCockpit` passou a:
+    - salvar checkpoint principal do workset quando o modo ativo e `supabase` ou `hybrid`
+    - reabrir o workset persistido como fallback quando nao existe sessao local
+    - manter a sessao local como draft e precedencia quando existe rascunho valido
+- **O que ja funciona**:
+  - `supabase`
+    - save/load real do manifesto persistido
+    - metadata/manifests first
+    - sem promocao binaria automatica
+  - `hybrid`
+    - save/load real do manifesto persistido
+    - pointers/localizacao principal e politica reference-first de anexos ficam gravados
+    - continua sem escrita local final completa do destino principal
+- **O que continua parcial**:
+  - `local_device`
+    - continua scaffold/contrato; falta picker/caminho final e escrita principal completa fora do manifesto
+  - `chosen_folder`
+    - continua scaffold/contrato; falta picker/caminho final e escrita principal completa fora do manifesto
+- **Guardas mantidas**:
+  - sessao local continua nao canonica
+  - seed `Preparar -> Classificar` nao foi promovido a base de verdade
+  - anexos grandes continuam a gerar `requiresDecision` no manifesto e sem promocao binaria automatica
+  - payloads pobres passam por merge conservador para nao apagarem manifestos melhores
+- **Proximo passo recomendado**:
+  - fechar a escrita principal executora para `local_device` / `chosen_folder`
+  - depois disso, rever a promocao remota controlada por policy sem abrir egress agressivo
