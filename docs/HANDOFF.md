@@ -435,17 +435,6 @@
   - a promocao final completa de worksets para Supabase continua para fase posterior
 - Atualizar `docs/DECISIONS.md` se alguma norma ou decisão mudou
 - Registar no output final: alterações, riscos, validações e próximos passos
-## Grupos v1: rollback temporario da persistencia funcional de worksets (Abril 2026)
-- **Estado atual em `main`**:
-  - PR #14 (`codex/groups-v1-storage-architecture`) permanece integrada
-  - PR #15 (`codex/groups-v1-workset-persistence-supabase-hybrid`) foi revertida por hotfix de arranque Outlook
-- **Motivo**:
-  - regressao critica em Outlook apos arranque React: `ReferenceError: Cannot access 'Li' before initialization`
-  - suspeita principal: dependencia circular/TDZ no runtime client introduzido pela ligacao workset persistence
-- **Proximo passo**:
-  - abrir hotfix dedicado para quebrar o ciclo de imports antes de reintroduzir a persistencia funcional
-
-<!-- Revert note: section removed by PR #15 rollback.
 ## Grupos v1: primeira persistencia principal funcional de worksets (Abril 2026)
 - **Objetivo desta ronda**:
   - tirar `Preparar` da dependencia exclusiva da sessao local
@@ -462,6 +451,7 @@
     - `client/src/modules/crm/groups-v1/storage/loadWorkset.ts`
     - `client/src/modules/crm/groups-v1/storage/mergeWorksetPayload.ts`
     - `client/src/modules/crm/groups-v1/storage/saveWorkset.ts`
+    - `client/src/modules/crm/groups-v1/storage/worksetApi.ts`
   - `GroupsPrepareCockpit` passou a:
     - salvar checkpoint principal do workset quando o modo ativo e `supabase` ou `hybrid`
     - reabrir o workset persistido como fallback quando nao existe sessao local
@@ -485,6 +475,7 @@
   - seed `Preparar -> Classificar` nao foi promovido a base de verdade
   - anexos grandes continuam a gerar `requiresDecision` no manifesto e sem promocao binaria automatica
   - payloads pobres passam por merge conservador para nao apagarem manifestos melhores
+  - `storage/saveWorkset.ts` e `storage/loadWorkset.ts` usam uma folha HTTP propria (`worksetApi.ts`) e nao importam o hub global `client/src/api.ts`
 - **Proximo passo recomendado**:
   - fechar a escrita principal executora para `local_device` / `chosen_folder`
   - depois disso, rever a promocao remota controlada por policy sem abrir egress agressivo
@@ -504,4 +495,3 @@
   - reverter primeiro o merge da PR #15 se o problema estiver na persistencia funcional
   - reverter depois o merge da PR #14 se o problema estiver na arquitetura base
   - usar sempre `git revert -m 1 <merge_commit_hash>`, nunca `reset --hard` em `main`
--->
