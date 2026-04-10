@@ -40,6 +40,7 @@ import { resolveGroupStorageRuntime, getGroupAttachmentStorageOptions } from "@/
 import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWorkset";
 import { getGroupWorksetManifestSignature } from "@/modules/crm/groups-v1/storage/worksetManifest";
 import { openGroupClassificationStudio } from "@/office";
+import { getStatusDisplayConfig } from "@/statusUtils";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 import type { GroupWorksetManifest } from "@/modules/crm/groups-v1/storage/types";
@@ -62,16 +63,6 @@ type EmailKeyCandidate = Partial<RelatedEmailEntry | RelevantEmailPayload> & {
   emailKey?: string;
   messageDateIso?: string;
   receivedAtIso?: string;
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  em_analise: "Em analise",
-  em_progresso: "Em progresso",
-  concluido: "Concluido",
-  respondido: "Respondido",
-  confirmado: "Confirmado",
-  arquivado: "Arquivado",
-  cancelado: "Cancelado",
 };
 
 function normalizeText(value: string | undefined): string {
@@ -235,12 +226,6 @@ function dedupeEmails(rows: Array<RelatedEmailEntry | null | undefined>): Relate
   );
 }
 
-function statusLabel(value: string | undefined): string {
-  const token = normalizeText(value);
-  if (!token) return "";
-  return STATUS_LABELS[token] || String(value || "").trim();
-}
-
 function extractPrincipalGroup(email: Partial<RelatedEmailEntry>): { id: string; name: string } | null {
   const principal = (email.relatedGroups || []).find((group) => normalizeText(group.relationKind) !== "referencia");
   if (principal?.id) {
@@ -298,12 +283,12 @@ function CompactToggle({
   return (
     <button
       type="button"
-      style={S.compactToggleButton}
+      style={{ ...S.compactToggleButton, ...(active ? S.compactToggleButtonOn : S.compactToggleButtonOff) }}
       onClick={onClick}
       aria-pressed={active}
       aria-label={`${label}: ${active ? "ativo" : "inativo"}`}
     >
-      <span style={S.compactToggleLabel}>{label}</span>
+      <span style={{ ...S.compactToggleLabel, ...(active ? S.compactToggleLabelOn : S.compactToggleLabelOff) }}>{label}</span>
       <span style={active ? S.compactToggleTrackOn : S.compactToggleTrackOff}>
         <span style={S.compactToggleThumb} />
       </span>
@@ -388,6 +373,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const canPersistWorkset = Boolean(settings) && (runtime.mode === "supabase" || runtime.mode === "hybrid");
   const hasStoredSessionRef = useRef(false);
   const persistedWorksetRef = useRef<GroupWorksetManifest | null>(null);
+  const preferredGroupAppliedForEmailRef = useRef("");
   const renderedWorksetRef = useRef<{ worksetKey: string; manifest: GroupWorksetManifest | null; signature: string }>({
     worksetKey: "",
     manifest: null,
@@ -636,24 +622,43 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    setGroupsLoading(true);
-    setGroupsError("");
-    listLinkGroups("/")
-      .then((rows) => {
-        if (!cancelled) setGroups(Array.isArray(rows) ? rows : []);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setGroups([]);
-        setGroupsError(getErrorMessage(error, "Nao foi possivel carregar grupos."));
-      })
-      .finally(() => {
-        if (!cancelled) setGroupsLoading(false);
-      });
+    const query = String(workingGroupQuery || "").trim();
+    if (!showGroupPanel || query.length < 2) {
+      setGroups([]);
+      setGroupsLoading(false);
+      setGroupsError("");
+      return () => {
+        cancelled = true;
+      };
+    }
+    const timer = window.setTimeout(() => {
+      setGroupsLoading(true);
+      setGroupsError("");
+      listLinkGroups(query)
+        .then((rows) => {
+          if (!cancelled) setGroups(dedupeGroupEntries(Array.isArray(rows) ? rows : []).slice(0, 8));
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          setGroups([]);
+          setGroupsError(getErrorMessage(error, "Nao foi possivel pesquisar grupos."));
+        })
+        .finally(() => {
+          if (!cancelled) setGroupsLoading(false);
+        });
+    }, 180);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
-  }, []);
+  }, [showGroupPanel, workingGroupQuery]);
+
+  useEffect(() => {
+    const selectedGroup = groups.find((group) => group.id === workingGroupId);
+    if (workingGroupId && selectedGroup && workingGroupQuery !== selectedGroup.name) {
+      setWorkingGroupQuery(selectedGroup.name);
+    }
+  }, [groups, workingGroupId, workingGroupQuery]);
 
   useEffect(() => {
     if (!hasCurrentIdentity) {
@@ -772,31 +777,34 @@ export const GroupsPrepareCockpit: React.FC = () => {
     renderedWorksetRef.current = { worksetKey: "", manifest: null, signature: "" };
     lastPersistedWorksetRef.current = { worksetKey: "", signature: "" };
     hydratedWorksetScopeRef.current = "";
+    preferredGroupAppliedForEmailRef.current = "";
     setSessionScopeKey(sessionKey);
     setSessionReady(Boolean(sessionKey));
   }, [currentEmailKey]);
+
+  const currentPrincipalGroup = useMemo(
+    () => extractPrincipalGroup(currentEmailEntry),
+    [currentEmailEntry]
+  );
 
   const preferredWorkingGroupId = useMemo(() => {
     const providerGroupId =
       activeGroupSelection.emailKey === currentEmailKey
         ? String(activeGroupSelection.groupId || "").trim()
         : "";
-    if (providerGroupId && groups.some((group) => group.id === providerGroupId)) {
-      return providerGroupId;
-    }
-    const principalGroup = extractPrincipalGroup(currentEmailEntry);
-    if (principalGroup && groups.some((group) => group.id === principalGroup.id)) {
-      return principalGroup.id;
-    }
-    return "";
-  }, [activeGroupSelection, currentEmailEntry, currentEmailKey, groups]);
+    if (providerGroupId) return providerGroupId;
+    return currentPrincipalGroup?.id || "";
+  }, [activeGroupSelection, currentEmailKey, currentPrincipalGroup]);
 
   useEffect(() => {
     if (!sessionReady || workingGroupId || !preferredWorkingGroupId) return;
+    if (preferredGroupAppliedForEmailRef.current === currentEmailKey) return;
+    preferredGroupAppliedForEmailRef.current = currentEmailKey;
     setWorkingGroupId(preferredWorkingGroupId);
-    const preferredGroup = groups.find((group) => group.id === preferredWorkingGroupId) || null;
+    const preferredGroup = groups.find((group) => group.id === preferredWorkingGroupId)
+      || (currentPrincipalGroup?.id === preferredWorkingGroupId ? currentPrincipalGroup : null);
     if (preferredGroup) setWorkingGroupQuery(preferredGroup.name);
-  }, [groups, preferredWorkingGroupId, sessionReady, workingGroupId]);
+  }, [currentEmailKey, currentPrincipalGroup, groups, preferredWorkingGroupId, sessionReady, workingGroupId]);
 
   useEffect(() => {
     renderedSessionRef.current = {
@@ -805,14 +813,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
       signature: sessionSignature,
     };
   }, [currentEmailKey, sessionScopeKey, sessionSignature, sessionSnapshot]);
-
-  useEffect(() => {
-    renderedWorksetRef.current = {
-      worksetKey: String(worksetManifest?.worksetKey || "").trim(),
-      manifest: worksetManifest,
-      signature: worksetSignature,
-    };
-  }, [worksetManifest, worksetSignature]);
 
   useEffect(() => {
     if (!canPersistWorkset || !sessionReady || !currentEmailKey || hydratedWorksetScopeRef.current === currentEmailKey) return;
@@ -885,21 +885,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
     sessionSignature,
     sessionSnapshot,
   ]);
-
-  useEffect(() => {
-    if (!sessionReady || !currentEmailKey || !worksetManifest) return;
-    const lastPersisted = lastPersistedWorksetRef.current;
-    if (lastPersisted.worksetKey === worksetManifest.worksetKey && lastPersisted.signature === worksetSignature) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void flushWorkset("debounced", {
-        manifest: worksetManifest,
-        signature: worksetSignature,
-      });
-    }, 2200);
-    return () => window.clearTimeout(timer);
-  }, [currentEmailKey, flushWorkset, sessionReady, worksetManifest, worksetSignature]);
 
   useEffect(() => {
     const handleSaveBeforeExit = () => {
@@ -1059,22 +1044,31 @@ export const GroupsPrepareCockpit: React.FC = () => {
     return map;
   }, [selectedAttachments]);
 
-  const workingGroup = useMemo(
-    () => groups.find((group) => group.id === workingGroupId) || null,
-    [groups, workingGroupId]
-  );
+  const workingGroup = useMemo<LinkGroupEntry | null>(() => {
+    const found = groups.find((group) => group.id === workingGroupId) || null;
+    if (found) return found;
+    if (currentPrincipalGroup?.id === workingGroupId) {
+      return { id: currentPrincipalGroup.id, name: currentPrincipalGroup.name, kind: "custom" };
+    }
+    if (workingGroupId) {
+      return { id: workingGroupId, name: String(workingGroupQuery || "Grupo selecionado").trim(), kind: "custom" };
+    }
+    return null;
+  }, [currentPrincipalGroup, groups, workingGroupId, workingGroupQuery]);
 
   const exactWorkingGroupMatch = useMemo(
-    () => groups.find((group) => normalizeText(group.name) === normalizeText(workingGroupQuery)) || null,
-    [groups, workingGroupQuery]
+    () => groups.find((group) => normalizeText(group.name) === normalizeText(workingGroupQuery))
+      || (workingGroup && normalizeText(workingGroup.name) === normalizeText(workingGroupQuery) ? workingGroup : null)
+      || null,
+    [groups, workingGroup, workingGroupQuery]
   );
 
   const workingGroupCandidates = useMemo(() => {
     const query = normalizeText(workingGroupQuery);
+    if (query.length < 2) return [];
     return [...groups]
       .filter((group) => !group.isArchived)
       .filter((group) => {
-        if (!query) return true;
         return [group.name, group.description, ...(group.labels || [])]
           .filter(Boolean)
           .join(" ")
@@ -1139,6 +1133,29 @@ export const GroupsPrepareCockpit: React.FC = () => {
     () => getGroupWorksetManifestSignature(worksetManifest),
     [worksetManifest]
   );
+
+  useEffect(() => {
+    renderedWorksetRef.current = {
+      worksetKey: String(worksetManifest?.worksetKey || "").trim(),
+      manifest: worksetManifest,
+      signature: worksetSignature,
+    };
+  }, [worksetManifest, worksetSignature]);
+
+  useEffect(() => {
+    if (!sessionReady || !currentEmailKey || !worksetManifest) return;
+    const lastPersisted = lastPersistedWorksetRef.current;
+    if (lastPersisted.worksetKey === worksetManifest.worksetKey && lastPersisted.signature === worksetSignature) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void flushWorkset("debounced", {
+        manifest: worksetManifest,
+        signature: worksetSignature,
+      });
+    }, 2200);
+    return () => window.clearTimeout(timer);
+  }, [currentEmailKey, flushWorkset, sessionReady, worksetManifest, worksetSignature]);
 
   const activeFilterSummary = useMemo(() => {
     const summary: string[] = [];
@@ -1336,6 +1353,18 @@ export const GroupsPrepareCockpit: React.FC = () => {
     { label: "Anexos", value: String(selectedAttachments.length), meta: selectedAttachments.filter((attachment) => attachment.hasContent).length ? `${selectedAttachments.filter((attachment) => attachment.hasContent).length} com conteudo local` : "Sem upload remoto nesta fase" },
     { label: "Filtros", value: String(activeFilterSummary.length), meta: activeFilterSummary.length ? activeFilterSummary.join(" / ") : "Sem filtros ativos" },
   ];
+  const storageModeChip = useMemo(() => {
+    if (runtime.mode === "hybrid") return { label: "Hibrido", style: S.hybridBadge };
+    if (runtime.mode === "supabase") return { label: "Remoto", style: S.remoteBadge };
+    return { label: "Local", style: S.localBadge };
+  }, [runtime.mode]);
+  const worksetStateChip = useMemo(() => {
+    if (!canPersistWorkset) return { label: "Sessao", style: S.sessionBadge };
+    if (lastPersistedWorksetRef.current.worksetKey) return { label: "Persistido", style: S.persistedBadge };
+    if (worksetManifest) return { label: "Pendente", style: S.pendingBadge };
+    return { label: "Draft", style: S.draftBadge };
+  }, [canPersistWorkset, worksetManifest]);
+  const anchorStatusConfig = getStatusDisplayConfig(currentEmailEntry.status);
 
   if (!hasCurrentIdentity) {
     return (
@@ -1389,7 +1418,9 @@ export const GroupsPrepareCockpit: React.FC = () => {
               {formatDate(currentEmailEntry.messageDateIso || currentEmailEntry.receivedAtIso)
                 ? <span style={S.mutedBadge}>{formatDate(currentEmailEntry.messageDateIso || currentEmailEntry.receivedAtIso)}</span>
                 : null}
-              <span style={S.mutedBadge}>Local</span>
+              <span style={storageModeChip.style}>{storageModeChip.label}</span>
+              <span style={worksetStateChip.style}>{worksetStateChip.label}</span>
+              <span style={{ ...S.statusBadge, ...anchorStatusConfig.style }}>{anchorStatusConfig.label}</span>
             </div>
           </div>
         </div>
@@ -1402,22 +1433,24 @@ export const GroupsPrepareCockpit: React.FC = () => {
       {showGroupPanel ? (
         <div style={S.panelCard}>
           <div style={S.fieldLabel}>Grupo em trabalho</div>
-          <div style={S.compactRow}>
-            <input style={{ ...S.input, flex: "1 1 220px" }} value={workingGroupQuery} onChange={(event) => setWorkingGroupQuery(event.target.value)} placeholder="Pesquisar grupo existente" />
-            <button
-              type="button"
-              style={S.secondaryBtn}
-              onClick={() => {
-                if (exactWorkingGroupMatch) {
-                  setWorkingGroupId(exactWorkingGroupMatch.id);
-                  setWorkingGroupQuery(exactWorkingGroupMatch.name);
-                }
-              }}
-              disabled={!exactWorkingGroupMatch}
-            >
-              <Icons.Search size={12} />
-              Pesquisar
-            </button>
+          <div style={S.currentGroupLine}>
+            {currentPrincipalGroup
+              ? <>Grupo atual neste email: <strong>{currentPrincipalGroup.name}</strong></>
+              : "Este email ainda nao tem grupo principal."}
+          </div>
+          <div style={S.searchBox}>
+            <div style={S.searchInputWrap}>
+              <Icons.Search size={11} />
+              <input
+                style={S.searchInput}
+                value={workingGroupQuery}
+                onChange={(event) => {
+                  setWorkingGroupQuery(event.target.value);
+                  setWorkingGroupId("");
+                }}
+                placeholder="Pesquisar grupo existente"
+              />
+            </div>
             <button type="button" style={S.primaryBtn} onClick={() => void handleCreateWorkingGroup()} disabled={busy || !String(workingGroupQuery || "").trim() || Boolean(exactWorkingGroupMatch)}>
               <Icons.Plus size={12} />
               Criar
@@ -1429,22 +1462,24 @@ export const GroupsPrepareCockpit: React.FC = () => {
                 <div style={S.selectedGroupTitle}>{workingGroup.name}</div>
                 <div style={S.smallMeta}>{workingGroup.memberCount || 0} email(s) / {workingGroup.documentsEnabled === false ? "documentos off" : "documentos on"}</div>
               </div>
-              <button type="button" style={S.iconGhostBtn} onClick={() => setWorkingGroupId("")} title="Limpar grupo em trabalho">
+              <button type="button" style={S.iconGhostBtn} onClick={() => { setWorkingGroupId(""); setWorkingGroupQuery(""); }} title="Limpar grupo em trabalho">
                 <Icons.RefreshCw size={12} />
               </button>
             </div>
           ) : null}
           {groupsError ? <PanelState compact tone="error" title="Falha a carregar grupos" description={groupsError} /> : null}
-          {groupsLoading ? <PanelState compact tone="loading" title="A carregar grupos" description="A preparar os grupos existentes para selecao." /> : null}
+          {groupsLoading ? <PanelState compact tone="loading" title="A procurar grupos" description="Escreve para ver sugestoes compactas." /> : null}
           {!groupsLoading && workingGroupCandidates.length ? (
-            <div style={S.listWrap}>
+            <div style={S.suggestionDropdown}>
               {workingGroupCandidates.map((group) => (
-                <button key={group.id} type="button" style={group.id === workingGroupId ? S.listRowActive : S.listRow} onClick={() => { setWorkingGroupId(group.id); setWorkingGroupQuery(group.name); }}>
+                <button key={group.id} type="button" style={group.id === workingGroupId ? S.suggestionRowActive : S.suggestionRow} onClick={() => { setWorkingGroupId(group.id); setWorkingGroupQuery(group.name); }}>
                   <span>{group.name}</span>
                   <span style={S.countBadge}>{group.memberCount || 0}</span>
                 </button>
               ))}
             </div>
+          ) : !groupsLoading && normalizeText(workingGroupQuery).length >= 2 && !exactWorkingGroupMatch ? (
+            <div style={S.smallMeta}>Sem sugestoes para esta pesquisa. Podes criar o grupo se fizer sentido.</div>
           ) : null}
           {emailGroupChangeRequests.length ? (
             <div style={S.warningBox}>
@@ -1508,6 +1543,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
                 const referenceGroups = extractReferenceGroups(email);
                 const tickets = emailKey === currentEmailKey ? contextTickets : (emailTicketMap[emailKey] || []);
                 const attachmentCount = Array.isArray(email.attachments) ? email.attachments.length : 0;
+                const emailStatusConfig = getStatusDisplayConfig(email.status);
                 const pendingChange = workingGroupId ? buildGroupChangeRequest({
                   emailKey,
                   previousPrincipalGroupId: principalGroup?.id || null,
@@ -1527,14 +1563,16 @@ export const GroupsPrepareCockpit: React.FC = () => {
                             <span style={emailKey === currentEmailKey ? S.subjectDotActive : S.subjectDot} />
                             <span style={S.emailSubjectText}>{email.subject || "(sem assunto)"}</span>
                             {emailKey === currentEmailKey ? <span style={S.anchorBadge}>Ancora</span> : null}
+                            <span style={{ ...S.statusBadge, ...emailStatusConfig.style }}>{emailStatusConfig.label}</span>
                           </div>
                           <div style={S.emailMeta}>
                             {email.fromName || email.fromEmail || "Sem remetente"}
                             {formatDate(email.messageDateIso || email.receivedAtIso) ? ` · ${formatDate(email.messageDateIso || email.receivedAtIso)}` : ""}
-                            {statusLabel(email.status) ? ` · ${statusLabel(email.status)}` : ""}
                           </div>
                         </div>
                         <div style={S.emailHeadBadges}>
+                          {selected ? <span style={worksetStateChip.style}>{worksetStateChip.label}</span> : null}
+                          {emailKey === currentEmailKey ? <span style={storageModeChip.style}>{storageModeChip.label}</span> : null}
                           {attachmentCount ? <span style={S.countBadge}>{attachmentCount}</span> : null}
                           {expanded ? <Icons.ArrowUp size={12} /> : <Icons.ArrowDown size={12} />}
                         </div>
@@ -1562,6 +1600,12 @@ export const GroupsPrepareCockpit: React.FC = () => {
                           </span>
                           <span style={S.mutedBadge}>
                             Anexos: {attachmentCount} / {selectedAttachmentCountByEmail.get(emailKey) || 0}
+                          </span>
+                          <span style={storageModeChip.style}>
+                            Storage: {storageModeChip.label}
+                          </span>
+                          <span style={selected ? worksetStateChip.style : S.mutedBadge}>
+                            Workset: {selected ? worksetStateChip.label : "Fora da selecao"}
                           </span>
                         </div>
                         {pendingChange ? (
@@ -1658,7 +1702,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
             <span style={S.footerStat}>{selectedEmails.length} email(s)</span>
             <span style={S.footerStat}>{selectedAttachments.length} anexo(s)</span>
           </div>
-          <div style={S.footerCopy}>Sessao local.</div>
+          <div style={S.footerCopy}>{canPersistWorkset ? `${worksetStateChip.label} / ${storageModeChip.label}` : "Sessao local."}</div>
         </div>
         <div style={S.inlineActions}>
           <button type="button" style={{ ...S.secondaryBtn, minWidth: 92 }} onClick={handleManualSessionSave}>
@@ -1708,7 +1752,7 @@ const S: Record<string, React.CSSProperties> = {
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 7px", borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "var(--iccc-card-bg)" },
   headerMain: { display: "grid", gap: 1, minWidth: 0 },
   kicker: { fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--iccc-text-muted)" },
-  title: { fontSize: 12.5, fontWeight: 700, color: "var(--iccc-text)" },
+  title: { fontSize: 12.5, fontWeight: 650, color: "#243244" },
   headerToolBtn: { ...baseButton, width: 24, height: 24, padding: 0, borderRadius: 999, background: "#fff", color: "var(--iccc-text-muted)", cursor: "not-allowed" },
   segmentBar: { display: "flex", gap: 2, padding: 2, borderRadius: 999, border: "1px solid rgba(148,163,184,0.22)", background: "rgba(241,245,249,0.92)", width: "100%", boxSizing: "border-box" },
   segment: { flex: "1 1 0", border: "none", background: "transparent", color: "var(--iccc-text-muted)", padding: "4px 7px", borderRadius: 999, fontSize: 9, fontWeight: 600, cursor: "pointer" },
@@ -1716,62 +1760,80 @@ const S: Record<string, React.CSSProperties> = {
   segmentDisabled: { flex: "1 1 0", border: "none", background: "transparent", color: "rgba(100,116,139,0.68)", padding: "4px 7px", borderRadius: 999, fontSize: 9, fontWeight: 600, cursor: "not-allowed" },
   anchorCard: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 6, alignItems: "start", padding: 7, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.9)" },
   anchorLead: { display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 },
-  anchorIcon: { width: 22, height: 22, borderRadius: 8, background: "#0f172a", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 },
+  anchorIcon: { width: 22, height: 22, borderRadius: 8, background: "#27425f", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 },
   anchorCopy: { display: "grid", gap: 2, minWidth: 0 },
-  anchorSubject: { fontSize: 11, fontWeight: 700, color: "var(--iccc-text)", wordBreak: "break-word", lineHeight: 1.18 },
+  anchorSubject: { fontSize: 11, fontWeight: 650, color: "#26364a", wordBreak: "break-word", lineHeight: 1.18 },
   anchorMeta: { fontSize: 10, color: "var(--iccc-text-muted)" },
   anchorActions: { display: "flex", gap: 6, alignItems: "center", justifyContent: "flex-end", flexWrap: "nowrap", paddingTop: 1 },
   anchorInfoChips: { display: "flex", gap: 3, flexWrap: "wrap" },
   compactToggleButton: { border: "none", background: "transparent", padding: 0, display: "inline-flex", alignItems: "center", gap: 4, color: "var(--iccc-text-muted)", fontSize: 8, fontWeight: 700, cursor: "pointer" },
+  compactToggleButtonOn: { color: "#15803d" },
+  compactToggleButtonOff: { color: "#b91c1c" },
   compactToggleLabel: { lineHeight: 1 },
-  compactToggleTrackOff: { width: 15, height: 9, borderRadius: 999, background: "rgba(148,163,184,0.38)", display: "inline-flex", alignItems: "center", justifyContent: "flex-start", padding: 1, boxSizing: "border-box", flexShrink: 0 },
-  compactToggleTrackOn: { width: 15, height: 9, borderRadius: 999, background: "rgba(15,23,42,0.76)", display: "inline-flex", alignItems: "center", justifyContent: "flex-end", padding: 1, boxSizing: "border-box", flexShrink: 0 },
+  compactToggleLabelOn: { color: "#15803d" },
+  compactToggleLabelOff: { color: "#b91c1c" },
+  compactToggleTrackOff: { width: 15, height: 9, borderRadius: 999, background: "rgba(239,68,68,0.72)", display: "inline-flex", alignItems: "center", justifyContent: "flex-start", padding: 1, boxSizing: "border-box", flexShrink: 0 },
+  compactToggleTrackOn: { width: 15, height: 9, borderRadius: 999, background: "rgba(34,197,94,0.78)", display: "inline-flex", alignItems: "center", justifyContent: "flex-end", padding: 1, boxSizing: "border-box", flexShrink: 0 },
   compactToggleThumb: { width: 5, height: 5, borderRadius: 999, background: "#fff" },
   panelCard: { display: "grid", gap: 5, padding: 6, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.82)" },
   sectionTitleRow: { display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
-  fieldLabel: { fontSize: 8, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--iccc-text-muted)" },
+  fieldLabel: { fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b" },
   compactRow: { display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" },
+  currentGroupLine: { fontSize: 8.7, color: "#526173", lineHeight: 1.25 },
+  searchBox: { display: "flex", gap: 5, alignItems: "center" },
+  searchInputWrap: { flex: "1 1 0", minWidth: 0, display: "flex", alignItems: "center", gap: 4, borderRadius: 11, border: "1px solid rgba(148,163,184,0.32)", background: "rgba(255,255,255,0.94)", color: "#64748b", padding: "4px 7px", boxSizing: "border-box" },
+  searchInput: { width: "100%", minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: 9.5, color: "#26364a", padding: 0 },
   filterGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))", gap: 5 },
-  input: { width: "100%", borderRadius: 12, border: "1px solid var(--iccc-card-border)", padding: "5px 9px", background: "#fff", fontSize: 10, color: "var(--iccc-text)", boxSizing: "border-box" },
-  select: { width: "100%", borderRadius: 12, border: "1px solid var(--iccc-card-border)", padding: "5px 9px", background: "#fff", fontSize: 10, color: "var(--iccc-text)" },
-  primaryBtn: { ...baseButton, background: "#0f172a", color: "#fff", border: "1px solid #0f172a" },
-  secondaryBtn: { ...baseButton, background: "rgba(255,255,255,0.88)", color: "var(--iccc-text)" },
-  iconGhostBtn: { ...baseButton, width: 24, height: 24, padding: 0, background: "rgba(255,255,255,0.9)", color: "var(--iccc-text)" },
-  selectedGroupCard: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 6, alignItems: "center", borderRadius: 12, border: "1px solid rgba(15,23,42,0.1)", background: "rgba(248,250,252,0.95)", padding: 6 },
+  input: { width: "100%", borderRadius: 11, border: "1px solid rgba(148,163,184,0.32)", padding: "5px 8px", background: "rgba(255,255,255,0.94)", fontSize: 9.5, color: "#26364a", boxSizing: "border-box" },
+  select: { width: "100%", borderRadius: 11, border: "1px solid rgba(148,163,184,0.32)", padding: "5px 8px", background: "rgba(255,255,255,0.94)", fontSize: 9.5, color: "#26364a" },
+  primaryBtn: { ...baseButton, background: "#27425f", color: "#fff", border: "1px solid #27425f" },
+  secondaryBtn: { ...baseButton, background: "rgba(255,255,255,0.88)", color: "#334155" },
+  iconGhostBtn: { ...baseButton, width: 22, height: 22, padding: 0, background: "rgba(255,255,255,0.9)", color: "#526173" },
+  selectedGroupCard: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 6, alignItems: "center", borderRadius: 11, border: "1px solid rgba(39,66,95,0.16)", background: "rgba(248,250,252,0.95)", padding: 6 },
   selectedGroupMain: { display: "grid", gap: 2, minWidth: 0 },
   selectedGroupTitle: { fontSize: 10, fontWeight: 700, color: "var(--iccc-text)" },
   listWrap: { display: "grid", gap: 4 },
   listRow: { width: "100%", borderRadius: 10, border: "1px solid var(--iccc-card-border)", background: "#fff", padding: "6px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer", color: "var(--iccc-text)", fontSize: 10, fontWeight: 700 },
   listRowActive: { width: "100%", borderRadius: 10, border: "1px solid rgba(15,23,42,0.18)", background: "rgba(248,250,252,0.95)", padding: "6px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer", color: "var(--iccc-text)", fontSize: 10, fontWeight: 700 },
-  countBadge: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 14, height: 14, borderRadius: 999, background: "rgba(15,23,42,0.06)", color: "var(--iccc-text-muted)", fontSize: 7.5, fontWeight: 800 },
+  suggestionDropdown: { display: "grid", gap: 2, borderRadius: 11, border: "1px solid rgba(148,163,184,0.24)", background: "rgba(255,255,255,0.96)", padding: 3, boxShadow: "0 8px 20px rgba(15,23,42,0.08)" },
+  suggestionRow: { width: "100%", border: "none", borderRadius: 8, background: "transparent", padding: "4px 6px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer", color: "#26364a", fontSize: 9.5, fontWeight: 600, textAlign: "left" },
+  suggestionRowActive: { width: "100%", border: "none", borderRadius: 8, background: "rgba(219,234,254,0.55)", padding: "4px 6px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer", color: "#1e3a5f", fontSize: 9.5, fontWeight: 650, textAlign: "left" },
+  countBadge: { display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 14, height: 14, borderRadius: 999, background: "rgba(71,85,105,0.08)", color: "#526173", fontSize: 7.5, fontWeight: 700 },
   warningBox: { padding: "6px 8px", borderRadius: 10, border: "1px solid rgba(245,158,11,0.16)", background: "rgba(255,247,237,0.8)", color: "#9a3412", fontSize: 9, lineHeight: 1.35 },
-  smallMeta: { fontSize: 8.5, color: "var(--iccc-text-muted)", lineHeight: 1.25 },
+  smallMeta: { fontSize: 8.5, color: "#526173", lineHeight: 1.25 },
   viewStack: { display: "grid", gap: 5 },
   inlineMetaRow: { display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" },
   tinyBtn: { ...baseButton, padding: "2px 7px", fontSize: 8, background: "rgba(255,255,255,0.88)", color: "var(--iccc-text-muted)" },
   emailList: { display: "grid", gap: 5 },
   emailCard: { display: "grid", gap: 0, borderRadius: 12, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.94)", overflow: "hidden" },
-  emailCardExpanded: { display: "grid", gap: 4, borderRadius: 12, border: "1px solid rgba(15,23,42,0.14)", background: "rgba(255,255,255,0.98)", paddingBottom: 4, overflow: "hidden" },
+  emailCardExpanded: { display: "grid", gap: 4, borderRadius: 12, border: "1px solid rgba(39,66,95,0.18)", background: "rgba(255,255,255,0.98)", paddingBottom: 4, overflow: "hidden" },
   emailCardHead: { display: "grid", gridTemplateColumns: "18px minmax(0, 1fr)", gap: 4, alignItems: "start", padding: "5px 6px" },
   checkboxCell: { display: "inline-flex", alignItems: "center", justifyContent: "center", paddingTop: 1 },
   emailCardMain: { border: "none", background: "transparent", padding: 0, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, cursor: "pointer", textAlign: "left", minWidth: 0 },
   emailCardCopy: { display: "grid", gap: 1, minWidth: 0 },
   emailSubject: { display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", color: "var(--iccc-text)", lineHeight: 1.15 },
   subjectDot: { width: 5, height: 5, borderRadius: 999, background: "rgba(100,116,139,0.42)", flexShrink: 0 },
-  subjectDotActive: { width: 5, height: 5, borderRadius: 999, background: "#0f172a", flexShrink: 0 },
-  emailSubjectText: { fontSize: 10.5, fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  emailMeta: { fontSize: 8.5, color: "var(--iccc-text-muted)", lineHeight: 1.2 },
+  subjectDotActive: { width: 5, height: 5, borderRadius: 999, background: "#27425f", flexShrink: 0 },
+  emailSubjectText: { fontSize: 10.5, fontWeight: 650, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#26364a" },
+  emailMeta: { fontSize: 8.5, color: "#526173", lineHeight: 1.2 },
   emailHeadBadges: { display: "inline-flex", alignItems: "center", gap: 3, color: "var(--iccc-text-muted)", paddingTop: 1 },
   badgeWrap: { display: "flex", gap: 4, flexWrap: "wrap" },
   detailBadgeStack: { display: "flex", flexWrap: "wrap", gap: 3, padding: "0 6px 0 20px" },
-  anchorBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(15,23,42,0.08)", color: "var(--iccc-text-muted)", fontSize: 7.5, fontWeight: 700 },
-  statusBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(249,115,22,0.1)", color: "#c2410c", fontSize: 7.5, fontWeight: 700 },
-  primaryBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(15,23,42,0.07)", color: "var(--iccc-text)", fontSize: 7.5, fontWeight: 700 },
-  mutedBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(148,163,184,0.12)", color: "var(--iccc-text-muted)", fontSize: 7.5, fontWeight: 700 },
-  selectedBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(15,23,42,0.09)", color: "var(--iccc-text)", fontSize: 7.5, fontWeight: 700 },
+  anchorBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(71,85,105,0.08)", color: "#526173", fontSize: 7.5, fontWeight: 700 },
+  statusBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, border: "1px solid transparent", background: "rgba(249,115,22,0.1)", color: "#c2410c", fontSize: 7.5, fontWeight: 700 },
+  primaryBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(39,66,95,0.08)", color: "#26364a", fontSize: 7.5, fontWeight: 700 },
+  mutedBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(148,163,184,0.12)", color: "#526173", fontSize: 7.5, fontWeight: 700 },
+  selectedBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(39,66,95,0.09)", color: "#26364a", fontSize: 7.5, fontWeight: 700 },
   warningBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(245,158,11,0.1)", color: "#b45309", fontSize: 7.5, fontWeight: 700 },
   labelBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(34,197,94,0.09)", color: "#15803d", fontSize: 7.5, fontWeight: 700 },
   readyBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(16,185,129,0.1)", color: "#047857", fontSize: 7.5, fontWeight: 700 },
+  localBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(220,252,231,0.78)", color: "#15803d", border: "1px solid rgba(34,197,94,0.18)", fontSize: 7.5, fontWeight: 700 },
+  remoteBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(219,234,254,0.82)", color: "#1d4ed8", border: "1px solid rgba(59,130,246,0.2)", fontSize: 7.5, fontWeight: 700 },
+  hybridBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(237,233,254,0.82)", color: "#6d28d9", border: "1px solid rgba(124,58,237,0.18)", fontSize: 7.5, fontWeight: 700 },
+  sessionBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(241,245,249,0.86)", color: "#475569", border: "1px solid rgba(148,163,184,0.18)", fontSize: 7.5, fontWeight: 700 },
+  draftBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(255,247,237,0.82)", color: "#c2410c", border: "1px solid rgba(249,115,22,0.18)", fontSize: 7.5, fontWeight: 700 },
+  pendingBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(254,243,199,0.82)", color: "#b45309", border: "1px solid rgba(245,158,11,0.18)", fontSize: 7.5, fontWeight: 700 },
+  persistedBadge: { display: "inline-flex", alignItems: "center", padding: "1px 5px", borderRadius: 999, background: "rgba(220,252,231,0.88)", color: "#15803d", border: "1px solid rgba(34,197,94,0.2)", fontSize: 7.5, fontWeight: 700 },
   detailGrid: { display: "grid", gap: 5, padding: "0 12px" },
   detailRow: { display: "grid", gridTemplateColumns: "88px minmax(0, 1fr)", gap: 8, alignItems: "start" },
   detailLabel: { fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--iccc-text-muted)" },

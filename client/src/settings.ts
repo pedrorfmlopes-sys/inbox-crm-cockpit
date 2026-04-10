@@ -251,6 +251,101 @@ const KEY_API_BASE = "apiBaseUrl";
 const KEY_SETTINGS = "cockpitSettingsV1";
 export const SETTINGS_UPDATED_EVENT = "iccc:settings-updated";
 
+const SETTINGS_STORAGE_KEYS: Array<keyof CockpitSettingsV1> = [
+  "version",
+  "skinId",
+  "appLanguage",
+  "readingLanguage",
+  "replyLanguage",
+  "tone",
+  "length",
+  "enabledLanguages",
+  "signatures",
+  "signaturesHtml",
+  "signatureImageUrl",
+  "signatureImageMaxWidth",
+  "aiKnowledge",
+  "aiManualOnly",
+  "userRole",
+  "styleContext",
+  "styleExamples",
+  "meetingLinks",
+  "odooUrl",
+  "odooDb",
+  "odooLogin",
+  "odooPassword",
+  "odooSessionToken",
+  "geminiApiKey",
+  "openaiApiKey",
+  "openaiModelFast",
+  "openaiModelQuality",
+  "geminiModel",
+  "invoiceStudio",
+  "bodyScope",
+  "responsePresets",
+  "contactAliases",
+  "aiCustomTones",
+  "aiTextShortcuts",
+  "aiAutoLabel",
+  "aiFontPreference",
+  "referenceCodes",
+  "groupStorage",
+  "groupLabelsManagerEnabled",
+  "groupLabelCatalog",
+  "groupFavoriteIds",
+  "groupTicketsEnabled",
+  "groupTicketUi",
+  "groupOutlookCategories",
+  "crm2OdooLayout",
+];
+
+function pickKnownSettings(input: Partial<CockpitSettingsV1> | null | undefined): Partial<CockpitSettingsV1> {
+  if (!input || typeof input !== "object") return {};
+  const compact: Partial<CockpitSettingsV1> = {};
+  for (const key of SETTINGS_STORAGE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(input, key)) {
+      (compact as Record<string, unknown>)[key] = (input as Record<string, unknown>)[key as string];
+    }
+  }
+  return compact;
+}
+
+function compactSettingsForStorage(settings: CockpitSettingsV1): CockpitSettingsV1 {
+  const compact = pickKnownSettings(settings) as CockpitSettingsV1;
+  compact.version = 1;
+  return compact;
+}
+
+function serializeSettings(settings: CockpitSettingsV1): string {
+  return JSON.stringify(compactSettingsForStorage(settings));
+}
+
+function writeLocalSettingsCache(json: string): void {
+  try {
+    globalThis.localStorage?.setItem(KEY_SETTINGS, json);
+  } catch {
+    try {
+      globalThis.localStorage?.removeItem(KEY_SETTINGS);
+      globalThis.localStorage?.setItem(KEY_SETTINGS, json);
+    } catch {
+      // Office roaming settings remain the source of truth; the local mirror is best effort.
+    }
+  }
+}
+
+function writeLocalSettingsRequired(json: string): void {
+  try {
+    globalThis.localStorage?.setItem(KEY_SETTINGS, json);
+  } catch (error) {
+    try {
+      globalThis.localStorage?.removeItem(KEY_SETTINGS);
+      globalThis.localStorage?.setItem(KEY_SETTINGS, json);
+    } catch {
+      throw error;
+    }
+  }
+}
+
 // Local-only keys for uploaded signature images (dataURL)
 // Stored outside roaming settings to avoid size limits.
 const KEY_SIGIMG_DATA_PREFIX = "icc.sigimg.data.v1:";
@@ -606,13 +701,14 @@ export function findGroupLabelCatalogEntry(
 }
 
 function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSettingsV1> | null): CockpitSettingsV1 {
-  if (!incoming) return base;
+  if (!incoming) return compactSettingsForStorage(base);
+  const knownIncoming = pickKnownSettings(incoming);
   const incomingLayout = ((incoming as any).crm2OdooLayout || {});
   const incomingLayoutMode = normalizeCrm2OdooLayoutMode(incomingLayout.mode ?? base.crm2OdooLayout.mode);
 
   const merged: CockpitSettingsV1 = {
     ...base,
-    ...incoming,
+    ...knownIncoming,
     signatures: { ...base.signatures, ...(incoming.signatures || {}) },
     signaturesHtml: { ...(base.signaturesHtml || {}), ...((incoming as any).signaturesHtml || {}) },
     signatureImageUrl: { ...(base.signatureImageUrl || {}), ...((incoming as any).signatureImageUrl || {}) },
@@ -788,13 +884,18 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
 
   // guard against wrong versions
   merged.version = 1;
-  return merged;
+  return compactSettingsForStorage(merged);
 }
 
 export function getCachedSettingsSnapshot(): CockpitSettingsV1 {
   const raw = globalThis.localStorage?.getItem(KEY_SETTINGS);
   const parsed = safeJsonParse<Partial<CockpitSettingsV1>>(raw);
-  return mergeSettings(DEFAULT_SETTINGS, parsed);
+  const merged = mergeSettings(DEFAULT_SETTINGS, parsed);
+  if (raw) {
+    const compactJson = serializeSettings(merged);
+    if (compactJson !== raw) writeLocalSettingsCache(compactJson);
+  }
+  return merged;
 }
 
 export async function getSettings(): Promise<CockpitSettingsV1> {
@@ -815,18 +916,18 @@ export async function saveSettings(patch: Partial<CockpitSettingsV1>): Promise<C
   await officeReady();
   const current = await getSettings();
   const next = mergeSettings(current, patch);
-  const json = JSON.stringify(next);
+  const json = serializeSettings(next);
 
   const rs = getRoamingSettings();
   if (rs) {
     rs.set(KEY_SETTINGS, json);
     await saveRoamingSettings(rs);
-    globalThis.localStorage?.setItem(KEY_SETTINGS, json);
+    writeLocalSettingsCache(json);
     emitSettingsUpdated(next);
     return next;
   }
 
-  globalThis.localStorage?.setItem(KEY_SETTINGS, json);
+  writeLocalSettingsRequired(json);
   emitSettingsUpdated(next);
   return next;
 }
@@ -834,17 +935,18 @@ export async function saveSettings(patch: Partial<CockpitSettingsV1>): Promise<C
 export async function resetSettings(): Promise<CockpitSettingsV1> {
   await officeReady();
   const rs = getRoamingSettings();
-  const json = JSON.stringify(DEFAULT_SETTINGS);
+  const next = compactSettingsForStorage(DEFAULT_SETTINGS);
+  const json = serializeSettings(next);
   if (rs) {
     rs.set(KEY_SETTINGS, json);
     await saveRoamingSettings(rs);
-    globalThis.localStorage?.setItem(KEY_SETTINGS, json);
-    emitSettingsUpdated(DEFAULT_SETTINGS);
-    return DEFAULT_SETTINGS;
+    writeLocalSettingsCache(json);
+    emitSettingsUpdated(next);
+    return next;
   }
-  globalThis.localStorage?.setItem(KEY_SETTINGS, json);
-  emitSettingsUpdated(DEFAULT_SETTINGS);
-  return DEFAULT_SETTINGS;
+  writeLocalSettingsRequired(json);
+  emitSettingsUpdated(next);
+  return next;
 }
 
 // ---------------------------
