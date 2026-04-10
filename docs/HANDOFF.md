@@ -495,3 +495,32 @@
   - reverter primeiro o merge da PR #15 se o problema estiver na persistencia funcional
   - reverter depois o merge da PR #14 se o problema estiver na arquitetura base
   - usar sempre `git revert -m 1 <merge_commit_hash>`, nunca `reset --hard` em `main`
+
+## Grupos v1: hotfix Preparar settings/search/estados/leitura (Abril 2026)
+- **Objetivo desta ronda**:
+  - corrigir regressao real no teste de `Groups > Preparar`
+  - resolver erro de quota em `cockpitSettingsV1`
+  - simplificar pesquisa de grupos, repor estados visuais e aproximar contraste/leitura da qualidade de `Classificar`
+- **Settings**:
+  - `client/src/settings.ts` passou a serializar apenas chaves conhecidas do contrato `CockpitSettingsV1`
+  - chaves top-level desconhecidas deixam de ser preservadas por `mergeSettings`, impedindo que worksets/caches/listas/anexos acidentais fiquem presos nas settings
+  - o espelho em `localStorage` e best-effort quando existe Office roaming settings; em fallback local, remove a copia antiga antes de tentar regravar a versao compacta
+  - `cockpitSettingsV1` continua reservado a preferencias pequenas: modo storage, limites, toggles, paths curtos e escolhas de comportamento
+- **Preparar**:
+  - pesquisa de grupo em trabalho deixou de carregar uma lista inicial de grupos
+  - mostra o grupo principal atual do email quando existir; sem grupo, mostra apenas uma nota compacta
+  - sugestoes aparecem so apos pesquisa com pelo menos 2 caracteres, em dropdown simples, sem mini-cards
+  - a auto-selecao do grupo principal atual acontece so uma vez por email, para nao bloquear a pesquisa manual
+  - toggles `Grupo` e `Filtros` usam cor semantica: verde quando ON, vermelho quando OFF
+  - estados visuais pequenos foram repostos para storage (`Local`/`Remoto`/`Hibrido`) e workset (`Sessao`/`Draft`/`Pendente`/`Persistido`)
+  - contraste, pesos e badges foram suavizados para leitura mais proxima de `Classificar`, sem mudar o papel funcional de `Preparar`
+- **Correcao minima de arranque em Preparar**:
+  - durante a validacao visual foi detetado um TDZ local em `GroupsPrepareCockpit.tsx`: efeitos que dependiam de `worksetManifest/worksetSignature` estavam declarados antes da criacao desses valores
+  - os efeitos foram apenas movidos para depois do manifesto, sem alterar a arquitetura de storage nem o contrato de persistencia
+- **Guardas mantidas**:
+  - sem nova UX pesada
+  - sem mexer em `Explorar`, `Explorador de Grupos`, `Gestor do Grupo` ou `Tarefas`
+  - sem mexer no backend
+  - sem transformar sessao/cache/seed em persistencia canonica
+- **Proximo passo recomendado**:
+  - testar no Outlook real: save de settings apos historico antigo possivelmente poluido, abertura de `Preparar`, pesquisa de grupos e leitura dos estados visuais
