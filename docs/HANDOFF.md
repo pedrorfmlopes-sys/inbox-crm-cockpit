@@ -545,3 +545,29 @@
   - sem transformar `Preparar` em `Classificar 2`
 - **Proximo passo recomendado**:
   - validar no Outlook real se a Lista ja deixa de duplicar o ancora e se a leitura dos cards fechados ficou limpa no task pane estreito
+
+## Grupos v1: stack de correções de `Preparar` integrada em `main` (Abril 2026)
+- **Estado pos-merge**:
+  - PR #16 (`codex/groups-v1-workset-api-cycle-hotfix`) integrada em `main` por merge commit explicito
+  - PR #17 (`codex/groups-prepare-settings-search-visual-fix`) integrada em `main` por merge commit explicito
+  - PR #18 (`codex/groups-prepare-fine-tune-cleanup`) integrada em `main` por merge commit explicito
+  - checkpoint pre-merge publicado em `pre-merge-groups-prepare-stack-2026-04-10`
+- **O que passou a estar em `main`**:
+  - fronteira HTTP de worksets isolada em `groups-v1/storage/worksetApi.ts`, evitando o ciclo anterior com `client/src/api.ts`
+  - settings compactas: `cockpitSettingsV1` volta a guardar apenas preferencias pequenas e conhecidas
+  - pesquisa de grupo em `Preparar` simplificada para campo + sugestoes compactas
+  - leitura/contraste de `Preparar` ajustados sem abrir nova UX
+  - email ancora removido da lista visual duplicada
+  - cards fechados limpos e estados visiveis reduzidos a `Rascunho`, `Local` e `Servidor`
+- **Guardas mantidas**:
+  - sem novas features
+  - sem reabrir `Explorar`, `Explorador de Grupos`, `Gestor do Grupo` ou `Tarefas`
+  - sem redesenho adicional de `Preparar`
+  - sem reabrir arquitetura de storage alem do hotfix de ciclo/imports ja aprovado
+- **Gate seguinte**:
+  - teste real em host Outlook com foco em arranque sem crash, settings, pesquisa de grupos, lista sem duplicacao do ancora e leitura dos cards
+- **Rollback preferido**:
+  - reverter primeiro o merge da PR #18 se o problema for visual/semantico no cleanup
+  - reverter depois o merge da PR #17 se o problema estiver em settings/search/visual
+  - reverter por ultimo o merge da PR #16 se o problema estiver na camada workset/api
+  - usar sempre `git revert -m 1 <merge_commit_hash>`, nunca `reset --hard` em `main`
