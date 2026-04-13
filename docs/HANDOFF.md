@@ -571,3 +571,19 @@
   - reverter depois o merge da PR #17 se o problema estiver em settings/search/visual
   - reverter por ultimo o merge da PR #16 se o problema estiver na camada workset/api
   - usar sempre `git revert -m 1 <merge_commit_hash>`, nunca `reset --hard` em `main`
+
+## Grupos v1: hotfix semantica visivel de storage em `Preparar` (Abril 2026)
+- **Problema corrigido**:
+  - `Preparar` estava a mostrar `Servidor` quando existia workset/manifesto persistido em modo `supabase` ou `hybrid`
+  - isto confundia infraestrutura de retoma/progresso com persistencia funcional final do email/classificacao
+- **Regra operacional**:
+  - `Rascunho` = informacao vinda de Outlook/sessao/preparacao, sem checkpoint local nem sinal funcional persistido
+  - `Local` = progresso/checkpoint local ou workset de retoma, ainda sem prova de classificacao final no Supabase
+  - `Servidor` = apenas quando o payload do email traz sinais funcionais persistidos, como grupo principal, referencia, motivo de grupo, etiquetas ou status final nao-draft
+- **Guardas mantidas**:
+  - sem backend
+  - sem nova arquitetura de storage
+  - sem novas superficies de Grupos
+  - sem novos estados visiveis alem de `Rascunho`, `Local` e `Servidor`
+- **Proximo passo recomendado**:
+  - validar no Outlook real que abrir/preparar ja nao promove visualmente emails para `Servidor` apenas por existir workset salvo

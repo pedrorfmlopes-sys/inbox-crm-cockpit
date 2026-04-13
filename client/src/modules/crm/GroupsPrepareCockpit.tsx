@@ -65,6 +65,8 @@ type EmailKeyCandidate = Partial<RelatedEmailEntry | RelevantEmailPayload> & {
   receivedAtIso?: string;
 };
 
+type VisibleInformationState = "draft" | "local" | "server";
+
 function normalizeText(value: string | undefined): string {
   return String(value || "").trim().toLowerCase();
 }
@@ -240,6 +242,24 @@ function extractReferenceGroups(email: Partial<RelatedEmailEntry>): Array<{ id: 
     .filter((group) => normalizeText(group.relationKind) === "referencia")
     .map((group) => ({ id: String(group.id || "").trim(), name: String(group.name || group.id || "").trim() }))
     .filter((group) => group.id);
+}
+
+function hasServerPersistedEmailClassification(email: Partial<RelatedEmailEntry>): boolean {
+  if (extractPrincipalGroup(email)) return true;
+  if (extractReferenceGroups(email).length) return true;
+  if ((email.relatedReasons || []).some((reason) => reason.kind === "group")) return true;
+  if ((email.labels || []).some((label) => String(label || "").trim())) return true;
+
+  const status = normalizeText(email.status);
+  return Boolean(status && status !== "rascunho" && status !== "draft" && status !== "pendente" && status !== "pending");
+}
+
+function resolveVisibleInformationState(
+  email: Partial<RelatedEmailEntry>,
+  hasLocalCheckpoint: boolean
+): VisibleInformationState {
+  if (hasServerPersistedEmailClassification(email)) return "server";
+  return hasLocalCheckpoint ? "local" : "draft";
 }
 
 function buildRelevantEmailPayloadFromEmail(email: RelatedEmailEntry): RelevantEmailPayload {
@@ -510,6 +530,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     const saved = writeGroupsPrepareSession(emailKey, snapshot, { reason });
     if (saved) {
       lastPersistedSessionRef.current = { emailKey, signature };
+      hasStoredSessionRef.current = true;
     }
     return saved;
   }, []);
@@ -1358,15 +1379,18 @@ export const GroupsPrepareCockpit: React.FC = () => {
     { label: "Anexos", value: String(selectedAttachments.length), meta: selectedAttachments.filter((attachment) => attachment.hasContent).length ? `${selectedAttachments.filter((attachment) => attachment.hasContent).length} com conteudo local` : "Sem upload remoto nesta fase" },
     { label: "Filtros", value: String(activeFilterSummary.length), meta: activeFilterSummary.length ? activeFilterSummary.join(" / ") : "Sem filtros ativos" },
   ];
-  const hasPersistedWorkset = Boolean(lastPersistedWorksetRef.current.worksetKey || persistedWorksetRef.current);
-  const visibleInformationState: "draft" | "local" | "server" = hasPersistedWorkset
-    ? (runtime.mode === "supabase" || runtime.mode === "hybrid" ? "server" : "local")
-    : "draft";
-  const visibleInformationStateChip = visibleInformationState === "server"
+  const hasLocalPrepareCheckpoint = Boolean(
+    hasStoredSessionRef.current
+    || lastPersistedWorksetRef.current.worksetKey
+    || persistedWorksetRef.current
+  );
+  const getVisibleInformationStateChip = (state: VisibleInformationState) => state === "server"
     ? { label: "Servidor", style: S.serverBadge, dot: S.infoDotServer }
-    : visibleInformationState === "local"
+    : state === "local"
       ? { label: "Local", style: S.localBadge, dot: S.infoDotLocal }
       : { label: "Rascunho", style: S.draftBadge, dot: S.infoDotDraft };
+  const anchorInformationState = resolveVisibleInformationState(currentEmailEntry, hasLocalPrepareCheckpoint);
+  const anchorInformationStateChip = getVisibleInformationStateChip(anchorInformationState);
 
   if (!hasCurrentIdentity) {
     return (
@@ -1420,7 +1444,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
               {formatDate(currentEmailEntry.messageDateIso || currentEmailEntry.receivedAtIso)
                 ? <span style={S.mutedBadge}>{formatDate(currentEmailEntry.messageDateIso || currentEmailEntry.receivedAtIso)}</span>
                 : null}
-              <span style={visibleInformationStateChip.style}>{visibleInformationStateChip.label}</span>
+              <span style={anchorInformationStateChip.style}>{anchorInformationStateChip.label}</span>
             </div>
           </div>
         </div>
@@ -1544,6 +1568,11 @@ export const GroupsPrepareCockpit: React.FC = () => {
                 const tickets = emailKey === currentEmailKey ? contextTickets : (emailTicketMap[emailKey] || []);
                 const attachmentCount = Array.isArray(email.attachments) ? email.attachments.length : 0;
                 const emailStatusConfig = getStatusDisplayConfig(email.status);
+                const emailInformationState = resolveVisibleInformationState(
+                  email,
+                  selected && hasLocalPrepareCheckpoint
+                );
+                const emailInformationStateChip = getVisibleInformationStateChip(emailInformationState);
                 const pendingChange = workingGroupId ? buildGroupChangeRequest({
                   emailKey,
                   previousPrincipalGroupId: principalGroup?.id || null,
@@ -1555,7 +1584,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
                   <div key={emailKey} style={expanded ? S.emailCardExpanded : S.emailCard}>
                     <div style={S.emailCardHead}>
                       <label style={S.checkboxCell}>
-                        <span style={visibleInformationStateChip.dot} title={visibleInformationStateChip.label} />
+                        <span style={emailInformationStateChip.dot} title={emailInformationStateChip.label} />
                         <input type="checkbox" checked={selected} onChange={() => toggleEmailSelection(emailKey)} />
                       </label>
                       <button type="button" style={S.emailCardMain} onClick={() => toggleEmailExpanded(emailKey)}>
@@ -1592,8 +1621,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
                           <span style={{ ...S.statusBadge, ...emailStatusConfig.style }}>
                             Estado: {emailStatusConfig.label}
                           </span>
-                          <span style={selected ? visibleInformationStateChip.style : S.mutedBadge}>
-                            Local: {selected ? visibleInformationStateChip.label : "Fora da selecao"}
+                          <span style={selected ? emailInformationStateChip.style : S.mutedBadge}>
+                            Local: {selected ? emailInformationStateChip.label : "Fora da selecao"}
                           </span>
                         </div>
                         {pendingChange ? (
@@ -1690,7 +1719,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
             <span style={S.footerStat}>{selectedEmails.length} email(s)</span>
             <span style={S.footerStat}>{selectedAttachments.length} anexo(s)</span>
           </div>
-          <div style={S.footerCopy}>{visibleInformationStateChip.label}</div>
+          <div style={S.footerCopy}>{anchorInformationStateChip.label}</div>
         </div>
         <div style={S.inlineActions}>
           <button type="button" style={{ ...S.secondaryBtn, minWidth: 92 }} onClick={handleManualSessionSave}>
