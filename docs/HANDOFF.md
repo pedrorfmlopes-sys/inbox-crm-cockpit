@@ -639,3 +639,10 @@
   - sem mexer em `Explorar`, `Explorador de Grupos`, `Gestor do Grupo` ou `Tarefas`
 - **Proximo passo recomendado**:
   - testar em Outlook real que email novo com historico agrupado fica `Rascunho`/`Local`, sem aviso de mudanca, e que nao ha escrita remota ao abrir/preparar
+
+## Grupos v1: correcao estrutural de `Preparar` integrada em `main` (Abril 2026)
+- **Estado pos-merge**:
+  - PR #22 (`codex/groups-prepare-root-semantics-persistence-fix`) integrada em `main` por merge commit explicito
+  - checkpoint pre-merge publicado em `pre-merge-groups-root-semantics-persistence-fix-2026-04-14`
+- **Gate seguinte**:
+  - teste real em host Outlook para confirmar que o email atual nao herda historico, abrir/preparar nao grava no servidor, `Servidor` so aparece com sinal funcional final real e o aviso de mudanca de grupo so surge quando o email atual ja tem grupo principal real diferente
