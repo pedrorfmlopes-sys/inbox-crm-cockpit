@@ -587,3 +587,10 @@
   - sem novos estados visiveis alem de `Rascunho`, `Local` e `Servidor`
 - **Proximo passo recomendado**:
   - validar no Outlook real que abrir/preparar ja nao promove visualmente emails para `Servidor` apenas por existir workset salvo
+
+## Grupos v1: semantica visivel de storage integrada em `main` (Abril 2026)
+- **Estado pos-merge**:
+  - PR #19 (`codex/groups-prepare-storage-state-semantics`) integrada em `main` por merge commit explicito
+  - checkpoint pre-merge publicado em `pre-merge-groups-storage-state-semantics-2026-04-14`
+- **Gate seguinte**:
+  - teste real em host Outlook para confirmar que `Servidor` nao aparece cedo demais e que `Local` cobre apenas workset/checkpoint sem persistencia funcional final
