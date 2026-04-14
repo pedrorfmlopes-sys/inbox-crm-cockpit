@@ -623,3 +623,19 @@
   - nao foram abertas novas superficies, backend, storage architecture ou UX
 - **Proximo passo recomendado**:
   - se o PR empilhado passar review, integrar a frente e testar no Outlook real com email novo numa conversa com historico agrupado
+
+## Grupos v1: correcao de raiz do email atual e escrita prematura em `Preparar` (Abril 2026)
+- **Problemas corrigidos**:
+  - a semantica do email ancora ainda podia usar `relatedGroups` / `relatedReasons` vindos do historico relacionado
+  - a resolucao do email atual ainda tentava registar automaticamente o email no servidor quando nao encontrava payload completo
+  - `Preparar` ainda tinha caminho ativo para persistir worksets remotos em modos `supabase` / `hybrid`
+- **Regra operacional atualizada**:
+  - o email atual usa helpers diretos para grupo principal, referencia e estado `Servidor`, baseados apenas em sinais proprios (`groupId`, `groupName`, `membershipKind`, labels/status do proprio email)
+  - contexto relacionado continua auxiliar para lista/historico, mas nao define estado visual nem aviso de mudanca do ancora
+  - abrir/preparar nao chama `registerRelevantEmail` nem pelo cockpit provider nem pela vista, e nao faz flush remoto de workset; `Preparar` guarda apenas sessao/rascunho local e seed temporario para `Classificar`
+- **Guardas mantidas**:
+  - sem backend novo
+  - sem UX nova
+  - sem mexer em `Explorar`, `Explorador de Grupos`, `Gestor do Grupo` ou `Tarefas`
+- **Proximo passo recomendado**:
+  - testar em Outlook real que email novo com historico agrupado fica `Rascunho`/`Local`, sem aviso de mudanca, e que nao ha escrita remota ao abrir/preparar

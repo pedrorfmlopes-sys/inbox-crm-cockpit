@@ -922,42 +922,55 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     });
                 }
             }
-            let emailRegistryOk = false;
-            try {
-                const attachmentStorage = getGroupAttachmentStorageOptions(s);
-                await registerRelevantEmail({
-                    itemId: c.itemId || "",
-                    internetMessageId: c.internetMessageId || "",
-                    conversationId: c.conversationId || "",
-                    subject: c.subject || "",
-                    fromEmail: c.fromEmail || "",
-                    fromName: c.fromName || "",
-                    receivedAtIso: c.receivedDateTimeIso || "",
-                    messageDateIso: c.receivedDateTimeIso || "",
-                    bodyText: b,
-                    bodyHtml: bh,
-                    ...attachmentStorage,
-                    attachments: (atts || []).map((attachment) => ({
-                        key: String((attachment as any)?.key || "").trim() || undefined,
-                        name: attachment.name,
-                        contentType: attachment.contentType,
-                        size: attachment.size,
-                        id: attachment.id,
-                        isInline: attachment.isInline,
-                        contentId: attachment.contentId,
-                        content: String(attachment.content || "").trim(),
-                    })),
-                });
-                emailRegistryOk = true;
-            } catch (error) {
-                clientLog("warn", "[Cockpit] email registry failed", error);
+            const shouldRegisterEmailRemotely = tab !== "groups";
+            let emailRegistryOk = !shouldRegisterEmailRemotely;
+            if (shouldRegisterEmailRemotely) {
+                try {
+                    const attachmentStorage = getGroupAttachmentStorageOptions(s);
+                    await registerRelevantEmail({
+                        itemId: c.itemId || "",
+                        internetMessageId: c.internetMessageId || "",
+                        conversationId: c.conversationId || "",
+                        subject: c.subject || "",
+                        fromEmail: c.fromEmail || "",
+                        fromName: c.fromName || "",
+                        receivedAtIso: c.receivedDateTimeIso || "",
+                        messageDateIso: c.receivedDateTimeIso || "",
+                        bodyText: b,
+                        bodyHtml: bh,
+                        ...attachmentStorage,
+                        attachments: (atts || []).map((attachment) => ({
+                            key: String((attachment as any)?.key || "").trim() || undefined,
+                            name: attachment.name,
+                            contentType: attachment.contentType,
+                            size: attachment.size,
+                            id: attachment.id,
+                            isInline: attachment.isInline,
+                            contentId: attachment.contentId,
+                            content: String(attachment.content || "").trim(),
+                        })),
+                    });
+                    emailRegistryOk = true;
+                } catch (error) {
+                    clientLog("warn", "[Cockpit] email registry failed", error);
+                }
             }
             if (reqId !== ctxLoadSeqRef.current) return;
 
             const attachmentCount = Array.isArray(atts) ? atts.length : 0;
             const attachmentLoadFailed = emailLoadFailures.includes("attachments");
             const bodyLoadFailed = emailLoadFailures.includes("body-text") || emailLoadFailures.includes("body-html");
-            if (!emailRegistryOk) {
+            if (!shouldRegisterEmailRemotely) {
+                commitEmailIngestionStatus({
+                    identity: ingestionIdentity,
+                    tone: emailLoadFailures.length ? "orange" : "green",
+                    detail: emailLoadFailures.length
+                        ? "Preparar manteve o email em sessao/local com dados parciais."
+                        : "Preparar manteve o email em sessao/local, sem envio automatico ao servidor.",
+                    progress: 100,
+                    isRunning: false,
+                });
+            } else if (!emailRegistryOk) {
                 commitEmailIngestionStatus({
                     identity: ingestionIdentity,
                     tone: "red",
