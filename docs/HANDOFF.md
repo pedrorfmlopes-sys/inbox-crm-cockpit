@@ -609,3 +609,17 @@
   - sem nova UX ou novas superficies de Grupos
 - **Proximo passo recomendado**:
   - testar no Outlook real um email novo numa conversa com historico ja agrupado e confirmar que fica `Rascunho`/`Local`, sem aviso de mudanca, ate o proprio email ter grupo final
+
+## Grupos v1: estabilidade de `Preparar` antes de merge (Abril 2026)
+- **Problema corrigido**:
+  - o warning React `Maximum update depth exceeded` vinha da sincronizacao `workingGroupId -> activeGroupSelection`
+  - `setActiveGroupForCurrentEmail` era recriada a cada render no `CockpitProvider` e escrevia sempre um novo objeto, criando uma cascata provider/consumer/effect
+- **Correcao aplicada**:
+  - `setActiveGroupForCurrentEmail` ficou memoizada com `useCallback`
+  - a escrita em `activeGroupSelection` passou a ser no-op quando `emailKey` e `groupId` ja estao iguais
+- **Auditoria curta**:
+  - `Servidor` continua dependente apenas do payload proprio do email atual
+  - o aviso de mudanca de grupo continua limitado ao grupo principal real do email atual
+  - nao foram abertas novas superficies, backend, storage architecture ou UX
+- **Proximo passo recomendado**:
+  - se o PR empilhado passar review, integrar a frente e testar no Outlook real com email novo numa conversa com historico agrupado

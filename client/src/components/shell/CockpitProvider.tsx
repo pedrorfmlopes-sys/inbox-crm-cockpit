@@ -346,12 +346,16 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setStartupNoticeDismissed(false);
     }
 
-    function setActiveGroupForCurrentEmail(groupId: string | null) {
-        setActiveGroupSelection({
-            emailKey: buildContextEmailKey(ctx),
-            groupId: groupId ? String(groupId).trim() : null,
+    const setActiveGroupForCurrentEmail = useCallback((groupId: string | null) => {
+        const emailKey = buildContextEmailKey(ctx);
+        const nextGroupId = groupId ? String(groupId).trim() : null;
+        setActiveGroupSelection((current) => {
+            if (current.emailKey === emailKey && current.groupId === nextGroupId) {
+                return current;
+            }
+            return { emailKey, groupId: nextGroupId };
         });
-    }
+    }, [ctx]);
 
     function dedupeLinks(entries: LinkEntry[]): LinkEntry[] {
         const seen = new Set<string>();
