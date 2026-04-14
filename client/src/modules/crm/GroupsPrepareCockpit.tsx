@@ -3,7 +3,6 @@ import {
   createLinkGroup,
   getRelatedEmailContext,
   listLinkGroups,
-  registerRelevantEmail,
   searchGroupTickets,
   searchKnownEmails,
   type GroupTicketEntry,
@@ -36,7 +35,7 @@ import {
 } from "@/modules/crm/groups-v1/prepareSession";
 import { buildPrepareWorksetManifest } from "@/modules/crm/groups-v1/storage/buildPrepareWorksetManifest";
 import { loadPrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/loadWorkset";
-import { resolveGroupStorageRuntime, getGroupAttachmentStorageOptions } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
+import { resolveGroupStorageRuntime } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWorkset";
 import { getGroupWorksetManifestSignature } from "@/modules/crm/groups-v1/storage/worksetManifest";
 import { openGroupClassificationStudio } from "@/office";
@@ -269,10 +268,36 @@ function extractReferenceGroups(email: Partial<RelatedEmailEntry>): Array<{ id: 
     .filter((group) => group.id);
 }
 
+function isReferenceMembershipKind(value: string | undefined): boolean {
+  const kind = normalizeText(value);
+  return kind === "referencia" || kind === "reference";
+}
+
+function extractCurrentEmailPrincipalGroup(email: Partial<RelatedEmailEntry>): { id: string; name: string } | null {
+  if (isReferenceMembershipKind(String(email.membershipKind || ""))) return null;
+  const groupId = String(email.groupId || "").trim();
+  return groupId ? { id: groupId, name: String(email.groupName || groupId).trim() } : null;
+}
+
+function extractCurrentEmailReferenceGroups(email: Partial<RelatedEmailEntry>): Array<{ id: string; name: string }> {
+  if (!isReferenceMembershipKind(String(email.membershipKind || ""))) return [];
+  const groupId = String(email.groupId || "").trim();
+  return groupId ? [{ id: groupId, name: String(email.groupName || groupId).trim() }] : [];
+}
+
 function hasServerPersistedEmailClassification(email: Partial<RelatedEmailEntry>): boolean {
   if (extractPrincipalGroup(email)) return true;
   if (extractReferenceGroups(email).length) return true;
   if ((email.relatedReasons || []).some((reason) => reason.kind === "group")) return true;
+  if ((email.labels || []).some((label) => String(label || "").trim())) return true;
+
+  const status = normalizeText(email.status);
+  return Boolean(status && status !== "rascunho" && status !== "draft" && status !== "pendente" && status !== "pending");
+}
+
+function hasServerPersistedCurrentEmailClassification(email: Partial<RelatedEmailEntry>): boolean {
+  if (extractCurrentEmailPrincipalGroup(email)) return true;
+  if (extractCurrentEmailReferenceGroups(email).length) return true;
   if ((email.labels || []).some((label) => String(label || "").trim())) return true;
 
   const status = normalizeText(email.status);
@@ -284,6 +309,14 @@ function resolveVisibleInformationState(
   hasLocalCheckpoint: boolean
 ): VisibleInformationState {
   if (hasServerPersistedEmailClassification(email)) return "server";
+  return hasLocalCheckpoint ? "local" : "draft";
+}
+
+function resolveCurrentEmailVisibleInformationState(
+  email: Partial<RelatedEmailEntry>,
+  hasLocalCheckpoint: boolean
+): VisibleInformationState {
+  if (hasServerPersistedCurrentEmailClassification(email)) return "server";
   return hasLocalCheckpoint ? "local" : "draft";
 }
 
@@ -415,7 +448,10 @@ export const GroupsPrepareCockpit: React.FC = () => {
     () => resolveGroupStorageRuntime(settings),
     [settings]
   );
-  const canPersistWorkset = Boolean(settings) && (runtime.mode === "supabase" || runtime.mode === "hybrid");
+  const canPersistRemotePrepareWorkset = false;
+  const canPersistWorkset = Boolean(settings)
+    && canPersistRemotePrepareWorkset
+    && (runtime.mode === "supabase" || runtime.mode === "hybrid");
   const hasStoredSessionRef = useRef(false);
   const persistedWorksetRef = useRef<GroupWorksetManifest | null>(null);
   const preferredGroupAppliedForEmailRef = useRef("");
@@ -512,8 +548,11 @@ export const GroupsPrepareCockpit: React.FC = () => {
     bodyHtml: String(currentEmailPayload.bodyHtml || "").trim(),
     status: persistedCurrentEmail?.status,
     labels: persistedCurrentEmail?.labels || [],
-    relatedGroups: persistedCurrentEmail?.relatedGroups || [],
-    relatedReasons: persistedCurrentEmail?.relatedReasons || [],
+    membershipKind: persistedCurrentEmail?.membershipKind,
+    groupId: String(persistedCurrentEmail?.groupId || "").trim() || undefined,
+    groupName: String(persistedCurrentEmail?.groupName || "").trim() || undefined,
+    relatedGroups: [],
+    relatedReasons: [],
     attachments: (currentEmailPayload.attachments || []).map((attachment) => ({
       key: attachment.key,
       id: attachment.id,
@@ -627,22 +666,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
         return rows.find((email) => emailMatchesCurrentEmailIdentity(email, ctx, currentEmailKey)) || null;
       };
 
-      let response = await loadRelated();
-      let email = pickBestEmail(response);
-      const needsRegistration = !email || (
-        Array.isArray(currentEmailBootstrapPayload.attachments)
-        && currentEmailBootstrapPayload.attachments.length > 0
-        && !(Array.isArray(email?.attachments) && email.attachments.length > 0)
-      );
-
-      if (needsRegistration) {
-        await registerRelevantEmail({
-          ...currentEmailBootstrapPayload,
-          ...getGroupAttachmentStorageOptions(settings),
-        }).catch(() => null);
-        response = await loadRelated();
-        email = pickBestEmail(response);
-      }
+      const response = await loadRelated();
+      const email = pickBestEmail(response);
 
       if (!cancelled) {
         setPersistedCurrentEmail(email || null);
@@ -657,13 +682,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [
     ctx,
     currentEmailBootstrapLinkPayload,
-    currentEmailBootstrapPayload,
     currentEmailKey,
     hasCurrentIdentity,
-    settings,
-    settings?.groupStorage?.baseFolderPath,
-    settings?.groupStorage?.mode,
-    settings?.groupStorage?.provider,
   ]);
 
   useEffect(() => {
@@ -829,7 +849,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [currentEmailKey]);
 
   const currentPrincipalGroup = useMemo(
-    () => extractPrincipalGroup(currentEmailEntry),
+    () => extractCurrentEmailPrincipalGroup(currentEmailEntry),
     [currentEmailEntry]
   );
 
@@ -1422,7 +1442,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     : state === "local"
       ? { label: "Local", style: S.localBadge, dot: S.infoDotLocal }
       : { label: "Rascunho", style: S.draftBadge, dot: S.infoDotDraft };
-  const anchorInformationState = resolveVisibleInformationState(currentEmailEntry, hasLocalPrepareCheckpoint);
+  const anchorInformationState = resolveCurrentEmailVisibleInformationState(currentEmailEntry, hasLocalPrepareCheckpoint);
   const anchorInformationStateChip = getVisibleInformationStateChip(anchorInformationState);
 
   if (!hasCurrentIdentity) {
