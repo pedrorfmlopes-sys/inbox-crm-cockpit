@@ -594,3 +594,18 @@
   - checkpoint pre-merge publicado em `pre-merge-groups-storage-state-semantics-2026-04-14`
 - **Gate seguinte**:
   - teste real em host Outlook para confirmar que `Servidor` nao aparece cedo demais e que `Local` cobre apenas workset/checkpoint sem persistencia funcional final
+
+## Grupos v1: correcao semantica do email atual em `Preparar` (Abril 2026)
+- **Problema corrigido**:
+  - historico relacionado da conversa podia contaminar o email atual e fazer aparecer `Servidor` mesmo quando o email novo ainda nao tinha classificacao propria
+  - o aviso de mudanca de grupo podia aparecer por causa de grupos principais em emails relacionados, mesmo quando o email atual nao tinha grupo
+- **Regra operacional**:
+  - `Servidor` no email ancora depende apenas de sinais funcionais do proprio email atual, identificados por `itemId` ou `internetMessageId` quando existirem
+  - historico/conversa/sugestoes/worksets continuam disponiveis como contexto, mas nao contam como classificacao final do email atual
+  - o aviso de grupo principal diferente usa apenas o grupo principal real do email atual comparado com o grupo em trabalho
+- **Guardas mantidas**:
+  - sem backend
+  - sem mexer na arquitetura de storage
+  - sem nova UX ou novas superficies de Grupos
+- **Proximo passo recomendado**:
+  - testar no Outlook real um email novo numa conversa com historico ja agrupado e confirmar que fica `Rascunho`/`Local`, sem aviso de mudanca, ate o proprio email ter grupo final

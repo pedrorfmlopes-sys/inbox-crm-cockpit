@@ -192,6 +192,31 @@ function emailMatchesCurrentContext(
   );
 }
 
+function emailMatchesCurrentEmailIdentity(
+  email: Partial<RelatedEmailEntry>,
+  ctx: {
+    itemId?: string;
+    internetMessageId?: string;
+    conversationId?: string;
+    subject?: string;
+    fromEmail?: string;
+    receivedDateTimeIso?: string;
+  },
+  currentEmailKey: string
+): boolean {
+  const currentItemId = String(ctx.itemId || "").trim();
+  const emailItemId = String(email.itemId || "").trim();
+  if (currentItemId && emailItemId && currentItemId === emailItemId) return true;
+
+  const currentMessageId = normalizeMessageId(ctx.internetMessageId);
+  const emailMessageId = normalizeMessageId(email.internetMessageId);
+  if (currentMessageId && emailMessageId && currentMessageId === emailMessageId) return true;
+
+  if (currentItemId || currentMessageId) return false;
+
+  return makeEmailKey(email) === currentEmailKey && emailMatchesCurrentContext(email, ctx);
+}
+
 function isRejectedAttachmentState(value: string | undefined): boolean {
   return String(value || "").trim().toLowerCase() === "rejected";
 }
@@ -599,7 +624,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
           response?.email,
           ...((response?.emails || []).filter(Boolean) as RelatedEmailEntry[]),
         ].filter(Boolean) as RelatedEmailEntry[];
-        return rows.find((email) => makeEmailKey(email) === currentEmailKey || emailMatchesCurrentContext(email, ctx)) || rows[0] || null;
+        return rows.find((email) => emailMatchesCurrentEmailIdentity(email, ctx, currentEmailKey)) || null;
       };
 
       let response = await loadRelated();
@@ -1110,18 +1135,26 @@ export const GroupsPrepareCockpit: React.FC = () => {
       .slice(0, 6);
   }, [groups, workingGroupQuery]);
 
+  const currentEmailGroupChangeRequest = useMemo(
+    () => {
+      const previousPrincipalGroupId = String(currentPrincipalGroup?.id || "").trim();
+      const nextPrincipalGroupId = String(workingGroupId || "").trim();
+      if (!previousPrincipalGroupId || !nextPrincipalGroupId || previousPrincipalGroupId === nextPrincipalGroupId) {
+        return null;
+      }
+      return buildGroupChangeRequest({
+        emailKey: currentEmailKey,
+        previousPrincipalGroupId,
+        nextPrincipalGroupId,
+        keepPreviousGroupAsReference: false,
+      });
+    },
+    [currentEmailKey, currentPrincipalGroup, workingGroupId]
+  );
+
   const emailGroupChangeRequests = useMemo(
-    () => selectedEmails
-      .map((email) =>
-        buildGroupChangeRequest({
-          emailKey: makeEmailKey(email),
-          previousPrincipalGroupId: extractPrincipalGroup(email)?.id || null,
-          nextPrincipalGroupId: workingGroupId || null,
-          keepPreviousGroupAsReference: false,
-        })
-      )
-      .filter(Boolean),
-    [selectedEmails, workingGroupId]
+    () => currentEmailGroupChangeRequest ? [currentEmailGroupChangeRequest] : [],
+    [currentEmailGroupChangeRequest]
   );
 
   const worksetManifest = useMemo(
@@ -1573,12 +1606,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
                   selected && hasLocalPrepareCheckpoint
                 );
                 const emailInformationStateChip = getVisibleInformationStateChip(emailInformationState);
-                const pendingChange = workingGroupId ? buildGroupChangeRequest({
-                  emailKey,
-                  previousPrincipalGroupId: principalGroup?.id || null,
-                  nextPrincipalGroupId: workingGroupId || null,
-                  keepPreviousGroupAsReference: false,
-                }) : null;
+                const pendingChange = emailKey === currentEmailKey ? currentEmailGroupChangeRequest : null;
 
                 return (
                   <div key={emailKey} style={expanded ? S.emailCardExpanded : S.emailCard}>
