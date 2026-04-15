@@ -1545,7 +1545,7 @@ function buildEmailListEntry(email, extra = {}) {
   };
 }
 
-function buildCurrentEmailContextEntry(store, emailId) {
+function buildDirectEmailContextEntry(store, emailId) {
   const eid = normalizeString(emailId);
   const email = store?.emails?.[eid];
   if (!eid || !email) return null;
@@ -2549,6 +2549,25 @@ async function listDbEmailsByGroup(groupId) {
   ));
 }
 
+function dbGroupMemberRowMatchesDirectLookup(row, normalized, emailKey = "") {
+  if (!row || !normalized) return false;
+  const rowItemId = normalizeString(row.item_id);
+  const rowMessageId = normalizeMessageId(row.internet_message_id);
+  const rowEmailKey = normalizeString(row.email_key);
+  const lookupItemId = normalizeString(normalized.itemId);
+  const lookupMessageId = normalizeMessageId(normalized.internetMessageId);
+  const lookupEmailKey = normalizeString(emailKey);
+
+  if (lookupItemId && rowItemId && rowItemId === lookupItemId) return true;
+  if (lookupMessageId && rowMessageId && rowMessageId === lookupMessageId) return true;
+  if (lookupEmailKey && rowEmailKey && rowEmailKey === lookupEmailKey) return true;
+  if (lookupItemId || lookupMessageId || lookupEmailKey) return false;
+
+  const lookupFingerprint = makeEmailFingerprint(normalized);
+  if (!lookupFingerprint) return false;
+  return makeEmailFingerprint(mapDbGroupMemberRow(row)) === lookupFingerprint;
+}
+
 async function getDbCustomGroupContext(input) {
   if (!db.isEnabled()) return { groups: [], emails: [], tickets: [] };
 
@@ -2623,29 +2642,12 @@ async function getDbCustomGroupContext(input) {
     return { groups: [], emails: [], tickets };
   }
 
-  const currentEmailKeys = new Set(membershipRows.map((row) => normalizeString(row.email_key)).filter(Boolean));
-  const primaryEmailKey = emailKey || Array.from(
-    new Map(
-      membershipRows
-        .map((row) => {
-          const rowEmailKey = normalizeString(row.email_key);
-          if (!rowEmailKey) return null;
-          return [rowEmailKey, mapDbGroupMemberRow(row)];
-        })
-        .filter(Boolean)
-    )
-      .entries()
-  )
-    .sort((left, right) => {
-      const scoreDelta = getEmailLookupMatchScore(right[1], normalized) - getEmailLookupMatchScore(left[1], normalized);
-      if (scoreDelta) return scoreDelta;
-      const rightDate = normalizeString(right[1]?.messageDateIso || right[1]?.receivedAtIso || right[1]?.updatedAt || right[1]?.createdAt);
-      const leftDate = normalizeString(left[1]?.messageDateIso || left[1]?.receivedAtIso || left[1]?.updatedAt || left[1]?.createdAt);
-      if (rightDate !== leftDate) return rightDate.localeCompare(leftDate);
-      return String(right[0] || "").localeCompare(String(left[0] || ""));
-    })
-    .map(([rowEmailKey]) => rowEmailKey)[0] || "";
-  const primaryMembershipRows = membershipRows.filter((row) => normalizeString(row.email_key) === primaryEmailKey);
+  const directMembershipRows = membershipRows.filter((row) => dbGroupMemberRowMatchesDirectLookup(row, normalized, emailKey));
+  const directEmailKeys = new Set(directMembershipRows.map((row) => normalizeString(row.email_key)).filter(Boolean));
+  const primaryEmailKey = normalizeString(directMembershipRows[0]?.email_key) || emailKey;
+  const primaryMembershipRows = primaryEmailKey
+    ? directMembershipRows.filter((row) => normalizeString(row.email_key) === primaryEmailKey)
+    : [];
   const groups = Array.from(
     new Map(membershipRows.map((row) => [normalizeString(row.id), {
       ...mapDbGroupRow(row),
@@ -2692,7 +2694,7 @@ async function getDbCustomGroupContext(input) {
   const aggregated = new Map();
   for (const row of relatedRows?.rows || []) {
     const rowEmailKey = normalizeString(row.email_key);
-    if (!rowEmailKey || currentEmailKeys.has(rowEmailKey)) continue;
+    if (!rowEmailKey || directEmailKeys.has(rowEmailKey)) continue;
 
     const email = mapDbGroupMemberRow(row);
     const current = aggregated.get(rowEmailKey)
@@ -3026,6 +3028,33 @@ function getMatchedEmailIds(store, lookup) {
     );
   }
   return [];
+}
+
+function getDirectMatchedEmailIds(store, lookup) {
+  const normalized = normalizeEmailInput(lookup);
+  if (normalized.itemId && store.indexes.itemIds[normalized.itemId]) {
+    return [store.indexes.itemIds[normalized.itemId]];
+  }
+  if (normalized.internetMessageId && store.indexes.internetMessageIds[normalized.internetMessageId]) {
+    return [store.indexes.internetMessageIds[normalized.internetMessageId]];
+  }
+  const fingerprint = makeEmailFingerprint(normalized);
+  if (fingerprint && store.indexes.fingerprints[fingerprint]) {
+    return [store.indexes.fingerprints[fingerprint]];
+  }
+  return [];
+}
+
+function getConversationMatchedEmailIds(store, lookup) {
+  const normalized = normalizeEmailInput(lookup);
+  if (!normalized.conversationId) return [];
+  return sortEmailIdsByLookupScore(
+    store,
+    Array.isArray(store.indexes.conversations[normalized.conversationId])
+      ? store.indexes.conversations[normalized.conversationId]
+      : [],
+    normalized
+  );
 }
 
 function readState() {
@@ -4230,8 +4259,9 @@ export async function detectGroupTicketsForEmail(input) {
 
 export async function getRelatedEmails(input) {
   const store = readState();
-  const currentEmailIds = getMatchedEmailIds(store, input);
+  const currentEmailIds = getDirectMatchedEmailIds(store, input);
   const currentEmailSet = new Set(currentEmailIds);
+  const conversationEmailIds = getConversationMatchedEmailIds(store, input);
   const primaryEmailKey = currentEmailIds[0] && store.emails[currentEmailIds[0]]
     ? makePersistentEmailKey(store.emails[currentEmailIds[0]])
     : resolveEmailKeyFromInput(store, input);
@@ -4242,9 +4272,7 @@ export async function getRelatedEmails(input) {
     const email = store.emails[emailId];
     if (!email) return;
     const current = aggregated.get(emailId) || {
-      ...buildEmailListEntry(email),
-      relatedRecords: [],
-      relatedGroups: [],
+      ...(buildDirectEmailContextEntry(store, emailId) || buildEmailListEntry(email)),
       relatedReasons: [],
     };
 
@@ -4312,26 +4340,48 @@ export async function getRelatedEmails(input) {
     }
   }
 
+  for (const emailId of conversationEmailIds) {
+    if (currentEmailSet.has(emailId)) continue;
+    const email = store.emails[emailId];
+    if (!email) continue;
+    appendReason(emailId, {
+      kind: "conversation",
+      conversationId: normalizeString(email.conversationId || input?.conversationId),
+    });
+  }
+
+  const contextGroups = new Map(
+    currentEmailIds
+      .flatMap((emailId) => listEmailGroupMemberships(store, emailId).map((entry) => ({
+        groupId: entry.groupId,
+        relationKind: normalizeGroupMembershipKind(entry.kind),
+      })))
+      .map((entry) => {
+        const group = store.groups[entry.groupId];
+        if (!group) return null;
+        return [entry.groupId, {
+          ...group,
+          relationKind: entry.relationKind,
+        }];
+      })
+      .filter(Boolean)
+  );
+
+  for (const email of aggregated.values()) {
+    for (const relation of email.relatedGroups || []) {
+      const groupId = normalizeString(relation?.id);
+      const group = groupId ? store.groups[groupId] : null;
+      if (!group) continue;
+      contextGroups.set(groupId, {
+        ...group,
+        relationKind: normalizeGroupMembershipKind(relation.relationKind),
+      });
+    }
+  }
+
   const fileResult = {
-    email: currentEmailIds[0] ? buildCurrentEmailContextEntry(store, currentEmailIds[0]) : null,
-    groups: Array.from(
-      new Map(
-        currentEmailIds
-          .flatMap((emailId) => listEmailGroupMemberships(store, emailId).map((entry) => ({
-            groupId: entry.groupId,
-            relationKind: normalizeGroupMembershipKind(entry.kind),
-          })))
-          .map((entry) => {
-            const group = store.groups[entry.groupId];
-            if (!group) return null;
-            return [entry.groupId, {
-              ...group,
-              relationKind: entry.relationKind,
-            }];
-          })
-          .filter(Boolean)
-      ).values()
-    ).map((group) => ({
+    email: currentEmailIds[0] ? buildDirectEmailContextEntry(store, currentEmailIds[0]) : null,
+    groups: Array.from(contextGroups.values()).map((group) => ({
       ...group,
       memberCount: Array.isArray(store.groupMembers[group.id]) ? store.groupMembers[group.id].length : 0,
     })),

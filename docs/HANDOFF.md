@@ -646,3 +646,15 @@
   - checkpoint pre-merge publicado em `pre-merge-groups-root-semantics-persistence-fix-2026-04-14`
 - **Gate seguinte**:
   - teste real em host Outlook para confirmar que o email atual nao herda historico, abrir/preparar nao grava no servidor, `Servidor` so aparece com sinal funcional final real e o aviso de mudanca de grupo so surge quando o email atual ja tem grupo principal real diferente
+
+## Grupos v1: fecho estrutural `Preparar` + `Classificar` (Abril 2026)
+- **Correcoes aplicadas nesta ronda**:
+  - a lista de `Preparar` passou a usar helpers diretos de email para grupo principal, referencias e estado `Servidor`; `relatedGroups` / `relatedReasons` deixam de contar como classificacao real do card
+  - `Classificar` deixa de chamar `registerRelevantEmail` no carregamento inicial; abrir a vista passa a ser leitura/bootstrap e a persistencia fica no apply final
+  - o servidor passa a resolver `email` atual apenas por identidade direta forte (`itemId`, `internetMessageId`, `emailKey`/fingerprint), mantendo historico/conversa em `emails`/`groups`
+  - foram removidas chamadas a `persistRelatedEmailsToServer`, que era um no-op com nome enganador
+- **Regra operacional reforcada**:
+  - email atual, emails relacionados e historico de conversa sao camadas separadas
+  - `Preparar` prepara; `Classificar` fecha; carregar contexto nao e classificacao final
+- **Proximo passo recomendado**:
+  - testar no Outlook real os cenarios de email novo sem grupo, email novo com historico agrupado, abertura de `Classificar` sem escrita remota e classificacao final com persistencia controlada

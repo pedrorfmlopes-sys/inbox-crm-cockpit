@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentContentUrl, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { clientLog } from "@/logger";
@@ -52,7 +52,7 @@ import {
   scoreStudioAttachment, scoreStudioAttachmentCollection, normalizeClassificationMetaDraft,
   mergeClassificationMetaDrafts, scoreRelatedEmailEntry, mergeRelatedEmailEntries,
   dedupeEmails, buildRelevantEmailPayloadFromRelatedEmail, buildAttachmentStorageOptions,
-  persistRelatedEmailsToServer, normalizeSearchValue, normalizeReferenceCandidate,
+  normalizeSearchValue, normalizeReferenceCandidate,
   compactReferenceValue, matchReferenceSet, formatDate, buildSnippet,
   buildEmailPreviewText, buildQuickDocumentPreviewText, buildCompactEmailMeta, buildEmailCorpus, isExternalEmail,
   isCurrentContextEmail, detectCaseType, inferCompanyName, normalizeGroupContactDraft,
@@ -601,13 +601,6 @@ function StudioInner() {
       setLoading(true);
       setError("");
       try {
-        const latestSettings = await getSettings().catch(() => null);
-        if (bootstrapEmailPayload) {
-          await registerRelevantEmail({
-            ...bootstrapEmailPayload,
-            ...buildAttachmentStorageOptions(latestSettings),
-          }).catch(() => null);
-        }
         const payload = {
           conversationId: currentContext.conversationId,
           internetMessageId: currentContext.internetMessageId,
@@ -629,11 +622,31 @@ function StudioInner() {
           acc.push(group);
           return acc;
         }, []);
+        const bootstrapContextEmail = bootstrapEmailPayload
+          ? ({
+              emailKey: makeEmailKey(bootstrapEmailPayload as any),
+              itemId: bootstrapEmailPayload.itemId,
+              internetMessageId: bootstrapEmailPayload.internetMessageId,
+              conversationId: bootstrapEmailPayload.conversationId,
+              subject: bootstrapEmailPayload.subject,
+              fromEmail: bootstrapEmailPayload.fromEmail,
+              fromName: bootstrapEmailPayload.fromName,
+              receivedAtIso: bootstrapEmailPayload.receivedAtIso,
+              messageDateIso: bootstrapEmailPayload.messageDateIso || bootstrapEmailPayload.receivedAtIso,
+              bodyText: bootstrapEmailPayload.bodyText || "",
+              bodyHtml: bootstrapEmailPayload.bodyHtml || "",
+              attachments: bootstrapEmailPayload.attachments || [],
+              relatedGroups: [],
+              relatedReasons: [],
+              isFallback: true,
+            } as RelatedEmailEntry)
+          : null;
+        const hasCurrentEmailFromServer = Boolean(related.email && isCurrentContextEmail(related.email, currentContext));
         const contextualEmails = dedupeEmails([
           ...(related.email ? [related.email] : []),
           ...(related.emails || []),
+          ...(!hasCurrentEmailFromServer && bootstrapContextEmail ? [bootstrapContextEmail] : []),
         ]);
-        await persistRelatedEmailsToServer(contextualEmails, latestSettings);
         const mergedEmails = dedupeEmails([...contextualEmails, ...(emails || [])]);
         setAllGroups(mergedGroups);
         setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
@@ -654,9 +667,9 @@ function StudioInner() {
           return makeEmailKey(currentItem || mergedEmails[0] || {});
         });
         if (mergedEmails.length) {
-          setStatus("Janela base pronta. O email atual e os relacionados persistidos ja podem ser analisados aqui.");
+          setStatus("Janela base pronta. O email atual e os relacionados podem ser analisados aqui.");
         } else if (bootstrapEmailPayload) {
-          setStatus("O email atual foi enviado para o servidor, mas ainda nao existem relacionados persistidos para mostrar.");
+          setStatus("O email atual abriu em modo de leitura. Ainda nao existem relacionados persistidos para mostrar.");
         } else {
           setStatus("Ainda nao encontrÃ¡mos um email persistido para este caso.");
         }
@@ -667,7 +680,7 @@ function StudioInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [bootstrapEmailPayload, currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject]);
+  }, [bootstrapEmailPayload, currentContext, currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject]);
 
   useEffect(() => {
     if (loading || prepareSeedBootstrap.status !== "invalid" || !prepareSeedBootstrap.key) return;
@@ -809,20 +822,11 @@ function StudioInner() {
     return isCurrentContextEmail(selectedEmail || {}, currentContext);
   }, [currentContext, selectedEmail]);
 
-  function getEmailGroupRelations(email: RelatedEmailEntry | null) {
+  const getEmailGroupRelations = useCallback((email: RelatedEmailEntry | null) => {
     if (!email) return [];
-    const fallbackCurrentGroups = isCurrentContextEmail(email, currentContext)
-      ? currentCaseBusinessGroups.map((group) => ({
-          id: group.id,
-          name: group.name,
-          relationKind: group.relationKind,
-          kind: group.kind,
-        }))
-      : [];
     const list = [
       ...(email.relatedGroups || []),
       ...(email.groupId ? [{ id: email.groupId, name: email.groupName, relationKind: email.membershipKind }] : []),
-      ...fallbackCurrentGroups,
     ];
     return list.reduce<Array<{ id: string; name?: string; relationKind?: string }>>((acc, row) => {
       if (!row?.id || acc.some((entry) => entry.id === row.id)) return acc;
@@ -831,11 +835,11 @@ function StudioInner() {
       acc.push(row);
       return acc;
     }, []);
-  }
+  }, [groupMap]);
 
   const selectedEmailGroups = useMemo(() => {
     return getEmailGroupRelations(selectedEmail);
-  }, [selectedEmail, currentCaseBusinessGroups, currentContext, groupMap]);
+  }, [getEmailGroupRelations, selectedEmail]);
 
   const principalAnchorGroupId = useMemo(
     () => principalGroupId || selectedEmailGroups.find((group) => String(group.relationKind || "").toLowerCase() === "principal")?.id || "",
@@ -955,7 +959,7 @@ function StudioInner() {
         (group) => String(group.relationKind || "").toLowerCase() === "principal" && group.id === principalAnchorGroupId
       )
     );
-  }, [emailPool, principalAnchorGroupId, currentCaseBusinessGroups, currentContext, groupMap]);
+  }, [emailPool, getEmailGroupRelations, principalAnchorGroupId]);
   const selectedTargetCount = selectedTargetEmails.length;
   const principalScopeCount = principalScopeEmails.length;
   const currentScopeEmail = useMemo(
@@ -2251,8 +2255,6 @@ function StudioInner() {
       ...(related.email ? [related.email] : []),
       ...(related.emails || []),
     ]);
-    const latestSettings = await getSettings().catch(() => null);
-    await persistRelatedEmailsToServer(contextualEmails, latestSettings);
     setAllGroups((current) => mergeGroupEntryLists(current, related.groups || []));
     setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
     setRelatedTickets((current) => {
