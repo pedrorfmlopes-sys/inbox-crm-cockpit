@@ -2,7 +2,7 @@
 // Centralized prompt templates for the "MailMaestro-like" features.
 // Keep these versioned and isolated from Odoo/CRM code.
 
-export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, inputText, knowledge = [], filesContext = "", contextBundle = "", persona = {}, briefing = null, contactAliases = [], currentTime = null }) {
+export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", length = "m", email, inputText, knowledge = [], aiKnowledge = [], signature = null, replyDirection = null, filesContext = "", contextBundle = "", persona = {}, briefing = null, contactAliases = [], currentTime = null }) {
   const LOCALE_HUMAN = {
     "pt-PT": "Português (Portugal)",
     "es-ES": "Espanhol",
@@ -19,6 +19,19 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
 
   // Human label (only for fixed languages)
   const lang = LOCALE_HUMAN[effectiveLocale] || effectiveLocale;
+  const normalizedLength = ["xs", "s", "m", "l"].includes(String(length || "").trim().toLowerCase())
+    ? String(length || "").trim().toLowerCase()
+    : "m";
+  const lengthRules = {
+    xs: "- EXTENSAO: ultra-curto. Usa 1-2 frases ou no maximo 3 bullets. Sem detalhes secundarios.\n",
+    s: "- EXTENSAO: curto. Vai direto ao ponto, com poucos paragrafos e sem listas longas.\n",
+    m: "- EXTENSAO: media. Da contexto suficiente, mas corta redundancias.\n",
+    l: "- EXTENSAO: completa. Inclui contexto, detalhes relevantes, passos e ressalvas quando necessario.\n",
+  };
+  const normalizedKnowledge = Array.from(new Set([
+    ...(Array.isArray(aiKnowledge) ? aiKnowledge : []),
+    ...(Array.isArray(knowledge) ? knowledge : []),
+  ].map((entry) => String(entry || "").trim()).filter(Boolean)));
 
   // REGRAS DE IDIOMA (User feedback: Strict enforcement)
   const languageEnforcement =
@@ -63,12 +76,13 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", email, 
     pragmatismRules +
     `- PROIBIDO: "Aqui est\u00e1 a sua resposta", "Espero que este email...", "Certamente posso ajudar", "Como assistente de IA...", ou introdu\u00e7\u00f5es redundantes.\n` +
     `- NUNCA inventes factos. Se faltar informa\u00e7\u00e3o, faz perguntas curtas e diretas.\n` +
+    lengthRules[normalizedLength] +
     `- Devolve HTML simples: <p>, <br>, <ul>, <li>, <strong>, <em>, <a>.\n` +
-    `- ORDEM DE PRIORIDADE: 1\u00ba Instru\u00e7\u00f5es expl\u00edcitas; 2\u00ba Contexto do Email; 3\u00ba Estilo Aprendido.\n`;
+    `- ORDEM DE PRIORIDADE: 1\u00ba Instru\u00e7\u00f5es expl\u00edcitas desta chamada; 2\u00ba regras fixas do utilizador; 3\u00ba contexto do email/caso; 4\u00ba estilo aprendido.\n`;
 
   // Inject user knowledge if present
-  const knowledgeBlock = knowledge.length > 0
-    ? `\nREGRAS/CONHECIMENTO EXTRA DO UTILIZADOR:\n${knowledge.map(k => `- ${k}`).join('\n')}\n`
+  const knowledgeBlock = normalizedKnowledge.length > 0
+    ? `\nREGRAS FIXAS DO UTILIZADOR (PRIORIDADE ALTA; CUMPRIR SALVO CONFLITO COM SEGURANCA):\n${normalizedKnowledge.map(k => `- ${k}`).join('\n')}\n`
     : "";
 
   // Inject file content if present
@@ -112,7 +126,27 @@ PERFIL DE COMUNICAÇÃO:
       `- Quando o email atual for curto, ambíguo ou parcial, prioriza este contexto consolidado antes de responder.\n\n${contextBundle}\n`
     : "";
 
-  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock + briefingBlock + contactBlock + contextBundleBlock;
+  const replyDirectionBlock = action === "reply" && replyDirection && (replyDirection.addresseeName || replyDirection.addresseeContext)
+    ? `\nDIRECAO EXPLICITA DA RESPOSTA (INSTRUCAO DE ESCRITA, NAO DESTINATARIO DE OUTLOOK):\n` +
+      `- O interlocutor principal do texto e: ${replyDirection.addresseeName || "(nome nao indicado)"}.\n` +
+      (replyDirection.addresseeContext ? `- Contexto/papel dessa pessoa: ${replyDirection.addresseeContext}.\n` : "") +
+      `- Esta indicacao sobrepoe qualquer inferencia baseada no ultimo remetente visivel.\n` +
+      `- Remetentes, colegas ou reencaminhadores intermedios sao apenas contexto.\n` +
+      `- Nao escrevas como se o destinatario principal fosse o ultimo remetente se ele for apenas reencaminhador.\n` +
+      `- Nao menciones a cadeia de reencaminhamentos, salvo instrucao explicita do utilizador.\n`
+    : "";
+
+  const signatureBlock = action === "reply" && signature && (signature.html || signature.text || signature.imageUrl)
+    ? `\nASSINATURA OFICIAL DISPONIVEL:\n` +
+      `- A app vai anexar/aplicar a assinatura oficial no final do output de forma deterministica.\n` +
+      `- Nao inventes outra assinatura e nao dupliques nomes/cargos/contactos no corpo.\n` +
+      `- Termina o corpo imediatamente antes da assinatura.\n` +
+      (signature.text ? `- Texto da assinatura: ${String(signature.text).slice(0, 1000)}\n` : "") +
+      (signature.html ? `- HTML da assinatura disponivel (nao copiar para o corpo): ${String(signature.html).slice(0, 1000)}\n` : "") +
+      (signature.imageUrl ? `- Imagem de assinatura disponivel; largura max: ${signature.imageMaxWidth || 260}px.\n` : "")
+    : "";
+
+  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock + briefingBlock + contactBlock + contextBundleBlock + replyDirectionBlock + signatureBlock;
   const toneLine = `Tom: ${tone}.`;
 
   const emailBlock = email

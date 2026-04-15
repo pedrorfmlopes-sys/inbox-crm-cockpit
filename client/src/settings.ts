@@ -349,6 +349,14 @@ function writeLocalSettingsRequired(json: string): void {
 // Local-only keys for uploaded signature images (dataURL)
 // Stored outside roaming settings to avoid size limits.
 const KEY_SIGIMG_DATA_PREFIX = "icc.sigimg.data.v1:";
+const LEGACY_SIGNATURE_KEYS = {
+  mode: "icc.sig.mode",
+  text: "icc.sig.text",
+  html: "icc.sig.html",
+  image: "icc.sig.img",
+  imageWidth: "icc.sig.img.w",
+} as const;
+const SIGNATURE_LOCALES: AppLocale[] = ["pt-PT", "es-ES", "en-GB", "it-IT", "de-DE"];
 
 const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   version: 1,
@@ -700,8 +708,82 @@ export function findGroupLabelCatalogEntry(
   return normalizeGroupLabelCatalog(catalog || []).find((entry) => entry.label.toLowerCase() === normalized) || null;
 }
 
+function readLocalString(key: string): string {
+  try {
+    return String(globalThis.localStorage?.getItem(key) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function removeLegacySignatureSettings(): void {
+  try {
+    for (const key of Object.values(LEGACY_SIGNATURE_KEYS)) {
+      globalThis.localStorage?.removeItem(key);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function hasOfficialSignature(settings: CockpitSettingsV1): boolean {
+  for (const loc of SIGNATURE_LOCALES) {
+    if (String(settings.signatures?.[loc] || "").trim()) return true;
+    if (String(settings.signaturesHtml?.[loc] || "").trim()) return true;
+    if (String(settings.signatureImageUrl?.[loc] || "").trim()) return true;
+    if (getSignatureImageDataUrl(loc)) return true;
+  }
+  return false;
+}
+
+function applyLegacySignatureMigration(settings: CockpitSettingsV1, removeLegacy = false): CockpitSettingsV1 {
+  const legacyMode = readLocalString(LEGACY_SIGNATURE_KEYS.mode).toLowerCase();
+  const legacyText = readLocalString(LEGACY_SIGNATURE_KEYS.text);
+  const legacyHtml = readLocalString(LEGACY_SIGNATURE_KEYS.html);
+  const legacyImage = readLocalString(LEGACY_SIGNATURE_KEYS.image);
+  const legacyWidth = Number(readLocalString(LEGACY_SIGNATURE_KEYS.imageWidth));
+
+  if (!legacyMode && !legacyText && !legacyHtml && !legacyImage) return settings;
+
+  if (hasOfficialSignature(settings)) {
+    if (removeLegacy) removeLegacySignatureSettings();
+    return settings;
+  }
+
+  const targetLocale: AppLocale =
+    settings.replyLanguage && settings.replyLanguage !== "auto"
+      ? settings.replyLanguage
+      : settings.appLanguage || "pt-PT";
+  const next: CockpitSettingsV1 = {
+    ...settings,
+    signatures: { ...settings.signatures },
+    signaturesHtml: { ...(settings.signaturesHtml || {}) },
+    signatureImageUrl: { ...(settings.signatureImageUrl || {}) },
+    signatureImageMaxWidth: { ...(settings.signatureImageMaxWidth || {}) },
+  };
+
+  if ((legacyMode === "html" || (!legacyMode && legacyHtml)) && legacyHtml) {
+    next.signaturesHtml![targetLocale] = legacyHtml;
+  } else if ((legacyMode === "text" || (!legacyMode && legacyText)) && legacyText) {
+    next.signatures[targetLocale] = legacyText;
+  } else if ((legacyMode === "image" || (!legacyMode && legacyImage)) && legacyImage) {
+    if (legacyImage.startsWith("data:")) {
+      setSignatureImageDataUrl(targetLocale, legacyImage);
+      next.signatureImageUrl![targetLocale] = "";
+    } else {
+      next.signatureImageUrl![targetLocale] = legacyImage;
+    }
+    if (Number.isFinite(legacyWidth) && legacyWidth > 0) {
+      next.signatureImageMaxWidth![targetLocale] = Math.max(80, Math.min(800, legacyWidth));
+    }
+  }
+
+  if (removeLegacy) removeLegacySignatureSettings();
+  return next;
+}
+
 function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSettingsV1> | null): CockpitSettingsV1 {
-  if (!incoming) return compactSettingsForStorage(base);
+  if (!incoming) return compactSettingsForStorage(applyLegacySignatureMigration(base));
   const knownIncoming = pickKnownSettings(incoming);
   const incomingLayout = ((incoming as any).crm2OdooLayout || {});
   const incomingLayoutMode = normalizeCrm2OdooLayoutMode(incomingLayout.mode ?? base.crm2OdooLayout.mode);
@@ -884,7 +966,7 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
 
   // guard against wrong versions
   merged.version = 1;
-  return compactSettingsForStorage(merged);
+  return compactSettingsForStorage(applyLegacySignatureMigration(merged));
 }
 
 export function getCachedSettingsSnapshot(): CockpitSettingsV1 {
@@ -905,11 +987,28 @@ export async function getSettings(): Promise<CockpitSettingsV1> {
   if (rs) {
     const raw = rs.get(KEY_SETTINGS);
     const parsed = safeJsonParse<Partial<CockpitSettingsV1>>(raw);
-    return mergeSettings(getCachedSettingsSnapshot(), parsed);
+    const merged = mergeSettings(getCachedSettingsSnapshot(), parsed);
+    const migrated = compactSettingsForStorage(applyLegacySignatureMigration(merged, true));
+    if (serializeSettings(migrated) !== serializeSettings(merged)) {
+      const json = serializeSettings(migrated);
+      try {
+        rs.set(KEY_SETTINGS, json);
+        await saveRoamingSettings(rs);
+      } catch {
+        // Keep returning the migrated value; persistence can be retried on next settings save.
+      }
+      writeLocalSettingsCache(json);
+    }
+    return migrated;
   }
 
   // fallback (dev / non-office)
-  return getCachedSettingsSnapshot();
+  const merged = getCachedSettingsSnapshot();
+  const migrated = compactSettingsForStorage(applyLegacySignatureMigration(merged, true));
+  if (serializeSettings(migrated) !== serializeSettings(merged)) {
+    writeLocalSettingsRequired(serializeSettings(migrated));
+  }
+  return migrated;
 }
 
 export async function saveSettings(patch: Partial<CockpitSettingsV1>): Promise<CockpitSettingsV1> {

@@ -3,6 +3,20 @@ export type AiAction = "summarize" | "reply" | "rewrite" | "forward" | "tasks" |
 export type AiMode = "fast" | "quality";
 export type AiTone = "neutro" | "formal" | "curto" | "direto" | "simpático";
 export type AiLocale = "pt-PT" | "es-ES" | "en-GB" | "it-IT" | "de-DE" | "auto";
+export type AiLength = "xs" | "s" | "m" | "l";
+
+export type AiSignaturePayload = {
+  text?: string;
+  html?: string;
+  imageUrl?: string;
+  imageMaxWidth?: number;
+};
+
+export type AiReplyDirection = {
+  addresseeName?: string;
+  addresseeContext?: string;
+  ignoreIntermediateForwarders?: boolean;
+};
 
 export type AiEmailContext = {
   subject: string;
@@ -22,10 +36,14 @@ export type AiGenerateRequest = {
   mode: AiMode;
   locale: AiLocale;
   tone: AiTone;
+  length?: AiLength;
   email?: AiEmailContext;
   inputText?: string;
   draftText?: string;  // explicit current draft for refine
   knowledge?: string[];
+  aiKnowledge?: string[];
+  signature?: AiSignaturePayload | null;
+  replyDirection?: AiReplyDirection | null;
   files?: any[]; // optional: raw files
   history?: Array<{ role: "user" | "assistant"; content: string }>; // NEW: Chat history
   filesContext?: string; // optional: pre-extracted text context

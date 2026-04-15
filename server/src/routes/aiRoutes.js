@@ -93,6 +93,69 @@ function trimEmailBodyFull(raw) {
   return s.trim();
 }
 
+const VALID_LENGTHS = new Set(["xs", "s", "m", "l"]);
+
+function normalizeLength(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return VALID_LENGTHS.has(normalized) ? normalized : "m";
+}
+
+function normalizeStringList(value, maxEntries = 40, maxChars = 2000) {
+  const source = Array.isArray(value) ? value : [];
+  const out = [];
+  const seen = new Set();
+  for (const entry of source) {
+    const clean = String(entry || "").trim().slice(0, maxChars);
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(clean);
+    if (out.length >= maxEntries) break;
+  }
+  return out;
+}
+
+function normalizeReplyDirection(value) {
+  if (!value || typeof value !== "object") return null;
+  const addresseeName = String(value.addresseeName || "").trim().slice(0, 160);
+  const addresseeContext = String(value.addresseeContext || "").trim().slice(0, 500);
+  const ignoreIntermediateForwarders = value.ignoreIntermediateForwarders !== false;
+  if (!addresseeName && !addresseeContext) return null;
+  return {
+    addresseeName,
+    addresseeContext,
+    ignoreIntermediateForwarders,
+  };
+}
+
+function normalizeSignature(value) {
+  if (!value || typeof value !== "object") return null;
+  const text = String(value.text || "").trim().slice(0, 4000);
+  const html = String(value.html || "").trim().slice(0, 6000);
+  const imageUrl = String(value.imageUrl || "").trim().slice(0, 12000);
+  const imageMaxWidth = Math.max(80, Math.min(800, Number(value.imageMaxWidth || 260) || 260));
+  if (!text && !html && !imageUrl) return null;
+  return {
+    text,
+    html,
+    imageUrl,
+    imageMaxWidth,
+  };
+}
+
+function maxOutputTokensFor(action, length) {
+  const normalizedLength = normalizeLength(length);
+  const table = {
+    xs: { reply: 350, summarize: 450, rewrite: 350, tasks: 450, default: 350 },
+    s: { reply: 550, summarize: 650, rewrite: 550, tasks: 650, default: 550 },
+    m: { reply: 850, summarize: 900, rewrite: 850, tasks: 900, default: 800 },
+    l: { reply: 1300, summarize: 1300, rewrite: 1300, tasks: 1200, default: 1100 },
+  };
+  const byLength = table[normalizedLength] || table.m;
+  return byLength[action] || byLength.default;
+}
+
 export function createAiRouter() {
   const router = express.Router();
   initBriefingDb(); // Ensure DB table exists
@@ -140,10 +203,14 @@ export function createAiRouter() {
         mode = "fast",
         locale = "pt-PT",
         tone = "neutro",
+        length = "m",
         email,
         inputText,
         draftText = "",    // NEW: explicit draft for refine
         knowledge = [],
+        aiKnowledge = [],
+        signature = null,
+        replyDirection = null,
         history = [], // NEW: Support for chat refinement
         filesContext: clientFilesContext = "",
         contextBundle = "",
@@ -153,6 +220,14 @@ export function createAiRouter() {
         briefing = null,   // NEW: Contextual briefing
         contactAliases = [], // NEW: Contact Aliases
       } = req.body || {};
+
+      const effectiveLength = normalizeLength(length);
+      const normalizedKnowledge = normalizeStringList([
+        ...normalizeStringList(aiKnowledge),
+        ...normalizeStringList(knowledge),
+      ]);
+      const normalizedReplyDirection = normalizeReplyDirection(replyDirection);
+      const normalizedSignature = normalizeSignature(signature);
 
       const safeEmail = email
         ? {
@@ -206,7 +281,11 @@ export function createAiRouter() {
         tone,
         email: safeEmail,
         inputText: String(inputText || ""),
-        knowledge: Array.isArray(knowledge) ? knowledge.map(String) : [],
+        length: effectiveLength,
+        knowledge: normalizedKnowledge,
+        aiKnowledge: normalizedKnowledge,
+        signature: normalizedSignature,
+        replyDirection: normalizedReplyDirection,
         filesContext: clientFilesContext,
         contextBundle: String(contextBundle || ""),
         persona: {
@@ -248,7 +327,7 @@ ${currentDraft}`
         input: providerInput,
         files: action === "refine" ? [] : files,
         history: action === "refine" ? [] : history,
-        max_output_tokens: action === "summarize" || action === "tasks" || action === "summarize_actions" ? 800 : 700,
+        max_output_tokens: maxOutputTokensFor(action, effectiveLength),
         temperature: action === "refine" ? 0 : 0.1,
         customModels,
       });
@@ -267,7 +346,7 @@ ${currentDraft}`
           input: providerInput,
           files: action === "refine" ? [] : files,
           history: action === "refine" ? [] : history,
-          max_output_tokens: action === "summarize" || action === "tasks" || action === "summarize_actions" ? 800 : 700,
+          max_output_tokens: maxOutputTokensFor(action, effectiveLength),
           temperature: action === "refine" ? 0 : 0.1,
           customModels,
         });

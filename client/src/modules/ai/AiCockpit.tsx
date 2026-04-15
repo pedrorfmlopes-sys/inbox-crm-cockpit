@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useCockpit } from "@/components/shell/CockpitProvider";
-import { aiGenerate, type AiAction, type AiTone, type AiLocale } from "@/ai/aiClient";
+import { aiGenerate, type AiAction, type AiTone, type AiLocale, type AiReplyDirection, type AiSignaturePayload } from "@/ai/aiClient";
 import { insertTextToBody, isComposeMode, displayReplyForm, displayForwardForm, displayNewMessageForm, displayNewMeetingForm, setRecipients, setSubjectInComposeDraft, openAiSettings, addBase64AttachmentToCompose, openAiReplyTargetPicker, syncLinkCategoriesToComposeDraft, type AiReplyTargetSelection } from "@/office";
-import { getSettings } from "@/settings";
+import { getSettings, getSignatureImageDataUrl, type AppLocale, type CockpitSettingsV1 } from "@/settings";
 import { getEmailAttachmentContentBase64, getRelatedEmailContext, logLearningInteraction, registerRelevantEmail, type RelevantEmailPayload, type RelatedEmailEntry } from "@/api";
 import { getGroupAttachmentStorageOptions } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { buildOutlookCategorySourceFromRelatedContext, mergeOutlookCategorySources, ODOO_LINKED_CATEGORY, type OutlookCategorySource } from "@/outlookCategories";
@@ -27,6 +27,7 @@ type HistoryEntry = {
     draftSubject: string;
     customToneId?: string;
     replyTarget?: AiReplyTargetSelection | null;
+    replyDirection?: AiReplyDirection | null;
 };
 
 type QuickPanelId = "lang" | "mode" | "presets" | "intents" | "contacts" | "files" | null;
@@ -151,6 +152,62 @@ function formatEmailHtml(raw: string): string {
     flushList();
 
     return `<div style="font-family:Aptos,Segoe UI,Arial,sans-serif;font-size:11pt;line-height:1.55;color:#1f2937;">${blocks.join("")}</div>`;
+}
+
+const AI_SIGNATURE_LOCALES: AppLocale[] = ["pt-PT", "es-ES", "en-GB", "it-IT", "de-DE"];
+
+function resolveSignatureLocale(settings: CockpitSettingsV1, locale: AiLocale): AppLocale {
+    if (locale !== "auto" && AI_SIGNATURE_LOCALES.includes(locale as AppLocale)) return locale as AppLocale;
+    const replyLanguage = settings.replyLanguage;
+    if (replyLanguage && replyLanguage !== "auto" && AI_SIGNATURE_LOCALES.includes(replyLanguage)) return replyLanguage;
+    if (AI_SIGNATURE_LOCALES.includes(settings.appLanguage)) return settings.appLanguage;
+    return "pt-PT";
+}
+
+function buildAiSignaturePayload(settings: CockpitSettingsV1, locale: AiLocale): AiSignaturePayload | null {
+    const signatureLocale = resolveSignatureLocale(settings, locale);
+    const html = String(settings.signaturesHtml?.[signatureLocale] || "").trim();
+    const text = String(settings.signatures?.[signatureLocale] || "").trim();
+    const storedImage = getSignatureImageDataUrl(signatureLocale);
+    const imageUrl = String(storedImage || settings.signatureImageUrl?.[signatureLocale] || "").trim();
+    const imageMaxWidth = Math.max(80, Math.min(800, Number(settings.signatureImageMaxWidth?.[signatureLocale] || 260) || 260));
+
+    if (!html && !text && !imageUrl) return null;
+    return {
+        html: html || undefined,
+        text: text || undefined,
+        imageUrl: imageUrl || undefined,
+        imageMaxWidth,
+    };
+}
+
+function signaturePayloadToHtml(signature: AiSignaturePayload | null | undefined): string {
+    if (!signature) return "";
+    const parts: string[] = [];
+    const html = String(signature.html || "").trim();
+    const text = String(signature.text || "").trim();
+    const imageUrl = String(signature.imageUrl || "").trim();
+    const imageMaxWidth = Math.max(80, Math.min(800, Number(signature.imageMaxWidth || 260) || 260));
+
+    if (html) {
+        parts.push(html);
+    } else if (text) {
+        parts.push(`<div>${escapeHtml(text).replace(/\n/g, "<br/>")}</div>`);
+    }
+
+    if (imageUrl) {
+        parts.push(`<div><img src="${escapeHtml(imageUrl)}" alt="" style="max-width:${imageMaxWidth}px;height:auto;border:0;" /></div>`);
+    }
+
+    if (!parts.length) return "";
+    return `<div data-iccc-signature="official" style="margin-top:16px;">${parts.join("")}</div>`;
+}
+
+function appendOfficialSignature(html: string, signature: AiSignaturePayload | null | undefined): string {
+    const signatureHtml = signaturePayloadToHtml(signature);
+    const source = String(html || "").trim();
+    if (!source || !signatureHtml || source.includes('data-iccc-signature="official"')) return source;
+    return `${source}${signatureHtml}`;
 }
 
 function normalizeForwardSubject(subject: string): string {
@@ -367,6 +424,8 @@ export const AiCockpit: React.FC = () => {
     const [activePanel, setActivePanel] = useState<QuickPanelId>(null);
     const [selectedCustomToneId, setSelectedCustomToneId] = useState<string>("");
     const [replyTargetEmail, setReplyTargetEmail] = useState<AiReplyTargetSelection | null>(null);
+    const [replyAddresseeName, setReplyAddresseeName] = useState("");
+    const [replyAddresseeContext, setReplyAddresseeContext] = useState("");
     const [fileUsage, setFileUsage] = useState<Record<string, FileUsageState>>({});
     const [persistedCurrentEmail, setPersistedCurrentEmail] = useState<RelatedEmailEntry | null>(null);
 
@@ -418,6 +477,8 @@ export const AiCockpit: React.FC = () => {
         setHistoryExpanded(false);
         setSelectedCustomToneId("");
         setReplyTargetEmail(null);
+        setReplyAddresseeName("");
+        setReplyAddresseeContext("");
         setDraftTicketCode("");
         setFileUsage({});
     }, [emailKey]);
@@ -745,18 +806,19 @@ export const AiCockpit: React.FC = () => {
     const currentCustomTone = (settings?.aiCustomTones || []).find((entry: any) => entry.id === selectedCustomToneId) || null;
     const selectedAnalyzeFiles = (files || [])
         .filter((entry: any) => fileUsage[String(entry?.name || "").trim()]?.analyze)
-        .map((entry) => ({
+        .map((entry: any) => ({
             name: entry.name,
             type: entry.type || entry.contentType,
             content: entry.content || "",
         }))
-        .filter((entry) => entry.name && entry.content);
+        .filter((entry: { name?: string; content?: string }) => entry.name && entry.content);
     const selectedForwardFiles = (persistedEmailAttachments || [])
         .filter((entry) => fileUsage[String(entry?.name || "").trim()]?.forward)
         .map((entry) => ({
             name: entry.name,
             type: entry.contentType,
             content: entry.content || "",
+            hasContent: entry.hasContent,
         }))
         .filter((entry) => entry.name && (entry.content || entry.hasContent));
     const availableAttachmentCount = (persistedEmailAttachments || [])
@@ -775,6 +837,8 @@ export const AiCockpit: React.FC = () => {
         setDraftSubject(String(entry.draftSubject || ""));
         setSelectedCustomToneId(String(entry.customToneId || ""));
         setReplyTargetEmail(entry.replyTarget || null);
+        setReplyAddresseeName(String(entry.replyDirection?.addresseeName || ""));
+        setReplyAddresseeContext(String(entry.replyDirection?.addresseeContext || ""));
         setShowDraftPreview(true);
         setAiState({
             prompt: entry.prompt || "",
@@ -1404,19 +1468,44 @@ export const AiCockpit: React.FC = () => {
         setDebugLog("");
 
         try {
-            const settings = await getSettings();
             const bundle = await ensureContextBundle(true);
             const analyzeFiles = await resolveSelectedAnalyzeFiles();
             const effectiveBodyTextForGeneration = effectiveBodyText || htmlToPlainText(effectiveBodyHtml || "");
-            const knowledge = [...(settings.aiKnowledge || [])];
-            if (currentCustomTone?.instructions) {
-                knowledge.push(`[TOM PERSONALIZADO ATIVO] ${String(currentCustomTone.instructions).trim()}`);
+            const freshSettings = await getSettings();
+            const generationSelectedLocale = ((aiState.locale || freshSettings.replyLanguage || "auto") as AiLocale);
+            const generationEffectiveLocale = (generationSelectedLocale !== "auto"
+                ? generationSelectedLocale
+                : ((freshSettings.readingLanguage && freshSettings.readingLanguage !== "auto"
+                    ? freshSettings.readingLanguage
+                    : (freshSettings.appLanguage || "pt-PT")) as AiLocale));
+            const generationTone = aiState.tone || freshSettings.tone || "neutro";
+            const freshCustomTone = (freshSettings.aiCustomTones || []).find((entry: any) => entry.id === selectedCustomToneId) || null;
+            const knowledge = [...(freshSettings.aiKnowledge || [])];
+            if (freshCustomTone?.instructions) {
+                knowledge.push(`[TOM PERSONALIZADO ATIVO] ${String(freshCustomTone.instructions).trim()}`);
             }
+            const replyDirection: AiReplyDirection | null =
+                resolvedAction === "reply" && (replyAddresseeName.trim() || replyAddresseeContext.trim())
+                    ? {
+                        addresseeName: replyAddresseeName.trim() || undefined,
+                        addresseeContext: replyAddresseeContext.trim() || undefined,
+                        ignoreIntermediateForwarders: true,
+                    }
+                    : null;
+            const signature = resolvedAction === "reply" ? buildAiSignaturePayload(freshSettings, generationEffectiveLocale) : null;
+            const customModels = {
+                openaiModelFast: freshSettings.openaiModelFast,
+                openaiModelQuality: freshSettings.openaiModelQuality,
+                geminiModel: freshSettings.geminiModel,
+                openaiApiKey: freshSettings.openaiApiKey,
+                geminiApiKey: freshSettings.geminiApiKey,
+            };
             const res = await aiGenerate({
                 action: resolvedAction,
                 mode: "quality",
-                tone: baseTone,
-                locale: effectiveLocale,
+                tone: generationTone,
+                locale: generationEffectiveLocale,
+                length: freshSettings.length || "m",
                 inputText: finalPrompt,
                 files: analyzeFiles,
                 briefing: briefing, // Pass the thread summary for isolation
@@ -1427,22 +1516,28 @@ export const AiCockpit: React.FC = () => {
                     to: (ctx.toRecipients || []).map((r: any) => r.email),
                     cc: (ctx.ccRecipients || []).map((r: any) => r.email),
                     bodyText: effectiveBodyTextForGeneration,
-                    bodyScope: settings.bodyScope || "main"
+                    bodyScope: freshSettings.bodyScope || "main"
                 },
                 persona: {
-                    userRole: settings.userRole,
-                    styleContext: settings.styleContext,
-                    styleExamples: settings.styleExamples,
+                    userRole: freshSettings.userRole,
+                    styleContext: freshSettings.styleContext,
+                    styleExamples: freshSettings.styleExamples,
                 },
                 history: isRefining ? aiState.history : [],
                 knowledge,
-                contactAliases: settings.contactAliases || [],
+                aiKnowledge: freshSettings.aiKnowledge || [],
+                signature,
+                replyDirection,
+                contactAliases: freshSettings.contactAliases || [],
+                customModels,
                 // For refine: send the current editor content as explicit draft
                 draftText: action === "refine" ? (output || aiState.output || "") : undefined,
             }); //inputText is already extraPrompt || prompt
 
             if (res.ok) {
-                const formattedText = formatEmailHtml(res.text);
+                const formattedText = resolvedAction === "reply"
+                    ? appendOfficialSignature(formatEmailHtml(res.text), signature)
+                    : formatEmailHtml(res.text);
                 setAiState({
                     action: resolvedAction,
                     output: formattedText,
@@ -1482,13 +1577,14 @@ export const AiCockpit: React.FC = () => {
                     output: fullText,
                     prompt: finalPrompt,
                     action: resolvedAction,
-                    tone: baseTone,
-                    locale: selectedLocale,
+                    tone: generationTone,
+                    locale: generationSelectedLocale,
                     draftTo,
                     draftCc,
-                    draftSubject: buildTicketEmailSubject(draftSubject, draftTicketCode, settings?.groupTicketUi?.includeTicketCodeInSubject !== false),
+                    draftSubject: buildTicketEmailSubject(draftSubject, draftTicketCode, freshSettings?.groupTicketUi?.includeTicketCodeInSubject !== false),
                     customToneId: selectedCustomToneId || undefined,
                     replyTarget: replyTargetEmail,
+                    replyDirection,
                 };
                 const fullHist = [entry, ...loadHistory()];
                 saveHistory(fullHist);
@@ -1714,6 +1810,8 @@ export const AiCockpit: React.FC = () => {
         setActivePanel(null);
         setHistoryExpanded(false);
         setReplyTargetEmail(null);
+        setReplyAddresseeName("");
+        setReplyAddresseeContext("");
         clearFiles();
     };
 
@@ -2217,6 +2315,44 @@ export const AiCockpit: React.FC = () => {
             cursor: "pointer",
             padding: "0 2px",
             alignSelf: "flex-start",
+        },
+        replyDirectionBox: {
+            border: "1px solid rgba(37, 99, 235, 0.12)",
+            background: "rgba(248,250,252,0.88)",
+            borderRadius: "8px",
+            padding: "6px",
+            display: "grid",
+            gap: "5px",
+            marginBottom: "6px",
+        },
+        replyDirectionTitle: {
+            fontSize: "9px",
+            fontWeight: 800,
+            color: "#1d4ed8",
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+        },
+        replyDirectionInputs: {
+            display: "grid",
+            gridTemplateColumns: isNarrow ? "1fr" : "minmax(0, 0.7fr) minmax(0, 1fr)",
+            gap: "5px",
+        },
+        replyDirectionInput: {
+            width: "100%",
+            minWidth: 0,
+            boxSizing: "border-box",
+            border: "1px solid rgba(148, 163, 184, 0.35)",
+            borderRadius: "8px",
+            background: "#ffffff",
+            color: "#172B4D",
+            padding: "6px 7px",
+            fontSize: "11px",
+            outline: "none",
+        },
+        replyDirectionHint: {
+            fontSize: "9px",
+            color: "#64748b",
+            lineHeight: 1.25,
         },
         quickPanel: {
             background: "var(--iccc-card-bg)",
@@ -2952,6 +3088,28 @@ export const AiCockpit: React.FC = () => {
                                 </div>
                             </div>
                         )}
+                    </div>
+                ) : null}
+                {selectedAction === "reply" ? (
+                    <div style={S.replyDirectionBox}>
+                        <div style={S.replyDirectionTitle}>Dirigir resposta a</div>
+                        <div style={S.replyDirectionInputs}>
+                            <input
+                                style={S.replyDirectionInput}
+                                value={replyAddresseeName}
+                                onChange={(e) => setReplyAddresseeName(e.target.value)}
+                                placeholder="Nome, ex.: Sr. X"
+                                title="Pessoa a quem o texto deve ser dirigido. Nao altera o To."
+                            />
+                            <input
+                                style={S.replyDirectionInput}
+                                value={replyAddresseeContext}
+                                onChange={(e) => setReplyAddresseeContext(e.target.value)}
+                                placeholder="Contexto/papel, ex.: cliente final"
+                                title="Contexto dessa pessoa para orientar a redacao."
+                            />
+                        </div>
+                        <div style={S.replyDirectionHint}>So orienta a redacao. Nao preenche To/Cc nem procura emails.</div>
                     </div>
                 ) : null}
                 {persistedEmailAttachments.length > 0 && (

@@ -665,3 +665,33 @@
   - checkpoint pre-merge publicado em `pre-merge-groups-prepare-classify-structural-fix-2026-04-15`
 - **Gate seguinte**:
   - teste real em host Outlook para confirmar que historico nao contamina o email atual, `Preparar`/`Classificar` nao gravam cedo demais e a lista mostra apenas grupo real do email
+
+## IA: settings efetivas e direcao explicita de resposta (Abril 2026)
+- **Objetivo desta ronda**:
+  - fechar o circuito tecnico entre settings do utilizador e geracao IA
+  - separar a pessoa a quem o texto e dirigido dos destinatarios reais do Outlook
+- **Implementacao feita**:
+  - o contrato `aiGenerate` passou a suportar `length`, `aiKnowledge`, `signature` e `replyDirection`
+  - `AiCockpit` e a superficie legada `AiPanel` releem `getSettings()` no momento de gerar, evitando depender de settings carregadas no arranque do painel
+  - `length` entra no prompt e tambem regula `max_output_tokens` no servidor
+  - `aiKnowledge` entra no prompt como regras fixas do utilizador com prioridade alta
+  - `replyDirection.addresseeName/addresseeContext` entra no prompt de `reply` como instrucao de escrita, sem mexer em To/Cc/Bcc
+  - respostas podem ser dirigidas explicitamente a uma pessoa indicada mesmo em cadeias de reencaminhamento
+  - assinatura oficial vem de `cockpitSettingsV1` e e aplicada no output de reply pelo client; `icc.sig.*` deixa de ser fonte ativa e passa por migracao best-effort para settings oficiais
+- **Decisao de superficie IA**:
+  - `client/src/modules/ai/AiCockpit.tsx` e a superficie principal do modulo IA no shell atual
+  - `client/src/ai/AiPanel.tsx` fica classificado como superficie legada/secundaria; deve manter compatibilidade basica, mas as novas capacidades completas desta ronda nao devem ser vendidas como garantidas por esse painel
+  - novas correcoes funcionais do modulo IA devem partir do `AiCockpit` salvo pedido explicito para reativar/consolidar `AiPanel`
+- **Guardas mantidas**:
+  - sem auto-preenchimento de `To:` a partir de "Dirigir resposta a"
+  - sem procura automatica de email da pessoa indicada
+  - sem alteracoes em Odoo, manifest ou modulo de Grupos
+  - fluxos de copy/insert/new message mantidos sobre o mesmo output final
+- **Validacao feita nesta ronda**:
+  - build client bem-sucedido (`npm -w client run build`, executado via `npm.cmd` por bloqueio de PowerShell aos shims `.ps1`)
+  - build server bem-sucedido (`npm -w server run build`, executado via `npm.cmd`)
+  - typecheck client foi executado (`npx tsc -p client/tsconfig.json --noEmit`, via `npx.cmd`) e continua bloqueado por erros pre-existentes fora desta ronda; os erros introduzidos no `AiCockpit` foram corrigidos
+  - teste de prompt simulado confirmou que `reply` inclui length, aiKnowledge, assinatura e interlocutor principal `Sr. X`; `summarize` inclui length e aiKnowledge
+- **Limites atuais**:
+  - nao houve teste em Outlook real nesta execucao; a validacao de host real continua recomendada para confirmar UX e APIs do Outlook
+  - a superficie legada `client/src/ai/AiPanel.tsx` continua existente, mas deixa de escrever `icc.sig.*`; o cockpit ativo e `client/src/modules/ai/AiCockpit.tsx`
