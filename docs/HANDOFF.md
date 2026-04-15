@@ -658,3 +658,10 @@
   - `Preparar` prepara; `Classificar` fecha; carregar contexto nao e classificacao final
 - **Proximo passo recomendado**:
   - testar no Outlook real os cenarios de email novo sem grupo, email novo com historico agrupado, abertura de `Classificar` sem escrita remota e classificacao final com persistencia controlada
+
+## Grupos v1: fecho estrutural `Preparar` + `Classificar` integrado em `main` (Abril 2026)
+- **Estado pos-merge**:
+  - PR #23 (`codex/groups-prepare-classify-structural-fix`) integrada em `main` por merge commit explicito
+  - checkpoint pre-merge publicado em `pre-merge-groups-prepare-classify-structural-fix-2026-04-15`
+- **Gate seguinte**:
+  - teste real em host Outlook para confirmar que historico nao contamina o email atual, `Preparar`/`Classificar` nao gravam cedo demais e a lista mostra apenas grupo real do email
