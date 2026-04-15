@@ -231,15 +231,20 @@ export function createAiRouter() {
 
       const safeEmail = email
         ? {
-          subject: String(email.subject || ""),
-          from: String(email.from || ""),
-          to: Array.isArray(email.to) ? email.to.map(String) : [],
-          cc: Array.isArray(email.cc) ? email.cc.map(String) : [],
-          bodyText:
-            String(email.bodyScope || "main") === "full"
-              ? trimEmailBodyFull(email.bodyText || "")
-              : trimEmailBody(email.bodyText || ""),
-        }
+            subject: String(email.subject || ""),
+            from: String(email.from || ""),
+            fromName: String(email.fromName || "").trim(),
+            fromEmail: String(email.fromEmail || "").trim(),
+            greetingName: String(email.greetingName || "").trim(),
+            greetingEmail: String(email.greetingEmail || "").trim(),
+            to: Array.isArray(email.to) ? email.to.map(String) : [],
+            cc: Array.isArray(email.cc) ? email.cc.map(String) : [],
+            bodyText:
+              String(email.bodyScope || "main") === "full"
+                ? trimEmailBodyFull(email.bodyText || "")
+                : trimEmailBody(email.bodyText || ""),
+            bodyScope: email.bodyScope === "full" ? "full" : "main",
+          }
         : null;
 
       // --- PROCESS FILES ---

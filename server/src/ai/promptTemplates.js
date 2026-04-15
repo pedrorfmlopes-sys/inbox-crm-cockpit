@@ -91,12 +91,24 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", length 
     : "";
 
   // Inject Persona / User Style mimic (The "Pedro" Standard)
-  const learnedStyleLine = (persona.learnedProfile && typeof persona.learnedProfile === 'string')
+  const learnedStyleLine = (persona.learnedProfile && typeof persona.learnedProfile === "string")
     ? `\nESTILO APRENDIDO (HISTÓRICO):\n${persona.learnedProfile}\n`
     : "";
 
-  const learnedHabitsLine = (persona.learnedHabits && typeof persona.learnedHabits === 'string')
+  const learnedHabitsLine = (persona.learnedHabits && typeof persona.learnedHabits === "string")
     ? `\nHÁBITOS IDENTIFICADOS:\n${persona.learnedHabits}\n`
+    : "";
+
+  const personaRoleLine = persona.userRole
+    ? `\nFUNÇÃO/CONTEXTO PROFISSIONAL DO UTILIZADOR:\n${String(persona.userRole).trim()}\n`
+    : "";
+
+  const personaStyleContextLine = persona.styleContext
+    ? `\nESTILO E REGRAS DE ESCRITA DO UTILIZADOR (APLICAR QUANDO REDIGES EMAILS):\n${String(persona.styleContext).trim()}\n`
+    : "";
+
+  const personaStyleExamplesLine = persona.styleExamples
+    ? `\nEXEMPLOS DE ESCRITA DO UTILIZADOR (IMITAR PADRÃO, TOM E ESTRUTURA SEM COPIAR LITERALMENTE):\n${String(persona.styleExamples).trim()}\n`
     : "";
 
   const personaBlock = `
@@ -106,7 +118,7 @@ PERFIL DE COMUNICAÇÃO:
 - Foco absoluto em precisão, completude e utilidade prática.
 - Evita floreados, generalidades ("espero que este email...") e "linguagem de IA" artificial.
 - Mantém o tom cordial e confiante.
-- Escreve sempre no idioma solicitado (${lang}), respeitando as normas gramaticais e de negócio locais.${learnedStyleLine}${learnedHabitsLine}
+- Escreve sempre no idioma solicitado (${lang}), respeitando as normas gramaticais e de negócio locais.${personaRoleLine}${personaStyleContextLine}${personaStyleExamplesLine}${learnedStyleLine}${learnedHabitsLine}
 `;
 
   const briefingBlock = briefing
@@ -146,7 +158,17 @@ PERFIL DE COMUNICAÇÃO:
       (signature.imageUrl ? `- Imagem de assinatura disponivel; largura max: ${signature.imageMaxWidth || 260}px.\n` : "")
     : "";
 
-  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock + briefingBlock + contactBlock + contextBundleBlock + replyDirectionBlock + signatureBlock;
+  const greetingBlock = action === "reply" && (email?.greetingName || email?.greetingEmail)
+    ? `\nSAUDACAO DO EMAIL:\n` +
+      `- Abre o email com uma saudacao nominal direta ao interlocutor principal.\n` +
+      `- Se existir nome, usa-o explicitamente na primeira linha.\n` +
+      `- Nome preferencial para a saudacao: ${String(email?.greetingName || "").trim() || "(nome indisponivel)"}.\n` +
+      `- Email do interlocutor principal: ${String(email?.greetingEmail || "").trim() || "(email indisponivel)"}.\n` +
+      `- Exemplos validos: "Caro Sr. Fernando Gameiro,", "Bom dia Fernando,", "Cara Sara,".\n` +
+      `- Nao comeces diretamente pelo corpo sem saudacao quando existir nome disponivel.\n`
+    : "";
+
+  const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock + briefingBlock + contactBlock + contextBundleBlock + replyDirectionBlock + greetingBlock + signatureBlock;
   const toneLine = `Tom: ${tone}.`;
 
   const emailBlock = email
@@ -191,13 +213,19 @@ PERFIL DE COMUNICAÇÃO:
       `\n\nTAREFA: Cria uma resposta profissional sugerida ao email.\n` +
       `Antes de responder, integra mentalmente o email atual, o briefing e o CONTEXTO CONSOLIDADO DO CASO.\n` +
       `A resposta final deve refletir o estado real do assunto, mesmo que o último email isolado seja curto.\n` +
-      `ESTRUTURA (Pragmatismo Pedro):\n` +
-      `1. Agradecimento ou confirmação de receção (curto).\n` +
-      `2. Próximo passo ou decisão (se necessário).\n` +
-      `3. Fecho cordial.\n\n` +
-      `- NÃO repitas o que o remetente acabou de dizer.\n` +
-      `- NÃO uses listas se o texto couber num parágrafo curto.\n` +
-      `- Garante que é uma resposta "pronta a enviar".\n` +
+      `ESTRUTURA OBRIGATORIA DO EMAIL:\n` +
+      `1. Saudacao inicial em linha propria.\n` +
+      `2. Paragrafo curto de agradecimento/confirmacao.\n` +
+      `3. Paragrafo curto com a informacao principal, decisao ou enquadramento.\n` +
+      `4. Paragrafo curto com proximo passo, quando aplicavel.\n` +
+      `5. Fecho cordial em paragrafo separado.\n\n` +
+      `REGRAS CRITICAS DE REDACAO:\n` +
+      `- Se existir nome do interlocutor principal, abre com saudacao nominal direta.\n` +
+      `- Se o utilizador tiver definido regras de estilo/saudacao, essas regras devem ser aplicadas.\n` +
+      `- Escreve por paragrafos curtos e separados; nunca devolvas tudo num bloco unico.\n` +
+      `- Nao uses listas se o texto couber em paragrafos curtos.\n` +
+      `- Nao repitas o que o remetente acabou de dizer.\n` +
+      `- Garante que e uma resposta pronta a enviar.\n` +
       (inputText ? `\n\nINSTRUÇÃO CRÍTICA DO UTILIZADOR (OBRIGATÓRIO SEGUIR): "${inputText}"\n` : "") +
       emailBlock
     );

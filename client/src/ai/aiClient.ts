@@ -21,8 +21,12 @@ export type AiReplyDirection = {
 export type AiEmailContext = {
   subject: string;
   from: string;
+  fromName?: string;
+  fromEmail?: string;
   to: string[];
   cc: string[];
+  greetingName?: string;
+  greetingEmail?: string;
   /**
    * "main": apenas a mensagem principal (pode cortar citações/reencaminhados)
    * "full": inclui todo o corpo disponível (incl. reencaminhados/citações)

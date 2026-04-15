@@ -1488,6 +1488,13 @@ export const AiCockpit: React.FC = () => {
             }
             const replyDirection: AiReplyDirection | null = null;
             const signature = resolvedAction === "reply" ? buildAiSignaturePayload(freshSettings, generationEffectiveLocale) : null;
+            const greetingName = resolvedAction === "reply"
+                ? String(replyTargetEmail?.fromName || ctx.fromName || "").trim()
+                : "";
+            const greetingEmail = resolvedAction === "reply"
+                ? String(replyTargetEmail?.fromEmail || ctx.fromEmail || "").trim()
+                : "";
+
             const res = await aiGenerate({
                 action: resolvedAction,
                 mode: "quality",
@@ -1501,6 +1508,10 @@ export const AiCockpit: React.FC = () => {
                 email: {
                     subject: ctx.subject || "",
                     from: ctx.fromEmail || "",
+                    fromName: String(ctx.fromName || "").trim(),
+                    fromEmail: String(ctx.fromEmail || "").trim(),
+                    greetingName,
+                    greetingEmail,
                     to: (ctx.toRecipients || []).map((r: any) => r.email),
                     cc: (ctx.ccRecipients || []).map((r: any) => r.email),
                     bodyText: effectiveBodyTextForGeneration,
