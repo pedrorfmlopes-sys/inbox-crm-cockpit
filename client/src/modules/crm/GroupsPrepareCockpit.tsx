@@ -252,71 +252,37 @@ function dedupeEmails(rows: Array<RelatedEmailEntry | null | undefined>): Relate
   );
 }
 
-function extractPrincipalGroup(email: Partial<RelatedEmailEntry>): { id: string; name: string } | null {
-  const principal = (email.relatedGroups || []).find((group) => normalizeText(group.relationKind) !== "referencia");
-  if (principal?.id) {
-    return { id: String(principal.id).trim(), name: String(principal.name || principal.id).trim() };
-  }
-  const groupId = String(email.groupId || "").trim();
-  return groupId ? { id: groupId, name: String(email.groupName || groupId).trim() } : null;
-}
-
-function extractReferenceGroups(email: Partial<RelatedEmailEntry>): Array<{ id: string; name: string }> {
-  return (email.relatedGroups || [])
-    .filter((group) => normalizeText(group.relationKind) === "referencia")
-    .map((group) => ({ id: String(group.id || "").trim(), name: String(group.name || group.id || "").trim() }))
-    .filter((group) => group.id);
-}
-
 function isReferenceMembershipKind(value: string | undefined): boolean {
   const kind = normalizeText(value);
   return kind === "referencia" || kind === "reference";
 }
 
-function extractCurrentEmailPrincipalGroup(email: Partial<RelatedEmailEntry>): { id: string; name: string } | null {
+function extractDirectPrincipalGroup(email: Partial<RelatedEmailEntry>): { id: string; name: string } | null {
   if (isReferenceMembershipKind(String(email.membershipKind || ""))) return null;
   const groupId = String(email.groupId || "").trim();
   return groupId ? { id: groupId, name: String(email.groupName || groupId).trim() } : null;
 }
 
-function extractCurrentEmailReferenceGroups(email: Partial<RelatedEmailEntry>): Array<{ id: string; name: string }> {
+function extractDirectReferenceGroups(email: Partial<RelatedEmailEntry>): Array<{ id: string; name: string }> {
   if (!isReferenceMembershipKind(String(email.membershipKind || ""))) return [];
   const groupId = String(email.groupId || "").trim();
   return groupId ? [{ id: groupId, name: String(email.groupName || groupId).trim() }] : [];
 }
 
-function hasServerPersistedEmailClassification(email: Partial<RelatedEmailEntry>): boolean {
-  if (extractPrincipalGroup(email)) return true;
-  if (extractReferenceGroups(email).length) return true;
-  if ((email.relatedReasons || []).some((reason) => reason.kind === "group")) return true;
+function hasServerPersistedDirectEmailClassification(email: Partial<RelatedEmailEntry>): boolean {
+  if (extractDirectPrincipalGroup(email)) return true;
+  if (extractDirectReferenceGroups(email).length) return true;
   if ((email.labels || []).some((label) => String(label || "").trim())) return true;
 
   const status = normalizeText(email.status);
   return Boolean(status && status !== "rascunho" && status !== "draft" && status !== "pendente" && status !== "pending");
 }
 
-function hasServerPersistedCurrentEmailClassification(email: Partial<RelatedEmailEntry>): boolean {
-  if (extractCurrentEmailPrincipalGroup(email)) return true;
-  if (extractCurrentEmailReferenceGroups(email).length) return true;
-  if ((email.labels || []).some((label) => String(label || "").trim())) return true;
-
-  const status = normalizeText(email.status);
-  return Boolean(status && status !== "rascunho" && status !== "draft" && status !== "pendente" && status !== "pending");
-}
-
-function resolveVisibleInformationState(
+function resolveDirectVisibleInformationState(
   email: Partial<RelatedEmailEntry>,
   hasLocalCheckpoint: boolean
 ): VisibleInformationState {
-  if (hasServerPersistedEmailClassification(email)) return "server";
-  return hasLocalCheckpoint ? "local" : "draft";
-}
-
-function resolveCurrentEmailVisibleInformationState(
-  email: Partial<RelatedEmailEntry>,
-  hasLocalCheckpoint: boolean
-): VisibleInformationState {
-  if (hasServerPersistedCurrentEmailClassification(email)) return "server";
+  if (hasServerPersistedDirectEmailClassification(email)) return "server";
   return hasLocalCheckpoint ? "local" : "draft";
 }
 
@@ -849,7 +815,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [currentEmailKey]);
 
   const currentPrincipalGroup = useMemo(
-    () => extractCurrentEmailPrincipalGroup(currentEmailEntry),
+    () => extractDirectPrincipalGroup(currentEmailEntry),
     [currentEmailEntry]
   );
 
@@ -1015,7 +981,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       if (attachmentMode === "with" && attachmentCount === 0) return false;
       if (attachmentMode === "without" && attachmentCount > 0) return false;
 
-      const principalGroup = extractPrincipalGroup(email);
+      const principalGroup = extractDirectPrincipalGroup(email);
       if (groupMode === "with_group" && !principalGroup) return false;
       if (groupMode === "without_group" && principalGroup) return false;
 
@@ -1442,7 +1408,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     : state === "local"
       ? { label: "Local", style: S.localBadge, dot: S.infoDotLocal }
       : { label: "Rascunho", style: S.draftBadge, dot: S.infoDotDraft };
-  const anchorInformationState = resolveCurrentEmailVisibleInformationState(currentEmailEntry, hasLocalPrepareCheckpoint);
+  const anchorInformationState = resolveDirectVisibleInformationState(currentEmailEntry, hasLocalPrepareCheckpoint);
   const anchorInformationStateChip = getVisibleInformationStateChip(anchorInformationState);
 
   if (!hasCurrentIdentity) {
@@ -1616,12 +1582,12 @@ export const GroupsPrepareCockpit: React.FC = () => {
                 const emailKey = makeEmailKey(email);
                 const expanded = expandedEmailKeys.includes(emailKey);
                 const selected = selectedEmailKeys.includes(emailKey);
-                const principalGroup = extractPrincipalGroup(email);
-                const referenceGroups = extractReferenceGroups(email);
+                const principalGroup = extractDirectPrincipalGroup(email);
+                const referenceGroups = extractDirectReferenceGroups(email);
                 const tickets = emailKey === currentEmailKey ? contextTickets : (emailTicketMap[emailKey] || []);
                 const attachmentCount = Array.isArray(email.attachments) ? email.attachments.length : 0;
                 const emailStatusConfig = getStatusDisplayConfig(email.status);
-                const emailInformationState = resolveVisibleInformationState(
+                const emailInformationState = resolveDirectVisibleInformationState(
                   email,
                   selected && hasLocalPrepareCheckpoint
                 );

@@ -444,11 +444,6 @@ export function buildAttachmentStorageOptions(settings?: any): Pick<RelevantEmai
   return getGroupAttachmentStorageOptions(settings);
 }
 
-export async function persistRelatedEmailsToServer(emails: RelatedEmailEntry[], settings?: any): Promise<void> {
-  // Logic to persist emails to server if needed
-  // This usually involves registerRelevantEmail from api.ts
-}
-
 export function normalizeSearchValue(value: string): string {
   return String(value || "").trim().toLowerCase();
 }
