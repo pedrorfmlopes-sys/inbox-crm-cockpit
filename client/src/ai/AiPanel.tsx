@@ -677,10 +677,9 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
 
   const [sigImgMaxW, setSigImgMaxW] = useState<string>("260");
 
-  const persistSig = (k: string, v: string) => {
-    try {
-      localStorage.setItem(k, v);
-    } catch { }
+  const persistSig = (_k: string, _v: string) => {
+    // Legacy icc.sig.* writes are intentionally disabled.
+    // Official signatures live in cockpitSettingsV1 and are migrated in settings.ts.
   };
 
 
@@ -1064,6 +1063,11 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
       // if the user switches the selected message while the AI call is running.
       const runEmailKey = emailKey;
       const runConversationId = ctx.conversationId || "";
+      const freshSettings = await getSettings();
+      setSettings(freshSettings);
+      if (freshSettings.tone) setTone(freshSettings.tone);
+      if (freshSettings.readingLanguage) setReadingLang(freshSettings.readingLanguage);
+      if (freshSettings.replyLanguage) setReplyLang(freshSettings.replyLanguage);
 
       // For non-summary actions, we clear the previous output before generating again.
       // (Summary should live in the Summary card only, so we don't duplicate it in Result.)
@@ -1085,24 +1089,28 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
       if (action === "summarize") {
         effectiveLocale = "pt-PT";
       } else {
-        effectiveLocale = (replyLang === "auto" ? ("auto" as any) : (replyLang as any)) as AiLocale;
+        const currentReplyLang = freshSettings.replyLanguage || replyLang;
+        effectiveLocale = (currentReplyLang === "auto" ? ("auto" as any) : (currentReplyLang as any)) as AiLocale;
       }
 
-      const customModels = settings ? {
-        openaiModelFast: settings.openaiModelFast,
-        openaiModelQuality: settings.openaiModelQuality,
-        geminiModel: settings.geminiModel,
-        openaiApiKey: settings.openaiApiKey,
-        geminiApiKey: settings.geminiApiKey,
+      const customModels = freshSettings ? {
+        openaiModelFast: freshSettings.openaiModelFast,
+        openaiModelQuality: freshSettings.openaiModelQuality,
+        geminiModel: freshSettings.geminiModel,
+        openaiApiKey: freshSettings.openaiApiKey,
+        geminiApiKey: freshSettings.geminiApiKey,
       } : {};
 
       const r = await aiGenerate({
         action,
         mode,
         locale: effectiveLocale,
-        tone,
+        tone: freshSettings.tone || tone,
         email: action === "rewrite" ? undefined : (emailForAi as any),
         inputText: action === "rewrite" ? rewriteText : undefined,
+        length: freshSettings.length || "m",
+        aiKnowledge: freshSettings.aiKnowledge || [],
+        knowledge: freshSettings.aiKnowledge || [],
         customModels,
       });
 
