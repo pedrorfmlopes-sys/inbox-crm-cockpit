@@ -216,7 +216,7 @@ export function createAiRouter() {
         contextBundle = "",
         persona = {}, // NEW: Persona / Style mimic
         files = [],   // NEW: Direct files support
-        customModels = {}, // NEW: Custom models from client
+        customModels: _customModels = {}, // ignored on /generate for stability
         briefing = null,   // NEW: Contextual briefing
         contactAliases = [], // NEW: Contact Aliases
       } = req.body || {};
@@ -321,6 +321,8 @@ ${currentDraft}`
                     ? (normalizedInputText || "Redige agora a resposta final pronta a enviar com base em todo o contexto fornecido.")
                     : (normalizedInputText || "Executa a tarefa pedida com base em todo o contexto fornecido.");
 
+      const safeCustomModels = {};
+
       let result = await aiCreateText({
         mode,
         instructions,
@@ -329,7 +331,7 @@ ${currentDraft}`
         history: action === "refine" ? [] : history,
         max_output_tokens: maxOutputTokensFor(action, effectiveLength),
         temperature: action === "refine" ? 0 : 0.1,
-        customModels,
+        customModels: safeCustomModels,
       });
 
       if ((action === "reply" || action === "forward") && looksLikeGenericDraftRefusal(result.text)) {
@@ -348,7 +350,7 @@ ${currentDraft}`
           history: action === "refine" ? [] : history,
           max_output_tokens: maxOutputTokensFor(action, effectiveLength),
           temperature: action === "refine" ? 0 : 0.1,
-          customModels,
+          customModels: safeCustomModels,
         });
       }
 

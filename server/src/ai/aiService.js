@@ -105,10 +105,8 @@ export async function aiCreateText(args) {
   providers.push(alternative);
 
   // Filter out providers without keys
-  const availableProviders = providers.filter(p => {
-    const key = p === "openai"
-      ? (customModels.openaiApiKey || cfg.openai.apiKey)
-      : (customModels.geminiApiKey || cfg.gemini.apiKey);
+  const availableProviders = providers.filter((p) => {
+    const key = p === "openai" ? cfg.openai.apiKey : cfg.gemini.apiKey;
     return Boolean(key);
   });
 
@@ -121,8 +119,8 @@ export async function aiCreateText(args) {
   for (const provider of availableProviders) {
     try {
       if (provider === "openai") {
-        const apiKey = customModels.openaiApiKey || cfg.openai.apiKey;
-        const model = customModels.openaiModelFast || (mode === "quality" ? cfg.openai.modelQuality : cfg.openai.modelFast);
+        const apiKey = cfg.openai.apiKey;
+        const model = mode === "quality" ? cfg.openai.modelQuality : cfg.openai.modelFast;
         const prepared = await prepareOpenAiPayload({ instructions, files });
         console.log(`[ai] Calling OpenAI (${model})...`);
         return await openaiCreateResponse({
@@ -138,8 +136,8 @@ export async function aiCreateText(args) {
       }
 
       if (provider === "gemini") {
-        const apiKey = customModels.geminiApiKey || cfg.gemini.apiKey;
-        const model = customModels.geminiModel || (mode === "quality" ? cfg.gemini.modelQuality : cfg.gemini.modelFast);
+        const apiKey = cfg.gemini.apiKey;
+        const model = mode === "quality" ? cfg.gemini.modelQuality : cfg.gemini.modelFast;
         console.log(`[ai] Calling Gemini (${model})...`);
         return await geminiCreateResponse({
           apiKey,

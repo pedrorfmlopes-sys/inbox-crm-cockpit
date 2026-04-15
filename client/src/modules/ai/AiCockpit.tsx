@@ -426,6 +426,7 @@ export const AiCockpit: React.FC = () => {
     const [replyTargetEmail, setReplyTargetEmail] = useState<AiReplyTargetSelection | null>(null);
     const [replyAddresseeName, setReplyAddresseeName] = useState("");
     const [replyAddresseeContext, setReplyAddresseeContext] = useState("");
+    const [generationError, setGenerationError] = useState("");
     const [fileUsage, setFileUsage] = useState<Record<string, FileUsageState>>({});
     const [persistedCurrentEmail, setPersistedCurrentEmail] = useState<RelatedEmailEntry | null>(null);
 
@@ -1466,6 +1467,7 @@ export const AiCockpit: React.FC = () => {
 
         setOutput("");
         setDebugLog("");
+        setGenerationError("");
 
         try {
             const bundle = await ensureContextBundle(true);
@@ -1484,22 +1486,8 @@ export const AiCockpit: React.FC = () => {
             if (freshCustomTone?.instructions) {
                 knowledge.push(`[TOM PERSONALIZADO ATIVO] ${String(freshCustomTone.instructions).trim()}`);
             }
-            const replyDirection: AiReplyDirection | null =
-                resolvedAction === "reply" && (replyAddresseeName.trim() || replyAddresseeContext.trim())
-                    ? {
-                        addresseeName: replyAddresseeName.trim() || undefined,
-                        addresseeContext: replyAddresseeContext.trim() || undefined,
-                        ignoreIntermediateForwarders: true,
-                    }
-                    : null;
+            const replyDirection: AiReplyDirection | null = null;
             const signature = resolvedAction === "reply" ? buildAiSignaturePayload(freshSettings, generationEffectiveLocale) : null;
-            const customModels = {
-                openaiModelFast: freshSettings.openaiModelFast,
-                openaiModelQuality: freshSettings.openaiModelQuality,
-                geminiModel: freshSettings.geminiModel,
-                openaiApiKey: freshSettings.openaiApiKey,
-                geminiApiKey: freshSettings.geminiApiKey,
-            };
             const res = await aiGenerate({
                 action: resolvedAction,
                 mode: "quality",
@@ -1529,7 +1517,6 @@ export const AiCockpit: React.FC = () => {
                 signature,
                 replyDirection,
                 contactAliases: freshSettings.contactAliases || [],
-                customModels,
                 // For refine: send the current editor content as explicit draft
                 draftText: action === "refine" ? (output || aiState.output || "") : undefined,
             }); //inputText is already extraPrompt || prompt
@@ -1590,10 +1577,14 @@ export const AiCockpit: React.FC = () => {
                 saveHistory(fullHist);
                 setHistory(fullHist.filter(h => h.emailKey === emailKey));
             } else {
-                setMsg(res.error);
+                const message = String(res.error || "Erro ao gerar resposta.");
+                setGenerationError(message);
+                setMsg(message);
             }
         } catch (e: any) {
-            setMsg(e.message);
+            const message = String(e?.message || "Erro ao gerar resposta.");
+            setGenerationError(message);
+            setMsg(message);
         } finally {
             setIsGenerating(false);
         }
@@ -2315,44 +2306,6 @@ export const AiCockpit: React.FC = () => {
             cursor: "pointer",
             padding: "0 2px",
             alignSelf: "flex-start",
-        },
-        replyDirectionBox: {
-            border: "1px solid rgba(37, 99, 235, 0.12)",
-            background: "rgba(248,250,252,0.88)",
-            borderRadius: "8px",
-            padding: "6px",
-            display: "grid",
-            gap: "5px",
-            marginBottom: "6px",
-        },
-        replyDirectionTitle: {
-            fontSize: "9px",
-            fontWeight: 800,
-            color: "#1d4ed8",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-        },
-        replyDirectionInputs: {
-            display: "grid",
-            gridTemplateColumns: isNarrow ? "1fr" : "minmax(0, 0.7fr) minmax(0, 1fr)",
-            gap: "5px",
-        },
-        replyDirectionInput: {
-            width: "100%",
-            minWidth: 0,
-            boxSizing: "border-box",
-            border: "1px solid rgba(148, 163, 184, 0.35)",
-            borderRadius: "8px",
-            background: "#ffffff",
-            color: "#172B4D",
-            padding: "6px 7px",
-            fontSize: "11px",
-            outline: "none",
-        },
-        replyDirectionHint: {
-            fontSize: "9px",
-            color: "#64748b",
-            lineHeight: 1.25,
         },
         quickPanel: {
             background: "var(--iccc-card-bg)",
@@ -3090,28 +3043,7 @@ export const AiCockpit: React.FC = () => {
                         )}
                     </div>
                 ) : null}
-                {selectedAction === "reply" ? (
-                    <div style={S.replyDirectionBox}>
-                        <div style={S.replyDirectionTitle}>Dirigir resposta a</div>
-                        <div style={S.replyDirectionInputs}>
-                            <input
-                                style={S.replyDirectionInput}
-                                value={replyAddresseeName}
-                                onChange={(e) => setReplyAddresseeName(e.target.value)}
-                                placeholder="Nome, ex.: Sr. X"
-                                title="Pessoa a quem o texto deve ser dirigido. Nao altera o To."
-                            />
-                            <input
-                                style={S.replyDirectionInput}
-                                value={replyAddresseeContext}
-                                onChange={(e) => setReplyAddresseeContext(e.target.value)}
-                                placeholder="Contexto/papel, ex.: cliente final"
-                                title="Contexto dessa pessoa para orientar a redacao."
-                            />
-                        </div>
-                        <div style={S.replyDirectionHint}>So orienta a redacao. Nao preenche To/Cc nem procura emails.</div>
-                    </div>
-                ) : null}
+                {null}
                 {persistedEmailAttachments.length > 0 && (
                     <div style={{ display: "flex", alignItems: "center", gap: "4px", marginBottom: "6px", padding: "2px 6px", background: "rgba(59, 130, 246, 0.05)", borderRadius: "4px", width: "fit-content" }}>
                         <Icons.Files size={10} color="var(--iccc-pill-active-bg)" />
@@ -3590,6 +3522,24 @@ export const AiCockpit: React.FC = () => {
             </div>
 
             {renderQuickPanel()}
+
+            {generationError ? (
+                <div
+                    style={{
+                        border: "1px solid rgba(239, 68, 68, 0.24)",
+                        background: "rgba(254, 242, 242, 0.96)",
+                        color: "#991b1b",
+                        borderRadius: "10px",
+                        padding: "8px 10px",
+                        fontSize: "11px",
+                        lineHeight: 1.35,
+                        marginTop: "4px",
+                        marginBottom: "4px",
+                    }}
+                >
+                    <strong>Erro na geração:</strong> {generationError}
+                </div>
+            ) : null}
 
             {
                 (output || isGenerating || aiState.history.length > 0 || history.length > 0) && (
