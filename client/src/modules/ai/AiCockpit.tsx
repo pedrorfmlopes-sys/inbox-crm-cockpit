@@ -1475,11 +1475,24 @@ export const AiCockpit: React.FC = () => {
             const effectiveBodyTextForGeneration = effectiveBodyText || htmlToPlainText(effectiveBodyHtml || "");
             const freshSettings = await getSettings();
             const generationSelectedLocale = ((aiState.locale || freshSettings.replyLanguage || "auto") as AiLocale);
-            const generationEffectiveLocale = (generationSelectedLocale !== "auto"
-                ? generationSelectedLocale
-                : ((freshSettings.readingLanguage && freshSettings.readingLanguage !== "auto"
-                    ? freshSettings.readingLanguage
-                    : (freshSettings.appLanguage || "pt-PT")) as AiLocale));
+
+            // IMPORTANT:
+            // In reply/forward mode, "auto" must be sent to the server as "auto".
+            // The server is responsible for detecting the predominant language of the email.
+            // Do not collapse "auto" into appLanguage/readingLanguage here, otherwise Spanish/English emails
+            // can incorrectly receive Portuguese replies.
+            const generationEffectiveLocale: AiLocale =
+                generationSelectedLocale === "auto"
+                    ? "auto"
+                    : generationSelectedLocale;
+
+            const signatureLocale: AiLocale =
+                generationEffectiveLocale === "auto"
+                    ? ((freshSettings.replyLanguage && freshSettings.replyLanguage !== "auto"
+                        ? freshSettings.replyLanguage
+                        : (freshSettings.appLanguage || "pt-PT")) as AiLocale)
+                    : generationEffectiveLocale;
+
             const generationTone = aiState.tone || freshSettings.tone || "neutro";
             const freshCustomTone = (freshSettings.aiCustomTones || []).find((entry: any) => entry.id === selectedCustomToneId) || null;
             const knowledge = [...(freshSettings.aiKnowledge || [])];
@@ -1487,7 +1500,7 @@ export const AiCockpit: React.FC = () => {
                 knowledge.push(`[TOM PERSONALIZADO ATIVO] ${String(freshCustomTone.instructions).trim()}`);
             }
             const replyDirection: AiReplyDirection | null = null;
-            const signature = resolvedAction === "reply" ? buildAiSignaturePayload(freshSettings, generationEffectiveLocale) : null;
+            const signature = resolvedAction === "reply" ? buildAiSignaturePayload(freshSettings, signatureLocale) : null;
             const greetingName = resolvedAction === "reply"
                 ? String(replyTargetEmail?.fromName || ctx.fromName || "").trim()
                 : "";

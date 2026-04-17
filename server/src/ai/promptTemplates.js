@@ -19,6 +19,18 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", length 
 
   // Human label (only for fixed languages)
   const lang = LOCALE_HUMAN[effectiveLocale] || effectiveLocale;
+  const autoLanguageInstruction = effectiveLocale === "auto"
+    ? `\nIDIOMA AUTO:\n` +
+      `- Deteta o idioma predominante do email recebido, dando prioridade ao corpo do email mais recente e relevante.\n` +
+      `- Responde nesse mesmo idioma.\n` +
+      `- Se o email estiver em espanhol, responde em espanhol.\n` +
+      `- Se o email estiver em inglês, responde em inglês.\n` +
+      `- Se o email estiver em português, responde em português de Portugal.\n` +
+      `- Nao uses o idioma da interface, das settings ou da assinatura para decidir o idioma da resposta.\n` +
+      `- Nao mistures idiomas na mesma resposta, salvo se o utilizador pedir.\n`
+    : `\nIDIOMA FIXO:\n` +
+      `- Escreve a resposta final em ${lang}.\n` +
+      `- Nao mistures idiomas na mesma resposta, salvo se o utilizador pedir.\n`;
   const normalizedLength = ["xs", "s", "m", "l"].includes(String(length || "").trim().toLowerCase())
     ? String(length || "").trim().toLowerCase()
     : "m";
@@ -68,7 +80,8 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", length 
     }
   }
 
-  const baseRules = languageEnforcement +
+  const baseRules = autoLanguageInstruction +
+    languageEnforcement +
     `REGRAS DE OURO (ESTILO PEDRO - N\u00c3O ABDICAR):\n` +
     `- SAUDA\u00c7\u00c3O OBRIGAT\u00d3RIA: ${greeting}\n` +
     `- AGRADECIMENTO FINAL: End with a warm, cordial closing appropriate for ${lang} (e.g. in PT: "Muito obrigado pela ajuda."; in EN: "Thank you for your support."; in ES: "Muchas gracias por su ayuda."). Avoid a bare single-word sign-off.\n` +
@@ -77,7 +90,15 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", length 
     `- PROIBIDO: "Aqui est\u00e1 a sua resposta", "Espero que este email...", "Certamente posso ajudar", "Como assistente de IA...", ou introdu\u00e7\u00f5es redundantes.\n` +
     `- NUNCA inventes factos. Se faltar informa\u00e7\u00e3o, faz perguntas curtas e diretas.\n` +
     lengthRules[normalizedLength] +
-    `- Devolve HTML simples: <p>, <br>, <ul>, <li>, <strong>, <em>, <a>.\n` +
+    `- Devolve APENAS HTML simples, sem Markdown e sem texto fora de tags HTML.\n` +
+    `- Usa <p>...</p> para cada bloco lógico do email.\n` +
+    `- Nao uses <br> para separar paragrafos; usa paragrafos <p> separados.\n` +
+    `- A saudacao deve ficar num <p> proprio.\n` +
+    `- Cada ideia principal deve ficar num <p> proprio.\n` +
+    `- O agradecimento final, quando existir, deve ficar num <p> proprio.\n` +
+    `- O fecho cordial deve ficar num <p> proprio.\n` +
+    `- Nao juntes agradecimento, fecho e assinatura no mesmo paragrafo.\n` +
+    `- Tags permitidas: <p>, <br>, <ul>, <li>, <strong>, <em>, <a>.\n` +
     `- ORDEM DE PRIORIDADE: 1\u00ba Instru\u00e7\u00f5es expl\u00edcitas desta chamada; 2\u00ba regras fixas do utilizador; 3\u00ba contexto do email/caso; 4\u00ba estilo aprendido.\n`;
 
   // Inject user knowledge if present
@@ -223,9 +244,13 @@ PERFIL DE COMUNICAÇÃO:
       `- Se existir nome do interlocutor principal, abre com saudacao nominal direta.\n` +
       `- Se o utilizador tiver definido regras de estilo/saudacao, essas regras devem ser aplicadas.\n` +
       `- Escreve por paragrafos curtos e separados; nunca devolvas tudo num bloco unico.\n` +
+      `- Cada bloco da resposta deve ser um <p> separado.\n` +
+      `- A saudacao, o corpo, o agradecimento, o fecho e a assinatura nunca devem ficar todos juntos.\n` +
       `- Nao uses listas se o texto couber em paragrafos curtos.\n` +
       `- Nao repitas o que o remetente acabou de dizer.\n` +
       `- Garante que e uma resposta pronta a enviar.\n` +
+      `- Se o email recebido estiver em espanhol, a resposta deve ser integralmente em espanhol, incluindo saudacao e fecho.\n` +
+      `- Se o email recebido estiver em português, a resposta deve ser em português de Portugal.\n` +
       (inputText ? `\n\nINSTRUÇÃO CRÍTICA DO UTILIZADOR (OBRIGATÓRIO SEGUIR): "${inputText}"\n` : "") +
       emailBlock
     );
