@@ -1490,7 +1490,14 @@ export const AiCockpit: React.FC = () => {
         }
     };
 
-    async function handleGenerate(action: AiAction = "reply", extraPrompt?: string) {
+    async function handleGenerate(
+        action: AiAction = "reply",
+        extraPrompt?: string,
+        options?: {
+            customToneId?: string;
+            tone?: AiTone;
+        },
+    ) {
         if (isGenerating) return;
         setIsGenerating(true);
         // If we are starting a NEW task (not refining), clear previous history
@@ -1570,9 +1577,13 @@ export const AiCockpit: React.FC = () => {
                         : (freshSettings.appLanguage || "pt-PT")) as AiLocale)
                     : generationEffectiveLocale;
 
-            const generationTone = aiState.tone || freshSettings.tone || "neutro";
-            const freshCustomTone = (freshSettings.aiCustomTones || []).find((entry: any) => entry.id === selectedCustomToneId) || null;
+            const generationTone = options?.tone || aiState.tone || freshSettings.tone || "neutro";
+            const effectiveCustomToneId = typeof options?.customToneId === "string"
+                ? options.customToneId
+                : selectedCustomToneId;
+            const freshCustomTone = (freshSettings.aiCustomTones || []).find((entry: any) => entry.id === effectiveCustomToneId) || null;
             const knowledge = [...(freshSettings.aiKnowledge || [])];
+
             if (freshCustomTone?.instructions) {
                 knowledge.push(`[TOM PERSONALIZADO ATIVO] ${String(freshCustomTone.instructions).trim()}`);
             }
@@ -1670,7 +1681,7 @@ export const AiCockpit: React.FC = () => {
                     draftTo,
                     draftCc,
                     draftSubject: buildTicketEmailSubject(draftSubject, draftTicketCode, freshSettings?.groupTicketUi?.includeTicketCodeInSubject !== false),
-                    customToneId: selectedCustomToneId || undefined,
+                    customToneId: effectiveCustomToneId || undefined,
                     replyTarget: replyTargetEmail,
                     replyDirection,
                 };
@@ -2771,7 +2782,10 @@ export const AiCockpit: React.FC = () => {
                                     setAiState({ tone: toneOption.tone });
                                     setSelectedCustomToneId("");
                                     setActivePanel(null);
-                                    if (output) void handleGenerate("rewrite", output);
+                                    void handleGenerate(selectedAction, undefined, {
+                                        customToneId: "",
+                                        tone: toneOption.tone,
+                                    });
                                 }}
                             >
                                 {toneOption.icon}
@@ -2789,7 +2803,9 @@ export const AiCockpit: React.FC = () => {
                                 onClick={() => {
                                     setSelectedCustomToneId(toneEntry.id);
                                     setActivePanel(null);
-                                    if (output) void handleGenerate("rewrite", output);
+                                    void handleGenerate(selectedAction, undefined, {
+                                        customToneId: toneEntry.id,
+                                    });
                                 }}
                             >
                                 <Icons.Sparkles size={12} />
