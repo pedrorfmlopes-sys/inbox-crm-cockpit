@@ -95,61 +95,138 @@ function looksLikeHtml(value: string): boolean {
     return /<\/?(p|br|ul|ol|li|strong|em|a|div|span|h[1-6]|table|tr|td|blockquote)\b/i.test(String(value || ""));
 }
 
-function formatEmailHtml(raw: string): string {
+function htmlFragmentToPlainText(raw: string): string {
     const source = String(raw || "").trim();
     if (!source) return "";
 
-    if (looksLikeHtml(source)) {
-        return `<div style="font-family:Aptos,Segoe UI,Arial,sans-serif;font-size:11pt;line-height:1.55;color:#1f2937;">${source}</div>`;
+    if (!looksLikeHtml(source)) {
+        return source;
     }
 
-    const normalized = source
+    const marked = source
+        .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+        .replace(/<\s*li[^>]*>/gi, "\n- ")
+        .replace(/<\/\s*(p|div|li|h[1-6]|blockquote|tr|td)\s*>/gi, "\n\n");
+
+    try {
+        if (typeof document !== "undefined") {
+            const div = document.createElement("div");
+            div.innerHTML = marked;
+            return div.textContent || "";
+        }
+    } catch {
+        // fallback below
+    }
+
+    return marked.replace(/<[^>]+>/g, " ");
+}
+
+function normalizeGeneratedText(raw: string): string {
+    return htmlFragmentToPlainText(raw)
+        .replace(/\u00a0/g, " ")
         .replace(/\r\n/g, "\n")
         .replace(/\r/g, "\n")
+        .replace(/\|\s*/g, "\n")
+        .replace(/[ \t]+/g, " ")
+        .replace(/[ \t]*\n[ \t]*/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+
+function protectCommonAbbreviations(value: string): string {
+    return String(value || "")
+        .replace(/\b(Sr|Sra|Dr|Dra|Eng|Exmo|Exma|Mr|Mrs|Ms|St)\./gi, "$1§")
+        .replace(/\be\.g\./gi, "e§g§")
+        .replace(/\bi\.e\./gi, "i§e§");
+}
+
+function restoreCommonAbbreviations(value: string): string {
+    return String(value || "")
+        .replace(/§/g, ".");
+}
+
+function splitSentenceBlocks(line: string): string[] {
+    const source = String(line || "").trim();
+    if (!source) return [];
+
+    const protectedText = protectCommonAbbreviations(source);
+    const parts = protectedText.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g) || [protectedText];
+
+    return parts
+        .map((part) => restoreCommonAbbreviations(part).trim())
+        .filter(Boolean);
+}
+
+function forceEmailBoundaryBreaks(text: string): string {
+    return String(text || "")
+        .replace(/\s+(Com os melhores cumprimentos,|Melhores cumprimentos,|Cumprimentos,|Best regards,|Kind regards,|Regards,|Saludos,|Un saludo,|Cordialmente,|Cordiali saluti,|Mit freundlichen Grüßen,)/gi, "\n\n$1")
+        .replace(/\s+(Muito obrigado(?: pela| pelo|,|\.|$)|Obrigado(?: pela| pelo|,|\.|$)|Thank you(?: for [^.!?]+[.!?]|\.|,|$)|Muchas gracias(?:[^.!?]*[.!?]|,|$)|Gracias(?:[^.!?]*[.!?]|,|$))/gi, "\n\n$1")
+        .replace(/\s+(Pedro Lopes(?:\s+Backoffice Divitek)?)(?=\s|$)/gi, "\n\n$1");
+}
+
+function formatEmailHtml(raw: string): string {
+    const source = normalizeGeneratedText(raw);
+    if (!source) return "";
+
+    const prepared = forceEmailBoundaryBreaks(source)
         .replace(/([A-Za-zÀ-ÿ]+,)\s+([A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ\[])/g, "$1\n\n$2")
-        .replace(/(Com os melhores cumprimentos,|Melhores cumprimentos,|Cumprimentos,|Obrigado,|Muito obrigado,|Obrigado pela atenção,|Obrigado pela atencao,)\s+/gi, "$1\n\n")
-        .replace(/\|\s*/g, "\n");
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
 
-    const lines = normalized.split("\n");
     const blocks: string[] = [];
-    let paragraph: string[] = [];
     let listItems: string[] = [];
-
-    const flushParagraph = () => {
-        if (!paragraph.length) return;
-        blocks.push(`<p style="margin:0 0 14px;">${escapeHtml(paragraph.join(" ")).replace(/\n/g, "<br/>")}</p>`);
-        paragraph = [];
-    };
 
     const flushList = () => {
         if (!listItems.length) return;
-        blocks.push(`<ul style="margin:0 0 14px 18px;padding:0;">${listItems.map((item) => `<li style="margin:0 0 6px;">${escapeHtml(item)}</li>`).join("")}</ul>`);
+        blocks.push(
+            `<ul style="margin:0 0 14px 18px;padding:0;">${
+                listItems.map((item) => `<li style="margin:0 0 6px;">${escapeHtml(item)}</li>`).join("")
+            }</ul>`
+        );
         listItems = [];
     };
 
-    for (const rawLine of lines) {
-        const line = String(rawLine || "").trim();
-        if (!line) {
-            flushParagraph();
+    const pushParagraph = (value: string) => {
+        const clean = String(value || "").trim();
+        if (!clean) return;
+        flushList();
+        blocks.push(`<p style="margin:0 0 14px;">${escapeHtml(clean)}</p>`);
+    };
+
+    const chunks = prepared.split(/\n{2,}/).map((chunk) => chunk.trim()).filter(Boolean);
+
+    for (const chunk of chunks) {
+        const lines = chunk.split("\n").map((line) => line.trim()).filter(Boolean);
+
+        for (const rawLine of lines) {
+            const line = String(rawLine || "").trim();
+            if (!line) continue;
+
+            if (/^[-*•]\s+/.test(line)) {
+                listItems.push(line.replace(/^[-*•]\s+/, "").trim());
+                continue;
+            }
+
             flushList();
-            continue;
-        }
 
-        if (/^[-*•]\s+/.test(line)) {
-            flushParagraph();
-            listItems.push(line.replace(/^[-*•]\s+/, ""));
-            continue;
-        }
+            const sentenceBlocks = splitSentenceBlocks(line);
 
-        if (listItems.length) {
-            flushList();
-        }
+            if (sentenceBlocks.length <= 1) {
+                pushParagraph(line);
+                continue;
+            }
 
-        paragraph.push(line);
+            for (const sentence of sentenceBlocks) {
+                pushParagraph(sentence);
+            }
+        }
     }
 
-    flushParagraph();
     flushList();
+
+    if (!blocks.length) {
+        return "";
+    }
 
     return `<div style="font-family:Aptos,Segoe UI,Arial,sans-serif;font-size:11pt;line-height:1.55;color:#1f2937;">${blocks.join("")}</div>`;
 }
