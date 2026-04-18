@@ -21,6 +21,10 @@ export type ResponsePreset = {
   prompt: string;
 };
 
+export type SettingsMigrations = {
+  legacyResponsePresetsV1?: boolean;
+};
+
 export type ContactAlias = {
   id: string;
   name: string;
@@ -220,6 +224,9 @@ export type CockpitSettingsV1 = {
   // New: Custom Response Presets
   responsePresets: ResponsePreset[];
 
+  // One-shot local/roaming migrations already processed.
+  migrations?: SettingsMigrations;
+
   // New: Contact Aliases (Forwarding Shortcuts)
   contactAliases: ContactAlias[];
 
@@ -283,6 +290,7 @@ const SETTINGS_STORAGE_KEYS: Array<keyof CockpitSettingsV1> = [
   "invoiceStudio",
   "bodyScope",
   "responsePresets",
+  "migrations",
   "contactAliases",
   "aiCustomTones",
   "aiTextShortcuts",
@@ -356,7 +364,14 @@ const LEGACY_SIGNATURE_KEYS = {
   image: "icc.sig.img",
   imageWidth: "icc.sig.img.w",
 } as const;
+const LEGACY_RESPONSE_PRESETS_KEY = "crmCockpit.templates.v1";
 const SIGNATURE_LOCALES: AppLocale[] = ["pt-PT", "es-ES", "en-GB", "it-IT", "de-DE"];
+
+const DEFAULT_RESPONSE_PRESETS: ResponsePreset[] = [
+  { id: "p1", name: "Pedido de Dados", prompt: "Agradece o contacto e solicita os dados de faturação (NIF, Morada) para podermos proceder." },
+  { id: "p2", name: "Agendamento Carga", prompt: "Informa que a mercadoria está pronta e solicita confirmação de data/hora para a recolha no nosso armazém." },
+  { id: "p3", name: "Follow-up Proposta", prompt: "Faz um follow-up cortês sobre a última proposta enviada, perguntando se restam dúvidas técnicas." }
+];
 
 const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   version: 1,
@@ -423,11 +438,8 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
     project: "",
   },
   bodyScope: "main",
-  responsePresets: [
-    { id: "p1", name: "Pedido de Dados", prompt: "Agradece o contacto e solicita os dados de faturação (NIF, Morada) para podermos proceder." },
-    { id: "p2", name: "Agendamento Carga", prompt: "Informa que a mercadoria está pronta e solicita confirmação de data/hora para a recolha no nosso armazém." },
-    { id: "p3", name: "Follow-up Proposta", prompt: "Faz um follow-up cortês sobre a última proposta enviada, perguntando se restam dúvidas técnicas." }
-  ],
+  responsePresets: [...DEFAULT_RESPONSE_PRESETS],
+  migrations: {},
   contactAliases: [
     { id: "c1", name: "Ragno", email: "info@ragno.it" },
     { id: "c2", name: "Marazzi", email: "contact@marazzi.it" }
@@ -782,8 +794,111 @@ function applyLegacySignatureMigration(settings: CockpitSettingsV1, removeLegacy
   return next;
 }
 
+function responsePresetKey(entry: Pick<ResponsePreset, "name" | "prompt">): string {
+  return `${String(entry.name || "").trim().toLowerCase()}\n${String(entry.prompt || "").trim().toLowerCase()}`;
+}
+
+function normalizeResponsePresets(input: any[]): ResponsePreset[] {
+  const usedIds = new Set<string>();
+  const seen = new Set<string>();
+  const next: ResponsePreset[] = [];
+
+  for (const raw of input || []) {
+    const name = String(raw?.name || "").trim();
+    const prompt = String(raw?.prompt ?? raw?.body ?? "").trim();
+    if (!name && !prompt) continue;
+
+    const key = responsePresetKey({ name, prompt });
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const rawId = String(raw?.id || "").trim();
+    const baseId = rawId || `preset-${next.length + 1}`;
+    let id = baseId;
+    let suffix = 2;
+    while (usedIds.has(id)) {
+      id = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    usedIds.add(id);
+
+    next.push({
+      id,
+      name: name || "MOD sem nome",
+      prompt,
+    });
+  }
+
+  return next;
+}
+
+function responsePresetsAreDefaultOrEmpty(input: ResponsePreset[] | undefined): boolean {
+  const presets = normalizeResponsePresets(Array.isArray(input) ? input : []);
+  if (!presets.length) return true;
+  const defaults = normalizeResponsePresets(DEFAULT_RESPONSE_PRESETS);
+  if (presets.length !== defaults.length) return false;
+  const defaultKeys = new Set(defaults.map(responsePresetKey));
+  return presets.every((entry) => defaultKeys.has(responsePresetKey(entry)));
+}
+
+function readLegacyResponsePresets(): ResponsePreset[] {
+  const raw = readLocalString(LEGACY_RESPONSE_PRESETS_KEY);
+  const parsed = safeJsonParse<any[]>(raw);
+  if (!Array.isArray(parsed)) return [];
+  return normalizeResponsePresets(
+    parsed.map((entry: any) => ({
+      id: String(entry?.id || "").trim(),
+      name: String(entry?.name || "").trim(),
+      prompt: String(entry?.prompt ?? entry?.body ?? "").trim(),
+    }))
+  );
+}
+
+function removeLegacyResponsePresets(): void {
+  try {
+    globalThis.localStorage?.removeItem(LEGACY_RESPONSE_PRESETS_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function applyLegacyResponsePresetMigration(settings: CockpitSettingsV1, removeLegacy = false): CockpitSettingsV1 {
+  if (settings.migrations?.legacyResponsePresetsV1) {
+    if (removeLegacy) removeLegacyResponsePresets();
+    return settings;
+  }
+
+  const legacyPresets = readLegacyResponsePresets();
+  if (!legacyPresets.length) return settings;
+
+  const next: CockpitSettingsV1 = {
+    ...settings,
+    migrations: {
+      ...(settings.migrations || {}),
+      legacyResponsePresetsV1: true,
+    },
+  };
+
+  if (responsePresetsAreDefaultOrEmpty(settings.responsePresets)) {
+    next.responsePresets = normalizeResponsePresets([
+      ...legacyPresets,
+      ...DEFAULT_RESPONSE_PRESETS,
+    ]);
+  }
+
+  if (removeLegacy) removeLegacyResponsePresets();
+  return next;
+}
+
+function applyLegacySettingsMigrations(settings: CockpitSettingsV1, removeLegacy = false): CockpitSettingsV1 {
+  return applyLegacyResponsePresetMigration(
+    applyLegacySignatureMigration(settings, removeLegacy),
+    removeLegacy
+  );
+}
+
 function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSettingsV1> | null): CockpitSettingsV1 {
-  if (!incoming) return compactSettingsForStorage(applyLegacySignatureMigration(base));
+  if (!incoming) return compactSettingsForStorage(applyLegacySettingsMigrations(base));
   const knownIncoming = pickKnownSettings(incoming);
   const incomingLayout = ((incoming as any).crm2OdooLayout || {});
   const incomingLayoutMode = normalizeCrm2OdooLayoutMode(incomingLayout.mode ?? base.crm2OdooLayout.mode);
@@ -797,6 +912,13 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
     signatureImageMaxWidth: { ...(base.signatureImageMaxWidth || {}), ...((incoming as any).signatureImageMaxWidth || {}) },
     aiKnowledge: Array.isArray(incoming.aiKnowledge) ? incoming.aiKnowledge : base.aiKnowledge,
     aiManualOnly: typeof incoming.aiManualOnly === "boolean" ? incoming.aiManualOnly : base.aiManualOnly,
+    responsePresets: Array.isArray((incoming as any).responsePresets)
+      ? normalizeResponsePresets((incoming as any).responsePresets)
+      : base.responsePresets,
+    migrations: {
+      ...(base.migrations || {}),
+      ...(((incoming as any).migrations || {}) as SettingsMigrations),
+    },
     aiCustomTones: Array.isArray((incoming as any).aiCustomTones)
       ? (incoming as any).aiCustomTones
         .map((entry: any) => ({
@@ -966,7 +1088,7 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
 
   // guard against wrong versions
   merged.version = 1;
-  return compactSettingsForStorage(applyLegacySignatureMigration(merged));
+  return compactSettingsForStorage(applyLegacySettingsMigrations(merged));
 }
 
 export function getCachedSettingsSnapshot(): CockpitSettingsV1 {
@@ -988,7 +1110,7 @@ export async function getSettings(): Promise<CockpitSettingsV1> {
     const raw = rs.get(KEY_SETTINGS);
     const parsed = safeJsonParse<Partial<CockpitSettingsV1>>(raw);
     const merged = mergeSettings(getCachedSettingsSnapshot(), parsed);
-    const migrated = compactSettingsForStorage(applyLegacySignatureMigration(merged, true));
+    const migrated = compactSettingsForStorage(applyLegacySettingsMigrations(merged, true));
     if (serializeSettings(migrated) !== serializeSettings(merged)) {
       const json = serializeSettings(migrated);
       try {
@@ -1004,7 +1126,7 @@ export async function getSettings(): Promise<CockpitSettingsV1> {
 
   // fallback (dev / non-office)
   const merged = getCachedSettingsSnapshot();
-  const migrated = compactSettingsForStorage(applyLegacySignatureMigration(merged, true));
+  const migrated = compactSettingsForStorage(applyLegacySettingsMigrations(merged, true));
   if (serializeSettings(migrated) !== serializeSettings(merged)) {
     writeLocalSettingsRequired(serializeSettings(migrated));
   }

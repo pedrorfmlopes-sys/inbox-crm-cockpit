@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import type { OutlookMessageContext } from "../office";
-import { getEmailBodyText, syncOutlookCategorySource } from "../office";
+import { getEmailBodyText, openAiSettings, syncOutlookCategorySource } from "../office";
 import { aiGenerate, type AiLocale, type AiMode, type AiTone } from "./aiClient";
-import { getSettings, saveSettings, type CockpitSettingsV1, type LangOption, type AppLocale } from "../settings";
+import { getSettings, saveSettings, type LangOption, type AppLocale, type ResponsePreset } from "../settings";
 import { CRM_FOLLOW_UP_CATEGORY } from "../outlookCategories";
 
 type Action = "summarize" | "reply" | "tasks" | "rewrite";
@@ -21,8 +21,6 @@ type RecipientRow = {
 
 
 type SnippetTemplate = { id: string; name: string; body: string };
-
-const TPL_KEY = "crmCockpit.templates.v1";
 
 // Local history of generated outputs (per thread) — kept for 3 days
 type AiHistoryEntry = {
@@ -211,54 +209,14 @@ function upsertSummary(emailKey: string, text: string, conversationId: string) {
   }
 }
 
-function defaultTemplates(): SnippetTemplate[] {
-  return [
-    {
-      id: "tpl-followup",
-      name: "Pedido de informação (follow-up)",
-      body: `Olá {{nome}},\n\nObrigado pelo seu email.\nPara avançarmos, pode confirmar por favor:\n- (ponto 1)\n- (ponto 2)\n\nFico a aguardar.\n\nCumprimentos,`,
-    },
-    {
-      id: "tpl-orcamento",
-      name: "Pedido de orçamento (curto)",
-      body: `Olá {{nome}},\n\nObrigado pelo contacto.\nPara preparar o orçamento, preciso de confirmar:\n- referência / modelo\n- acabamento\n- quantidades\n- prazo pretendido\n\nAssim que tiver estes dados envio a proposta.\n\nCumprimentos,`,
-    },
-    {
-      id: "tpl-atraso",
-      name: "Atualização de prazo / atraso",
-      body: `Olá {{nome}},\n\nSó para atualizar: estamos a acompanhar o processo e assim que tivermos confirmação de data/prazo voltamos a contactar.\n\nObrigado pela compreensão.\n\nCumprimentos,`,
-    },
-  ];
-}
-
-function loadTemplates(): SnippetTemplate[] {
-  try {
-    const raw = localStorage.getItem(TPL_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        const clean = parsed
-          .map((t: any) => ({
-            id: String(t?.id || "").trim() || `tpl-${Math.random()}`,
-            name: String(t?.name || "").trim() || "Sem nome",
-            body: String(t?.body || ""),
-          }))
-          .filter((t: any) => t.id && t.name);
-        if (clean.length) return clean;
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return defaultTemplates();
-}
-
-function saveTemplates(list: SnippetTemplate[]) {
-  try {
-    localStorage.setItem(TPL_KEY, JSON.stringify(list || []));
-  } catch {
-    // ignore
-  }
+function responsePresetsToTemplates(presets: ResponsePreset[] | undefined): SnippetTemplate[] {
+  return (presets || [])
+    .map((preset) => ({
+      id: String(preset?.id || "").trim(),
+      name: String(preset?.name || "").trim() || "MOD sem nome",
+      body: String(preset?.prompt || ""),
+    }))
+    .filter((preset) => preset.id && preset.name);
 }
 
 function applyTemplateVars(body: string, ctx: OutlookMessageContext): string {
@@ -568,8 +526,6 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
   const [locale, setLocale] = useState<AiLocale>("pt-PT");
   const [readingLang, setReadingLang] = useState<LangOption>("auto");
   const [replyLang, setReplyLang] = useState<LangOption>("auto");
-  const [settings, setSettings] = useState<CockpitSettingsV1 | null>(null);
-
   // Languages shown in the quick picker (bottom bar). Controlled from Settings.
   const [enabledLangs, setEnabledLangs] = useState<AppLocale[]>(ALL_LOCALES);
   const [langMenuOpen, setLangMenuOpen] = useState(false);
@@ -683,16 +639,8 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
   };
 
 
-  const [templates, setTemplates] = useState<SnippetTemplate[]>(() => loadTemplates());
+  const [templates, setTemplates] = useState<SnippetTemplate[]>([]);
   const [tplPickId, setTplPickId] = useState<string>("");
-  const [tplEdit, setTplEdit] = useState<SnippetTemplate | null>(null);
-  const [tplName, setTplName] = useState<string>("");
-  const [tplBody, setTplBody] = useState<string>("");
-
-  useEffect(() => {
-    saveTemplates(templates);
-  }, [templates]);
-
 
   const [composeNotes, setComposeNotes] = useState<string>("");
   const [rewriteText, setRewriteText] = useState<string>("");
@@ -922,7 +870,7 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
     (async () => {
       try {
         const s = await getSettings();
-        if (s) setSettings(s);
+        if (s) setTemplates(responsePresetsToTemplates(s.responsePresets));
         if (s?.tone) setTone(s.tone);
         if (s?.readingLanguage) setReadingLang(s.readingLanguage);
         if (s?.replyLanguage) setReplyLang(s.replyLanguage);
@@ -1064,7 +1012,7 @@ export default function AiPanel({ ctx }: { ctx: OutlookMessageContext }) {
       const runEmailKey = emailKey;
       const runConversationId = ctx.conversationId || "";
       const freshSettings = await getSettings();
-      setSettings(freshSettings);
+      setTemplates(responsePresetsToTemplates(freshSettings.responsePresets));
       if (freshSettings.tone) setTone(freshSettings.tone);
       if (freshSettings.readingLanguage) setReadingLang(freshSettings.readingLanguage);
       if (freshSettings.replyLanguage) setReplyLang(freshSettings.replyLanguage);
@@ -1547,115 +1495,15 @@ Divitek
           <div style={S.sheetHint}>Estas opções afetam o estilo e o nível de detalhe.</div>
         </div>
 
-        <div style={S.sectionTitle}>Templates</div>
+        <div style={S.sectionTitle}>MODS</div>
         <div style={S.sectionCard}>
           <div style={S.smallHint}>
-            Cria textos reutilizáveis para respostas rápidas. Suporta <code>{"{{nome}}"}</code> e <code>{"{{assunto}}"}</code>.
+            Os templates legados foram descontinuados. Gere os MODS oficiais em Settings &gt; IA; esta superficie legada apenas consome essa fonte.
           </div>
-
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button
-              style={S.secondaryBtn}
-              onClick={() => {
-                const t: SnippetTemplate = { id: `tpl-${Date.now()}`, name: "Novo template", body: "" };
-                setTplEdit(t);
-                setTplName(t.name);
-                setTplBody(t.body);
-              }}
-            >
-              + Novo
-            </button>
-
-            <button
-              style={S.secondaryBtn}
-              onClick={() => {
-                setTemplates(defaultTemplates());
-              }}
-              title="Repor templates base"
-            >
-              Repor
-            </button>
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-            {templates.map((t) => (
-              <div key={t.id} style={S.tplRow}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={S.tplName} title={t.name}>
-                    {t.name}
-                  </div>
-                  <div style={S.tplMeta}>{(t.body || "").trim().slice(0, 90) || "—"}</div>
-                </div>
-
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button
-                    style={S.smallBtn}
-                    onClick={() => {
-                      setTplEdit(t);
-                      setTplName(t.name);
-                      setTplBody(t.body);
-                    }}
-                  >
-                    Editar
-                  </button>
-                  <button style={S.smallBtn} onClick={() => setTemplates((prev) => prev.filter((x) => x.id !== t.id))}>
-                    🗑
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {tplEdit && (
-            <div style={S.tplEditor}>
-              <div style={S.tplEditorTitle}>Editar template</div>
-
-              <label style={S.fieldLabel}>Nome</label>
-              <input style={S.input} value={tplName} onChange={(e) => setTplName(e.currentTarget.value)} />
-
-              <label style={S.fieldLabel}>Corpo</label>
-              <textarea
-                style={S.textarea}
-                value={tplBody}
-                onChange={(e) => setTplBody(e.currentTarget.value)}
-                rows={9}
-                placeholder="Escreve aqui o texto do template…"
-              />
-
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <button
-                  style={S.primaryBtn}
-                  onClick={() => {
-                    const next: SnippetTemplate = { id: tplEdit.id, name: (tplName || "Sem nome").trim(), body: tplBody || "" };
-                    setTemplates((prev) => {
-                      const idx = prev.findIndex((x) => x.id === next.id);
-                      if (idx >= 0) {
-                        const copy = [...prev];
-                        copy[idx] = next;
-                        return copy;
-                      }
-                      return [next, ...prev];
-                    });
-                    setTplEdit(null);
-                    setTplName("");
-                    setTplBody("");
-                  }}
-                >
-                  Guardar
-                </button>
-                <button
-                  style={S.secondaryBtn}
-                  onClick={() => {
-                    setTplEdit(null);
-                    setTplName("");
-                    setTplBody("");
-                  }}
-                >
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          )}
+          <button style={{ ...S.secondaryBtn, marginTop: 8 }} onClick={() => openAiSettings()} title="Gerir MODS nas Settings">
+            Gerir MODS
+          </button>
+        </div>
 
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(11,45,107,0.10)" }}>
             <label style={S.fieldLabel}>Histórico (5 dias)</label>
@@ -1694,8 +1542,6 @@ Divitek
                 })}
             </select>
           </div>
-
-        </div>
 
       </BottomSheet>
 
@@ -1825,7 +1671,7 @@ Divitek
                 }
               }}
             >
-              <option value="">— Template —</option>
+              <option value="">— MOD —</option>
               {templates.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -1833,7 +1679,7 @@ Divitek
               ))}
             </select>
 
-            <button style={S.secondaryBtn} onClick={() => setSheet("options")} title="Gerir templates nas opções">
+            <button style={S.secondaryBtn} onClick={() => openAiSettings()} title="Gerir MODS nas Settings">
               Gerir
             </button>
           </div>
