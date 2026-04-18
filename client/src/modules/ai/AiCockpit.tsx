@@ -2502,11 +2502,12 @@ export const AiCockpit: React.FC = () => {
     };
 
     const filteredPresets = (settings?.responsePresets || [])
-        .filter((p: any) =>
-            !presetSearch ||
-            p.name.toLowerCase().includes(presetSearch.toLowerCase()) ||
-            p.prompt.toLowerCase().includes(presetSearch.toLowerCase())
-        )
+        .filter((p: any) => {
+            const name = String(p?.name || "").toLowerCase();
+            const promptText = String(p?.prompt || "").toLowerCase();
+            const search = presetSearch.toLowerCase();
+            return !search || name.includes(search) || promptText.includes(search);
+        })
         .slice(0, 12);
 
     const filteredIntents = aiState.smartReplies
@@ -2595,7 +2596,11 @@ export const AiCockpit: React.FC = () => {
                                 onClick={() => {
                                     setActivePanel(null);
                                     setPresetSearch("");
-                                    void handleGenerate(selectedAction, preset.prompt);
+                                    const presetPrompt = String(preset?.prompt || "").trim();
+                                    const taskInstruction = presetPrompt
+                                        ? `MOD selecionado: ${String(preset?.name || "MOD").trim()}\n\nInstrucao obrigatoria do MOD:\n${presetPrompt}`
+                                        : "";
+                                    void handleGenerate(selectedAction, taskInstruction);
                                 }}
                             >
                                 <Icons.ArrowRight size={12} />

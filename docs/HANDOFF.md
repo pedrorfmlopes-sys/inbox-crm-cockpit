@@ -695,3 +695,21 @@
 - **Limites atuais**:
   - nao houve teste em Outlook real nesta execucao; a validacao de host real continua recomendada para confirmar UX e APIs do Outlook
   - a superficie legada `client/src/ai/AiPanel.tsx` continua existente, mas deixa de escrever `icc.sig.*`; o cockpit ativo e `client/src/modules/ai/AiCockpit.tsx`
+
+## IA: MODS oficiais em `responsePresets` (Abril 2026)
+- **Decisao final**:
+  - MODS passam a ter uma unica fonte oficial: `cockpitSettingsV1.responsePresets`
+  - o editor oficial fica em AI Settings, na seccao `MODS / Response Presets` de `client/src/modules/ai/AiSettingsApp.tsx`; `client/src/ui/SettingsPanel.tsx` tambem edita a mesma fonte quando aberto na seccao IA
+  - `client/src/modules/ai/AiCockpit.tsx` e a superficie ativa e consome apenas `settings.responsePresets`
+  - `client/src/ai/AiPanel.tsx` permanece legado/secundario, mas deixa de editar ou gravar `crmCockpit.templates.v1`; quando mostra templates/MODS, le apenas a fonte oficial
+- **Migracao**:
+  - `client/src/settings.ts` migra uma vez `crmCockpit.templates.v1` para `responsePresets` quando o legado existe e a lista oficial esta vazia ou apenas com defaults
+  - a migracao deduplica por nome/prompt, marca `migrations.legacyResponsePresetsV1` e remove o storage legado quando `getSettings()` persiste a migracao
+  - depois da migracao, `crmCockpit.templates.v1` deixa de ser lido como fonte funcional ativa
+- **Comportamento no cockpit**:
+  - o menu MODS filtra apenas `settings.responsePresets`
+  - ao selecionar um MOD, o prompt do MOD entra como instrucao obrigatoria da geracao atual, mantendo o pipeline de `reply`/`forward`, contexto do email, assinatura e normalizacao de output
+- **Validacao recomendada fora do repo**:
+  - criar, editar, duplicar, reordenar e apagar MODS em Settings > IA
+  - confirmar no Outlook que o MOD aparece/desaparece no menu MODS do `AiCockpit`
+  - gerar resposta com um MOD e confirmar que a instrucao influencia o texto sem virar texto fixo, salvo quando o proprio MOD for texto fechado

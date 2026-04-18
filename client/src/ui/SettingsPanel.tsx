@@ -228,25 +228,6 @@ export function SettingsPanel(): JSX.Element {
     setSigImgLocal((prev) => ({ ...prev, [loc]: "" }));
   }
 
-  function addPreset() {
-    if (!model) return;
-    const newPreset = { id: `p${Date.now()}`, name: "Novo Modelo", prompt: "" };
-    setModel({ ...model, responsePresets: [...(model.responsePresets || []), newPreset] });
-  }
-
-  function removePreset(id: string) {
-    if (!model) return;
-    setModel({ ...model, responsePresets: (model.responsePresets || []).filter(p => p.id !== id) });
-  }
-
-  function updatePreset(id: string, field: "name" | "prompt", value: string) {
-    if (!model) return;
-    setModel({
-      ...model,
-      responsePresets: (model.responsePresets || []).map(p => p.id === id ? { ...p, [field]: value } : p)
-    });
-  }
-
   function addContactAlias() {
     if (!model) return;
     const newAlias = { id: `c${Date.now()}`, name: "", email: "" };
@@ -495,47 +476,10 @@ export function SettingsPanel(): JSX.Element {
 
               <div style={{ borderTop: "1px solid var(--iccc-card-border)", paddingTop: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <div style={S.fieldLabel}>Modelos de Resposta (Presets)</div>
-                  <button style={{ ...S.btnGhost, padding: "4px 10px", height: "auto" }} onClick={addPreset}>
-                    <Icons.Settings size={12} style={{ marginRight: 4 }} />
-                    Adicionar
-                  </button>
+                  <div style={S.fieldLabel}>MODS / Response Presets</div>
                 </div>
-                <div style={{ ...S.hint, marginBottom: 12 }}>Cria atalhos para respostas frequentes ou instruções específicas.</div>
-
-                <div style={{ display: "grid", gap: 10 }}>
-                  {(model.responsePresets || []).map((p) => (
-                    <div key={p.id} style={{ padding: 10, border: "1px solid var(--iccc-card-border)", borderRadius: 12, background: "rgba(255,255,255,0.02)" }}>
-                      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                        <input
-                          style={{ ...S.input, fontWeight: 700 }}
-                          value={p.name}
-                          onChange={(e) => updatePreset(p.id, "name", e.target.value)}
-                          placeholder="Nome do Modelo (ex: Pedido NIF)"
-                          title="Nome do modelo"
-                        />
-                        <button
-                          style={{ ...S.btnGhost, borderColor: "#fca5a5", color: "#ef4444" }}
-                          onClick={() => removePreset(p.id)}
-                          title="Remover modelo"
-                        >
-                          <Icons.Trash size={12} />
-                        </button>
-                      </div>
-                      <textarea
-                        style={{ ...S.textarea, minHeight: 60 }}
-                        value={p.prompt}
-                        onChange={(e) => updatePreset(p.id, "prompt", e.target.value)}
-                        placeholder="Instruções para a IA (ex: Agradece e pede o NIF de faturação)..."
-                        title="Instruções do modelo"
-                      />
-                    </div>
-                  ))}
-                  {(!model.responsePresets || model.responsePresets.length === 0) && (
-                    <div style={{ ...S.hint, textAlign: "center", padding: 20, border: "1px dashed var(--iccc-card-border)", borderRadius: 12 }}>
-                      Nenhum modelo criado. Adiciona um acima para acelerar as tuas respostas.
-                    </div>
-                  )}
+                <div style={{ ...S.hint, padding: 12, border: "1px dashed var(--iccc-card-border)", borderRadius: 12 }}>
+                  Os MODS são geridos nas AI Settings. Esta secção usa a mesma fonte oficial, mas não edita `responsePresets`.
                 </div>
               </div>
 

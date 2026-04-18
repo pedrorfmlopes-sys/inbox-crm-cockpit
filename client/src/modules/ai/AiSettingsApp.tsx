@@ -13,12 +13,14 @@ import {
   type AppLocale,
   type CockpitSettingsV1,
   type ContactAlias,
+  type ResponsePreset,
 } from "@/settings";
 import { requestCockpitHostAction } from "@/office";
 
 type SectionId =
   | "general"
   | "ai-knowledge"
+  | "response-presets"
   | "nicknames"
   | "signature"
   | "custom-tones"
@@ -73,6 +75,7 @@ const AUTO_LABEL_META: Array<{ id: AiAutoLabelId; label: string; description: st
 const MENU: Array<{ id: SectionId; label: string; icon: React.ReactNode }> = [
   { id: "general", label: "General", icon: <Icons.Settings size={15} /> },
   { id: "ai-knowledge", label: "AI knowledge", icon: <Icons.Sparkles size={15} /> },
+  { id: "response-presets", label: "MODS", icon: <Icons.Clipboard size={15} /> },
   { id: "nicknames", label: "Nicknames", icon: <Icons.MessageSquare size={15} /> },
   { id: "signature", label: "Signature", icon: <Icons.Edit size={15} /> },
   { id: "custom-tones", label: "Custom tones", icon: <Icons.RefreshCw size={15} /> },
@@ -204,6 +207,52 @@ export default function AiSettingsApp() {
   function removeAlias(id: string) {
     if (!model) return;
     setModel({ ...model, contactAliases: model.contactAliases.filter((entry) => entry.id !== id) });
+  }
+
+  function addResponsePreset() {
+    if (!model) return;
+    const preset: ResponsePreset = { id: uid("preset"), name: "Novo MOD", prompt: "" };
+    setModel({ ...model, responsePresets: [...(model.responsePresets || []), preset] });
+  }
+
+  function updateResponsePreset(id: string, patch: Partial<ResponsePreset>) {
+    if (!model) return;
+    setModel({
+      ...model,
+      responsePresets: (model.responsePresets || []).map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)),
+    });
+  }
+
+  function duplicateResponsePreset(id: string) {
+    if (!model) return;
+    const presets = model.responsePresets || [];
+    const preset = presets.find((entry) => entry.id === id);
+    if (!preset) return;
+    const copy: ResponsePreset = {
+      ...preset,
+      id: uid("preset"),
+      name: `${preset.name || "MOD"} (copia)`,
+    };
+    const idx = presets.findIndex((entry) => entry.id === id);
+    const next = [...presets];
+    next.splice(idx + 1, 0, copy);
+    setModel({ ...model, responsePresets: next });
+  }
+
+  function removeResponsePreset(id: string) {
+    if (!model) return;
+    setModel({ ...model, responsePresets: (model.responsePresets || []).filter((entry) => entry.id !== id) });
+  }
+
+  function moveResponsePreset(id: string, direction: -1 | 1) {
+    if (!model) return;
+    const presets = [...(model.responsePresets || [])];
+    const idx = presets.findIndex((entry) => entry.id === id);
+    const target = idx + direction;
+    if (idx < 0 || target < 0 || target >= presets.length) return;
+    const [entry] = presets.splice(idx, 1);
+    presets.splice(target, 0, entry);
+    setModel({ ...model, responsePresets: presets });
   }
 
   function addCustomTone() {
@@ -354,6 +403,41 @@ export default function AiSettingsApp() {
                 <Field label="Writing examples" help="Exemplos reais teus para a IA captar ritmo e estrutura.">
                   <textarea style={{ ...S.textarea, minHeight: 180 }} value={model.styleExamples || ""} onChange={(e) => setModel({ ...model, styleExamples: e.target.value })} placeholder="Cola aqui 2 ou 3 exemplos de emails teus." />
                 </Field>
+              </div>
+            ) : null}
+
+            {section === "response-presets" ? (
+              <div style={S.sectionStack}>
+                <SectionHeader title="MODS / Response Presets" description="Instrucoes reutilizaveis para gerar respostas com o contexto real do email. Esta e a fonte oficial do menu MODS do cockpit." />
+                <div style={S.toolbarRow}>
+                  <button type="button" style={S.ghostBtn} onClick={addResponsePreset}><Icons.Plus size={14} /> Adicionar MOD</button>
+                </div>
+                <div style={S.listStack}>
+                  {(model.responsePresets || []).map((preset, index) => (
+                    <div key={preset.id} style={S.blockCard}>
+                      <div style={S.inlineCard}>
+                        <input
+                          style={{ ...S.input, flex: 1 }}
+                          value={preset.name}
+                          onChange={(e) => updateResponsePreset(preset.id, { name: e.target.value })}
+                          placeholder="Nome do MOD"
+                        />
+                        <button type="button" style={S.ghostBtn} onClick={() => moveResponsePreset(preset.id, -1)} disabled={index === 0}>Subir</button>
+                        <button type="button" style={S.ghostBtn} onClick={() => moveResponsePreset(preset.id, 1)} disabled={index === (model.responsePresets || []).length - 1}>Descer</button>
+                        <button type="button" style={S.ghostBtn} onClick={() => duplicateResponsePreset(preset.id)}>Duplicar</button>
+                        <button type="button" style={S.iconBtnDanger} onClick={() => removeResponsePreset(preset.id)}><Icons.Trash size={14} /></button>
+                      </div>
+                      <textarea
+                        style={{ ...S.textarea, minHeight: 120 }}
+                        value={preset.prompt}
+                        onChange={(e) => updateResponsePreset(preset.id, { prompt: e.target.value })}
+                        placeholder="Instrucao para a IA. Ex.: Agradece o contacto e pede o NIF de faturacao."
+                      />
+                      <div style={S.hint}>O MOD e usado como instrucao explicita; a IA continua a gerar com base no email, contexto e pipeline atual.</div>
+                    </div>
+                  ))}
+                  {(model.responsePresets || []).length === 0 ? <EmptyState text="Sem MODS configurados." /> : null}
+                </div>
               </div>
             ) : null}
 
