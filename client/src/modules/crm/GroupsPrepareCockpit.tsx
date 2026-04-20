@@ -431,6 +431,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
     signature: "",
   });
   const hydratedWorksetScopeRef = useRef("");
+  const emailSelectionTouchedRef = useRef(false);
+  const attachmentSelectionTouchedRef = useRef(false);
 
   const currentEmailBootstrapPayload = useMemo<RelevantEmailPayload>(() => ({
     itemId: String(ctx.itemId || "").trim(),
@@ -792,6 +794,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
       ? buildGroupsPrepareSessionSnapshot(readGroupsPrepareSession(sessionKey))
       : { ...DEFAULT_GROUPS_PREPARE_SESSION_STATE };
     const sessionStateSignature = getGroupsPrepareSessionSignature(sessionState);
+    emailSelectionTouchedRef.current = sessionState.selectedEmailKeys.length > 0;
+    attachmentSelectionTouchedRef.current = sessionState.selectedAttachmentKeys.length > 0;
     setSubview(sessionState.subview);
     setShowGroupPanel(sessionState.showGroupPanel);
     setShowFiltersPanel(sessionState.showFiltersPanel);
@@ -876,12 +880,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
           setShowFiltersPanel(true);
         }
         if (Array.isArray(manifest.includedEmailKeys) && manifest.includedEmailKeys.length) {
+          emailSelectionTouchedRef.current = true;
           setSelectedEmailKeys(manifest.includedEmailKeys);
         }
         const selectedAttachments = (manifest.attachments || [])
           .filter((attachment) => attachment.selection === "selected")
           .map((attachment) => attachment.key);
         if (selectedAttachments.length) {
+          attachmentSelectionTouchedRef.current = true;
           setSelectedAttachmentKeys(selectedAttachments);
         }
       })
@@ -961,9 +967,11 @@ export const GroupsPrepareCockpit: React.FC = () => {
   );
 
   const visibleEmails = useMemo(() => {
+    if (!showFiltersPanel) return mergedCandidateEmails;
+
     const query = normalizeText(filterQuery);
     return mergedCandidateEmails.filter((email) => {
-      if (showFiltersPanel && query) {
+      if (query) {
         const haystack = [
           email.subject,
           email.fromName,
@@ -990,41 +998,49 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [attachmentMode, filterQuery, groupMode, mergedCandidateEmails, showFiltersPanel]);
 
   const visibleListEmails = useMemo(
-    () => visibleEmails.filter((email) => makeEmailKey(email) !== currentEmailKey && !emailMatchesCurrentContext(email, ctx)),
+    () => visibleEmails.filter((email) => makeEmailKey(email) !== currentEmailKey && !emailMatchesCurrentEmailIdentity(email, ctx, currentEmailKey)),
     [ctx, currentEmailKey, visibleEmails]
+  );
+
+  const activePrepareEmails = useMemo(
+    () => dedupeEmails([currentEmailEntry, ...visibleListEmails]),
+    [currentEmailEntry, visibleListEmails]
   );
 
   useEffect(() => {
     if (!sessionReady) return;
-    const validKeys = new Set(mergedCandidateEmails.map((email) => makeEmailKey(email)).filter(Boolean));
-    const defaultSelection = currentEmailKey && validKeys.has(currentEmailKey)
-      ? [currentEmailKey]
-      : mergedCandidateEmails[0]
-        ? [makeEmailKey(mergedCandidateEmails[0])]
-        : [];
+    const validKeys = new Set(activePrepareEmails.map((email) => makeEmailKey(email)).filter(Boolean));
+    const defaultSelection = activePrepareEmails.length
+      ? activePrepareEmails.map((email) => makeEmailKey(email)).filter(Boolean)
+      : [];
     setSelectedEmailKeys((current) => {
       const next = current.filter((key) => validKeys.has(key));
+      if (!emailSelectionTouchedRef.current) {
+        return sameStringArray(defaultSelection, current) ? current : defaultSelection;
+      }
       if (next.length) return sameStringArray(next, current) ? current : next;
       return sameStringArray(defaultSelection, current) ? current : defaultSelection;
     });
     setExpandedEmailKeys((current) => {
       const next = current.filter((key) => validKeys.has(key));
-      const fallback = mergedCandidateEmails.slice(0, 2).map((email) => makeEmailKey(email)).filter(Boolean);
+      const fallback = activePrepareEmails.slice(0, 2).map((email) => makeEmailKey(email)).filter(Boolean);
       const resolved = next.length ? next : fallback;
       return sameStringArray(resolved, current) ? current : resolved;
     });
-  }, [currentEmailKey, mergedCandidateEmails, sessionReady]);
+  }, [activePrepareEmails, sessionReady]);
 
   const selectedEmails = useMemo(
-    () => mergedCandidateEmails.filter((email) => selectedEmailKeys.includes(makeEmailKey(email))),
-    [mergedCandidateEmails, selectedEmailKeys]
+    () => activePrepareEmails.filter((email) => selectedEmailKeys.includes(makeEmailKey(email))),
+    [activePrepareEmails, selectedEmailKeys]
   );
+
+  const attachmentSourceEmails = selectedEmails;
 
   const attachmentRows = useMemo<PrepareAttachmentRow[]>(() => {
     const rows: PrepareAttachmentRow[] = [];
     const ignoreInline = settings?.groupStorage?.ignoreInlineAttachments === true;
 
-    for (const email of selectedEmails) {
+    for (const email of attachmentSourceEmails) {
       const emailKey = makeEmailKey(email);
       const sourceAttachments = emailKey === currentEmailKey
         ? currentEmailPayload.attachments || []
@@ -1055,7 +1071,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       if (a.emailDateIso !== b.emailDateIso) return b.emailDateIso.localeCompare(a.emailDateIso);
       return a.name.localeCompare(b.name, "pt-PT");
     });
-  }, [currentEmailKey, currentEmailPayload.attachments, selectedEmails, settings?.groupStorage?.ignoreInlineAttachments]);
+  }, [attachmentSourceEmails, currentEmailKey, currentEmailPayload.attachments, settings?.groupStorage?.ignoreInlineAttachments]);
 
   useEffect(() => {
     if (!sessionReady) return;
@@ -1063,6 +1079,9 @@ export const GroupsPrepareCockpit: React.FC = () => {
     const defaultSelection = attachmentRows.map((attachment) => attachment.key);
     setSelectedAttachmentKeys((current) => {
       const next = current.filter((key) => validKeys.has(key));
+      if (!attachmentSelectionTouchedRef.current) {
+        return sameStringArray(defaultSelection, current) ? current : defaultSelection;
+      }
       const resolved = next.length ? next : defaultSelection;
       return sameStringArray(resolved, current) ? current : resolved;
     });
@@ -1203,8 +1222,9 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [currentEmailKey, flushWorkset, sessionReady, worksetManifest, worksetSignature]);
 
   const activeFilterSummary = useMemo(() => {
+    if (!showFiltersPanel) return [];
     const summary: string[] = [];
-    if (showFiltersPanel && String(filterQuery || "").trim()) summary.push(`Pesquisa: ${String(filterQuery || "").trim()}`);
+    if (String(filterQuery || "").trim()) summary.push(`Pesquisa: ${String(filterQuery || "").trim()}`);
     if (attachmentMode === "with") summary.push("So com anexos");
     if (attachmentMode === "without") summary.push("So sem anexos");
     if (groupMode === "with_group") summary.push("So com grupo");
@@ -1376,9 +1396,15 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }
 
   function toggleEmailSelection(emailKey: string) {
+    emailSelectionTouchedRef.current = true;
     setSelectedEmailKeys((current) =>
       current.includes(emailKey) ? current.filter((entry) => entry !== emailKey) : [...current, emailKey]
     );
+  }
+
+  function setEmailSelectionFromUser(nextKeys: string[]) {
+    emailSelectionTouchedRef.current = true;
+    setSelectedEmailKeys(nextKeys);
   }
 
   function toggleEmailExpanded(emailKey: string) {
@@ -1388,9 +1414,15 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }
 
   function toggleAttachmentSelection(attachmentKey: string) {
+    attachmentSelectionTouchedRef.current = true;
     setSelectedAttachmentKeys((current) =>
       current.includes(attachmentKey) ? current.filter((entry) => entry !== attachmentKey) : [...current, attachmentKey]
     );
+  }
+
+  function setAttachmentSelectionFromUser(nextKeys: string[]) {
+    attachmentSelectionTouchedRef.current = true;
+    setSelectedAttachmentKeys(nextKeys);
   }
 
   const summaryMetricCards = [
@@ -1570,8 +1602,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
         <div style={S.viewStack}>
           <div style={S.inlineMetaRow}>
             <span style={S.smallMeta}>{selectedEmails.length} email(s) no conjunto de trabalho</span>
-            <button type="button" style={S.tinyBtn} onClick={() => setSelectedEmailKeys(Array.from(new Set([currentEmailKey, ...visibleListEmails.map((email) => makeEmailKey(email))].filter(Boolean))))}>Todos os visiveis</button>
-            <button type="button" style={S.tinyBtn} onClick={() => setSelectedEmailKeys(currentEmailKey ? [currentEmailKey] : [])}>So ancora</button>
+            <button type="button" style={S.tinyBtn} onClick={() => setEmailSelectionFromUser(Array.from(new Set([currentEmailKey, ...visibleListEmails.map((email) => makeEmailKey(email))].filter(Boolean))))}>Todos os visiveis</button>
+            <button type="button" style={S.tinyBtn} onClick={() => setEmailSelectionFromUser(currentEmailKey ? [currentEmailKey] : [])}>So ancora</button>
           </div>
           {contextLoading ? <PanelState compact tone="loading" title="A carregar emails" description="A montar o conjunto base a partir do email ancora." /> : null}
           {!contextLoading && !visibleListEmails.length ? (
@@ -1660,8 +1692,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
             <div style={S.fieldLabel}>Anexos</div>
             <div style={S.inlineMetaRow}>
               <span style={S.smallMeta}>{selectedAttachments.length}/{attachmentRows.length} anexo(s) preparado(s)</span>
-              <button type="button" style={S.tinyBtn} onClick={() => setSelectedAttachmentKeys(attachmentRows.map((attachment) => attachment.key))}>Todos</button>
-              <button type="button" style={S.tinyBtn} onClick={() => setSelectedAttachmentKeys([])}>Nenhum</button>
+              <button type="button" style={S.tinyBtn} onClick={() => setAttachmentSelectionFromUser(attachmentRows.map((attachment) => attachment.key))}>Todos</button>
+              <button type="button" style={S.tinyBtn} onClick={() => setAttachmentSelectionFromUser([])}>Nenhum</button>
             </div>
             {!selectedEmails.length ? (
               <PanelState compact tone="info" title="Sem emails selecionados" description="Escolhe primeiro emails na Lista para preparar anexos." />
