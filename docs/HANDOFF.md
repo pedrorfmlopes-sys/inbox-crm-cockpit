@@ -666,6 +666,17 @@
 - **Gate seguinte**:
   - teste real em host Outlook para confirmar que historico nao contamina o email atual, `Preparar`/`Classificar` nao gravam cedo demais e a lista mostra apenas grupo real do email
 
+## Grupos v1: correcao cirurgica da frente 1 de `Preparar` (Abril 2026)
+- **Correcoes aplicadas nesta ronda**:
+  - `Filtros` OFF passa a significar zero filtragem: pesquisa, modo de anexos e modo de grupo ficam inativos ate o painel ser ligado
+  - a selecao inicial de trabalho passa a acompanhar o conjunto visivel/ativo de `Preparar` ate haver escolha manual do utilizador, evitando que a aba `Anexos` pareca vazia quando a lista mostra emails relacionados com anexos
+  - a lista de relacionados deixa de excluir linhas por match contextual largo de conversa/assunto/remetente; apenas a identidade direta do ancora e removida da lista
+- **Guardas mantidas**:
+  - sem mexer em `Classificar`, preview de anexos, backend ou storage architecture
+  - sem nova UX, `Explorar`, `Explorador de Grupos`, `Gestor do Grupo` ou `Tarefas`
+- **Proximo passo recomendado**:
+  - validar em Outlook real uma conversa com dois emails relacionados, alternando entre `Filtros` OFF/ON e confirmando que a aba `Anexos` reflete os emails efetivamente selecionados no conjunto ativo
+
 ## IA: settings efetivas e direcao explicita de resposta (Abril 2026)
 - **Objetivo desta ronda**:
   - fechar o circuito tecnico entre settings do utilizador e geracao IA
