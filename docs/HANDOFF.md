@@ -677,6 +677,14 @@
 - **Proximo passo recomendado**:
   - validar em Outlook real uma conversa com dois emails relacionados, alternando entre `Filtros` OFF/ON e confirmando que a aba `Anexos` reflete os emails efetivamente selecionados no conjunto ativo
 
+## Grupos v1: frente 1 de `Preparar` integrada em `main` (Abril 2026)
+- **Estado pos-merge**:
+  - PR #24 (`codex/groups-prepare-filters-attachments-related-fix`) integrada em `main` por merge commit explicito
+  - checkpoint pre-merge publicado em `pre-merge-groups-prepare-front1-2026-04-20`
+- **Gate seguinte**:
+  - teste real em host Outlook para validar `Filtros` OFF/ON, coerencia da aba `Anexos` em `Preparar` e consistencia local da lista de relacionados
+  - a frente 2 de anexos/preview em `Classificar` permanece separada e fora deste merge
+
 ## IA: settings efetivas e direcao explicita de resposta (Abril 2026)
 - **Objetivo desta ronda**:
   - fechar o circuito tecnico entre settings do utilizador e geracao IA
