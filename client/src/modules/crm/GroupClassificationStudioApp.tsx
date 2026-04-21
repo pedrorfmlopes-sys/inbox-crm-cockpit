@@ -27,7 +27,8 @@ import {
   readGroupPreparationSeed,
   type GroupPreparationSeed,
 } from "@/modules/crm/groups-v1/prepareSession";
-import { hydrateIntermediateCaseEmailsToRelatedEntries } from "@/modules/crm/groups-v1/storage/intermediateCaseAdapters";
+import { hydrateIntermediateCaseEmailsToRelatedEntries, mapIntermediateEmailToRelatedEmailEntry } from "@/modules/crm/groups-v1/storage/intermediateCaseAdapters";
+import { applyClassificationToIntermediateCase, type IntermediateCaseClassificationDraft } from "@/modules/crm/groups-v1/storage/intermediateCaseClassification";
 import { resolveClassificationIntermediateCase } from "@/modules/crm/groups-v1/storage/resolveClassificationIntermediateCase";
 import type { IntermediateCase } from "@/modules/crm/groups-v1/storage/intermediateCaseTypes";
 import "../../global.css";
@@ -615,6 +616,19 @@ function StudioInner() {
     if (!incomingEmail) return;
     mergeEmailsIntoClassificationCase([incomingEmail]);
   }, [mergeEmailsIntoClassificationCase]);
+  const syncClassificationCaseEmails = useCallback((nextCaseValue: IntermediateCase) => {
+    const mappedEmails = nextCaseValue.emails.map((email) => mapIntermediateEmailToRelatedEmailEntry(email));
+    setIntermediateCaseBootstrap((current) => {
+      if (current.status !== "ready") return current;
+      return {
+        ...current,
+        caseValue: nextCaseValue,
+        emails: dedupeEmails(mappedEmails),
+      };
+    });
+    setRelatedEmails((current) => dedupeEmails([...mappedEmails, ...current]));
+    setKnownEmails((current) => dedupeEmails([...mappedEmails, ...current]));
+  }, []);
   const currentContext = useMemo(() => ({
     conversationId: String(params.conversationId || classificationAnchorEmail?.conversationId || currentSeed?.conversationId || fallbackIdentity?.conversationId || "").trim(),
     internetMessageId: String(params.internetMessageId || classificationAnchorEmail?.internetMessageId || currentSeed?.internetMessageId || fallbackIdentity?.internetMessageId || "").trim(),
@@ -970,7 +984,11 @@ function StudioInner() {
           return matchesOrigin || matchesGroup;
         })
         .map((ticket) => ticket.id);
-      map.set(key, { groupIds, labels, ticketIds });
+      const directTicketIds = Array.from(new Set([
+        ...ticketIds,
+        String((email.classificationMeta as any)?.ticketId || "").trim(),
+      ].filter(Boolean)));
+      map.set(key, { groupIds, labels, ticketIds: directTicketIds });
     }
     return map;
   }, [contextualTickets, currentCaseBusinessGroups, currentContext.internetMessageId, currentContext.itemId, emailPool, groupMap]);
@@ -3377,6 +3395,40 @@ function StudioInner() {
             });
             finalTicket = linked.ticket;
           }
+        }
+
+        const resolvedCaseTicket = finalTicket || currentOutlookTicket;
+        const localClassificationState = String(
+          (classificationMetaDraft.ticketStatusEnabled ? desiredTicketStatus || resolvedCaseTicket?.status : "")
+          || (classificationMetaDraft.principalStatusEnabled ? principalGroup?.status : "")
+          || ""
+        ).trim();
+        const localClassificationDraft: IntermediateCaseClassificationDraft = {
+          principalGroupId: principalGroupId || undefined,
+          principalGroupName: principalGroup?.name || undefined,
+          referenceGroupIds,
+          labels: emailOwnedSelectedLabels,
+          ticketIds: [String(resolvedCaseTicket?.id || selectedTicketId || "").trim()].filter(Boolean),
+          ticketCodes: [String(resolvedCaseTicket?.code || "").trim()].filter(Boolean),
+          state: localClassificationState || undefined,
+          status: emailLabelStatus || undefined,
+          classifiedAt: new Date().toISOString(),
+          classifiedSource: "user",
+        };
+
+        if (classificationCase) {
+          setStatus("A gravar classificacao local no caso...");
+          const classificationStorage = await resolveClassificationIntermediateCase({
+            caseId: classificationCase.caseId,
+            anchorEmailKey: classificationCase.anchorEmailKey,
+          });
+          const nextClassificationCase = applyClassificationToIntermediateCase({
+            caseValue: classificationCase,
+            targetEmails: effectiveTargetEmails,
+            draft: localClassificationDraft,
+          });
+          await classificationStorage.storage.repository.writeCase(nextClassificationCase);
+          syncClassificationCaseEmails(nextClassificationCase);
         }
 
         coreSuccess = true;

@@ -44,6 +44,7 @@ export type IntermediateCaseAttachment = {
   contentId?: string;
   hasContent: boolean;
   documentState?: string;
+  isHidden?: boolean;
   storageDecision: IntermediateAttachmentStorageDecision;
   localRef?: IntermediateStorageRef;
   serverRef?: IntermediateStorageRef;

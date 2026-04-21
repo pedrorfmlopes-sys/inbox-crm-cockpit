@@ -28,6 +28,7 @@ function mergeAttachment(
     contentId: pickString(current.contentId, incoming.contentId),
     hasContent: incoming.hasContent === true || current.hasContent === true,
     documentState: pickString(current.documentState, incoming.documentState),
+    isHidden: typeof incoming.isHidden === "boolean" ? incoming.isHidden : current.isHidden,
     storageDecision: incoming.storageDecision || current.storageDecision,
     localRef: incoming.localRef || current.localRef,
     serverRef: incoming.serverRef || current.serverRef,

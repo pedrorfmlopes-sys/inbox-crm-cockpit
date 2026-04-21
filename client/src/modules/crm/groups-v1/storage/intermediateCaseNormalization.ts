@@ -68,6 +68,7 @@ function normalizeAttachment(input: Partial<IntermediateCaseAttachment> | null |
     contentId: normalizeString(input?.contentId) || undefined,
     hasContent: input?.hasContent === true,
     documentState: normalizeString(input?.documentState) || undefined,
+    isHidden: typeof input?.isHidden === "boolean" ? input.isHidden : undefined,
     storageDecision: input?.storageDecision || "pending",
     localRef: normalizeStorageRef(input?.localRef),
     serverRef: normalizeStorageRef(input?.serverRef),

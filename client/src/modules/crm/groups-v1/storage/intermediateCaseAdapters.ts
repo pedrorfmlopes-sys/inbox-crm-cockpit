@@ -104,6 +104,7 @@ export function mapIntermediateEmailToRelatedEmailEntry(
         contentId: attachment.contentId,
         hasContent: attachment.hasContent,
         documentState: attachment.documentState,
+        isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
         storagePathHint: localPath || undefined,
         content: localPath ? attachmentContentByPath.get(localPath) || undefined : undefined,
       };

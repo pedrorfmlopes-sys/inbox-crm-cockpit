@@ -1,5 +1,32 @@
 # HANDOFF
 
+## Grupos v1: classificacao local do studio passa a ser projetada por email no `IntermediateCase` (Abril 2026)
+- **O que passa a ser escrito no caso canonico**:
+  - grupo principal e nome do grupo principal
+  - grupos de referencia
+  - labels proprias do email
+  - `ticketIds` / `ticketCodes` quando ja existem no fluxo atual
+  - `status` e `state` locais derivados do apply atual
+  - `classifiedAt` e `classifiedSource`
+  - `documentState` e `isHidden` dos anexos do email alvo
+- **Como o scope e aplicado**:
+  - o apply continua a respeitar `current`, `selected` e os outros scopes ja existentes no studio
+  - o `IntermediateCase` e atualizado por email alvo, nunca por caso inteiro de forma cega
+  - quando ha caso canonico, ele e regravado no storage intermédio e o bootstrap do studio e atualizado a partir desse caso
+- **O que ainda fica draft local puro nesta ronda**:
+  - `labelDrafts`
+  - `classificationMetaDraft` completo
+  - `selectedSeriesId`
+  - `ticketStatusDraft` enquanto draft de edicao
+  - `attachmentPlan` (`analyze` / `save` / `forward`)
+- **Legado que continua**:
+  - o apply legacy/remoto continua a coexistir para nao partir o fluxo atual
+  - o `IntermediateCase` passa a ser a verdade local principal onde ja existe, e o legado fica como compatibilidade/transicao
+- **Fora do scope mantido**:
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermédio
+  - sem endpoints novos
+
 ## Grupos v1: `Classificar` passa a hidratar-se internamente a partir do `IntermediateCase` (Abril 2026)
 - **O que passou a nascer diretamente do caso canonico**:
   - `classificationCase` como base interna explicita do studio
