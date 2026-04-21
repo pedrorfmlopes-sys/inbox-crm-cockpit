@@ -499,11 +499,32 @@ export const GroupsPrepareCockpit: React.FC = () => {
     () => normalizeGroupsTabSettings(settings?.groupsTabSettings || null),
     [settings?.groupsTabSettings]
   );
+  const intermediateCaseStorage = useMemo(
+    () => resolveIntermediateCaseStorage(groupsSettings),
+    [groupsSettings]
+  );
   const groupsTabEnabled = groupsSettings.groupsTabEnabled;
-  const groupsStorageEnabled = groupsSettings.storageMode !== "disabled";
-  const groupsAccessLimited = !groupsTabEnabled || !groupsStorageEnabled;
+  const resolvedStorageAvailability = intermediateCaseStorage.availability;
+  const groupsStorageEnabled = resolvedStorageAvailability !== "disabled";
+  const groupsStorageReady = resolvedStorageAvailability === "ready";
+  const groupsStorageMissingLocation = resolvedStorageAvailability === "missing_location";
+  const groupsAccessLimited = !groupsTabEnabled || resolvedStorageAvailability === "disabled";
   const storageModeLabel = groupsStorageEnabled ? "OneDrive / SharePoint" : "Armazenamento desativado";
   const locationPathLabel = String(groupsSettings.baseFolderPath || "").trim() || "Sem localizacao definida";
+  const resolvedStorageLabel = groupsStorageReady
+    ? "Pronto"
+    : groupsStorageMissingLocation
+      ? "Sem localizacao valida"
+      : "Desativado";
+  const resolvedStorageBadgeStyle = groupsStorageReady ? S.localBadge : S.warningBadge;
+  const resolvedStorageHint = groupsStorageReady
+    ? intermediateCaseStorage.reason
+    : groupsStorageMissingLocation
+      ? "Sem localizacao configurada para persistencia real. A aba continua em modo transitorio em memoria nesta fase."
+      : intermediateCaseStorage.reason;
+  const settingsDiagnosticHint = groupsStorageReady
+    ? intermediateCaseStorage.reason
+    : `${intermediateCaseStorage.reason} ${groupsSettings.quickDiagnostic}`.trim();
   const limitedStateTitle = !groupsTabEnabled ? "Aba Groups desativada" : "Armazenamento intermedio desativado";
   const limitedStateDescription = !groupsTabEnabled
     ? "A aba Groups esta desativada nos Settings. Podes reativa-la a qualquer momento sem perder a configuracao guardada."
@@ -647,11 +668,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
     () => String(currentEmailLinkPayload.conversationId || currentEmailKey || "").trim(),
     [currentEmailKey, currentEmailLinkPayload.conversationId]
   );
-  const intermediateCaseStorage = useMemo(
-    () => resolveIntermediateCaseStorage(groupsSettings),
-    [groupsSettings]
-  );
-
   const currentEmailEntry = useMemo<RelatedEmailEntry>(() => ({
     emailKey: currentEmailKey,
     itemId: currentEmailLinkPayload.itemId,
@@ -1629,9 +1645,12 @@ export const GroupsPrepareCockpit: React.FC = () => {
       setMsg("A aba Groups esta desativada. Reativa-a nos Settings para continuar.");
       return;
     }
-    if (!groupsStorageEnabled) {
+    if (resolvedStorageAvailability === "disabled") {
       setMsg("Ativa o armazenamento intermedio nos Settings para abrir o fluxo de Classificar.");
       return;
+    }
+    if (groupsStorageMissingLocation) {
+      setMsg("Sem localizacao configurada para persistencia real. O trabalho atual segue apenas em memoria nesta fase.");
     }
     flushSession("before_classify", {
       emailKey: currentEmailKey,
@@ -1704,7 +1723,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       setMsg("A aba Groups esta desativada. Reativa-a nos Settings para guardar progresso.");
       return;
     }
-    if (!groupsStorageEnabled) {
+    if (resolvedStorageAvailability === "disabled") {
       setMsg("Ativa o armazenamento intermedio nos Settings para voltar a guardar a sessao de Preparar.");
       return;
     }
@@ -1724,7 +1743,13 @@ export const GroupsPrepareCockpit: React.FC = () => {
       manifest: worksetManifest,
       signature: worksetSignature,
     });
-    setMsg(saved ? "Sessao de Preparar guardada localmente." : "Nao foi possivel guardar a sessao local.");
+    setMsg(
+      saved
+        ? groupsStorageMissingLocation
+          ? "Sessao de Preparar guardada apenas em memoria nesta configuracao."
+          : "Sessao de Preparar guardada localmente."
+        : "Nao foi possivel guardar a sessao local."
+    );
   }
 
   async function handleSettingsSave(nextSettings: GroupsTabSettings) {
@@ -1804,11 +1829,19 @@ export const GroupsPrepareCockpit: React.FC = () => {
     <div style={S.settingsStatusCard}>
       <div style={S.sectionTitleRow}>
         <div style={S.fieldLabel}>Settings aplicados</div>
-        <div style={groupsStorageEnabled ? S.localBadge : S.warningBadge}>{storageModeLabel}</div>
+        <div style={resolvedStorageBadgeStyle}>{resolvedStorageLabel}</div>
       </div>
       <div style={S.settingsStatusGrid}>
         <div style={S.settingsStatusRow}>
-          <span style={S.settingsStatusLabel}>Estado</span>
+          <span style={S.settingsStatusLabel}>Modo</span>
+          <span style={S.currentGroupLine}>{storageModeLabel}</span>
+        </div>
+        <div style={S.settingsStatusRow}>
+          <span style={S.settingsStatusLabel}>Estado real</span>
+          <span style={S.currentGroupLine}>{resolvedStorageLabel}</span>
+        </div>
+        <div style={S.settingsStatusRow}>
+          <span style={S.settingsStatusLabel}>Configuracao</span>
           <span style={S.currentGroupLine}>{groupsSettings.locationStatus}</span>
         </div>
         <div style={S.settingsStatusRow}>
@@ -1816,9 +1849,24 @@ export const GroupsPrepareCockpit: React.FC = () => {
           <span style={S.currentGroupLine}>{locationPathLabel}</span>
         </div>
       </div>
-      <div style={S.settingsStatusHint}>{groupsSettings.quickDiagnostic}</div>
+      <div style={S.settingsStatusHint}>{settingsDiagnosticHint}</div>
     </div>
   );
+  const transientStoragePanel = groupsStorageMissingLocation ? (
+    <div style={S.limitedStateWrap}>
+      <PanelState
+        tone="info"
+        title="Persistencia real indisponivel nesta configuracao"
+        description={resolvedStorageHint}
+      />
+      <div style={S.limitedActions}>
+        <button type="button" style={S.secondaryBtn} onClick={() => setShowSettingsPanel(true)}>
+          <Icons.Settings size={12} />
+          Abrir Settings
+        </button>
+      </div>
+    </div>
+  ) : null;
   const limitedGroupsPanel = (
     <div style={S.viewStack}>
       {groupsSettingsStatusCard}
@@ -1897,6 +1945,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       {groupsAccessLimited ? limitedGroupsPanel : (
         <>
       {groupsSettingsStatusCard}
+      {transientStoragePanel}
 
       <div style={S.anchorCard}>
         <div style={S.anchorLead}>

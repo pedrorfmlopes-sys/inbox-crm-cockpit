@@ -869,3 +869,9 @@
   - sem OneDrive / SharePoint reais
   - sem promocao para servidor
   - sem refactor profundo de `Classificar`
+
+## Grupos v1: UI de `Preparar` alinhada com o resolver real de storage intermédio (Abril 2026)
+- `GroupsPrepareCockpit` passa a usar `intermediateCaseStorage.availability` como verdade local para `ready`, `missing_location` e `disabled`
+- `missing_location` deixa de se comportar como storage real pronto; a vista mostra estado explicito de configuracao incompleta e assume apenas modo transitorio em memoria
+- o cartao de estado passa a distinguir `Estado real` do storage resolvido e `Configuracao` derivada dos settings
+- fora do scope mantido: adapter IndexedDB, OneDrive / SharePoint reais, refactor profundo de `Classificar`
