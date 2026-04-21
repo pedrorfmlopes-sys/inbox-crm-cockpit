@@ -774,3 +774,44 @@
   - estes pontos pertencem ao contrato tecnico da frente de storage/anexos e ainda nao tem equivalente funcional fechado em `groupsTabSettings`; mover agora sem storage real abriria semantica falsa
 - **Fora do scope mantido**:
   - storage real, filesystem real, migracao real, limpeza/avisos reais, politica real de anexos, refactor profundo de `Preparar` e `Classificar`
+
+## Grupos v1: modelo canonico da base intermedia por caso (Abril 2026)
+- **Objetivo fechado nesta ronda**:
+  - criar o contrato canonico do caso intermedio que vai servir de fonte de verdade para `Preparar` e, depois, para `Classificar`, sem abrir ainda storage real ou refactor profundo do fluxo
+- **Estrutura do modelo**:
+  - `IntermediateCase` passa a separar explicitamente:
+    - top-level do caso (`schemaVersion`, `caseId`, `anchorEmailKey`, `conversationId`, `createdAt`, `updatedAt`, `lastAccessedAt`)
+    - lista de emails (`IntermediateCaseEmail[]`)
+    - classificacao por email (`IntermediateEmailClassification`)
+    - anexos por email (`IntermediateCaseAttachment[]`)
+    - resumos derivados (`sourceSummary`, `classificationSummary`, `retentionSummary`, `diagnosticSummary`)
+- **Casos mistos suportados no contrato**:
+  - emails novos vindos do Outlook coexistem com historico ja no servidor
+  - alguns emails podem estar classificados e outros nao
+  - anexos podem ter decisoes distintas (`local`, `server`, `hybrid`, `metadata_only`, `pending`)
+  - o caso pode ficar `local_only`, `mixed` ou `promoted` para preparacao futura da limpeza segura
+- **Estrutura fisica alvo da base intermedia**:
+  - `Groups/cases/<caseId>/case.json`
+  - `Groups/cases/<caseId>/attachments/<emailKey>/...`
+  - o `case.json` passa a ser o manifesto canonico do caso; anexos ficam referenciados por `localRef` / `serverRef`, sem obrigar ainda a filesystem real
+- **Helpers novos criados**:
+  - `createEmptyIntermediateCase`
+  - `normalizeIntermediateCase`
+  - `buildIntermediateCaseFromSeed`
+  - `mergeEmailIntoIntermediateCase`
+  - `mergeAttachmentsIntoIntermediateCase`
+  - `touchIntermediateCaseAccess`
+  - `buildIntermediateCaseSummary`
+  - `serializeIntermediateCase`
+  - `parseIntermediateCase`
+  - repositorio abstrato com `readCase`, `writeCase`, `deleteCase`, `listCases`, `findCaseByEmailKey`
+- **O que ficou stub / deliberadamente fora**:
+  - OneDrive / SharePoint reais
+  - leitura/escrita em pasta real
+  - refactor ponta-a-ponta de `Preparar`
+  - refactor ponta-a-ponta de `Classificar`
+  - endpoints / servidor
+  - migracao total do workset antigo
+- **Compatibilidade mantida**:
+  - workset/storage antigo continua a coexistir
+  - o novo modelo canonico fica definido como alvo da frente, sem partir o fluxo atual
