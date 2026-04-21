@@ -732,3 +732,8 @@
   - criar, editar, duplicar, reordenar e apagar MODS em Settings > IA
   - confirmar no Outlook que o MOD aparece/desaparece no menu MODS do `AiCockpit`
   - gerar resposta com um MOD e confirmar que a instrucao influencia o texto sem virar texto fixo, salvo quando o proprio MOD for texto fechado
+- **Groups settings shell (UI only)**:
+  - `client/src/modules/crm/GroupsPrepareCockpit.tsx` passou a expor um icon pequeno de engrenagem no cabecalho de `Groups`, abrindo um modal compacto de settings dentro da propria aba
+  - `client/src/modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx` implementa a shell visual com menu lateral, uma secao ativa de cada vez, tooltips discretos em hover e botoes `Fechar` / `Guardar`
+  - scope desta ronda fica limitado a interface/estrutura: `General`, `Armazenamento intermedio`, `Anexos`, `Limpeza`, `Avisos`, `Migracao`, `Manutencao`, `Explorar` e `Sobre`
+  - campos, toggles e acoes estao stubados/local-state only; nao foi ligada logica pesada de storage real, servidor, migracao, backup, reset, `Preparar` profundo ou `Classificar`

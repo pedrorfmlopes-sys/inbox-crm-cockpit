@@ -37,6 +37,7 @@ import { buildPrepareWorksetManifest } from "@/modules/crm/groups-v1/storage/bui
 import { loadPrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/loadWorkset";
 import { resolveGroupStorageRuntime } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWorkset";
+import { GroupsSettingsPanel } from "@/modules/crm/groups-v1/settings/GroupsSettingsPanel";
 import { getGroupWorksetManifestSignature } from "@/modules/crm/groups-v1/storage/worksetManifest";
 import { openGroupClassificationStudio } from "@/office";
 import { getStatusDisplayConfig } from "@/statusUtils";
@@ -344,6 +345,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const { ctx, bodyText, bodyHtml, attachments, settings, setMsg, activeGroupSelection, setActiveGroupForCurrentEmail } = useCockpit();
   const [mode] = useState<"prepare" | "explore">("prepare");
   const [subview, setSubview] = useState<GroupsPrepareSubview>("list");
+  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showGroupPanel, setShowGroupPanel] = useState(false);
   const [showFiltersPanel, setShowFiltersPanel] = useState(false);
   const [workingGroupId, setWorkingGroupId] = useState("");
@@ -1385,6 +1387,11 @@ export const GroupsPrepareCockpit: React.FC = () => {
     setMsg(saved ? "Sessao de Preparar guardada localmente." : "Nao foi possivel guardar a sessao local.");
   }
 
+  function handleSettingsSave() {
+    setMsg("UI de Settings da aba Groups pronta. A ligacao funcional profunda fica para uma ronda propria.");
+    setShowSettingsPanel(false);
+  }
+
   function handleSubviewChange(nextSubview: GroupsPrepareSubview) {
     if (nextSubview === subview) return;
     flushSession("before_subview_change", {
@@ -1447,15 +1454,26 @@ export const GroupsPrepareCockpit: React.FC = () => {
     return (
       <div style={S.root}>
         <div style={S.header}>
-          <div>
+          <div style={S.headerMain}>
             <div style={S.kicker}>Grupos v1</div>
             <div style={S.title}>Preparar</div>
+          </div>
+          <div style={S.headerTools}>
+            <button type="button" style={S.headerToolBtnEnabled} title="Settings da aba Groups" onClick={() => setShowSettingsPanel(true)}>
+              <Icons.Settings size={11} />
+            </button>
           </div>
         </div>
         <PanelState
           tone="info"
           title="Sem email ancora disponivel"
           description="Abre um email no Outlook para preparar o conjunto de trabalho desta aba."
+        />
+        <GroupsSettingsPanel
+          open={showSettingsPanel}
+          settings={settings}
+          onClose={() => setShowSettingsPanel(false)}
+          onSave={handleSettingsSave}
         />
       </div>
     );
@@ -1468,9 +1486,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
           <div style={S.kicker}>Gestor de grupos</div>
           <div style={S.title}>Groups</div>
         </div>
-        <button type="button" style={S.headerToolBtn} disabled title="Pesquisa entra noutra fase.">
-          <Icons.Search size={11} />
-        </button>
+        <div style={S.headerTools}>
+          <button type="button" style={S.headerToolBtn} disabled title="Pesquisa entra noutra fase.">
+            <Icons.Search size={11} />
+          </button>
+          <button type="button" style={S.headerToolBtnEnabled} title="Settings da aba Groups" onClick={() => setShowSettingsPanel(true)}>
+            <Icons.Settings size={11} />
+          </button>
+        </div>
       </div>
 
       <div style={S.segmentBar}>
@@ -1778,6 +1801,13 @@ export const GroupsPrepareCockpit: React.FC = () => {
           </button>
         </div>
       </div>
+
+      <GroupsSettingsPanel
+        open={showSettingsPanel}
+        settings={settings}
+        onClose={() => setShowSettingsPanel(false)}
+        onSave={handleSettingsSave}
+      />
     </div>
   );
 };
@@ -1816,7 +1846,9 @@ const S: Record<string, React.CSSProperties> = {
   headerMain: { display: "grid", gap: 1, minWidth: 0 },
   kicker: { fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--iccc-text-muted)" },
   title: { fontSize: 12.5, fontWeight: 650, color: "#243244" },
+  headerTools: { display: "inline-flex", alignItems: "center", gap: 4 },
   headerToolBtn: { ...baseButton, width: 24, height: 24, padding: 0, borderRadius: 999, background: "#fff", color: "var(--iccc-text-muted)", cursor: "not-allowed" },
+  headerToolBtnEnabled: { ...baseButton, width: 24, height: 24, padding: 0, borderRadius: 999, background: "#fff", color: "#526173", cursor: "pointer" },
   segmentBar: { display: "flex", gap: 2, padding: 2, borderRadius: 999, border: "1px solid rgba(148,163,184,0.22)", background: "rgba(241,245,249,0.92)", width: "100%", boxSizing: "border-box" },
   segment: { flex: "1 1 0", border: "none", background: "transparent", color: "var(--iccc-text-muted)", padding: "4px 7px", borderRadius: 999, fontSize: 9, fontWeight: 600, cursor: "pointer" },
   segmentActive: { flex: "1 1 0", border: "1px solid rgba(148,163,184,0.18)", background: "#fff", color: "var(--iccc-text)", padding: "4px 7px", borderRadius: 999, fontSize: 9, fontWeight: 700, cursor: "pointer", boxShadow: "0 1px 2px rgba(15,23,42,0.06)" },
