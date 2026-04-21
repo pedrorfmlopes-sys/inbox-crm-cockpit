@@ -1,5 +1,24 @@
 # HANDOFF
 
+## Grupos v1: reidratacao local pos-apply no `Classificar` passa a voltar explicitamente ao `IntermediateCase` (Abril 2026)
+- **O que passou a ser reidratado diretamente do caso apos apply**:
+  - email selecionado/ancora preservado por `emailKey`, sem cair no primeiro da lista
+  - emails do conjunto canonico voltam a sobrepor os equivalentes legacy em `relatedEmails` / `knownEmails`
+  - etiquetas selecionadas, removidas herdadas, estados por etiqueta e categorizadas voltam a semear o editor a partir do caso
+  - grupo principal, referencias e `ticketId` canonico do email selecionado voltam a ser refletidos logo apos o apply
+  - selecao de emails alvo do apply volta a ser reconciliada com o conjunto do caso atualizado
+- **Estados stale reduzidos nesta ronda**:
+  - o studio deixa de depender apenas do `refreshSelectedEmailContext()` para refletir o caso atualizado
+  - o `IntermediateCase` atualizado passa a ser sincronizado imediatamente apos o `writeCase(...)` e reaplicado novamente depois do refresh legacy, para que a base canonica volte a mandar
+  - listas case-backed deixam de ser reinjetadas por merge vago quando o mesmo email ja existe no caso canonico
+- **O que ainda fica paralelo/legacy nesta ronda**:
+  - `ticketSearch`, `ticketSearchResults` e parte dos toggles ricos de `classificationMetaDraft`
+  - tickets/grupos carregados do servidor continuam a enriquecer o studio para nomes, estados e contexto, mas deixam de mandar na identidade do email e na classificacao canonica ja persistida
+- **Fora do scope mantido**:
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+  - sem endpoints novos
+
 ## Grupos v1: etiquetas locais do `Classificar` passam a reabrir com fidelidade a partir do `IntermediateCase` (Abril 2026)
 - **O que passa a ficar canonicamente guardado por email no caso**:
   - `labels` deixam de representar apenas labels "owned" do apply local e passam a guardar a lista final de etiquetas ativas do email
