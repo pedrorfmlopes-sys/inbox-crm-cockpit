@@ -73,10 +73,14 @@ export type IntermediateCaseEmail = {
 
 export type IntermediateCaseSourceSummary = {
   precedence: IntermediateCaseSourceOrigin[];
+  primarySource: IntermediateCaseSourceOrigin;
   anchorOrigin: IntermediateCaseSourceOrigin;
   hasServerBackedEmails: boolean;
   hasIntermediateBackedEmails: boolean;
   hasOutlookBackedEmails: boolean;
+  serverEmailCount: number;
+  intermediateEmailCount: number;
+  outlookEmailCount: number;
 };
 
 export type IntermediateCaseClassificationSummary = {

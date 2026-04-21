@@ -2,6 +2,7 @@ import type {
   IntermediateCase,
   IntermediateCaseClassificationSummary,
   IntermediateCaseDiagnosticSummary,
+  IntermediateCaseSourceOrigin,
   IntermediateCaseRetentionSummary,
   IntermediateCaseSourceSummary,
   IntermediateCaseSummary,
@@ -16,12 +17,24 @@ function pickVisibleState(caseValue: IntermediateCase): IntermediateVisibleState
 
 export function buildIntermediateCaseSourceSummary(caseValue: Pick<IntermediateCase, "emails">): IntermediateCaseSourceSummary {
   const emails = caseValue.emails;
+  const serverEmailCount = emails.filter((email) => email.sourceOrigin === "server").length;
+  const intermediateEmailCount = emails.filter((email) => email.sourceOrigin === "intermediate").length;
+  const outlookEmailCount = emails.filter((email) => email.sourceOrigin === "outlook").length;
+  const primarySource: IntermediateCaseSourceOrigin = serverEmailCount
+    ? "server"
+    : intermediateEmailCount
+      ? "intermediate"
+      : "outlook";
   return {
     precedence: ["server", "intermediate", "outlook"],
+    primarySource,
     anchorOrigin: emails[0]?.sourceOrigin || "outlook",
-    hasServerBackedEmails: emails.some((email) => email.sourceOrigin === "server"),
-    hasIntermediateBackedEmails: emails.some((email) => email.sourceOrigin === "intermediate"),
-    hasOutlookBackedEmails: emails.some((email) => email.sourceOrigin === "outlook"),
+    hasServerBackedEmails: serverEmailCount > 0,
+    hasIntermediateBackedEmails: intermediateEmailCount > 0,
+    hasOutlookBackedEmails: outlookEmailCount > 0,
+    serverEmailCount,
+    intermediateEmailCount,
+    outlookEmailCount,
   };
 }
 

@@ -6,10 +6,12 @@ import type {
   IntermediateCaseAttachment,
   IntermediateCaseEmail,
   IntermediateEmailClassification,
+  IntermediateCaseSourceOrigin,
   IntermediateLocalPresence,
   IntermediateServerPresence,
   IntermediateVisibleState,
 } from "./intermediateCaseTypes";
+import { buildIntermediateCaseSourceSummary } from "./intermediateCaseSummary";
 
 export type PrepareIntermediateAttachmentInput = {
   attachmentKey: string;
@@ -88,7 +90,10 @@ function normalizeAttachment(
   };
 }
 
-function normalizeEmail(caseId: string, input: PrepareIntermediateEmailInput): IntermediateCaseEmail {
+export function prepareIntermediateEmailToCaseEmail(
+  caseId: string,
+  input: PrepareIntermediateEmailInput
+): IntermediateCaseEmail {
   return {
     emailKey: input.emailKey,
     itemId: normalizeString(input.itemId),
@@ -145,8 +150,21 @@ export function buildPrepareIntermediateCase(args: BuildPrepareIntermediateCaseA
   });
 
   for (const email of args.emails) {
-    caseValue = mergeEmailIntoIntermediateCase(caseValue, normalizeEmail(args.caseId, email));
+    caseValue = mergeEmailIntoIntermediateCase(caseValue, prepareIntermediateEmailToCaseEmail(args.caseId, email));
   }
 
   return touchIntermediateCaseAccess(caseValue, nowIso);
+}
+
+export function applyPrepareIntermediateCaseSourcePriority(args: {
+  caseValue: IntermediateCase;
+  primarySource: IntermediateCaseSourceOrigin;
+}): IntermediateCase {
+  return {
+    ...args.caseValue,
+    sourceSummary: {
+      ...buildIntermediateCaseSourceSummary(args.caseValue),
+      primarySource: args.primarySource,
+    },
+  };
 }

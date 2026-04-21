@@ -875,3 +875,25 @@
 - `missing_location` deixa de se comportar como storage real pronto; a vista mostra estado explicito de configuracao incompleta e assume apenas modo transitorio em memoria
 - o cartao de estado passa a distinguir `Estado real` do storage resolvido e `Configuracao` derivada dos settings
 - fora do scope mantido: adapter IndexedDB, OneDrive / SharePoint reais, refactor profundo de `Classificar`
+
+## Grupos v1: precedência real de abertura em `Preparar` (Abril 2026)
+- `GroupsPrepareCockpit` passa a abrir o caso por precedência explícita `Servidor -> Intermédio -> Outlook`
+- **Servidor nesta frente**:
+  - `getRelatedEmailContext(...)` para email atual e históricos relacionados já conhecidos no backend
+  - `searchKnownEmails(...)` continua apenas como pesquisa auxiliar da vista; não passa a ser a fonte canónica de abertura do caso
+- **Intermédio nesta frente**:
+  - `readCase(caseId)` e `findCaseByEmailKey(emailKey)` sobre o storage intermédio real desta ronda
+- **Outlook nesta frente**:
+  - contexto do email aberto, corpo atual e anexos já carregados no host
+- O caso final continua a ser um `IntermediateCase`, mas passa a ser montado por batches de fonte:
+  - Outlook como fallback do âncora e dos campos em falta
+  - Intermédio para preservar rascunhos e dados locais úteis já existentes
+  - Servidor como fonte mais forte quando já há dados persistidos para o email atual e/ou históricos relacionados
+- Casos mistos ficam suportados de forma explícita:
+  - o `primarySource` do caso pode ser `server`, `intermediate` ou `outlook`
+  - cada email mantém `sourceOrigin` próprio
+  - o email âncora continua limpo e não é redefinido pelo histórico
+- Fora do scope mantido:
+  - sem endpoints novos
+  - sem promoção real para servidor
+  - sem refactor profundo de `Classificar`

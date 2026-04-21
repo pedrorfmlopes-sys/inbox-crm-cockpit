@@ -139,10 +139,14 @@ export function normalizeIntermediateCase(input: Partial<IntermediateCase> | nul
     lastAccessedAt,
     sourceSummary: {
       precedence: ["server", "intermediate", "outlook"],
+      primarySource: "outlook",
       anchorOrigin: "outlook",
       hasServerBackedEmails: false,
       hasIntermediateBackedEmails: false,
       hasOutlookBackedEmails: false,
+      serverEmailCount: 0,
+      intermediateEmailCount: 0,
+      outlookEmailCount: 0,
     },
     emails: normalizedEmails,
     classificationSummary: {
@@ -163,6 +167,16 @@ export function normalizeIntermediateCase(input: Partial<IntermediateCase> | nul
     },
   };
   baseCase.sourceSummary = buildIntermediateCaseSourceSummary(baseCase);
+  if (
+    input?.sourceSummary?.primarySource === "server"
+    || input?.sourceSummary?.primarySource === "intermediate"
+    || input?.sourceSummary?.primarySource === "outlook"
+  ) {
+    baseCase.sourceSummary = {
+      ...baseCase.sourceSummary,
+      primarySource: input.sourceSummary.primarySource,
+    };
+  }
   baseCase.classificationSummary = buildIntermediateCaseClassificationSummary(baseCase);
   baseCase.retentionSummary = buildIntermediateCaseRetentionSummary(baseCase);
   baseCase.diagnosticSummary = buildIntermediateCaseDiagnosticSummary(baseCase);
