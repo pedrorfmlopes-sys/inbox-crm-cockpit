@@ -86,6 +86,8 @@ export type TicketEditorMode = "existing" | "new";
 export interface StudioParams {
   seedKey?: string;
   prepareSeedKey?: string;
+  caseId?: string;
+  anchorEmailKey?: string;
   itemId?: string;
   internetMessageId?: string;
   conversationId?: string;

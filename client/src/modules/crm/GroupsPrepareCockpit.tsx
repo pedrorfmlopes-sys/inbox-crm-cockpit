@@ -34,9 +34,10 @@ import {
   writeGroupsPrepareSession,
 } from "@/modules/crm/groups-v1/prepareSession";
 import { buildPrepareWorksetManifest } from "@/modules/crm/groups-v1/storage/buildPrepareWorksetManifest";
-import type { IntermediateCase, IntermediateCaseEmail, IntermediateLocalPresence, IntermediateServerPresence, IntermediateVisibleState } from "@/modules/crm/groups-v1/storage/intermediateCaseTypes";
+import type { IntermediateCase, IntermediateLocalPresence, IntermediateServerPresence, IntermediateVisibleState } from "@/modules/crm/groups-v1/storage/intermediateCaseTypes";
 import { getIntermediateCaseAttachmentPath } from "@/modules/crm/groups-v1/storage/intermediateCasePaths";
 import { persistIntermediateCaseAttachmentBinaries } from "@/modules/crm/groups-v1/storage/intermediateCaseAttachmentStorage";
+import { mapIntermediateEmailToRelatedEmailEntry } from "@/modules/crm/groups-v1/storage/intermediateCaseAdapters";
 import { type PrepareIntermediateAttachmentInput, type PrepareIntermediateEmailInput } from "@/modules/crm/groups-v1/storage/prepareIntermediateCase";
 import { buildPrepareIntermediateCaseFromSources } from "@/modules/crm/groups-v1/storage/prepareIntermediateCaseResolution";
 import { resolveIntermediateCaseStorage } from "@/modules/crm/groups-v1/storage/resolveIntermediateCaseStorage";
@@ -410,42 +411,6 @@ function mapRelatedEmailEntryToIntermediateEmail(
     },
     attachments,
   };
-}
-
-function mapIntermediateEmailToRelatedEmailEntry(email: IntermediateCaseEmail): RelatedEmailEntry {
-  return {
-    emailKey: email.emailKey,
-    itemId: email.itemId,
-    internetMessageId: email.internetMessageId,
-    conversationId: email.conversationId,
-    subject: email.subject,
-    fromName: email.fromName,
-    fromEmail: email.fromEmail,
-    receivedAtIso: email.receivedAtIso,
-    messageDateIso: email.receivedAtIso,
-    bodyText: email.bodyText,
-    bodyHtml: email.bodyHtml,
-    status: email.classification.status,
-    labels: email.classification.labels,
-    membershipKind: email.classification.principalGroupId ? "principal" : undefined,
-    groupId: email.classification.principalGroupId,
-    groupName: email.classification.principalGroupName,
-    relatedGroups: [],
-    relatedReasons: [],
-    attachments: email.attachments.map((attachment) => ({
-      key: attachment.attachmentKey.startsWith(`${email.emailKey}:`)
-        ? attachment.attachmentKey.slice(email.emailKey.length + 1)
-        : attachment.attachmentKey,
-      id: attachment.id,
-      name: attachment.name,
-      contentType: attachment.contentType,
-      size: attachment.size,
-      isInline: attachment.isInline,
-      contentId: attachment.contentId,
-      hasContent: attachment.hasContent,
-      documentState: attachment.documentState,
-    })),
-  } as RelatedEmailEntry;
 }
 
 function CompactToggle({
@@ -1736,7 +1701,24 @@ export const GroupsPrepareCockpit: React.FC = () => {
       manifest: worksetManifest,
       signature: worksetSignature,
     });
+    if (prepareIntermediateCase) {
+      try {
+        await intermediateCaseStorage.repository.writeCase(prepareIntermediateCase);
+        await persistIntermediateCaseAttachmentBinaries({
+          adapter: intermediateCaseStorage.adapter,
+          caseValue: prepareIntermediateCase,
+          binarySources: intermediateCaseBinarySources,
+        });
+      } catch (error: unknown) {
+        setMsg(getErrorMessage(error, "Nao foi possivel persistir o caso intermedio antes de abrir o Classificar."));
+        return;
+      }
+    }
     const params: Record<string, string> = {};
+    if (prepareIntermediateCase?.caseId) params.caseId = prepareIntermediateCase.caseId;
+    if (prepareIntermediateCase?.anchorEmailKey || currentEmailKey) {
+      params.anchorEmailKey = prepareIntermediateCase?.anchorEmailKey || currentEmailKey;
+    }
     if (currentEmailLinkPayload.itemId) params.itemId = currentEmailLinkPayload.itemId;
     if (currentEmailLinkPayload.internetMessageId) params.internetMessageId = currentEmailLinkPayload.internetMessageId;
     if (currentEmailLinkPayload.conversationId) params.conversationId = currentEmailLinkPayload.conversationId;

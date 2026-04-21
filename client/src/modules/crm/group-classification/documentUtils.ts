@@ -15,6 +15,8 @@ export function readParams(): StudioParams {
   return {
     seedKey: urlParams.get("seedKey") || undefined,
     prepareSeedKey: urlParams.get("prepareSeedKey") || undefined,
+    caseId: urlParams.get("caseId") || undefined,
+    anchorEmailKey: urlParams.get("anchorEmailKey") || undefined,
     itemId: urlParams.get("itemId") || undefined,
     internetMessageId: urlParams.get("internetMessageId") || undefined,
     conversationId: urlParams.get("conversationId") || undefined,

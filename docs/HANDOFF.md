@@ -897,3 +897,22 @@
   - sem endpoints novos
   - sem promoção real para servidor
   - sem refactor profundo de `Classificar`
+
+## Grupos v1: handoff `Preparar -> Classificar` passa a priorizar o `IntermediateCase` (Abril 2026)
+- **Nova regra do handoff**:
+  - `Preparar` persiste primeiro o `IntermediateCase` corrente e so depois abre `Classificar`
+  - o handoff passa a transportar identidade explicita do caso: `caseId` e `anchorEmailKey`
+  - `Classificar` tenta abrir primeiro o caso canonico por `readCase(caseId)` e, se preciso, por `findCaseByEmailKey(anchorEmailKey)`
+- **O que `Classificar` ja le do `IntermediateCase`**:
+  - email ancora
+  - emails relacionados
+  - anexos
+  - classificacao por email ja existente
+  - `sourceSummary` / origem principal do caso
+- **Fallback legado que continua nesta ronda**:
+  - `seedKey` e `prepareSeedKey` continuam como ponte temporaria para nao partir cenarios onde o caso canonico ainda nao exista
+  - o seed legado deixa de ser a verdade principal quando o `IntermediateCase` esta disponivel
+- **Garantias mantidas**:
+  - o email ancora continua limpo e nao e redefinido pelo historico
+  - a abertura a partir do caso canonico nao implica promocao real para servidor
+  - limpeza real do intermédio continua fora desta ronda

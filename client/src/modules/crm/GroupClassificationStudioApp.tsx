@@ -27,6 +27,9 @@ import {
   readGroupPreparationSeed,
   type GroupPreparationSeed,
 } from "@/modules/crm/groups-v1/prepareSession";
+import { hydrateIntermediateCaseEmailsToRelatedEntries } from "@/modules/crm/groups-v1/storage/intermediateCaseAdapters";
+import { resolveClassificationIntermediateCase } from "@/modules/crm/groups-v1/storage/resolveClassificationIntermediateCase";
+import type { IntermediateCase } from "@/modules/crm/groups-v1/storage/intermediateCaseTypes";
 import "../../global.css";
 
 import {
@@ -79,6 +82,15 @@ type PrepareSeedBootstrapState = {
   key: string;
   seed: GroupPreparationSeed | null;
   status: "idle" | "invalid" | "ready" | "applied" | "skipped";
+};
+
+type IntermediateCaseBootstrapState = {
+  status: "idle" | "missing" | "ready";
+  caseValue: IntermediateCase | null;
+  emails: RelatedEmailEntry[];
+  lookup: "case_id" | "anchor_email_key" | "none";
+  availability: "ready" | "missing_location" | "disabled";
+  reason: string;
 };
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -407,6 +419,33 @@ function mergeTicketEntryLists(left: GroupTicketEntry[], right: GroupTicketEntry
   }, []);
 }
 
+function getPrepareSeedAttachmentCandidateKeys(email: RelatedEmailEntry | null | undefined, attachment: any): string[] {
+  const bareKey = String(makeAttachmentKey(attachment) || "").trim();
+  const emailKey = String(makeEmailKey(email || {}) || "").trim();
+  return Array.from(new Set([
+    bareKey,
+    bareKey && emailKey ? `${emailKey}:${bareKey}` : "",
+  ].filter(Boolean)));
+}
+
+function resolvePrepareSeedAttachmentKey(
+  emails: RelatedEmailEntry[],
+  seedKeys: string[]
+): string[] {
+  const normalizedSeedKeys = new Set(seedKeys.map((key) => String(key || "").trim()).filter(Boolean));
+  const resolved = new Set<string>();
+  for (const email of emails) {
+    for (const attachment of email.attachments || []) {
+      const candidates = getPrepareSeedAttachmentCandidateKeys(email, attachment);
+      if (candidates.some((candidate) => normalizedSeedKeys.has(candidate))) {
+        const bareKey = String(makeAttachmentKey(attachment) || "").trim();
+        if (bareKey) resolved.add(bareKey);
+      }
+    }
+  }
+  return Array.from(resolved);
+}
+
 // Moved to documentUtils.ts
 
 // readSeedEmail & buildFallbackEmail moved to documentUtils.ts
@@ -516,27 +555,47 @@ function StudioInner() {
     seed: null,
     status: "idle",
   });
+  const [intermediateCaseBootstrap, setIntermediateCaseBootstrap] = useState<IntermediateCaseBootstrapState>({
+    status: "idle",
+    caseValue: null,
+    emails: [],
+    lookup: "none",
+    availability: "disabled",
+    reason: "",
+  });
 
   const currentSeed = useMemo(() => readSeedEmail(params), [params]);
   const fallbackIdentity = useMemo(() => buildFallbackEmail(params), [params]);
+  const canonicalAnchorEmail = useMemo(() => {
+    const caseValue = intermediateCaseBootstrap.caseValue;
+    if (!caseValue) return null;
+    const preferredAnchorKey = String(params.anchorEmailKey || caseValue.anchorEmailKey || "").trim();
+    if (preferredAnchorKey) {
+      const byPreferredKey = intermediateCaseBootstrap.emails.find((email) => makeEmailKey(email) === preferredAnchorKey);
+      if (byPreferredKey) return byPreferredKey;
+    }
+    return intermediateCaseBootstrap.emails.find((email) => makeEmailKey(email) === caseValue.anchorEmailKey) || intermediateCaseBootstrap.emails[0] || null;
+  }, [intermediateCaseBootstrap.caseValue, intermediateCaseBootstrap.emails, params.anchorEmailKey]);
   const currentContext = useMemo(() => ({
-    conversationId: String(params.conversationId || currentSeed?.conversationId || fallbackIdentity?.conversationId || "").trim(),
-    internetMessageId: String(params.internetMessageId || currentSeed?.internetMessageId || fallbackIdentity?.internetMessageId || "").trim(),
-    itemId: String(params.itemId || currentSeed?.itemId || fallbackIdentity?.itemId || "").trim(),
-    subject: String(params.subject || currentSeed?.subject || fallbackIdentity?.subject || "").trim(),
-    fromEmail: String(params.fromEmail || currentSeed?.fromEmail || fallbackIdentity?.fromEmail || "").trim(),
-    fromName: String(params.fromName || currentSeed?.fromName || fallbackIdentity?.fromName || "").trim(),
+    conversationId: String(params.conversationId || canonicalAnchorEmail?.conversationId || currentSeed?.conversationId || fallbackIdentity?.conversationId || "").trim(),
+    internetMessageId: String(params.internetMessageId || canonicalAnchorEmail?.internetMessageId || currentSeed?.internetMessageId || fallbackIdentity?.internetMessageId || "").trim(),
+    itemId: String(params.itemId || canonicalAnchorEmail?.itemId || currentSeed?.itemId || fallbackIdentity?.itemId || "").trim(),
+    subject: String(params.subject || canonicalAnchorEmail?.subject || currentSeed?.subject || fallbackIdentity?.subject || "").trim(),
+    fromEmail: String(params.fromEmail || canonicalAnchorEmail?.fromEmail || currentSeed?.fromEmail || fallbackIdentity?.fromEmail || "").trim(),
+    fromName: String(params.fromName || canonicalAnchorEmail?.fromName || currentSeed?.fromName || fallbackIdentity?.fromName || "").trim(),
     receivedAtIso: String(
       params.receivedAtIso ||
+      canonicalAnchorEmail?.receivedAtIso ||
+      canonicalAnchorEmail?.messageDateIso ||
       currentSeed?.receivedAtIso ||
       currentSeed?.messageDateIso ||
       fallbackIdentity?.receivedAtIso ||
       fallbackIdentity?.messageDateIso ||
       ""
     ).trim(),
-  }), [currentSeed, fallbackIdentity, params]);
+  }), [canonicalAnchorEmail, currentSeed, fallbackIdentity, params]);
   const bootstrapEmailPayload = useMemo<RelevantEmailPayload | null>(() => {
-    const base = currentSeed || fallbackIdentity;
+    const base = canonicalAnchorEmail || currentSeed || fallbackIdentity;
     if (!base) return null;
     return buildRelevantEmailPayloadFromRelatedEmail({
       ...base,
@@ -550,6 +609,7 @@ function StudioInner() {
       messageDateIso: String(base.messageDateIso || currentContext.receivedAtIso || base.receivedAtIso || "").trim() || undefined,
     });
   }, [
+    canonicalAnchorEmail,
     currentContext.conversationId,
     currentContext.fromEmail,
     currentContext.fromName,
@@ -560,6 +620,58 @@ function StudioInner() {
     currentSeed,
     fallbackIdentity,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const caseId = String(params.caseId || "").trim();
+    const anchorEmailKey = String(params.anchorEmailKey || "").trim();
+    if (!caseId && !anchorEmailKey) {
+      setIntermediateCaseBootstrap({
+        status: "missing",
+        caseValue: null,
+        emails: [],
+        lookup: "none",
+        availability: "disabled",
+        reason: "",
+      });
+      return;
+    }
+
+    setIntermediateCaseBootstrap((current) => current.status === "idle" ? current : {
+      status: "idle",
+      caseValue: null,
+      emails: [],
+      lookup: "none",
+      availability: current.availability,
+      reason: current.reason,
+    });
+
+    void (async () => {
+      const resolved = await resolveClassificationIntermediateCase({
+        caseId,
+        anchorEmailKey,
+      });
+      const emails = resolved.caseValue
+        ? await hydrateIntermediateCaseEmailsToRelatedEntries({
+            caseValue: resolved.caseValue,
+            adapter: resolved.storage.adapter,
+          })
+        : [];
+      if (cancelled) return;
+      setIntermediateCaseBootstrap({
+        status: resolved.caseValue ? "ready" : "missing",
+        caseValue: resolved.caseValue,
+        emails,
+        lookup: resolved.lookup,
+        availability: resolved.storage.availability,
+        reason: resolved.storage.reason,
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [params.anchorEmailKey, params.caseId]);
 
   useEffect(() => {
     const key = String(params.prepareSeedKey || "").trim();
@@ -597,6 +709,12 @@ function StudioInner() {
 
   useEffect(() => {
     let cancelled = false;
+    const shouldWaitForCanonicalCase = Boolean(String(params.caseId || "").trim() || String(params.anchorEmailKey || "").trim());
+    if (shouldWaitForCanonicalCase && intermediateCaseBootstrap.status === "idle") {
+      return () => {
+        cancelled = true;
+      };
+    }
     void (async () => {
       setLoading(true);
       setError("");
@@ -642,12 +760,25 @@ function StudioInner() {
             } as RelatedEmailEntry)
           : null;
         const hasCurrentEmailFromServer = Boolean(related.email && isCurrentContextEmail(related.email, currentContext));
-        const contextualEmails = dedupeEmails([
+        const serverContextualEmails = dedupeEmails([
           ...(related.email ? [related.email] : []),
           ...(related.emails || []),
           ...(!hasCurrentEmailFromServer && bootstrapContextEmail ? [bootstrapContextEmail] : []),
         ]);
-        const mergedEmails = dedupeEmails([...contextualEmails, ...(emails || [])]);
+        const canonicalContextualEmails = intermediateCaseBootstrap.status === "ready"
+          ? dedupeEmails(intermediateCaseBootstrap.emails)
+          : [];
+        const contextualEmails = canonicalContextualEmails.length
+          ? canonicalContextualEmails
+          : serverContextualEmails;
+        const mergedEmails = dedupeEmails([
+          ...contextualEmails,
+          ...(canonicalContextualEmails.length ? serverContextualEmails : []),
+          ...(emails || []),
+        ]);
+        const preferredAnchorEmailKey = canonicalAnchorEmail
+          ? makeEmailKey(canonicalAnchorEmail)
+          : String(params.anchorEmailKey || "").trim();
         setAllGroups(mergedGroups);
         setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
         setTicketSeries(Array.isArray(series) ? series : []);
@@ -656,6 +787,9 @@ function StudioInner() {
         setKnownEmails(mergedEmails);
         setSelectedEmailKey((current) => {
           if (current && mergedEmails.some((email) => makeEmailKey(email) === current)) return current;
+          if (preferredAnchorEmailKey && mergedEmails.some((email) => makeEmailKey(email) === preferredAnchorEmailKey)) {
+            return preferredAnchorEmailKey;
+          }
           const currentItem = mergedEmails.find((email) => {
             const itemId = String(email.itemId || "").trim();
             const internetMessageId = String(email.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
@@ -666,7 +800,14 @@ function StudioInner() {
           });
           return makeEmailKey(currentItem || mergedEmails[0] || {});
         });
-        if (mergedEmails.length) {
+        if (canonicalContextualEmails.length) {
+          const sourceHint = intermediateCaseBootstrap.lookup === "case_id"
+            ? "caso intermedio"
+            : intermediateCaseBootstrap.lookup === "anchor_email_key"
+              ? "ancora do caso intermedio"
+              : "base intermedia";
+          setStatus(`Classificar aberto a partir do ${sourceHint}. O legado fica apenas como fallback nesta ronda.`);
+        } else if (mergedEmails.length) {
           setStatus("Janela base pronta. O email atual e os relacionados podem ser analisados aqui.");
         } else if (bootstrapEmailPayload) {
           setStatus("O email atual abriu em modo de leitura. Ainda nao existem relacionados persistidos para mostrar.");
@@ -680,7 +821,23 @@ function StudioInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [bootstrapEmailPayload, currentContext, currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject]);
+  }, [
+    bootstrapEmailPayload,
+    canonicalAnchorEmail,
+    currentContext,
+    currentContext.conversationId,
+    currentContext.fromEmail,
+    currentContext.fromName,
+    currentContext.internetMessageId,
+    currentContext.itemId,
+    currentContext.receivedAtIso,
+    currentContext.subject,
+    intermediateCaseBootstrap.emails,
+    intermediateCaseBootstrap.lookup,
+    intermediateCaseBootstrap.status,
+    params.anchorEmailKey,
+    params.caseId,
+  ]);
 
   useEffect(() => {
     if (loading || prepareSeedBootstrap.status !== "invalid" || !prepareSeedBootstrap.key) return;
@@ -864,6 +1021,7 @@ function StudioInner() {
     const availableEmailKeys = new Set(availableEmails.map((email) => makeEmailKey(email)).filter(Boolean));
     const relatedEmailKeys = new Set(relatedEmails.map((email) => makeEmailKey(email)).filter(Boolean));
     const selectedSeedKeys = bootstrapSeed.selectedEmailKeys.filter((key) => availableEmailKeys.has(key));
+    const selectedSeedAttachmentKeys = resolvePrepareSeedAttachmentKey(availableEmails, bootstrapSeed.selectedAttachmentKeys);
     const anchorAvailable = Boolean(
       bootstrapSeed.anchorEmailKey
       && availableEmailKeys.has(bootstrapSeed.anchorEmailKey)
@@ -908,11 +1066,11 @@ function StudioInner() {
       setOnlyWithAttachments(true);
     }
 
-    if (bootstrapSeed.selectedAttachmentKeys.length > 0) {
+    if (selectedSeedAttachmentKeys.length > 0) {
       setAttachmentPlan((current) => {
         let changed = false;
         const next = { ...current };
-        bootstrapSeed.selectedAttachmentKeys.forEach((attachmentKey) => {
+        selectedSeedAttachmentKeys.forEach((attachmentKey) => {
           const key = String(attachmentKey || "").trim();
           if (!key) return;
           const previous = current[key];
@@ -942,7 +1100,7 @@ function StudioInner() {
     const bootstrapSummary = [
       effectiveTargetKeys.length > 0 ? `${effectiveTargetKeys.length} email(s)` : "",
       bootstrapSeed.workingGroupId ? "grupo em trabalho" : "",
-      bootstrapSeed.selectedAttachmentKeys.length > 0 ? `${bootstrapSeed.selectedAttachmentKeys.length} anexo(s) preparado(s)` : "",
+      selectedSeedAttachmentKeys.length > 0 ? `${selectedSeedAttachmentKeys.length} anexo(s) preparado(s)` : "",
       bootstrapSeed.filterQuery ? `filtro "${bootstrapSeed.filterQuery}"` : "",
     ].filter(Boolean).join(" / ");
     setStatus(
@@ -1180,11 +1338,13 @@ function StudioInner() {
     setSelectedAttachmentPreviewKey((current) => {
       if (current && selectedEmailAttachments.some((attachment) => makeAttachmentKey(attachment) === current)) return current;
       const seededAttachment = selectedEmailAttachments.find((attachment) =>
-        prepareSeedBootstrap.seed?.selectedAttachmentKeys.includes(makeAttachmentKey(attachment))
+        getPrepareSeedAttachmentCandidateKeys(selectedEmail, attachment).some((candidate) =>
+          prepareSeedBootstrap.seed?.selectedAttachmentKeys.includes(candidate)
+        )
       );
       return seededAttachment ? makeAttachmentKey(seededAttachment) : current;
     });
-  }, [prepareSeedBootstrap, selectedEmailAttachments]);
+  }, [prepareSeedBootstrap, selectedEmail, selectedEmailAttachments]);
 
   const selectedAttachmentPreview = useMemo(
     () => selectedEmailAttachments.find((attachment) => makeAttachmentKey(attachment) === selectedAttachmentPreviewKey) || null,
