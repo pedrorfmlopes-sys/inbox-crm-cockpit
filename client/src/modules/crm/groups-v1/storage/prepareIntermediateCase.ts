@@ -121,7 +121,6 @@ function normalizeEmail(input: PrepareIntermediateEmailInput): IntermediateCaseE
 export function buildPrepareIntermediateCase(args: BuildPrepareIntermediateCaseArgs): IntermediateCase {
   const nowIso = String(args.nowIso || new Date().toISOString()).trim();
   const existingCase = args.existingCase && args.existingCase.caseId === args.caseId ? args.existingCase : null;
-  const currentEmailKeys = new Set(args.emails.map((email) => email.emailKey).filter(Boolean));
 
   let caseValue = buildIntermediateCaseFromSeed({
     caseId: args.caseId,
@@ -130,13 +129,11 @@ export function buildPrepareIntermediateCase(args: BuildPrepareIntermediateCaseA
     createdAt: existingCase?.createdAt || nowIso,
     updatedAt: nowIso,
     lastAccessedAt: nowIso,
-    emails: (existingCase?.emails || [])
-      .filter((email) => currentEmailKeys.has(email.emailKey))
-      .map((email) => ({
-        ...email,
-        attachments: email.attachments,
-        classification: email.classification,
-      })),
+    emails: (existingCase?.emails || []).map((email) => ({
+      ...email,
+      attachments: email.attachments,
+      classification: email.classification,
+    })),
   });
 
   for (const email of args.emails) {

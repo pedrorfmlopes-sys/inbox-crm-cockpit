@@ -1165,45 +1165,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
     setActiveGroupForCurrentEmail(workingGroupId || null);
   }, [groupsAccessLimited, sessionReady, setActiveGroupForCurrentEmail, workingGroupId]);
 
-  const rawMergedCandidateEmails = useMemo(
+  const rawCaseCandidateEmails = useMemo(
     () => dedupeEmails([currentEmailEntry, ...contextEmails, ...knownEmails]),
     [contextEmails, currentEmailEntry, knownEmails]
   );
 
-  const rawVisibleEmails = useMemo(() => {
-    if (!showFiltersPanel) return rawMergedCandidateEmails;
-
-    const query = normalizeText(filterQuery);
-    return rawMergedCandidateEmails.filter((email) => {
-      if (query) {
-        const haystack = [
-          email.subject,
-          email.fromName,
-          email.fromEmail,
-          ...(email.labels || []),
-          ...(email.relatedGroups || []).map((group) => group.name || group.id),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!haystack.includes(query)) return false;
-      }
-
-      const attachmentCount = Array.isArray(email.attachments) ? email.attachments.length : 0;
-      if (attachmentMode === "with" && attachmentCount === 0) return false;
-      if (attachmentMode === "without" && attachmentCount > 0) return false;
-
-      const principalGroup = extractDirectPrincipalGroup(email);
-      if (groupMode === "with_group" && !principalGroup) return false;
-      if (groupMode === "without_group" && principalGroup) return false;
-
-      return true;
-    });
-  }, [attachmentMode, filterQuery, groupMode, rawMergedCandidateEmails, showFiltersPanel]);
-
-  const rawVisibleListEmails = useMemo(
-    () => rawVisibleEmails.filter((email) => makeEmailKey(email) !== currentEmailKey && !emailMatchesCurrentEmailIdentity(email, ctx, currentEmailKey)),
-    [ctx, currentEmailKey, rawVisibleEmails]
+  const rawCaseRelatedEmails = useMemo(
+    () => rawCaseCandidateEmails.filter((email) => makeEmailKey(email) !== currentEmailKey && !emailMatchesCurrentEmailIdentity(email, ctx, currentEmailKey)),
+    [ctx, currentEmailKey, rawCaseCandidateEmails]
   );
 
   const hasLocalPrepareCheckpoint = Boolean(
@@ -1235,7 +1204,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
         localPresence: anchorLocalPresence,
         selectedAttachmentKeys: selectedAttachmentKeySet,
       }),
-      ...rawVisibleListEmails.map((email) => {
+      ...rawCaseRelatedEmails.map((email) => {
         const emailKey = makeEmailKey(email);
         const selectedAttachmentCount = Array.isArray(email.attachments)
           ? email.attachments.filter((attachment) =>
@@ -1273,7 +1242,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     hasLocalPrepareCheckpoint,
     hydratedIntermediateCase,
     persistedCurrentEmail,
-    rawVisibleListEmails,
+    rawCaseRelatedEmails,
     selectedAttachmentKeys,
     selectedEmailKeys,
   ]);
@@ -1289,13 +1258,44 @@ export const GroupsPrepareCockpit: React.FC = () => {
   );
 
   const activePrepareEmails = useMemo(
-    () => dedupeEmails(casePrepareEmails.length ? casePrepareEmails : [currentEmailEntry, ...rawVisibleListEmails]),
-    [casePrepareEmails, currentEmailEntry, rawVisibleListEmails]
+    () => dedupeEmails(casePrepareEmails.length ? casePrepareEmails : [currentEmailEntry, ...rawCaseRelatedEmails]),
+    [casePrepareEmails, currentEmailEntry, rawCaseRelatedEmails]
   );
 
+  const visibleEmails = useMemo(() => {
+    if (!showFiltersPanel) return activePrepareEmails;
+
+    const query = normalizeText(filterQuery);
+    return activePrepareEmails.filter((email) => {
+      if (query) {
+        const haystack = [
+          email.subject,
+          email.fromName,
+          email.fromEmail,
+          ...(email.labels || []),
+          ...(email.relatedGroups || []).map((group) => group.name || group.id),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
+
+      const attachmentCount = Array.isArray(email.attachments) ? email.attachments.length : 0;
+      if (attachmentMode === "with" && attachmentCount === 0) return false;
+      if (attachmentMode === "without" && attachmentCount > 0) return false;
+
+      const principalGroup = extractDirectPrincipalGroup(email);
+      if (groupMode === "with_group" && !principalGroup) return false;
+      if (groupMode === "without_group" && principalGroup) return false;
+
+      return true;
+    });
+  }, [activePrepareEmails, attachmentMode, filterQuery, groupMode, showFiltersPanel]);
+
   const visibleListEmails = useMemo(
-    () => activePrepareEmails.filter((email) => makeEmailKey(email) !== currentEmailKey && !emailMatchesCurrentEmailIdentity(email, ctx, currentEmailKey)),
-    [activePrepareEmails, ctx, currentEmailKey]
+    () => visibleEmails.filter((email) => makeEmailKey(email) !== currentEmailKey && !emailMatchesCurrentEmailIdentity(email, ctx, currentEmailKey)),
+    [ctx, currentEmailKey, visibleEmails]
   );
 
   useEffect(() => {

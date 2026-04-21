@@ -828,6 +828,11 @@
   - o email atual entra como ancora do caso e continua a usar apenas sinais diretos proprios
   - emails relacionados entram como emails distintos do caso, com classificacao propria e anexos proprios
   - os anexos selecionados em `Preparar` passam a refletir-se no caso como decisoes locais/pending sem abrir ainda storage real
+- **Micro-correcao estrutural seguinte**:
+  - o `IntermediateCase` deixa de nascer da lista filtrada/visivel da UI
+  - os filtros de `Preparar` passam a afetar apenas a projecao visivel (`visibleEmails` / `visibleListEmails`)
+  - o conjunto canonico do caso passa a ser montado a partir do email atual, relacionados conhecidos e emails ja preservados no caso existente
+  - emails ja integrados no caso deixam de ser removidos automaticamente so por estarem escondidos por filtros
 - **O que ainda ficou legado / ponte temporaria**:
   - o workset antigo continua a existir para draft de selecao, filtros, grupo em trabalho e seed para `Classificar`
   - `legacyStorageRuntime` continua a suportar o gate tecnico de anexos inline e o contrato antigo de workset, ate a ronda de storage real
