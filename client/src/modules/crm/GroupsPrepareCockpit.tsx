@@ -38,8 +38,10 @@ import { loadPrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/loadWor
 import { resolveGroupStorageRuntime } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWorkset";
 import { GroupsSettingsPanel } from "@/modules/crm/groups-v1/settings/GroupsSettingsPanel";
+import type { GroupsTabSettings } from "@/modules/crm/groups-v1/settings/groupsTabSettings";
 import { getGroupWorksetManifestSignature } from "@/modules/crm/groups-v1/storage/worksetManifest";
 import { openGroupClassificationStudio } from "@/office";
+import { saveSettings } from "@/settings";
 import { getStatusDisplayConfig } from "@/statusUtils";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
@@ -1387,9 +1389,16 @@ export const GroupsPrepareCockpit: React.FC = () => {
     setMsg(saved ? "Sessao de Preparar guardada localmente." : "Nao foi possivel guardar a sessao local.");
   }
 
-  function handleSettingsSave() {
-    setMsg("UI de Settings da aba Groups pronta. A ligacao funcional profunda fica para uma ronda propria.");
-    setShowSettingsPanel(false);
+  async function handleSettingsSave(nextSettings: GroupsTabSettings) {
+    try {
+      await saveSettings({
+        groupsTabSettings: nextSettings,
+      });
+      setMsg("Settings da aba Groups guardados.");
+      setShowSettingsPanel(false);
+    } catch (error) {
+      setMsg(getErrorMessage(error, "Nao foi possivel guardar os Settings da aba Groups."));
+    }
   }
 
   function handleSubviewChange(nextSubview: GroupsPrepareSubview) {
@@ -1471,7 +1480,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
         />
         <GroupsSettingsPanel
           open={showSettingsPanel}
-          settings={settings}
+          value={settings?.groupsTabSettings || null}
           onClose={() => setShowSettingsPanel(false)}
           onSave={handleSettingsSave}
         />
@@ -1804,7 +1813,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
       <GroupsSettingsPanel
         open={showSettingsPanel}
-        settings={settings}
+        value={settings?.groupsTabSettings || null}
         onClose={() => setShowSettingsPanel(false)}
         onSave={handleSettingsSave}
       />
