@@ -2175,7 +2175,7 @@ function StudioInner() {
       ),
     [principalGroup?.labels, referenceGroups, relatedTickets, selectedTicket?.labels]
   );
-  const emailOwnedLabels = useMemo(
+  const selectedEmailStoredLabels = useMemo(
     () => Array.isArray(selectedEmail?.labels) ? selectedEmail.labels.map((label) => String(label || "").trim()).filter(Boolean) : [],
     [selectedEmail?.labels]
   );
@@ -2352,9 +2352,9 @@ function StudioInner() {
 
   useEffect(() => {
     if (!labelCatalogReady) return;
-    if (selectedLabels.length || (!inheritedLabels.length && !emailOwnedLabels.length && !selectedEmailRemovedInheritedLabels.length)) return;
+    if (selectedLabels.length || (!inheritedLabels.length && !selectedEmailStoredLabels.length && !selectedEmailRemovedInheritedLabels.length)) return;
     const visibleInherited = inheritedLabels.filter((label) => !selectedEmailRemovedInheritedLabels.includes(label));
-    const seedLabels = mergeLabels(visibleInherited, emailOwnedLabels);
+    const seedLabels = mergeLabels(visibleInherited, selectedEmailStoredLabels);
     setSelectedLabels(seedLabels);
     setLabelDrafts((current) => {
       const next = { ...current };
@@ -2370,7 +2370,7 @@ function StudioInner() {
       }
       return next;
     });
-  }, [emailOwnedLabels, inheritedLabels, labelCatalogEntries, labelCatalogReady, selectedEmailCategorizedLabelNames, selectedEmailLabelStates, selectedEmailRemovedInheritedLabels, selectedLabels.length]);
+  }, [inheritedLabels, labelCatalogEntries, labelCatalogReady, selectedEmailCategorizedLabelNames, selectedEmailLabelStates, selectedEmailRemovedInheritedLabels, selectedEmailStoredLabels, selectedLabels.length]);
 
   useEffect(() => {
     if (!selectedLabels.length) return;
@@ -2413,8 +2413,8 @@ function StudioInner() {
       try {
         const snapshot = await getManagedOutlookCategorySnapshot(
           mergeLabels(
-            mergeLabels(labelCatalog, selectedEmail?.labels || []),
-            selectedEmail?.removedInheritedLabels || []
+            mergeLabels(labelCatalog, selectedEmailStoredLabels),
+            selectedEmailRemovedInheritedLabels
           )
         );
         if (cancelled) return;
@@ -2427,7 +2427,7 @@ function StudioInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedEmailIsCurrent, selectedEmailKey]);
+  }, [labelCatalog, selectedEmailIsCurrent, selectedEmailRemovedInheritedLabels, selectedEmailStoredLabels]);
 
   useEffect(() => {
     if (!outlookLabelCategories.length) return;
@@ -3407,7 +3407,10 @@ function StudioInner() {
           principalGroupId: principalGroupId || undefined,
           principalGroupName: principalGroup?.name || undefined,
           referenceGroupIds,
-          labels: emailOwnedSelectedLabels,
+          labels: selectedLabels,
+          removedInheritedLabels,
+          labelStates: selectedLabelStates,
+          categorizedLabelNames: categorizableLabels,
           ticketIds: [String(resolvedCaseTicket?.id || selectedTicketId || "").trim()].filter(Boolean),
           ticketCodes: [String(resolvedCaseTicket?.code || "").trim()].filter(Boolean),
           state: localClassificationState || undefined,
@@ -4501,7 +4504,7 @@ function StudioInner() {
                 <div style={S.summaryRow}><span>Estado por etiquetas</span><strong>{emailStatusSummary}</strong></div>
               </div>
               <div style={S.summaryActionBar}>
-                <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length && !selectedLabels.length && !(selectedEmail?.labels || []).length && !String(selectedEmail?.status || "").trim())}>
+                <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length && !selectedLabels.length && !selectedEmailStoredLabels.length && !String(selectedEmail?.status || "").trim())}>
                   <Icons.Save size={12} />
                   Gravar / atualizar
                 </button>
@@ -4912,7 +4915,7 @@ function StudioInner() {
                   !selectedEmailGroups.length &&
                   !selectedEmailTicketIds.length &&
                   !selectedLabels.length &&
-                  !(selectedEmail?.labels || []).length &&
+                  !selectedEmailStoredLabels.length &&
                   !String(selectedEmail?.status || "").trim())
               }
             >

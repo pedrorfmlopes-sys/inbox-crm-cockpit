@@ -118,6 +118,19 @@ export function prepareIntermediateEmailToCaseEmail(
         ? input.classification.referenceGroupIds.filter(Boolean)
         : [],
       labels: Array.isArray(input.classification?.labels) ? input.classification.labels.filter(Boolean) : [],
+      removedInheritedLabels: Array.isArray(input.classification?.removedInheritedLabels)
+        ? input.classification.removedInheritedLabels.filter(Boolean)
+        : [],
+      labelStates: input.classification?.labelStates && typeof input.classification.labelStates === "object"
+        ? Object.fromEntries(
+            Object.entries(input.classification.labelStates)
+              .map(([label, status]) => [normalizeString(label), normalizeString(status)])
+              .filter(([label, status]) => label && status)
+          )
+        : {},
+      categorizedLabelNames: Array.isArray(input.classification?.categorizedLabelNames)
+        ? input.classification.categorizedLabelNames.filter(Boolean)
+        : [],
       ticketIds: Array.isArray(input.classification?.ticketIds) ? input.classification.ticketIds.filter(Boolean) : [],
       ticketCodes: Array.isArray(input.classification?.ticketCodes) ? input.classification.ticketCodes.filter(Boolean) : [],
       state: normalizeString(input.classification?.state),

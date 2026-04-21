@@ -84,13 +84,15 @@ export function mapIntermediateEmailToRelatedEmailEntry(
     groupName: principalGroupId ? principalGroupName || principalGroupId : undefined,
     status: email.classification.status,
     labels: email.classification.labels,
+    removedInheritedLabels: email.classification.removedInheritedLabels,
+    labelStates: email.classification.labelStates,
     relatedGroups: referenceGroups,
     relatedReasons: [],
     classificationMeta: {
       principalGroupId: principalGroupId || "",
       referenceGroupIds: email.classification.referenceGroupIds,
       ticketId: email.classification.ticketIds[0] || "",
-      categorizedLabelNames: email.classification.labels,
+      categorizedLabelNames: email.classification.categorizedLabelNames,
     },
     attachments: email.attachments.map((attachment) => {
       const localPath = String(attachment.localRef?.value || "").trim();

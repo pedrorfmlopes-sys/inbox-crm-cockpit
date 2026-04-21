@@ -68,6 +68,18 @@ function mergeEmail(current: IntermediateCaseEmail | undefined, incoming: Interm
         ...(incoming.classification.referenceGroupIds || []),
       ])),
       labels: Array.from(new Set([...(current.classification.labels || []), ...(incoming.classification.labels || [])])),
+      removedInheritedLabels: Array.from(new Set([
+        ...(current.classification.removedInheritedLabels || []),
+        ...(incoming.classification.removedInheritedLabels || []),
+      ])),
+      labelStates: {
+        ...(current.classification.labelStates || {}),
+        ...(incoming.classification.labelStates || {}),
+      },
+      categorizedLabelNames: Array.from(new Set([
+        ...(current.classification.categorizedLabelNames || []),
+        ...(incoming.classification.categorizedLabelNames || []),
+      ])),
       ticketIds: Array.from(new Set([...(current.classification.ticketIds || []), ...(incoming.classification.ticketIds || [])])),
       ticketCodes: Array.from(new Set([...(current.classification.ticketCodes || []), ...(incoming.classification.ticketCodes || [])])),
       state: pickString(current.classification.state, incoming.classification.state),

@@ -31,6 +31,9 @@ export type IntermediateCaseClassificationDraft = {
   principalGroupName?: string;
   referenceGroupIds: string[];
   labels: string[];
+  removedInheritedLabels: string[];
+  labelStates: Record<string, string>;
+  categorizedLabelNames: string[];
   ticketIds: string[];
   ticketCodes: string[];
   state?: string;
@@ -48,6 +51,15 @@ function normalizeStringArray(values: unknown): string[] {
   return Array.from(new Set(values.map((value) => normalizeString(value)).filter(Boolean)));
 }
 
+function normalizeStringMap(values: unknown): Record<string, string> {
+  if (!values || typeof values !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(values as Record<string, unknown>)
+      .map(([key, value]) => [normalizeString(key), normalizeString(value)])
+      .filter(([key, value]) => key && value)
+  );
+}
+
 function buildClassificationFromDraft(
   draft: IntermediateCaseClassificationDraft
 ): IntermediateEmailClassification {
@@ -56,6 +68,9 @@ function buildClassificationFromDraft(
     principalGroupName: normalizeString(draft.principalGroupName) || undefined,
     referenceGroupIds: normalizeStringArray(draft.referenceGroupIds),
     labels: normalizeStringArray(draft.labels),
+    removedInheritedLabels: normalizeStringArray(draft.removedInheritedLabels),
+    labelStates: normalizeStringMap(draft.labelStates),
+    categorizedLabelNames: normalizeStringArray(draft.categorizedLabelNames),
     ticketIds: normalizeStringArray(draft.ticketIds),
     ticketCodes: normalizeStringArray(draft.ticketCodes),
     state: normalizeString(draft.state) || undefined,
@@ -138,6 +153,9 @@ function mapRelatedEmailEntryToIntermediateEmailBase(
     classification: current?.classification || {
       referenceGroupIds: [],
       labels: [],
+      removedInheritedLabels: [],
+      labelStates: {},
+      categorizedLabelNames: [],
       ticketIds: [],
       ticketCodes: [],
     },

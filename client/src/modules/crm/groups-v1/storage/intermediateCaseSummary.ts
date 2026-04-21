@@ -47,6 +47,9 @@ export function buildIntermediateCaseClassificationSummary(
       email.classification.principalGroupId
       || email.classification.referenceGroupIds.length
       || email.classification.labels.length
+      || email.classification.removedInheritedLabels.length
+      || email.classification.categorizedLabelNames.length
+      || Object.keys(email.classification.labelStates || {}).length
       || email.classification.ticketIds.length
       || email.classification.ticketCodes.length
       || email.classification.status

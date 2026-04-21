@@ -24,6 +24,15 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.from(new Set(value.map((entry) => normalizeString(entry)).filter(Boolean)));
 }
 
+function normalizeStringMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, entry]) => [normalizeString(key), normalizeString(entry)])
+      .filter(([key, entry]) => key && entry)
+  );
+}
+
 function pickDate(value: unknown, fallback?: string): string | undefined {
   const normalized = normalizeString(value);
   return normalized || fallback;
@@ -45,6 +54,9 @@ function normalizeClassification(input: Partial<IntermediateEmailClassification>
     principalGroupName: normalizeString(input?.principalGroupName) || undefined,
     referenceGroupIds: normalizeStringArray(input?.referenceGroupIds),
     labels: normalizeStringArray(input?.labels),
+    removedInheritedLabels: normalizeStringArray(input?.removedInheritedLabels),
+    labelStates: normalizeStringMap(input?.labelStates),
+    categorizedLabelNames: normalizeStringArray(input?.categorizedLabelNames),
     ticketIds: normalizeStringArray(input?.ticketIds),
     ticketCodes: normalizeStringArray(input?.ticketCodes),
     state: normalizeString(input?.state) || undefined,

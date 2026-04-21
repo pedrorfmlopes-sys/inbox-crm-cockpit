@@ -1,5 +1,25 @@
 # HANDOFF
 
+## Grupos v1: etiquetas locais do `Classificar` passam a reabrir com fidelidade a partir do `IntermediateCase` (Abril 2026)
+- **O que passa a ficar canonicamente guardado por email no caso**:
+  - `labels` deixam de representar apenas labels "owned" do apply local e passam a guardar a lista final de etiquetas ativas do email
+  - `removedInheritedLabels` passa a guardar as etiquetas herdadas removidas explicitamente
+  - `labelStates` passa a guardar o estado por etiqueta ja estabilizado no studio
+  - `categorizedLabelNames` passa a guardar as etiquetas marcadas para categorizacao quando essa parte ja esta estavel
+- **Como isto e escrito no apply local**:
+  - o apply continua a respeitar o scope por email do studio
+  - por cada email alvo, o `IntermediateCase` passa a receber a lista final de etiquetas selecionadas, removidas herdadas, estados por etiqueta e etiquetas categorizadas
+  - o caso atualizado e regravado no storage intermédio da frente
+- **Como o `Classificar` reabre isto**:
+  - `hydrateIntermediateCaseEmailsToRelatedEntries(...)` passa a devolver `labels`, `removedInheritedLabels`, `labelStates` e `categorizedLabelNames` diretamente do caso canonico
+  - o studio volta a semear `selectedLabels` e a parte canonica de `labelDrafts` a partir destes campos antes de cair em heuristicas legacy
+- **O que continua draft local puro nesta micro-ronda**:
+  - os toggles mais ricos de `classificationMetaDraft` que ainda nao tem contrato canonico fechado
+  - o objeto completo de `labelDrafts` enquanto editor rico; o caso guarda apenas a parte estavel necessaria para reabertura fiel
+- **Legado que continua**:
+  - fallback legacy continua a existir para cenarios antigos sem `IntermediateCase` ou sem estes campos ainda persistidos
+  - quando o caso canonico ja traz a informacao de etiquetas, ele passa a ser a base principal desta parte do studio
+
 ## Grupos v1: classificacao local do studio passa a ser projetada por email no `IntermediateCase` (Abril 2026)
 - **O que passa a ser escrito no caso canonico**:
   - grupo principal e nome do grupo principal

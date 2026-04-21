@@ -26,6 +26,9 @@ export type IntermediateEmailClassification = {
   principalGroupName?: string;
   referenceGroupIds: string[];
   labels: string[];
+  removedInheritedLabels: string[];
+  labelStates: Record<string, string>;
+  categorizedLabelNames: string[];
   ticketIds: string[];
   ticketCodes: string[];
   state?: string;
