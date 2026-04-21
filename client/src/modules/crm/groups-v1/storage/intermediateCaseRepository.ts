@@ -1,4 +1,4 @@
-import { getIntermediateCaseJsonPath, INTERMEDIATE_CASES_ROOT } from "./intermediateCasePaths";
+import { getIntermediateCaseFolder, getIntermediateCaseJsonPath, INTERMEDIATE_CASES_ROOT } from "./intermediateCasePaths";
 import { buildIntermediateCaseSummary } from "./intermediateCaseSummary";
 import { parseIntermediateCase, serializeIntermediateCase } from "./intermediateCaseSerialization";
 import type { IntermediateCase, IntermediateCaseSummary } from "./intermediateCaseTypes";
@@ -6,7 +6,7 @@ import type { IntermediateCase, IntermediateCaseSummary } from "./intermediateCa
 export interface IntermediateCaseStorageAdapter {
   readText(path: string): Promise<string | null>;
   writeText(path: string, content: string): Promise<void>;
-  deletePath(path: string): Promise<void>;
+  deleteTree(path: string): Promise<void>;
   listPaths(prefix: string): Promise<string[]>;
 }
 
@@ -30,7 +30,7 @@ export function createIntermediateCaseRepository(adapter: IntermediateCaseStorag
       return caseValue;
     },
     async deleteCase(caseId) {
-      await adapter.deletePath(getIntermediateCaseJsonPath(caseId));
+      await adapter.deleteTree(getIntermediateCaseFolder(caseId));
       return true;
     },
     async listCases() {
@@ -71,8 +71,13 @@ export function createInMemoryIntermediateCaseStorageAdapter(
     async writeText(path, content) {
       store.set(path, content);
     },
-    async deletePath(path) {
-      store.delete(path);
+    async deleteTree(path) {
+      const normalizedPrefix = `${path.replace(/\/+$/, "")}/`;
+      for (const key of Array.from(store.keys())) {
+        if (key === path || key.startsWith(normalizedPrefix)) {
+          store.delete(key);
+        }
+      }
     },
     async listPaths(prefix) {
       return Array.from(store.keys()).filter((path) => path.startsWith(prefix));

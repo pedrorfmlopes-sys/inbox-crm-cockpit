@@ -794,6 +794,7 @@
   - `Groups/cases/<caseId>/case.json`
   - `Groups/cases/<caseId>/attachments/<emailKey>/...`
   - o `case.json` passa a ser o manifesto canonico do caso; anexos ficam referenciados por `localRef` / `serverRef`, sem obrigar ainda a filesystem real
+  - apagar um caso intermedio significa apagar a arvore completa `Groups/cases/<caseId>/...`, nao apenas o `case.json`, para nao deixar anexos orfaos
 - **Helpers novos criados**:
   - `createEmptyIntermediateCase`
   - `normalizeIntermediateCase`
