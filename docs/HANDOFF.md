@@ -737,3 +737,4 @@
   - `client/src/modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx` implementa a shell visual com menu lateral, uma secao ativa de cada vez, tooltips discretos em hover e botoes `Fechar` / `Guardar`
   - scope desta ronda fica limitado a interface/estrutura: `General`, `Armazenamento intermedio`, `Anexos`, `Limpeza`, `Avisos`, `Migracao`, `Manutencao`, `Explorar` e `Sobre`
   - campos, toggles e acoes estao stubados/local-state only; nao foi ligada logica pesada de storage real, servidor, migracao, backup, reset, `Preparar` profundo ou `Classificar`
+  - afinacao seguinte da mesma shell corrige apenas linguagem e defaults user-facing: `Modo de armazenamento` mostra so `OneDrive / SharePoint` e `Desativado`; `Estrategia de armazenamento` mostra `Todos no servidor`, `Todos fora do servidor` e `Por tamanho`; defaults de `Limpeza`, `Avisos`, `Anexos`, `Migracao` e `Explorar` passam a bater com o contrato fechado, sem alterar a estrutura nem ligar logica real
