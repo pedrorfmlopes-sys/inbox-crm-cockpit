@@ -1,5 +1,25 @@
 # HANDOFF
 
+## Grupos v1: bloco de anexos/documentos do `Classificar` fica mais coerente entre estado canonico do caso e estado editorial/local (Abril 2026)
+- **O que passa a ficar mais claramente canonico**:
+  - a lista base de anexos do email selecionado passa a nascer primeiro do `IntermediateCase` / email canonico, em vez de depender de chaves editoriais demasiado globais
+  - quick docs, preview ativo e reidratacao passam a usar chave composta por `emailKey + attachmentKey`, evitando mistura silenciosa entre anexos de emails diferentes
+  - `documentState` e `isHidden` do anexo continuam a ser a verdade funcional e passam a mandar mais claramente na reidratacao do preview e dos quick docs
+- **O que continua editorial/local**:
+  - `showHiddenQuickDocuments`
+  - `expandedQuickDocumentKeys`
+  - preview aberto/fechado e estado remoto de preview
+  - `attachmentPlan` (`analyze` / `save` / `forward`) enquanto plano local de trabalho
+- **Reducao de ambiguidade nesta ronda**:
+  - o studio separa melhor a colecao canonica de anexos da camada visual filtrada
+  - a selecao de preview deixa de depender apenas de `selectedEmail` e passa a conseguir respeitar o par `email + anexo`
+  - quick docs e picker de anexos deixam de tratar anexos de emails diferentes como se partilhassem sempre a mesma chave local
+- **Guardas mantidas**:
+  - alteracoes continuam a ser feitas por email alvo; nao ha alteracao global cega de anexos do caso inteiro
+  - preview, expand/collapse e filtros temporarios continuam fora do caso canonico
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: bloco de grupos e referencias do `Classificar` fica mais coerente entre base canonica e pesquisa editorial (Abril 2026)
 - **O que passa a ficar mais claramente canonico**:
   - `effectivePrincipalGroupId` e `effectiveReferenceGroupIds` passam a representar a verdade funcional do email quando o caso canonico ja existe

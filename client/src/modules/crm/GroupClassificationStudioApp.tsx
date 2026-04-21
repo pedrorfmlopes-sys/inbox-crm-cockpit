@@ -517,6 +517,16 @@ function resolvePrepareSeedAttachmentKey(
   return Array.from(resolved);
 }
 
+function makeScopedAttachmentKey(
+  email: RelatedEmailEntry | null | undefined,
+  attachment: any
+): string {
+  const bareKey = String(makeAttachmentKey(attachment) || "").trim();
+  const emailKey = String(makeEmailKey(email || {}) || "").trim();
+  if (!bareKey) return "";
+  return emailKey ? `${emailKey}:${bareKey}` : bareKey;
+}
+
 // Moved to documentUtils.ts
 
 // readSeedEmail & buildFallbackEmail moved to documentUtils.ts
@@ -1561,77 +1571,99 @@ function StudioInner() {
     }, []);
     return rows.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
   }, [canonicalTicketChoices, ticketSearchResults]);
-  const selectedEmailAttachments = useMemo(() => {
-    return (selectedEmail?.attachments || [])
+  const canonicalSelectedEmailAttachmentEntries = useMemo(() => {
+    if (!selectedEmail) return [] as Array<{ email: RelatedEmailEntry; attachment: any; scopedKey: string }>;
+    return (selectedEmail.attachments || [])
       .map((attachment) => normalizeStudioAttachment(attachment))
       .filter((attachment): attachment is NonNullable<typeof attachment> => Boolean(attachment))
-      .filter((attachment) => String(attachment.name || "").trim());
-  }, [selectedEmail?.attachments]);
+      .filter((attachment) => String(attachment.name || "").trim())
+      .map((attachment) => ({
+        email: selectedEmail,
+        attachment,
+        scopedKey: makeScopedAttachmentKey(selectedEmail, attachment),
+      }))
+      .filter((entry) => entry.scopedKey);
+  }, [selectedEmail]);
+  const selectedEmailAttachments = useMemo(
+    () => canonicalSelectedEmailAttachmentEntries.map((entry) => entry.attachment),
+    [canonicalSelectedEmailAttachmentEntries]
+  );
 
-  const quickDocumentAttachments = useMemo(() => {
+  const canonicalQuickDocumentAttachments = useMemo(() => {
     const emails = dedupeEmails([selectedEmail, ...classificationContextEmails].filter(Boolean) as RelatedEmailEntry[]);
-    const list: Array<{ email: RelatedEmailEntry; attachment: any }> = [];
+    const list: Array<{ email: RelatedEmailEntry; attachment: any; scopedKey: string }> = [];
     emails.forEach((email) => {
       const attachments = (email?.attachments || [])
         .map((att) => normalizeStudioAttachment(att))
         .filter((att): att is NonNullable<typeof att> => Boolean(att))
         .filter((att) => String(att.name || "").trim());
-      
+
       attachments.forEach((attachment) => {
-        if (showHiddenQuickDocuments || !isStudioAttachmentHiddenInQuickDocs(attachment)) {
-          list.push({ email, attachment });
-        }
+        const scopedKey = makeScopedAttachmentKey(email, attachment);
+        if (!scopedKey) return;
+        list.push({ email, attachment, scopedKey });
       });
     });
     return list;
-  }, [classificationContextEmails, selectedEmail, showHiddenQuickDocuments]);
-
-  const quickDocumentHiddenCount = useMemo(() => {
-    const emails = dedupeEmails([selectedEmail, ...classificationContextEmails].filter(Boolean) as RelatedEmailEntry[]);
-    let count = 0;
-    emails.forEach((email) => {
-      (email?.attachments || []).forEach((att) => {
-        const normalized = normalizeStudioAttachment(att);
-        if (normalized && isStudioAttachmentHiddenInQuickDocs(normalized)) {
-          count++;
-        }
-      });
-    });
-    return count;
   }, [classificationContextEmails, selectedEmail]);
+
+  const quickDocumentAttachments = useMemo(
+    () => canonicalQuickDocumentAttachments.filter((entry) => showHiddenQuickDocuments || !isStudioAttachmentHiddenInQuickDocs(entry.attachment)),
+    [canonicalQuickDocumentAttachments, showHiddenQuickDocuments]
+  );
+
+  const quickDocumentHiddenCount = useMemo(
+    () => canonicalQuickDocumentAttachments.filter((entry) => isStudioAttachmentHiddenInQuickDocs(entry.attachment)).length,
+    [canonicalQuickDocumentAttachments]
+  );
+  const canonicalAttachmentPreviewEntries = useMemo(
+    () => mergeUniqueBy(
+      [...canonicalSelectedEmailAttachmentEntries, ...canonicalQuickDocumentAttachments],
+      (entry) => entry.scopedKey
+    ),
+    [canonicalQuickDocumentAttachments, canonicalSelectedEmailAttachmentEntries]
+  );
   useEffect(() => {
     setExpandedQuickDocumentKeys((current) =>
-      current.filter((key) => quickDocumentAttachments.some((item) => makeAttachmentKey(item.attachment) === key))
+      current.filter((key) => quickDocumentAttachments.some((item) => item.scopedKey === key))
     );
   }, [quickDocumentAttachments]);
+  const activeSelectedEmailAttachmentEntries = useMemo(
+    () => canonicalSelectedEmailAttachmentEntries.filter((entry) => !isRejectedDocumentLifecycleState((entry.attachment as any)?.documentState)),
+    [canonicalSelectedEmailAttachmentEntries]
+  );
   const activeSelectedEmailAttachments = useMemo(
-    () => selectedEmailAttachments.filter((attachment) => !isRejectedDocumentLifecycleState((attachment as any)?.documentState)),
-    [selectedEmailAttachments]
+    () => activeSelectedEmailAttachmentEntries.map((entry) => entry.attachment),
+    [activeSelectedEmailAttachmentEntries]
   );
 
   useEffect(() => {
     setSelectedAttachmentPreviewKey((current) => {
-      if (current && selectedEmailAttachments.some((attachment) => makeAttachmentKey(attachment) === current)) return current;
+      if (current && canonicalAttachmentPreviewEntries.some((entry) => entry.scopedKey === current)) return current;
       return "";
     });
-  }, [selectedEmailAttachments]);
+  }, [canonicalAttachmentPreviewEntries]);
 
   useEffect(() => {
     if (prepareSeedBootstrap.status !== "applied" || !prepareSeedBootstrap.seed?.selectedAttachmentKeys.length) return;
     setSelectedAttachmentPreviewKey((current) => {
-      if (current && selectedEmailAttachments.some((attachment) => makeAttachmentKey(attachment) === current)) return current;
-      const seededAttachment = selectedEmailAttachments.find((attachment) =>
-        getPrepareSeedAttachmentCandidateKeys(selectedEmail, attachment).some((candidate) =>
+      if (current && canonicalAttachmentPreviewEntries.some((entry) => entry.scopedKey === current)) return current;
+      const seededAttachment = canonicalSelectedEmailAttachmentEntries.find((entry) =>
+        getPrepareSeedAttachmentCandidateKeys(entry.email, entry.attachment).some((candidate) =>
           prepareSeedBootstrap.seed?.selectedAttachmentKeys.includes(candidate)
         )
       );
-      return seededAttachment ? makeAttachmentKey(seededAttachment) : current;
+      return seededAttachment?.scopedKey || current;
     });
-  }, [prepareSeedBootstrap, selectedEmail, selectedEmailAttachments]);
+  }, [canonicalAttachmentPreviewEntries, canonicalSelectedEmailAttachmentEntries, prepareSeedBootstrap]);
 
   const selectedAttachmentPreview = useMemo(
-    () => selectedEmailAttachments.find((attachment) => makeAttachmentKey(attachment) === selectedAttachmentPreviewKey) || null,
-    [selectedAttachmentPreviewKey, selectedEmailAttachments]
+    () => canonicalAttachmentPreviewEntries.find((entry) => entry.scopedKey === selectedAttachmentPreviewKey)?.attachment || null,
+    [canonicalAttachmentPreviewEntries, selectedAttachmentPreviewKey]
+  );
+  const selectedAttachmentPreviewEmail = useMemo(
+    () => canonicalAttachmentPreviewEntries.find((entry) => entry.scopedKey === selectedAttachmentPreviewKey)?.email || null,
+    [canonicalAttachmentPreviewEntries, selectedAttachmentPreviewKey]
   );
   const selectedAttachmentDocumentState = useMemo(
     () => normalizeDocumentLifecycleState((selectedAttachmentPreview as any)?.documentState, "ingested"),
@@ -1642,8 +1674,8 @@ function StudioInner() {
     [selectedAttachmentPreview]
   );
   const selectedAttachmentPreviewEmailId = useMemo(
-    () => String(selectedEmail?.id || selectedEmail?.emailKey || "").trim(),
-    [selectedEmail?.emailKey, selectedEmail?.id]
+    () => String(selectedAttachmentPreviewEmail?.id || selectedAttachmentPreviewEmail?.emailKey || "").trim(),
+    [selectedAttachmentPreviewEmail?.emailKey, selectedAttachmentPreviewEmail?.id]
   );
   const selectedAttachmentPreviewContentUrl = useMemo(() => {
     if (!selectedAttachmentPreviewEmailId || !selectedAttachmentPreviewRemoteId || selectedAttachmentPreview?.hasContent !== true) return "";
@@ -1739,13 +1771,14 @@ function StudioInner() {
 
   useEffect(() => {
     if (!selectedAttachmentPreviewKey || showHiddenQuickDocuments) return;
-    if (quickDocumentAttachments.some((item) => makeAttachmentKey(item.attachment) === selectedAttachmentPreviewKey)) return;
-    const nextKey = quickDocumentAttachments[0] ? makeAttachmentKey(quickDocumentAttachments[0].attachment) : "";
+    if (canonicalSelectedEmailAttachmentEntries.some((entry) => entry.scopedKey === selectedAttachmentPreviewKey)) return;
+    if (quickDocumentAttachments.some((item) => item.scopedKey === selectedAttachmentPreviewKey)) return;
+    const nextKey = quickDocumentAttachments[0]?.scopedKey || "";
     setSelectedAttachmentPreviewKey(nextKey);
     if (!nextKey && previewMode === "document") {
       setPreviewMode("email");
     }
-  }, [previewMode, quickDocumentAttachments, selectedAttachmentPreviewKey, showHiddenQuickDocuments]);
+  }, [canonicalSelectedEmailAttachmentEntries, previewMode, quickDocumentAttachments, selectedAttachmentPreviewKey, showHiddenQuickDocuments]);
 
   const selectedAttachmentPreviewText = useMemo(() => {
     if (selectedAttachmentPreviewMode !== "text") return "";
@@ -1817,8 +1850,9 @@ function StudioInner() {
     setAttachmentPlan((current) => {
       const next = { ...current };
       let changed = false;
-      for (const attachment of selectedEmailAttachments) {
-        const key = makeAttachmentKey(attachment);
+      for (const entry of canonicalSelectedEmailAttachmentEntries) {
+        const attachment = entry.attachment;
+        const key = entry.scopedKey;
         if (!key) continue;
         const contentType = String(attachment.contentType || "").toLowerCase();
         const isDocument = /pdf|image|excel|spreadsheet|word|officedocument|text|csv/.test(contentType) || /\.(pdf|png|jpe?g|xlsx?|docx?|csv|txt)$/i.test(String(attachment.name || ""));
@@ -1840,16 +1874,16 @@ function StudioInner() {
       }
       return changed ? next : current;
     });
-  }, [selectedEmailAttachments]);
+  }, [canonicalSelectedEmailAttachmentEntries]);
 
   useEffect(() => {
     let cancelled = false;
-    const extractableFiles = activeSelectedEmailAttachments
-      .map((attachment) => ({
-        key: makeAttachmentKey(attachment),
-        name: String(attachment.name || "").trim(),
-        contentType: String(attachment.contentType || "").trim(),
-        content: String(attachment.content || "").trim(),
+    const extractableFiles = activeSelectedEmailAttachmentEntries
+      .map((entry) => ({
+        key: makeAttachmentKey(entry.attachment),
+        name: String(entry.attachment.name || "").trim(),
+        contentType: String(entry.attachment.contentType || "").trim(),
+        content: String(entry.attachment.content || "").trim(),
       }))
       .filter((attachment) => {
         if (!attachment.key || !attachment.name || !attachment.content) return false;
@@ -1881,7 +1915,7 @@ function StudioInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [activeSelectedEmailAttachments]);
+  }, [activeSelectedEmailAttachmentEntries]);
 
   const detectionText = useMemo(() => {
     const attachmentNames = activeSelectedEmailAttachments.map((attachment) => attachment.name).join(" ");
@@ -3139,7 +3173,7 @@ function StudioInner() {
   }
 
   async function handleSetSelectedAttachmentDocumentState(nextState: DocumentLifecycleState) {
-    if (!selectedEmail || !selectedAttachmentPreview) {
+    if (!selectedAttachmentPreviewEmail || !selectedAttachmentPreview) {
       setStatus("Escolhe primeiro um anexo para atualizar o estado documental.");
       return;
     }
@@ -3148,7 +3182,7 @@ function StudioInner() {
       setStatus("Nao foi possivel identificar o anexo selecionado.");
       return;
     }
-    const updatedEmail = updateAttachmentStateOnEmail(selectedEmail, attachmentKey, nextState);
+    const updatedEmail = updateAttachmentStateOnEmail(selectedAttachmentPreviewEmail, attachmentKey, nextState);
     if (!updatedEmail) {
       setStatus("Nao foi possivel atualizar o estado documental deste anexo.");
       return;
@@ -3160,10 +3194,10 @@ function StudioInner() {
       mergeEmailIntoClassificationCase(updatedEmail);
       setAttachmentPlan((current) => ({
         ...current,
-        [attachmentKey]: {
-          analyze: nextState === "rejected" ? false : (current[attachmentKey]?.analyze ?? false),
-          save: nextState === "rejected" ? false : (current[attachmentKey]?.save ?? false),
-          forward: current[attachmentKey]?.forward ?? false,
+        [selectedAttachmentPreviewKey]: {
+          analyze: nextState === "rejected" ? false : (current[selectedAttachmentPreviewKey]?.analyze ?? false),
+          save: nextState === "rejected" ? false : (current[selectedAttachmentPreviewKey]?.save ?? false),
+          forward: current[selectedAttachmentPreviewKey]?.forward ?? false,
         },
       }));
       const latestSettings = await getSettings().catch(() => null);
@@ -3189,9 +3223,10 @@ function StudioInner() {
     }
     const docs = (
       await Promise.all(
-        selectedEmailAttachments
-          .filter((attachment) => attachmentPlan[makeAttachmentKey(attachment)]?.save)
-          .map(async (attachment) => {
+        canonicalSelectedEmailAttachmentEntries
+          .filter((entry) => attachmentPlan[entry.scopedKey]?.save)
+          .map(async (entry) => {
+            const attachment = entry.attachment;
             let contentBase64 = String(attachment.content || "").trim();
             const selectedEmailRemoteId = String(selectedEmail?.id || selectedEmail?.emailKey || "").trim();
             if (!contentBase64 && attachment.hasContent && selectedEmailRemoteId) {
@@ -3894,7 +3929,7 @@ function StudioInner() {
   }
 
   function handleOpenQuickAttachment(email: RelatedEmailEntry, attachment: NonNullable<ReturnType<typeof normalizeStudioAttachment>>) {
-    const key = makeAttachmentKey(attachment);
+    const key = makeScopedAttachmentKey(email, attachment);
     if (!key) return;
     setSelectedAttachmentPreviewKey(key);
     setPreviewMode("document");
@@ -4116,11 +4151,11 @@ function StudioInner() {
                 <div style={S.cardMeta}>Preview simples dos anexos deste email.</div>
               </div>
             </div>
-            {selectedEmailAttachments.length ? (
+            {canonicalSelectedEmailAttachmentEntries.length ? (
               <div style={S.stackMini}>
                 <div style={S.attachmentPickerBar}>
-                  {selectedEmailAttachments.map((attachment) => {
-                    const key = makeAttachmentKey(attachment);
+                  {canonicalSelectedEmailAttachmentEntries.map((entry) => {
+                    const key = entry.scopedKey;
                     const active = key === selectedAttachmentPreviewKey;
                     return (
                       <button
@@ -4129,7 +4164,7 @@ function StudioInner() {
                         style={active ? S.groupChipBtnOn : S.groupChipBtn}
                         onClick={() => setSelectedAttachmentPreviewKey(key)}
                       >
-                        {attachment.name}
+                        {entry.attachment.name}
                       </button>
                     );
                   })}
