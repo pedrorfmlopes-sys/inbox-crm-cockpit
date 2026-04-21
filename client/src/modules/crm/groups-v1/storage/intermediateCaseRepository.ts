@@ -10,12 +10,24 @@ export interface IntermediateCaseStorageAdapter {
   listPaths(prefix: string): Promise<string[]>;
 }
 
+export interface IntermediateCaseBinaryStorageAdapter extends IntermediateCaseStorageAdapter {
+  readBinary(path: string): Promise<Blob | null>;
+  writeBinary(path: string, content: Blob | Uint8Array | ArrayBuffer): Promise<void>;
+}
+
 export interface IntermediateCaseRepository {
   readCase(caseId: string): Promise<IntermediateCase | null>;
   writeCase(caseValue: IntermediateCase): Promise<IntermediateCase>;
   deleteCase(caseId: string): Promise<boolean>;
   listCases(): Promise<IntermediateCaseSummary[]>;
   findCaseByEmailKey(emailKey: string): Promise<IntermediateCase | null>;
+}
+
+export function supportsIntermediateCaseBinaryStorage(
+  adapter: IntermediateCaseStorageAdapter
+): adapter is IntermediateCaseBinaryStorageAdapter {
+  return typeof (adapter as IntermediateCaseBinaryStorageAdapter).readBinary === "function"
+    && typeof (adapter as IntermediateCaseBinaryStorageAdapter).writeBinary === "function";
 }
 
 export function createIntermediateCaseRepository(adapter: IntermediateCaseStorageAdapter): IntermediateCaseRepository {

@@ -1,4 +1,5 @@
 import { buildIntermediateCaseFromSeed, touchIntermediateCaseAccess } from "./intermediateCaseNormalization";
+import { getIntermediateCaseAttachmentPath } from "./intermediateCasePaths";
 import { mergeEmailIntoIntermediateCase } from "./intermediateCaseMerge";
 import type {
   IntermediateCase,
@@ -22,6 +23,7 @@ export type PrepareIntermediateAttachmentInput = {
   documentState?: string;
   previewReady?: boolean;
   selected?: boolean;
+  contentBase64?: string;
 };
 
 export type PrepareIntermediateEmailInput = {
@@ -59,7 +61,11 @@ function normalizeString(value: unknown): string | undefined {
   return normalized || undefined;
 }
 
-function normalizeAttachment(input: PrepareIntermediateAttachmentInput): IntermediateCaseAttachment {
+function normalizeAttachment(
+  caseId: string,
+  emailKey: string,
+  input: PrepareIntermediateAttachmentInput
+): IntermediateCaseAttachment {
   return {
     attachmentKey: input.attachmentKey,
     id: normalizeString(input.id),
@@ -71,10 +77,10 @@ function normalizeAttachment(input: PrepareIntermediateAttachmentInput): Interme
     hasContent: input.hasContent === true,
     documentState: normalizeString(input.documentState),
     storageDecision: input.selected ? (input.hasContent === true ? "local" : "metadata_only") : "pending",
-    localRef: input.selected
+    localRef: input.selected && input.hasContent === true
       ? {
           kind: "relative_path",
-          value: `attachments/${input.attachmentKey}`,
+          value: getIntermediateCaseAttachmentPath(caseId, emailKey, input.attachmentKey, input.name),
           label: String(input.name || "").trim() || undefined,
         }
       : undefined,
@@ -82,7 +88,7 @@ function normalizeAttachment(input: PrepareIntermediateAttachmentInput): Interme
   };
 }
 
-function normalizeEmail(input: PrepareIntermediateEmailInput): IntermediateCaseEmail {
+function normalizeEmail(caseId: string, input: PrepareIntermediateEmailInput): IntermediateCaseEmail {
   return {
     emailKey: input.emailKey,
     itemId: normalizeString(input.itemId),
@@ -114,7 +120,9 @@ function normalizeEmail(input: PrepareIntermediateEmailInput): IntermediateCaseE
       classifiedAt: normalizeString(input.classification?.classifiedAt),
       classifiedSource: input.classification?.classifiedSource,
     },
-    attachments: Array.isArray(input.attachments) ? input.attachments.map((attachment) => normalizeAttachment(attachment)) : [],
+    attachments: Array.isArray(input.attachments)
+      ? input.attachments.map((attachment) => normalizeAttachment(caseId, input.emailKey, attachment))
+      : [],
   };
 }
 
@@ -137,7 +145,7 @@ export function buildPrepareIntermediateCase(args: BuildPrepareIntermediateCaseA
   });
 
   for (const email of args.emails) {
-    caseValue = mergeEmailIntoIntermediateCase(caseValue, normalizeEmail(email));
+    caseValue = mergeEmailIntoIntermediateCase(caseValue, normalizeEmail(args.caseId, email));
   }
 
   return touchIntermediateCaseAccess(caseValue, nowIso);

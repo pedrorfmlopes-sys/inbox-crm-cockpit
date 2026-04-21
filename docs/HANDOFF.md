@@ -841,3 +841,31 @@
   - sem promocao remota real para servidor
   - sem refactor profundo de `Classificar`
   - sem reescrita total do fluxo `Servidor -> Intermedio -> Outlook`
+
+## Grupos v1: primeira camada de storage intermédio real do `IntermediateCase` (Abril 2026)
+- **Auditoria tecnica fechada nesta ronda**:
+  - o repo ja tinha prova de uso real de `indexedDB` no cliente (`client/src/modules/crm/excelProvider.ts`)
+  - nao existe ainda no repo uma bridge real para escrever diretamente em `groupsTabSettings.baseFolderPath`
+  - nao existe ainda integracao real com OneDrive / SharePoint ou com a pasta escolhida pelo utilizador
+  - por isso, a camada real desta ronda fecha apenas o que o host atual suporta de forma segura: storage persistente no browser via IndexedDB
+- **Adapter real implementado**:
+  - `client/src/modules/crm/groups-v1/storage/intermediateCaseIndexedDbAdapter.ts`
+  - operacoes reais: `readText`, `writeText`, `deleteTree`, `listPaths`, `readBinary`, `writeBinary`
+  - o storage fisico continua a respeitar o contrato logico aprovado:
+    - `Groups/cases/<caseId>/case.json`
+    - `Groups/cases/<caseId>/attachments/<emailKey>/...`
+  - a `baseFolderPath` configurada passa a ser usada como namespace logico do adapter, nao como pasta real validada no host
+- **O que ja ficou funcional de verdade**:
+  - `case.json` pode ser lido/escrito de verdade
+  - `listCases` e `findCaseByEmailKey` passam a funcionar sobre a base persistida no IndexedDB
+  - `GroupsPrepareCockpit` ja consegue reabrir um caso persistido dessa base quando `storageMode` esta ativo e existe `baseFolderPath` configurada
+- **Como ficaram os anexos nesta ronda**:
+  - `case.json` referencia anexos usando o path canonico de `attachments/<emailKey>/...`
+  - blobs reais sao escritos apenas quando o host ja tem conteudo do anexo em memoria (`attachment.content`)
+  - anexos sem binario disponivel continuam metadata-only; nao se finge preview real nem ficheiro persistido
+- **Limitacoes honestas mantidas**:
+  - sem escrita direta na localizacao escolhida pelo utilizador
+  - sem validacao real de `baseFolderPath`
+  - sem OneDrive / SharePoint reais
+  - sem promocao para servidor
+  - sem refactor profundo de `Classificar`

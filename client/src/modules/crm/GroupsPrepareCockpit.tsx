@@ -34,9 +34,11 @@ import {
   writeGroupsPrepareSession,
 } from "@/modules/crm/groups-v1/prepareSession";
 import { buildPrepareWorksetManifest } from "@/modules/crm/groups-v1/storage/buildPrepareWorksetManifest";
-import { createInMemoryIntermediateCaseStorageAdapter, createIntermediateCaseRepository } from "@/modules/crm/groups-v1/storage/intermediateCaseRepository";
 import type { IntermediateCase, IntermediateCaseEmail, IntermediateLocalPresence, IntermediateServerPresence, IntermediateVisibleState } from "@/modules/crm/groups-v1/storage/intermediateCaseTypes";
+import { getIntermediateCaseAttachmentPath } from "@/modules/crm/groups-v1/storage/intermediateCasePaths";
+import { persistIntermediateCaseAttachmentBinaries } from "@/modules/crm/groups-v1/storage/intermediateCaseAttachmentStorage";
 import { buildPrepareIntermediateCase, type PrepareIntermediateAttachmentInput, type PrepareIntermediateEmailInput } from "@/modules/crm/groups-v1/storage/prepareIntermediateCase";
+import { resolveIntermediateCaseStorage } from "@/modules/crm/groups-v1/storage/resolveIntermediateCaseStorage";
 import { loadPrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/loadWorkset";
 import { resolveGroupStorageRuntime } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWorkset";
@@ -573,9 +575,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const hydratedWorksetScopeRef = useRef("");
   const emailSelectionTouchedRef = useRef(false);
   const attachmentSelectionTouchedRef = useRef(false);
-  const intermediateCaseRepositoryRef = useRef(
-    createIntermediateCaseRepository(createInMemoryIntermediateCaseStorageAdapter())
-  );
 
   const currentEmailBootstrapPayload = useMemo<RelevantEmailPayload>(() => ({
     itemId: String(ctx.itemId || "").trim(),
@@ -647,6 +646,10 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const currentCaseId = useMemo(
     () => String(currentEmailLinkPayload.conversationId || currentEmailKey || "").trim(),
     [currentEmailKey, currentEmailLinkPayload.conversationId]
+  );
+  const intermediateCaseStorage = useMemo(
+    () => resolveIntermediateCaseStorage(groupsSettings),
+    [groupsSettings]
   );
 
   const currentEmailEntry = useMemo<RelatedEmailEntry>(() => ({
@@ -768,7 +771,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       return;
     }
     let cancelled = false;
-    const repository = intermediateCaseRepositoryRef.current;
+    const repository = intermediateCaseStorage.repository;
     void Promise.all([
       repository.readCase(currentCaseId),
       repository.findCaseByEmailKey(currentEmailKey),
@@ -783,7 +786,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [currentCaseId, currentEmailKey, groupsAccessLimited]);
+  }, [currentCaseId, currentEmailKey, groupsAccessLimited, intermediateCaseStorage]);
 
   useEffect(() => {
     if (groupsAccessLimited) {
@@ -1249,12 +1252,40 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
   useEffect(() => {
     if (!prepareIntermediateCase) return;
-    void intermediateCaseRepositoryRef.current.writeCase(prepareIntermediateCase);
-  }, [prepareIntermediateCase]);
+    void (async () => {
+      await intermediateCaseStorage.repository.writeCase(prepareIntermediateCase);
+      await persistIntermediateCaseAttachmentBinaries({
+        adapter: intermediateCaseStorage.adapter,
+        caseValue: prepareIntermediateCase,
+        binarySources: intermediateCaseBinarySources,
+      });
+    })();
+  }, [intermediateCaseBinarySources, intermediateCaseStorage, prepareIntermediateCase]);
 
   const casePrepareEmails = useMemo(
     () => (prepareIntermediateCase?.emails || []).map((email) => mapIntermediateEmailToRelatedEmailEntry(email)),
     [prepareIntermediateCase]
+  );
+
+  const intermediateCaseBinarySources = useMemo(
+    () =>
+      !currentCaseId
+        ? []
+        : rawCaseCandidateEmails.flatMap((email) => {
+            const emailKey = makeEmailKey(email);
+            return (email.attachments || []).flatMap((attachment) => {
+              const contentBase64 = String(attachment.content || "").trim();
+              const attachmentIdentity = makeAttachmentSelectionKey(attachment);
+              if (!contentBase64 || !attachmentIdentity || !String(attachment.name || "").trim()) return [];
+              const attachmentKey = `${emailKey}:${attachmentIdentity}`;
+              return [{
+                path: getIntermediateCaseAttachmentPath(currentCaseId, emailKey, attachmentKey, attachment.name),
+                contentBase64,
+                contentType: attachment.contentType,
+              }];
+            });
+          }),
+    [currentCaseId, rawCaseCandidateEmails]
   );
 
   const activePrepareEmails = useMemo(
