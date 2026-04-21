@@ -34,6 +34,9 @@ import {
   writeGroupsPrepareSession,
 } from "@/modules/crm/groups-v1/prepareSession";
 import { buildPrepareWorksetManifest } from "@/modules/crm/groups-v1/storage/buildPrepareWorksetManifest";
+import { createInMemoryIntermediateCaseStorageAdapter, createIntermediateCaseRepository } from "@/modules/crm/groups-v1/storage/intermediateCaseRepository";
+import type { IntermediateCase, IntermediateCaseEmail, IntermediateLocalPresence, IntermediateServerPresence, IntermediateVisibleState } from "@/modules/crm/groups-v1/storage/intermediateCaseTypes";
+import { buildPrepareIntermediateCase, type PrepareIntermediateAttachmentInput, type PrepareIntermediateEmailInput } from "@/modules/crm/groups-v1/storage/prepareIntermediateCase";
 import { loadPrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/loadWorkset";
 import { resolveGroupStorageRuntime } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWorkset";
@@ -321,6 +324,121 @@ function buildRelevantEmailPayloadFromEmail(email: RelatedEmailEntry): RelevantE
   };
 }
 
+function resolveIntermediateServerPresence(email: Partial<RelatedEmailEntry>, sourceOrigin: "server" | "intermediate" | "outlook"): IntermediateServerPresence {
+  if (hasServerPersistedDirectEmailClassification(email)) return "classified";
+  if (sourceOrigin === "server") return "metadata";
+  return "none";
+}
+
+function resolveIntermediateLocalPresence(args: {
+  isAnchor: boolean;
+  hasLocalCheckpoint: boolean;
+  isSelected: boolean;
+  hasSelectedAttachments: boolean;
+}): IntermediateLocalPresence {
+  if (args.hasSelectedAttachments) return "attachments";
+  if (args.isSelected) return "complete";
+  if (args.isAnchor && args.hasLocalCheckpoint) return "case_only";
+  return "none";
+}
+
+function mapRelatedEmailEntryToIntermediateEmail(
+  email: RelatedEmailEntry,
+  options: {
+    sourceOrigin: "server" | "intermediate" | "outlook";
+    visibilityState: IntermediateVisibleState;
+    localPresence: IntermediateLocalPresence;
+    serverPresence: IntermediateServerPresence;
+    selectedAttachmentKeys: Set<string>;
+  }
+): PrepareIntermediateEmailInput {
+  const emailKey = makeEmailKey(email);
+  const attachments: PrepareIntermediateAttachmentInput[] = Array.isArray(email.attachments)
+    ? email.attachments
+        .map((attachment) => {
+          const attachmentIdentity = makeAttachmentSelectionKey(attachment);
+          if (!attachmentIdentity || !String(attachment.name || "").trim()) return null;
+          const selectionKey = `${emailKey}:${attachmentIdentity}`;
+          return {
+            attachmentKey: selectionKey,
+            id: attachment.id,
+            name: attachment.name,
+            contentType: attachment.contentType,
+            size: attachment.size,
+            isInline: attachment.isInline,
+            contentId: attachment.contentId,
+            hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+            documentState: attachment.documentState,
+            previewReady: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+            selected: options.selectedAttachmentKeys.has(selectionKey),
+          } satisfies PrepareIntermediateAttachmentInput;
+        })
+        .filter(Boolean) as PrepareIntermediateAttachmentInput[]
+    : [];
+
+  return {
+    emailKey,
+    itemId: email.itemId,
+    internetMessageId: email.internetMessageId,
+    conversationId: email.conversationId,
+    subject: email.subject,
+    fromName: email.fromName,
+    fromEmail: email.fromEmail,
+    receivedAtIso: String(email.messageDateIso || email.receivedAtIso || "").trim() || undefined,
+    bodyText: email.bodyText,
+    bodyHtml: email.bodyHtml,
+    sourceOrigin: options.sourceOrigin,
+    visibilityState: options.visibilityState,
+    serverPresence: options.serverPresence,
+    localPresence: options.localPresence,
+    classification: {
+      principalGroupId: extractDirectPrincipalGroup(email)?.id,
+      principalGroupName: extractDirectPrincipalGroup(email)?.name,
+      referenceGroupIds: extractDirectReferenceGroups(email).map((group) => group.id),
+      labels: Array.isArray(email.labels) ? email.labels.filter(Boolean) : [],
+      status: String(email.status || "").trim() || undefined,
+      classifiedSource: options.sourceOrigin === "outlook" ? undefined : options.sourceOrigin,
+    },
+    attachments,
+  };
+}
+
+function mapIntermediateEmailToRelatedEmailEntry(email: IntermediateCaseEmail): RelatedEmailEntry {
+  return {
+    emailKey: email.emailKey,
+    itemId: email.itemId,
+    internetMessageId: email.internetMessageId,
+    conversationId: email.conversationId,
+    subject: email.subject,
+    fromName: email.fromName,
+    fromEmail: email.fromEmail,
+    receivedAtIso: email.receivedAtIso,
+    messageDateIso: email.receivedAtIso,
+    bodyText: email.bodyText,
+    bodyHtml: email.bodyHtml,
+    status: email.classification.status,
+    labels: email.classification.labels,
+    membershipKind: email.classification.principalGroupId ? "principal" : undefined,
+    groupId: email.classification.principalGroupId,
+    groupName: email.classification.principalGroupName,
+    relatedGroups: [],
+    relatedReasons: [],
+    attachments: email.attachments.map((attachment) => ({
+      key: attachment.attachmentKey.startsWith(`${email.emailKey}:`)
+        ? attachment.attachmentKey.slice(email.emailKey.length + 1)
+        : attachment.attachmentKey,
+      id: attachment.id,
+      name: attachment.name,
+      contentType: attachment.contentType,
+      size: attachment.size,
+      isInline: attachment.isInline,
+      contentId: attachment.contentId,
+      hasContent: attachment.hasContent,
+      documentState: attachment.documentState,
+    })),
+  } as RelatedEmailEntry;
+}
+
 function CompactToggle({
   label,
   active,
@@ -370,6 +488,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const [expandedEmailKeys, setExpandedEmailKeys] = useState<string[]>([]);
   const [selectedAttachmentKeys, setSelectedAttachmentKeys] = useState<string[]>([]);
   const [persistedCurrentEmail, setPersistedCurrentEmail] = useState<RelatedEmailEntry | null>(null);
+  const [hydratedIntermediateCase, setHydratedIntermediateCase] = useState<IntermediateCase | null>(null);
   const [emailTicketMap, setEmailTicketMap] = useState<Record<string, GroupTicketEntry[]>>({});
   const [busy, setBusy] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
@@ -454,6 +573,9 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const hydratedWorksetScopeRef = useRef("");
   const emailSelectionTouchedRef = useRef(false);
   const attachmentSelectionTouchedRef = useRef(false);
+  const intermediateCaseRepositoryRef = useRef(
+    createIntermediateCaseRepository(createInMemoryIntermediateCaseStorageAdapter())
+  );
 
   const currentEmailBootstrapPayload = useMemo<RelevantEmailPayload>(() => ({
     itemId: String(ctx.itemId || "").trim(),
@@ -521,6 +643,10 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const currentEmailKey = useMemo(
     () => makeEmailKey(currentEmailLinkPayload),
     [currentEmailLinkPayload]
+  );
+  const currentCaseId = useMemo(
+    () => String(currentEmailLinkPayload.conversationId || currentEmailKey || "").trim(),
+    [currentEmailKey, currentEmailLinkPayload.conversationId]
   );
 
   const currentEmailEntry = useMemo<RelatedEmailEntry>(() => ({
@@ -635,6 +761,29 @@ export const GroupsPrepareCockpit: React.FC = () => {
   useEffect(() => {
     setPersistedCurrentEmail(null);
   }, [currentEmailKey]);
+
+  useEffect(() => {
+    if (groupsAccessLimited || !currentEmailKey || !currentCaseId) {
+      setHydratedIntermediateCase(null);
+      return;
+    }
+    let cancelled = false;
+    const repository = intermediateCaseRepositoryRef.current;
+    void Promise.all([
+      repository.readCase(currentCaseId),
+      repository.findCaseByEmailKey(currentEmailKey),
+    ])
+      .then(([byCaseId, byEmailKey]) => {
+        if (cancelled) return;
+        setHydratedIntermediateCase(byEmailKey || byCaseId || null);
+      })
+      .catch(() => {
+        if (!cancelled) setHydratedIntermediateCase(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentCaseId, currentEmailKey, groupsAccessLimited]);
 
   useEffect(() => {
     if (groupsAccessLimited) {
@@ -1016,16 +1165,16 @@ export const GroupsPrepareCockpit: React.FC = () => {
     setActiveGroupForCurrentEmail(workingGroupId || null);
   }, [groupsAccessLimited, sessionReady, setActiveGroupForCurrentEmail, workingGroupId]);
 
-  const mergedCandidateEmails = useMemo(
+  const rawMergedCandidateEmails = useMemo(
     () => dedupeEmails([currentEmailEntry, ...contextEmails, ...knownEmails]),
     [contextEmails, currentEmailEntry, knownEmails]
   );
 
-  const visibleEmails = useMemo(() => {
-    if (!showFiltersPanel) return mergedCandidateEmails;
+  const rawVisibleEmails = useMemo(() => {
+    if (!showFiltersPanel) return rawMergedCandidateEmails;
 
     const query = normalizeText(filterQuery);
-    return mergedCandidateEmails.filter((email) => {
+    return rawMergedCandidateEmails.filter((email) => {
       if (query) {
         const haystack = [
           email.subject,
@@ -1050,16 +1199,103 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
       return true;
     });
-  }, [attachmentMode, filterQuery, groupMode, mergedCandidateEmails, showFiltersPanel]);
+  }, [attachmentMode, filterQuery, groupMode, rawMergedCandidateEmails, showFiltersPanel]);
 
-  const visibleListEmails = useMemo(
-    () => visibleEmails.filter((email) => makeEmailKey(email) !== currentEmailKey && !emailMatchesCurrentEmailIdentity(email, ctx, currentEmailKey)),
-    [ctx, currentEmailKey, visibleEmails]
+  const rawVisibleListEmails = useMemo(
+    () => rawVisibleEmails.filter((email) => makeEmailKey(email) !== currentEmailKey && !emailMatchesCurrentEmailIdentity(email, ctx, currentEmailKey)),
+    [ctx, currentEmailKey, rawVisibleEmails]
+  );
+
+  const hasLocalPrepareCheckpoint = Boolean(
+    hasStoredSessionRef.current
+    || lastPersistedWorksetRef.current.worksetKey
+    || persistedWorksetRef.current
+  );
+
+  const prepareIntermediateCase = useMemo(() => {
+    if (groupsAccessLimited || !currentEmailKey || !currentCaseId) return null;
+    const selectedEmailKeySet = new Set(selectedEmailKeys);
+    const selectedAttachmentKeySet = new Set(selectedAttachmentKeys);
+    const anchorSelectedAttachmentCount = Array.isArray(currentEmailEntry.attachments)
+      ? currentEmailEntry.attachments.filter((attachment) =>
+          selectedAttachmentKeySet.has(`${currentEmailKey}:${makeAttachmentSelectionKey(attachment)}`)
+        ).length
+      : 0;
+    const anchorLocalPresence = resolveIntermediateLocalPresence({
+      isAnchor: true,
+      hasLocalCheckpoint: hasLocalPrepareCheckpoint,
+      isSelected: selectedEmailKeySet.has(currentEmailKey),
+      hasSelectedAttachments: anchorSelectedAttachmentCount > 0,
+    });
+    const seedEmails: PrepareIntermediateEmailInput[] = [
+      mapRelatedEmailEntryToIntermediateEmail(currentEmailEntry, {
+        sourceOrigin: persistedCurrentEmail ? "server" : "outlook",
+        visibilityState: resolveDirectVisibleInformationState(currentEmailEntry, hasLocalPrepareCheckpoint),
+        serverPresence: resolveIntermediateServerPresence(currentEmailEntry, persistedCurrentEmail ? "server" : "outlook"),
+        localPresence: anchorLocalPresence,
+        selectedAttachmentKeys: selectedAttachmentKeySet,
+      }),
+      ...rawVisibleListEmails.map((email) => {
+        const emailKey = makeEmailKey(email);
+        const selectedAttachmentCount = Array.isArray(email.attachments)
+          ? email.attachments.filter((attachment) =>
+              selectedAttachmentKeySet.has(`${emailKey}:${makeAttachmentSelectionKey(attachment)}`)
+            ).length
+          : 0;
+        const sourceOrigin = "server" as const;
+        const hasLocalDraft = selectedEmailKeySet.has(emailKey) || selectedAttachmentCount > 0;
+        return mapRelatedEmailEntryToIntermediateEmail(email, {
+          sourceOrigin,
+          visibilityState: resolveDirectVisibleInformationState(email, hasLocalDraft),
+          serverPresence: resolveIntermediateServerPresence(email, sourceOrigin),
+          localPresence: resolveIntermediateLocalPresence({
+            isAnchor: false,
+            hasLocalCheckpoint: hasLocalDraft,
+            isSelected: selectedEmailKeySet.has(emailKey),
+            hasSelectedAttachments: selectedAttachmentCount > 0,
+          }),
+          selectedAttachmentKeys: selectedAttachmentKeySet,
+        });
+      }),
+    ];
+    return buildPrepareIntermediateCase({
+      caseId: currentCaseId,
+      anchorEmailKey: currentEmailKey,
+      conversationId: currentEmailEntry.conversationId,
+      existingCase: hydratedIntermediateCase,
+      emails: seedEmails,
+    });
+  }, [
+    currentCaseId,
+    currentEmailEntry,
+    currentEmailKey,
+    groupsAccessLimited,
+    hasLocalPrepareCheckpoint,
+    hydratedIntermediateCase,
+    persistedCurrentEmail,
+    rawVisibleListEmails,
+    selectedAttachmentKeys,
+    selectedEmailKeys,
+  ]);
+
+  useEffect(() => {
+    if (!prepareIntermediateCase) return;
+    void intermediateCaseRepositoryRef.current.writeCase(prepareIntermediateCase);
+  }, [prepareIntermediateCase]);
+
+  const casePrepareEmails = useMemo(
+    () => (prepareIntermediateCase?.emails || []).map((email) => mapIntermediateEmailToRelatedEmailEntry(email)),
+    [prepareIntermediateCase]
   );
 
   const activePrepareEmails = useMemo(
-    () => dedupeEmails([currentEmailEntry, ...visibleListEmails]),
-    [currentEmailEntry, visibleListEmails]
+    () => dedupeEmails(casePrepareEmails.length ? casePrepareEmails : [currentEmailEntry, ...rawVisibleListEmails]),
+    [casePrepareEmails, currentEmailEntry, rawVisibleListEmails]
+  );
+
+  const visibleListEmails = useMemo(
+    () => activePrepareEmails.filter((email) => makeEmailKey(email) !== currentEmailKey && !emailMatchesCurrentEmailIdentity(email, ctx, currentEmailKey)),
+    [activePrepareEmails, ctx, currentEmailKey]
   );
 
   useEffect(() => {
@@ -1098,9 +1334,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
     for (const email of attachmentSourceEmails) {
       const emailKey = makeEmailKey(email);
-      const sourceAttachments = emailKey === currentEmailKey
-        ? currentEmailPayload.attachments || []
-        : email.attachments || [];
+      const sourceAttachments = email.attachments || [];
       for (const attachment of sourceAttachments) {
         const attachmentKey = makeAttachmentSelectionKey(attachment);
         if (!attachmentKey || !String(attachment.name || "").trim()) continue;
@@ -1127,7 +1361,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       if (a.emailDateIso !== b.emailDateIso) return b.emailDateIso.localeCompare(a.emailDateIso);
       return a.name.localeCompare(b.name, "pt-PT");
     });
-  }, [attachmentSourceEmails, currentEmailKey, currentEmailPayload.attachments, ignoreInlineAttachmentsFromLegacyStorage]);
+  }, [attachmentSourceEmails, currentEmailKey, ignoreInlineAttachmentsFromLegacyStorage]);
 
   useEffect(() => {
     if (groupsAccessLimited) return;
@@ -1516,15 +1750,18 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }
 
   const summaryMetricCards = [
-    { label: "Emails", value: String(selectedEmails.length), meta: selectedEmails.length === 1 ? "1 selecionado" : `${selectedEmails.length} selecionados` },
+    {
+      label: "Emails",
+      value: String(selectedEmails.length),
+      meta: prepareIntermediateCase
+        ? `${prepareIntermediateCase.classificationSummary.totalEmails} no caso / ${selectedEmails.length} selecionados`
+        : selectedEmails.length === 1
+          ? "1 selecionado"
+          : `${selectedEmails.length} selecionados`,
+    },
     { label: "Anexos", value: String(selectedAttachments.length), meta: selectedAttachments.filter((attachment) => attachment.hasContent).length ? `${selectedAttachments.filter((attachment) => attachment.hasContent).length} com conteudo local` : "Sem upload remoto nesta fase" },
     { label: "Filtros", value: String(activeFilterSummary.length), meta: activeFilterSummary.length ? activeFilterSummary.join(" / ") : "Sem filtros ativos" },
   ];
-  const hasLocalPrepareCheckpoint = Boolean(
-    hasStoredSessionRef.current
-    || lastPersistedWorksetRef.current.worksetKey
-    || persistedWorksetRef.current
-  );
   const getVisibleInformationStateChip = (state: VisibleInformationState) => state === "server"
     ? { label: "Servidor", style: S.serverBadge, dot: S.infoDotServer }
     : state === "local"
@@ -1892,6 +2129,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
             <div style={S.fieldLabel}>Resumo antes de abrir no Classificar</div>
             <div style={S.summaryList}>
               <div><b>Email ancora:</b> {currentEmailEntry.subject || "(sem assunto)"}</div>
+              {prepareIntermediateCase ? <div><b>Caso intermedio:</b> {prepareIntermediateCase.caseId}</div> : null}
+              {prepareIntermediateCase ? <div><b>Emails no caso:</b> {prepareIntermediateCase.classificationSummary.totalEmails}</div> : null}
               <div><b>Grupo em trabalho:</b> {workingGroup?.name || "Sem grupo em trabalho"}</div>
               <div><b>Anexos preparados:</b> {selectedAttachments.length || 0}</div>
               <div><b>Filtros ativos:</b> {activeFilterSummary.join(", ") || "Sem filtros ativos"}</div>

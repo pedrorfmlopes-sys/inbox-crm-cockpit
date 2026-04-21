@@ -816,3 +816,23 @@
 - **Compatibilidade mantida**:
   - workset/storage antigo continua a coexistir
   - o novo modelo canonico fica definido como alvo da frente, sem partir o fluxo atual
+
+## Grupos v1: `Preparar` ligado ao `IntermediateCase` canonico (Abril 2026)
+- **O que passou a usar `IntermediateCase` de verdade**:
+  - `GroupsPrepareCockpit` passa a montar um `IntermediateCase` explicito a partir do email atual, relacionados visiveis e anexos conhecidos
+  - a lista ativa de emails de `Preparar` passa a ser derivada dos emails do `IntermediateCase`, em vez de trabalhar apenas sobre arrays soltos
+  - a lista de anexos preparada passa a nascer dos anexos dos emails do caso canonico
+  - o caso e escrito num repositorio abstrato em memoria durante a sessao, como ponte para a futura base intermedia real
+- **Como o caso e montado nesta ronda**:
+  - `caseId` usa `conversationId` quando existe; caso contrario usa o `anchorEmailKey`
+  - o email atual entra como ancora do caso e continua a usar apenas sinais diretos proprios
+  - emails relacionados entram como emails distintos do caso, com classificacao propria e anexos proprios
+  - os anexos selecionados em `Preparar` passam a refletir-se no caso como decisoes locais/pending sem abrir ainda storage real
+- **O que ainda ficou legado / ponte temporaria**:
+  - o workset antigo continua a existir para draft de selecao, filtros, grupo em trabalho e seed para `Classificar`
+  - `legacyStorageRuntime` continua a suportar o gate tecnico de anexos inline e o contrato antigo de workset, ate a ronda de storage real
+- **Fora do scope mantido**:
+  - sem OneDrive / SharePoint reais
+  - sem promocao remota real para servidor
+  - sem refactor profundo de `Classificar`
+  - sem reescrita total do fluxo `Servidor -> Intermedio -> Outlook`
