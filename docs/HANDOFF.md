@@ -1,5 +1,23 @@
 # HANDOFF
 
+## Grupos v1: bloco de grupos e referencias do `Classificar` fica mais coerente entre base canonica e pesquisa editorial (Abril 2026)
+- **O que passa a ficar mais claramente canonico**:
+  - `effectivePrincipalGroupId` e `effectiveReferenceGroupIds` passam a representar a verdade funcional do email quando o caso canonico ja existe
+  - o grupo principal e as referencias usados em resumos, chips ativos, favoritos, apply e reidratacao deixam de depender apenas do estado bruto do editor e passam a respeitar primeiro a selecao canonica do email/caso
+  - a reidratacao do editor volta a limpar `principalSearch` e `referenceSearch`, para que a pesquisa nao fique a parecer o estado aplicado
+- **O que continua editorial/local**:
+  - `principalSearch` e `referenceSearch` continuam como texto de pesquisa/criacao
+  - resultados temporarios, sugestoes e drafts ricos de `classificationMetaDraft` continuam locais
+- **Reducao de ambiguidade nesta ronda**:
+  - pesquisar grupo ou referencia deixa de funcionar como espelho implicito do grupo/referencia canonicos
+  - `hasPendingClassificationChanges` deixa de contar o texto de pesquisa como alteracao funcional pendente
+  - o apply e os resumos passam a usar os ids efetivos do caso, sem reabrir classificacao global cega
+- **Guardas mantidas**:
+  - o email selecionado/ancora continua protegido pela `preferred key` / ancora do caso
+  - o apply por scope continua por email alvo
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: bloco de tickets do `Classificar` fica mais coerente entre ticket canonico e pesquisa editorial (Abril 2026)
 - **O que passa a ficar mais claramente canonico**:
   - o ticket real do email passa a ser resolvido primeiro a partir do proprio email/caso (`classificationMeta.ticketId` e fallback dos `ticketIds` do contexto)

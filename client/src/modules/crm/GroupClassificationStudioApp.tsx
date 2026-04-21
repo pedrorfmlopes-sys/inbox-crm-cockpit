@@ -710,12 +710,8 @@ function StudioInner() {
       labelCatalogEntries,
     });
     const nextTicketId = normalizeComparableString((email.classificationMeta as any)?.ticketId);
-    const nextPrincipalSearch = principalGroupId
-      ? normalizeComparableString(groupMap.get(principalGroupId)?.name || email.groupName || principalGroupId)
-      : "";
-    const nextReferenceSearch = normalizedSelection.referenceGroupIds.length === 1
-      ? normalizeComparableString(groupMap.get(normalizedSelection.referenceGroupIds[0])?.name || normalizedSelection.referenceGroupIds[0])
-      : "";
+    const nextPrincipalSearch = "";
+    const nextReferenceSearch = "";
     const nextTicketSearch = "";
     const nextTicketSearchResults: GroupTicketEntry[] = [];
     const nextClassificationMetaDraft = normalizeClassificationMetaDraft({
@@ -760,7 +756,6 @@ function StudioInner() {
     classificationMetaDraft,
     createTicketTitle,
     getEmailGroupRelations,
-    groupMap,
     labelCatalogEntries,
     ticketStatusDraft,
   ]);
@@ -1242,9 +1237,43 @@ function StudioInner() {
     return getEmailGroupRelations(selectedEmail);
   }, [getEmailGroupRelations, selectedEmail]);
 
+  const canonicalGroupSelection = useMemo(() => {
+    const principalGroupId = normalizeComparableString(selectedEmail?.groupId || selectedEmail?.classificationMeta?.principalGroupId);
+    const relationGroups = getEmailGroupRelations(selectedEmail || null);
+    const referenceGroupIds = relationGroups
+      .filter((group) => group.id && group.id !== principalGroupId)
+      .map((group) => String(group.id || "").trim());
+    return createEmailGroupSelectionState({
+      principalGroupId,
+      referenceGroupIds,
+    });
+  }, [getEmailGroupRelations, selectedEmail]);
+  const effectivePrincipalGroupId = useMemo(
+    () => normalizeComparableString(selectionTouched.principal ? principalGroupId : (canonicalGroupSelection.principalGroupId || principalGroupId)),
+    [canonicalGroupSelection.principalGroupId, principalGroupId, selectionTouched.principal]
+  );
+  const effectiveReferenceGroupIds = useMemo(() => {
+    if (selectionTouched.references) {
+      return createEmailGroupSelectionState({
+        principalGroupId: effectivePrincipalGroupId,
+        referenceGroupIds,
+      }).referenceGroupIds;
+    }
+    if (canonicalGroupSelection.referenceGroupIds.length || canonicalGroupSelection.principalGroupId || effectivePrincipalGroupId) {
+      return createEmailGroupSelectionState({
+        principalGroupId: effectivePrincipalGroupId,
+        referenceGroupIds: canonicalGroupSelection.referenceGroupIds,
+      }).referenceGroupIds;
+    }
+    return createEmailGroupSelectionState({
+      principalGroupId: effectivePrincipalGroupId,
+      referenceGroupIds,
+    }).referenceGroupIds;
+  }, [canonicalGroupSelection.principalGroupId, canonicalGroupSelection.referenceGroupIds, effectivePrincipalGroupId, referenceGroupIds, selectionTouched.references]);
+
   const principalAnchorGroupId = useMemo(
-    () => principalGroupId || selectedEmailGroups.find((group) => String(group.relationKind || "").toLowerCase() === "principal")?.id || "",
-    [principalGroupId, selectedEmailGroups]
+    () => effectivePrincipalGroupId || selectedEmailGroups.find((group) => String(group.relationKind || "").toLowerCase() === "principal")?.id || "",
+    [effectivePrincipalGroupId, selectedEmailGroups]
   );
 
   const selectedTargetEmails = useMemo(
@@ -1491,12 +1520,12 @@ function StudioInner() {
   const filteredReferenceGroups = useMemo(() => {
     const q = normalizeSearchValue(referenceSearch);
     const rows = businessGroups.filter((group) => {
-      if (group.id === principalGroupId) return false;
+      if (group.id === effectivePrincipalGroupId) return false;
       if (!q) return true;
       return normalizeSearchValue(String(group.name || "")).includes(q);
     });
     return rows.slice(0, 24);
-  }, [businessGroups, principalGroupId, referenceSearch]);
+  }, [businessGroups, effectivePrincipalGroupId, referenceSearch]);
   const filteredClassificationLabels = useMemo(() => {
     const q = String(classificationLabelInput || "").trim().toLowerCase();
     const rows = q ? labelCatalog.filter((label) => label.toLowerCase().includes(q)) : labelCatalog;
@@ -2062,7 +2091,7 @@ function StudioInner() {
       || relatedTickets.find((ticket) => ticket.id === resolvedSelectedTicketId)
       || (selectionTouched.ticket ? ticketSearchResults.find((ticket) => ticket.id === resolvedSelectedTicketId) || null : null);
   }, [canonicalTicketChoices, relatedTickets, resolvedSelectedTicketId, selectionTouched.ticket, ticketSearchResults]);
-  const principalGroup = useMemo(() => (principalGroupId ? groupMap.get(principalGroupId) || null : null), [groupMap, principalGroupId]);
+  const principalGroup = useMemo(() => (effectivePrincipalGroupId ? groupMap.get(effectivePrincipalGroupId) || null : null), [effectivePrincipalGroupId, groupMap]);
   const favoritePrincipalGroups = useMemo(
     () => favoriteGroupIds
       .map((groupId) => businessGroups.find((group) => group.id === groupId) || null)
@@ -2070,8 +2099,8 @@ function StudioInner() {
     [businessGroups, favoriteGroupIds]
   );
   const favoriteReferenceGroups = useMemo(
-    () => favoritePrincipalGroups.filter((group) => group.id !== principalGroupId).slice(0, 6),
-    [favoritePrincipalGroups, principalGroupId]
+    () => favoritePrincipalGroups.filter((group) => group.id !== effectivePrincipalGroupId).slice(0, 6),
+    [effectivePrincipalGroupId, favoritePrincipalGroups]
   );
   const normalizedPrincipalSearch = useMemo(() => normalizeSearchValue(principalSearch), [principalSearch]);
   const normalizedReferenceSearch = useMemo(() => normalizeSearchValue(referenceSearch), [referenceSearch]);
@@ -2086,11 +2115,11 @@ function StudioInner() {
     () =>
       normalizedReferenceSearch
         ? businessGroups.find((group) =>
-          group.id !== principalGroupId
+          group.id !== effectivePrincipalGroupId
           && normalizeSearchValue(String(group.name || "")) === normalizedReferenceSearch
         ) || null
         : null,
-    [businessGroups, normalizedReferenceSearch, principalGroupId]
+    [businessGroups, effectivePrincipalGroupId, normalizedReferenceSearch]
   );
   const principalSearchResults = useMemo(() => {
     if (!normalizedPrincipalSearch) return [];
@@ -2113,8 +2142,8 @@ function StudioInner() {
     [exactPrincipalSearchGroup, principalGroup]
   );
   const referenceGroups = useMemo(
-    () => referenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[],
-    [groupMap, referenceGroupIds]
+    () => effectiveReferenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[],
+    [effectiveReferenceGroupIds, groupMap]
   );
   const referenceSettingsTargetGroup = useMemo(() => {
     if (exactReferenceSearchGroup) return exactReferenceSearchGroup;
@@ -2169,8 +2198,8 @@ function StudioInner() {
   );
   const canApplyClassification = useMemo(
     () => Boolean(
-      principalGroupId
-      || referenceGroupIds.length
+      effectivePrincipalGroupId
+      || effectiveReferenceGroupIds.length
       || selectedTicketId
       || selectedSeriesId
       || selectedEmailGroups.length
@@ -2180,8 +2209,8 @@ function StudioInner() {
       || String(selectedEmail?.status || "").trim()
     ),
     [
-      principalGroupId,
-      referenceGroupIds.length,
+      effectivePrincipalGroupId,
+      effectiveReferenceGroupIds.length,
       selectedTicketId,
       selectedSeriesId,
       selectedEmailGroups.length,
@@ -2195,9 +2224,7 @@ function StudioInner() {
     const snapshot = classificationDraftSnapshotRef.current;
     if (!snapshot) return false;
     return snapshot.principalGroupId !== principalGroupId
-      || snapshot.principalSearch !== principalSearch
       || getComparableStringListSignature(snapshot.referenceGroupIds) !== getComparableStringListSignature(referenceGroupIds)
-      || snapshot.referenceSearch !== referenceSearch
       || getComparableStringListSignature(snapshot.selectedLabels) !== getComparableStringListSignature(selectedLabels)
       || getComparableLabelDraftsSignature(snapshot.labelDrafts) !== getComparableLabelDraftsSignature(labelDrafts)
       || getComparableClassificationMetaSignature(snapshot.classificationMetaDraft) !== getComparableClassificationMetaSignature(classificationMetaDraft)
@@ -2210,9 +2237,7 @@ function StudioInner() {
     createTicketTitle,
     labelDrafts,
     principalGroupId,
-    principalSearch,
     referenceGroupIds,
-    referenceSearch,
     selectedLabels,
     selectedSeriesId,
     selectedTicketId,
@@ -2728,13 +2753,13 @@ function StudioInner() {
   }
 
   function toggleReferenceGroup(groupId: string) {
-    if (!groupId || groupId === principalGroupId) return;
+    if (!groupId || groupId === effectivePrincipalGroupId) return;
     setSelectionTouched((current) => ({ ...current, references: true }));
     setReferenceGroupIds((current) =>
       toggleReferenceGroupSelection(
         {
-          principalGroupId,
-          referenceGroupIds: current,
+          principalGroupId: effectivePrincipalGroupId,
+          referenceGroupIds: selectionTouched.references ? current : effectiveReferenceGroupIds,
         },
         groupId
       ).referenceGroupIds
@@ -2744,6 +2769,7 @@ function StudioInner() {
   function clearPrincipalSelection() {
     setSelectionTouched((current) => ({ ...current, principal: true }));
     setPrincipalGroupId("");
+    setPrincipalSearchValue("");
   }
 
   function setPrincipalSearchValue(value: string) {
@@ -2760,15 +2786,15 @@ function StudioInner() {
     if (!group?.id) return;
     const normalizedSelection = setPrincipalGroupSelection(
       {
-        principalGroupId,
-        referenceGroupIds,
+        principalGroupId: effectivePrincipalGroupId,
+        referenceGroupIds: effectiveReferenceGroupIds,
       },
       group.id
     );
     setSelectionTouched((current) => ({ ...current, principal: true }));
     setPrincipalGroupId(normalizedSelection.principalGroupId);
     setReferenceGroupIds(normalizedSelection.referenceGroupIds);
-    setPrincipalSearchValue(group.name);
+    setPrincipalSearchValue("");
   }
 
   function toggleExpandedQuickDocumentKey(attachmentKey: string) {
@@ -2783,12 +2809,9 @@ function StudioInner() {
 
   function toggleFavoritePrincipalGroup(group: LinkGroupEntry) {
     if (!group?.id) return;
-    const sameGroup = principalGroupId === group.id;
+    const sameGroup = effectivePrincipalGroupId === group.id;
     if (sameGroup) {
       clearPrincipalSelection();
-      if (normalizeSearchValue(principalSearch) === normalizeSearchValue(group.name)) {
-        setPrincipalSearchValue("");
-      }
       return;
     }
     selectPrincipalGroup(group);
@@ -2796,16 +2819,14 @@ function StudioInner() {
 
   function toggleFavoriteReferenceGroup(group: LinkGroupEntry) {
     if (!group?.id) return;
-    const sameGroup = referenceGroupIds.includes(group.id);
-    setReferenceSearchValue(group.name);
+    const sameGroup = effectiveReferenceGroupIds.includes(group.id);
     if (sameGroup) {
       toggleReferenceGroup(group.id);
-      if (normalizeSearchValue(referenceSearch) === normalizeSearchValue(group.name)) {
-        setReferenceSearchValue("");
-      }
+      setReferenceSearchValue("");
       return;
     }
     toggleReferenceGroup(group.id);
+    setReferenceSearchValue("");
   }
 
   function openManagedGroupFromPrincipal(group: LinkGroupEntry | null) {
@@ -2822,11 +2843,11 @@ function StudioInner() {
 
   function applySuggestedGroup(groupId: string) {
     if (!groupId) return;
-    if (principalGroupId === groupId) {
+    if (effectivePrincipalGroupId === groupId) {
       clearPrincipalSelection();
       return;
     }
-    if (referenceGroupIds.includes(groupId)) {
+    if (effectiveReferenceGroupIds.includes(groupId)) {
       toggleReferenceGroup(groupId);
       return;
     }
@@ -2835,32 +2856,35 @@ function StudioInner() {
       setReferenceGroupIds((current) =>
         addReferenceGroupSelection(
           {
-            principalGroupId,
-            referenceGroupIds: current,
+            principalGroupId: effectivePrincipalGroupId,
+            referenceGroupIds: selectionTouched.references ? current : effectiveReferenceGroupIds,
           },
           groupId
         ).referenceGroupIds
       );
+      setReferenceSearchValue("");
       return;
     }
-    if (!principalGroupId || classificationFocus === "principal") {
+    if (!effectivePrincipalGroupId || classificationFocus === "principal") {
       setSelectionTouched((current) => ({ ...current, principal: true }));
       setPrincipalGroupId(groupId);
+      setPrincipalSearchValue("");
       return;
     }
-    if (principalGroupId === groupId) {
+    if (effectivePrincipalGroupId === groupId) {
       return;
     }
     setSelectionTouched((current) => ({ ...current, references: true }));
     setReferenceGroupIds((current) =>
       addReferenceGroupSelection(
         {
-          principalGroupId,
-          referenceGroupIds: current,
+          principalGroupId: effectivePrincipalGroupId,
+          referenceGroupIds: selectionTouched.references ? current : effectiveReferenceGroupIds,
         },
         groupId
       ).referenceGroupIds
     );
+    setReferenceSearchValue("");
   }
 
   function applySuggestedTicket(ticketId: string) {
@@ -3073,7 +3097,7 @@ function StudioInner() {
     }
     setActionBusy(true);
     try {
-      const groupIds = [principalGroupId, ...referenceGroupIds].filter(Boolean);
+      const groupIds = [effectivePrincipalGroupId, ...effectiveReferenceGroupIds].filter(Boolean);
       const ticket = await createGroupTicket({
         seriesId: selectedSeriesId,
         title: String(createTicketTitle || selectedEmail?.subject || "Ticket").trim(),
@@ -3087,7 +3111,7 @@ function StudioInner() {
           labelStates: selectedLabelStates,
           classificationMeta: classificationMetaDraft,
         },
-        membershipKind: principalGroupId ? "principal" : "referencia",
+        membershipKind: effectivePrincipalGroupId ? "principal" : "referencia",
       });
       setRelatedTickets((current) => [ticket, ...current.filter((entry) => entry.id !== ticket.id)]);
       setSelectionTouched((current) => ({ ...current, ticket: true }));
@@ -3159,7 +3183,7 @@ function StudioInner() {
   }
 
   async function handleSaveSelectedAttachments() {
-    if (!principalGroupId) {
+    if (!effectivePrincipalGroupId) {
       setStatus("Escolhe primeiro um grupo principal para guardar documentos.");
       return;
     }
@@ -3437,9 +3461,9 @@ function StudioInner() {
           setOutlookCategoryOperationPhase(activeCategoryOperationId, "saving");
         }
 
-        const principalGroup = principalGroupId ? groupMap.get(principalGroupId) || null : null;
-        const referenceGroups = referenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[];
-        const allGroupIds = [principalGroupId, ...referenceGroupIds].filter(Boolean);
+        const principalGroup = effectivePrincipalGroupId ? groupMap.get(effectivePrincipalGroupId) || null : null;
+        const referenceGroups = effectiveReferenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[];
+        const allGroupIds = [effectivePrincipalGroupId, ...effectiveReferenceGroupIds].filter(Boolean);
         const emailLabelStatus = selectedLabelStatuses[0] || "";
         const removedInheritedLabels = inheritedLabels.filter((label) => !selectedLabels.includes(label));
         const emailOwnedSelectedLabels = selectedLabels.filter((label) => !inheritedLabels.includes(label));
@@ -3522,7 +3546,7 @@ function StudioInner() {
             labels: selectedLabels,
             groupIds: allGroupIds,
             email: baseClassifiedEmailPayload,
-            membershipKind: principalGroupId ? "principal" : "referencia",
+            membershipKind: effectivePrincipalGroupId ? "principal" : "referencia",
           });
           if (desiredTicketStatus && desiredTicketStatus !== String(finalTicket?.status || "").trim()) {
             finalTicket = await updateGroupTicket(finalTicket.id, { status: desiredTicketStatus });
@@ -3568,13 +3592,13 @@ function StudioInner() {
             });
           }
 
-          if (principalGroupId) {
-            await addEmailToLinkGroup(principalGroupId, {
+          if (effectivePrincipalGroupId) {
+            await addEmailToLinkGroup(effectivePrincipalGroupId, {
               ...classifiedEmailPayload,
               membershipKind: "principal",
             });
           }
-          for (const groupId of referenceGroupIds) {
+          for (const groupId of effectiveReferenceGroupIds) {
             await addEmailToLinkGroup(groupId, {
               ...classifiedEmailPayload,
               membershipKind: "referencia",
@@ -3599,7 +3623,7 @@ function StudioInner() {
               email: classifiedEmailPayload,
               applyGroups: allGroupIds.length > 0,
               groupIds: allGroupIds,
-              membershipKind: principalGroupId ? "principal" : "referencia",
+              membershipKind: effectivePrincipalGroupId ? "principal" : "referencia",
             });
             finalTicket = linked.ticket;
           }
@@ -3612,9 +3636,9 @@ function StudioInner() {
           || ""
         ).trim();
         const localClassificationDraft: IntermediateCaseClassificationDraft = {
-          principalGroupId: principalGroupId || undefined,
+          principalGroupId: effectivePrincipalGroupId || undefined,
           principalGroupName: principalGroup?.name || undefined,
-          referenceGroupIds,
+          referenceGroupIds: effectiveReferenceGroupIds,
           labels: selectedLabels,
           removedInheritedLabels,
           labelStates: selectedLabelStates,
@@ -4246,7 +4270,7 @@ function StudioInner() {
                       <button
                         key={group.id}
                         type="button"
-                        style={group.id === principalGroupId ? S.miniChipOn : S.miniChip}
+                        style={group.id === effectivePrincipalGroupId ? S.miniChipOn : S.miniChip}
                         onClick={() => toggleFavoritePrincipalGroup(group)}
                       >
                         {group.name}
@@ -4299,9 +4323,9 @@ function StudioInner() {
                       <button
                         key={group.id}
                         type="button"
-                        style={group.id === principalGroupId ? S.searchResultBtnOn : S.searchResultBtn}
+                        style={group.id === effectivePrincipalGroupId ? S.searchResultBtnOn : S.searchResultBtn}
                         onClick={() => {
-                          if (group.id === principalGroupId) {
+                          if (group.id === effectivePrincipalGroupId) {
                             clearPrincipalSelection();
                             return;
                           }
@@ -4309,7 +4333,7 @@ function StudioInner() {
                         }}
                       >
                         <span>{group.name}</span>
-                        {group.id === principalGroupId ? <span style={S.resultMiniMeta}>Ligado</span> : null}
+                        {group.id === effectivePrincipalGroupId ? <span style={S.resultMiniMeta}>Ligado</span> : null}
                       </button>
                     ))}
                   </div>
@@ -4379,7 +4403,7 @@ function StudioInner() {
                       <button
                         key={group.id}
                         type="button"
-                        style={referenceGroupIds.includes(group.id) ? S.miniChipOn : S.miniChip}
+                        style={effectiveReferenceGroupIds.includes(group.id) ? S.miniChipOn : S.miniChip}
                         onClick={() => toggleFavoriteReferenceGroup(group)}
                       >
                         {group.name}
@@ -4409,7 +4433,7 @@ function StudioInner() {
                       }
                       if (exactReferenceSearchGroup) {
                         toggleReferenceGroup(exactReferenceSearchGroup.id);
-                        setReferenceSearchValue(exactReferenceSearchGroup.name);
+                        setReferenceSearchValue("");
                       }
                     }}
                     disabled={!String(referenceSearch || "").trim()}
@@ -4433,14 +4457,14 @@ function StudioInner() {
                       <button
                         key={group.id}
                         type="button"
-                        style={referenceGroupIds.includes(group.id) ? S.searchResultBtnOn : S.searchResultBtn}
+                        style={effectiveReferenceGroupIds.includes(group.id) ? S.searchResultBtnOn : S.searchResultBtn}
                         onClick={() => {
                           toggleReferenceGroup(group.id);
-                          setReferenceSearchValue(group.name);
+                          setReferenceSearchValue("");
                         }}
                       >
                         <span>{group.name}</span>
-                        {referenceGroupIds.includes(group.id) ? <span style={S.resultMiniMeta}>Ligada</span> : null}
+                        {effectiveReferenceGroupIds.includes(group.id) ? <span style={S.resultMiniMeta}>Ligada</span> : null}
                       </button>
                     ))}
                   </div>
@@ -4722,7 +4746,7 @@ function StudioInner() {
                 <div style={S.summaryRow}><span>Estado por etiquetas</span><strong>{emailStatusSummary}</strong></div>
               </div>
               <div style={S.summaryActionBar}>
-                <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!principalGroupId && !referenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length && !selectedLabels.length && !selectedEmailStoredLabels.length && !String(selectedEmail?.status || "").trim())}>
+                <button type="button" style={S.primaryBtn} onClick={() => void handleApplyClassification()} disabled={actionBusy || (!effectivePrincipalGroupId && !effectiveReferenceGroupIds.length && !selectedTicketId && !selectedSeriesId && !selectedEmailGroups.length && !selectedEmailTicketIds.length && !selectedLabels.length && !selectedEmailStoredLabels.length && !String(selectedEmail?.status || "").trim())}>
                   <Icons.Save size={12} />
                   Gravar / atualizar
                 </button>
@@ -5126,8 +5150,8 @@ function StudioInner() {
               onClick={() => void handleApplyClassification()}
               disabled={
                 actionBusy ||
-                (!principalGroupId &&
-                  !referenceGroupIds.length &&
+                (!effectivePrincipalGroupId &&
+                  !effectiveReferenceGroupIds.length &&
                   !selectedTicketId &&
                   !selectedSeriesId &&
                   !selectedEmailGroups.length &&
