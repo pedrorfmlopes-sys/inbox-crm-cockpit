@@ -38,7 +38,10 @@ import { loadPrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/loadWor
 import { resolveGroupStorageRuntime } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWorkset";
 import { GroupsSettingsPanel } from "@/modules/crm/groups-v1/settings/GroupsSettingsPanel";
-import type { GroupsTabSettings } from "@/modules/crm/groups-v1/settings/groupsTabSettings";
+import {
+  normalizeGroupsTabSettings,
+  type GroupsTabSettings,
+} from "@/modules/crm/groups-v1/settings/groupsTabSettings";
 import { getGroupWorksetManifestSignature } from "@/modules/crm/groups-v1/storage/worksetManifest";
 import { openGroupClassificationStudio } from "@/office";
 import { saveSettings } from "@/settings";
@@ -371,6 +374,19 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionScopeKey, setSessionScopeKey] = useState("");
+  const groupsSettings = useMemo(
+    () => normalizeGroupsTabSettings(settings?.groupsTabSettings || null),
+    [settings?.groupsTabSettings]
+  );
+  const groupsTabEnabled = groupsSettings.groupsTabEnabled;
+  const groupsStorageEnabled = groupsSettings.storageMode !== "disabled";
+  const groupsAccessLimited = !groupsTabEnabled || !groupsStorageEnabled;
+  const storageModeLabel = groupsStorageEnabled ? "OneDrive / SharePoint" : "Armazenamento desativado";
+  const locationPathLabel = String(groupsSettings.baseFolderPath || "").trim() || "Sem localizacao definida";
+  const limitedStateTitle = !groupsTabEnabled ? "Aba Groups desativada" : "Armazenamento intermedio desativado";
+  const limitedStateDescription = !groupsTabEnabled
+    ? "A aba Groups esta desativada nos Settings. Podes reativa-la a qualquer momento sem perder a configuracao guardada."
+    : "Os Settings desta aba estao com o armazenamento intermedio desativado. A configuracao continua acessivel, mas o fluxo de Preparar fica bloqueado nesta fase.";
 
   const sessionSnapshot = useMemo<GroupsPrepareSessionState>(() => buildGroupsPrepareSessionSnapshot({
     subview,
@@ -620,6 +636,10 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [currentEmailKey]);
 
   useEffect(() => {
+    if (groupsAccessLimited) {
+      setPersistedCurrentEmail(null);
+      return;
+    }
     if (!hasCurrentIdentity) {
       setPersistedCurrentEmail(null);
       return;
@@ -655,10 +675,17 @@ export const GroupsPrepareCockpit: React.FC = () => {
     ctx,
     currentEmailBootstrapLinkPayload,
     currentEmailKey,
+    groupsAccessLimited,
     hasCurrentIdentity,
   ]);
 
   useEffect(() => {
+    if (groupsAccessLimited) {
+      setGroups([]);
+      setGroupsLoading(false);
+      setGroupsError("");
+      return;
+    }
     let cancelled = false;
     const query = String(workingGroupQuery || "").trim();
     if (!showGroupPanel || query.length < 2) {
@@ -689,7 +716,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [showGroupPanel, workingGroupQuery]);
+  }, [groupsAccessLimited, showGroupPanel, workingGroupQuery]);
 
   useEffect(() => {
     const selectedGroup = groups.find((group) => group.id === workingGroupId);
@@ -699,6 +726,12 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [groups, workingGroupId, workingGroupQuery]);
 
   useEffect(() => {
+    if (groupsAccessLimited) {
+      setContextEmails([]);
+      setContextTickets([]);
+      setContextLoading(false);
+      return;
+    }
     if (!hasCurrentIdentity) {
       setContextEmails([]);
       setContextTickets([]);
@@ -728,9 +761,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [currentEmailKey, currentEmailLinkPayload, hasCurrentIdentity, setMsg]);
+  }, [currentEmailKey, currentEmailLinkPayload, groupsAccessLimited, hasCurrentIdentity, setMsg]);
 
   useEffect(() => {
+    if (groupsAccessLimited) {
+      setKnownEmails([]);
+      setKnownEmailsLoading(false);
+      return;
+    }
     const query = String(filterQuery || "").trim();
     if (!showFiltersPanel || !query) {
       setKnownEmails([]);
@@ -758,7 +796,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [filterQuery, setMsg, showFiltersPanel]);
+  }, [filterQuery, groupsAccessLimited, setMsg, showFiltersPanel]);
 
   useEffect(() => {
     const previousSession = renderedSessionRef.current;
@@ -789,6 +827,12 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [currentEmailKey, flushSession, flushWorkset, sessionScopeKey]);
 
   useEffect(() => {
+    if (groupsAccessLimited) {
+      setSessionReady(false);
+      setSessionScopeKey("");
+      hasStoredSessionRef.current = false;
+      return;
+    }
     setSessionReady(false);
     setSessionScopeKey("");
     const sessionKey = String(currentEmailKey || "").trim();
@@ -820,7 +864,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     preferredGroupAppliedForEmailRef.current = "";
     setSessionScopeKey(sessionKey);
     setSessionReady(Boolean(sessionKey));
-  }, [currentEmailKey]);
+  }, [currentEmailKey, groupsAccessLimited]);
 
   const currentPrincipalGroup = useMemo(
     () => extractDirectPrincipalGroup(currentEmailEntry),
@@ -837,6 +881,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [activeGroupSelection, currentEmailKey, currentPrincipalGroup]);
 
   useEffect(() => {
+    if (groupsAccessLimited) return;
     if (!sessionReady || workingGroupId || !preferredWorkingGroupId) return;
     if (preferredGroupAppliedForEmailRef.current === currentEmailKey) return;
     preferredGroupAppliedForEmailRef.current = currentEmailKey;
@@ -844,7 +889,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     const preferredGroup = groups.find((group) => group.id === preferredWorkingGroupId)
       || (currentPrincipalGroup?.id === preferredWorkingGroupId ? currentPrincipalGroup : null);
     if (preferredGroup) setWorkingGroupQuery(preferredGroup.name);
-  }, [currentEmailKey, currentPrincipalGroup, groups, preferredWorkingGroupId, sessionReady, workingGroupId]);
+  }, [currentEmailKey, currentPrincipalGroup, groups, groupsAccessLimited, preferredWorkingGroupId, sessionReady, workingGroupId]);
 
   useEffect(() => {
     renderedSessionRef.current = {
@@ -855,6 +900,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [currentEmailKey, sessionScopeKey, sessionSignature, sessionSnapshot]);
 
   useEffect(() => {
+    if (groupsAccessLimited) return;
     if (!canPersistWorkset || !sessionReady || !currentEmailKey || hydratedWorksetScopeRef.current === currentEmailKey) return;
     let cancelled = false;
     void loadPrimaryGroupWorkset({
@@ -903,9 +949,10 @@ export const GroupsPrepareCockpit: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [canPersistWorkset, currentEmailKey, runtime, sessionReady]);
+  }, [canPersistWorkset, currentEmailKey, groupsAccessLimited, runtime, sessionReady]);
 
   useEffect(() => {
+    if (groupsAccessLimited) return;
     if (!sessionReady || !currentEmailKey || sessionScopeKey !== currentEmailKey) return;
     const lastPersisted = lastPersistedSessionRef.current;
     if (lastPersisted.emailKey === currentEmailKey && lastPersisted.signature === sessionSignature) {
@@ -922,6 +969,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [
     currentEmailKey,
     flushSession,
+    groupsAccessLimited,
     sessionReady,
     sessionScopeKey,
     sessionSignature,
@@ -929,6 +977,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   ]);
 
   useEffect(() => {
+    if (groupsAccessLimited) return;
     const handleSaveBeforeExit = () => {
       const currentSession = renderedSessionRef.current;
       if (!currentSession.emailKey) return;
@@ -958,12 +1007,13 @@ export const GroupsPrepareCockpit: React.FC = () => {
       window.removeEventListener("beforeunload", handleSaveBeforeExit);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [flushSession, flushWorkset]);
+  }, [flushSession, flushWorkset, groupsAccessLimited]);
 
   useEffect(() => {
+    if (groupsAccessLimited) return;
     if (!sessionReady) return;
     setActiveGroupForCurrentEmail(workingGroupId || null);
-  }, [sessionReady, setActiveGroupForCurrentEmail, workingGroupId]);
+  }, [groupsAccessLimited, sessionReady, setActiveGroupForCurrentEmail, workingGroupId]);
 
   const mergedCandidateEmails = useMemo(
     () => dedupeEmails([currentEmailEntry, ...contextEmails, ...knownEmails]),
@@ -1012,6 +1062,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   );
 
   useEffect(() => {
+    if (groupsAccessLimited) return;
     if (!sessionReady) return;
     const validKeys = new Set(activePrepareEmails.map((email) => makeEmailKey(email)).filter(Boolean));
     const defaultSelection = activePrepareEmails.length
@@ -1031,7 +1082,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       const resolved = next.length ? next : fallback;
       return sameStringArray(resolved, current) ? current : resolved;
     });
-  }, [activePrepareEmails, sessionReady]);
+  }, [activePrepareEmails, groupsAccessLimited, sessionReady]);
 
   const selectedEmails = useMemo(
     () => activePrepareEmails.filter((email) => selectedEmailKeys.includes(makeEmailKey(email))),
@@ -1078,6 +1129,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [attachmentSourceEmails, currentEmailKey, currentEmailPayload.attachments, settings?.groupStorage?.ignoreInlineAttachments]);
 
   useEffect(() => {
+    if (groupsAccessLimited) return;
     if (!sessionReady) return;
     const validKeys = new Set(attachmentRows.map((attachment) => attachment.key));
     const defaultSelection = attachmentRows.map((attachment) => attachment.key);
@@ -1089,7 +1141,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       const resolved = next.length ? next : defaultSelection;
       return sameStringArray(resolved, current) ? current : resolved;
     });
-  }, [attachmentRows, sessionReady]);
+  }, [attachmentRows, groupsAccessLimited, sessionReady]);
 
   const selectedAttachments = useMemo(
     () => attachmentRows.filter((attachment) => selectedAttachmentKeys.includes(attachment.key)),
@@ -1242,6 +1294,10 @@ export const GroupsPrepareCockpit: React.FC = () => {
   );
 
   useEffect(() => {
+    if (groupsAccessLimited) {
+      setEmailTicketMap({});
+      return;
+    }
     const targets = expandedEmailRows.filter((email) => {
       const key = makeEmailKey(email);
       return key && emailTicketMap[key] === undefined;
@@ -1274,7 +1330,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [emailTicketMap, expandedEmailRows]);
+  }, [emailTicketMap, expandedEmailRows, groupsAccessLimited]);
 
   async function handleCreateWorkingGroup() {
     const name = String(workingGroupQuery || "").trim();
@@ -1303,6 +1359,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }
 
   async function handleOpenClassificationFromPrepare() {
+    if (!groupsTabEnabled) {
+      setMsg("A aba Groups esta desativada. Reativa-a nos Settings para continuar.");
+      return;
+    }
+    if (!groupsStorageEnabled) {
+      setMsg("Ativa o armazenamento intermedio nos Settings para abrir o fluxo de Classificar.");
+      return;
+    }
     flushSession("before_classify", {
       emailKey: currentEmailKey,
       snapshot: sessionSnapshot,
@@ -1370,6 +1434,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }
 
   function handleManualSessionSave() {
+    if (!groupsTabEnabled) {
+      setMsg("A aba Groups esta desativada. Reativa-a nos Settings para guardar progresso.");
+      return;
+    }
+    if (!groupsStorageEnabled) {
+      setMsg("Ativa o armazenamento intermedio nos Settings para voltar a guardar a sessao de Preparar.");
+      return;
+    }
     if (!currentEmailKey) {
       setMsg("Sem email ancora para guardar sessao.");
       return;
@@ -1402,6 +1474,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }
 
   function handleSubviewChange(nextSubview: GroupsPrepareSubview) {
+    if (groupsAccessLimited) return;
     if (nextSubview === subview) return;
     flushSession("before_subview_change", {
       emailKey: currentEmailKey,
@@ -1458,6 +1531,43 @@ export const GroupsPrepareCockpit: React.FC = () => {
       : { label: "Rascunho", style: S.draftBadge, dot: S.infoDotDraft };
   const anchorInformationState = resolveDirectVisibleInformationState(currentEmailEntry, hasLocalPrepareCheckpoint);
   const anchorInformationStateChip = getVisibleInformationStateChip(anchorInformationState);
+  const groupsSettingsStatusCard = (
+    <div style={S.settingsStatusCard}>
+      <div style={S.sectionTitleRow}>
+        <div style={S.fieldLabel}>Settings aplicados</div>
+        <div style={groupsStorageEnabled ? S.localBadge : S.warningBadge}>{storageModeLabel}</div>
+      </div>
+      <div style={S.settingsStatusGrid}>
+        <div style={S.settingsStatusRow}>
+          <span style={S.settingsStatusLabel}>Estado</span>
+          <span style={S.currentGroupLine}>{groupsSettings.locationStatus}</span>
+        </div>
+        <div style={S.settingsStatusRow}>
+          <span style={S.settingsStatusLabel}>Localizacao</span>
+          <span style={S.currentGroupLine}>{locationPathLabel}</span>
+        </div>
+      </div>
+      <div style={S.settingsStatusHint}>{groupsSettings.quickDiagnostic}</div>
+    </div>
+  );
+  const limitedGroupsPanel = (
+    <div style={S.viewStack}>
+      {groupsSettingsStatusCard}
+      <div style={S.limitedStateWrap}>
+        <PanelState
+          tone="info"
+          title={limitedStateTitle}
+          description={limitedStateDescription}
+        />
+        <div style={S.limitedActions}>
+          <button type="button" style={S.secondaryBtn} onClick={() => setShowSettingsPanel(true)}>
+            <Icons.Settings size={12} />
+            Abrir Settings
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (!hasCurrentIdentity) {
     return (
@@ -1478,6 +1588,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
           title="Sem email ancora disponivel"
           description="Abre um email no Outlook para preparar o conjunto de trabalho desta aba."
         />
+        {groupsSettingsStatusCard}
         <GroupsSettingsPanel
           open={showSettingsPanel}
           value={settings?.groupsTabSettings || null}
@@ -1513,6 +1624,10 @@ export const GroupsPrepareCockpit: React.FC = () => {
           Explorar
         </button>
       </div>
+
+      {groupsAccessLimited ? limitedGroupsPanel : (
+        <>
+      {groupsSettingsStatusCard}
 
       <div style={S.anchorCard}>
         <div style={S.anchorLead}>
@@ -1810,6 +1925,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
           </button>
         </div>
       </div>
+      </>
+      )}
 
       <GroupsSettingsPanel
         open={showSettingsPanel}
@@ -1862,6 +1979,13 @@ const S: Record<string, React.CSSProperties> = {
   segment: { flex: "1 1 0", border: "none", background: "transparent", color: "var(--iccc-text-muted)", padding: "4px 7px", borderRadius: 999, fontSize: 9, fontWeight: 600, cursor: "pointer" },
   segmentActive: { flex: "1 1 0", border: "1px solid rgba(148,163,184,0.18)", background: "#fff", color: "var(--iccc-text)", padding: "4px 7px", borderRadius: 999, fontSize: 9, fontWeight: 700, cursor: "pointer", boxShadow: "0 1px 2px rgba(15,23,42,0.06)" },
   segmentDisabled: { flex: "1 1 0", border: "none", background: "transparent", color: "rgba(100,116,139,0.68)", padding: "4px 7px", borderRadius: 999, fontSize: 9, fontWeight: 600, cursor: "not-allowed" },
+  settingsStatusCard: { display: "grid", gap: 5, padding: 6, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.86)" },
+  settingsStatusGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(144px, 1fr))", gap: 5 },
+  settingsStatusRow: { display: "grid", gap: 2 },
+  settingsStatusLabel: { fontSize: 8.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" },
+  settingsStatusHint: { fontSize: 8.8, color: "#526173", lineHeight: 1.3 },
+  limitedStateWrap: { display: "grid", gap: 6 },
+  limitedActions: { display: "flex", justifyContent: "flex-start", gap: 6 },
   anchorCard: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 6, alignItems: "start", padding: 7, borderRadius: 14, border: "1px solid var(--iccc-card-border)", background: "rgba(255,255,255,0.9)" },
   anchorLead: { display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 },
   anchorIcon: { width: 22, height: 22, borderRadius: 8, background: "linear-gradient(180deg,#3b82f6 0%, #2563eb 100%)", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 },

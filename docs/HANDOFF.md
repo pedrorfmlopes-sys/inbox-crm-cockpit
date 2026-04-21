@@ -742,3 +742,19 @@
   - wiring seguinte da shell: `client/src/settings.ts` passa a persistir um bloco proprio `groupsTabSettings`; `client/src/modules/crm/groups-v1/settings/groupsTabSettings.ts` define defaults/normalizacao; `GroupsSettingsPanel` abre com valores reais, edita draft local e `Guardar` persiste via `saveSettings`
   - `locationStatus` e `quickDiagnostic` continuam leves e derivados do proprio bloco de settings; `groupsVersion` fica estatico nesta ronda
   - continuam explicitamente fora do scope: validacao real de localizacao, OneDrive/SharePoint real, migracao real, backup/reset reais, limpeza real, avisos reais, storage final, servidor, `Preparar` profundo e `Classificar` profundo
+
+## Grupos v1: efeitos reais leves dos `groupsTabSettings` na aba `Groups` (Abril 2026)
+- **O que passou a ter efeito real nesta ronda**:
+  - `groupsTabEnabled` passa a bloquear o uso local da aba `Groups` quando desligado; a vista deixa de expor o fluxo de `Preparar` e mostra um estado claro de modulo desativado
+  - `storageMode = disabled` passa a bloquear localmente o fluxo de `Preparar`; a aba deixa de agir como se a base intermedia estivesse ativa e mostra um estado coerente com o storage desligado
+  - `locationStatus`, `baseFolderPath` e `quickDiagnostic` passam a aparecer de forma visivel na propria aba, como resumo leve do estado configurado
+  - os Settings da aba `Groups` continuam acessiveis mesmo quando o modulo ou o storage estao limitados
+- **Guardas mantidas**:
+  - sem validacao real de pasta
+  - sem OneDrive / SharePoint real
+  - sem migracao, backup, reset, limpeza ou avisos reais
+  - sem refactor profundo de `Preparar` ou `Classificar`
+- **Comportamento deliberadamente fora desta ronda**:
+  - `validateLocationOnOpen`, `warnIfUnavailable`, `autoRetryValidation`, `cleanup*`, `warning*`, `attachment*`, `migration*` e `maintenance` continuam apenas persistidos, sem motor real por baixo
+- **Proximo passo recomendado**:
+  - validar em Outlook real a combinacao de `groupsTabEnabled` e `storageMode`, confirmando que a aba mostra bloqueio claro e reversivel sem fingir capacidades de storage que ainda nao existem
