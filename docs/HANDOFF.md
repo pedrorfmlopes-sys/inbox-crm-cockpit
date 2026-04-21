@@ -1,5 +1,21 @@
 # HANDOFF
 
+## Grupos v1: reducao de estados paralelos editoriais no `Classificar` (Abril 2026)
+- **O que passou a depender menos de estado paralelo**:
+  - a mudanca de email selecionado deixa de fazer apenas uma limpeza parcial do editor e passa a reidratar grupo principal, referencias, labels canonicas, `ticketId` canonico e `classificationMetaDraft` derivavel diretamente do `IntermediateCase`
+  - a pesquisa de ticket deixa de contar como sinal de alteracao funcional pendente; `ticketSearch` continua a existir, mas fica explicitamente como ferramenta editorial
+  - a reidratacao canonica passa tambem a limpar `ticketSearch` / `ticketSearchResults`, para que o ticket canonico do email volte a mandar logo que o caso atualizado esta disponivel
+- **Separacao mais clara entre canonico e editorial**:
+  - canonico/derivavel do caso: email selecionado, grupo principal, referencias, labels canonicas, `ticketId` canonico e metadados de classificacao por email
+  - editorial/transitorio: texto de pesquisa de ticket, resultados de pesquisa, `createTicketTitle`, `ticketStatusDraft` e partes ainda ricas de `classificationMetaDraft`
+- **O que ainda continua paralelo nesta ronda**:
+  - `ticketSearch` / `ticketSearchResults` continuam locais como UX de apoio
+  - `createTicketTitle`, `ticketStatusDraft` e toggles ricos de `classificationMetaDraft` continuam editoriais porque ainda nao representam contrato canonico final por email
+- **Guardas mantidas**:
+  - a identidade do email selecionado continua a ser reidratada pela `preferred key` / ancora do caso, sem regressar ao padrao do primeiro item da lista
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: reidratacao local pos-apply no `Classificar` passa a voltar explicitamente ao `IntermediateCase` (Abril 2026)
 - **O que passou a ser reidratado diretamente do caso apos apply**:
   - email selecionado/ancora preservado por `emailKey`, sem cair no primeiro da lista

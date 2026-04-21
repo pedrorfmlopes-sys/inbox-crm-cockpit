@@ -601,6 +601,7 @@ function StudioInner() {
   const [favoriteGroupIds, setFavoriteGroupIds] = useState<string[]>([]);
   const hydratedEmailKeysRef = useRef<Set<string>>(new Set());
   const ticketSearchRequestSeqRef = useRef(0);
+  const selectedEmailRef = useRef<RelatedEmailEntry | null>(null);
   const classificationDraftSnapshotRef = useRef<null | {
     principalGroupId: string;
     principalSearch: string;
@@ -686,6 +687,11 @@ function StudioInner() {
     if (!incomingEmail) return;
     mergeEmailsIntoClassificationCase([incomingEmail]);
   }, [mergeEmailsIntoClassificationCase]);
+
+  useEffect(() => {
+    selectedEmailRef.current = selectedEmail;
+  }, [selectedEmail]);
+
   const rehydrateClassificationEditorFromCaseEmail = useCallback((email: RelatedEmailEntry | null) => {
     if (!email) return;
     const principalGroupId = normalizeComparableString(email.groupId || email.classificationMeta?.principalGroupId);
@@ -710,6 +716,8 @@ function StudioInner() {
     const nextReferenceSearch = normalizedSelection.referenceGroupIds.length === 1
       ? normalizeComparableString(groupMap.get(normalizedSelection.referenceGroupIds[0])?.name || normalizedSelection.referenceGroupIds[0])
       : "";
+    const nextTicketSearch = "";
+    const nextTicketSearchResults: GroupTicketEntry[] = [];
     const nextClassificationMetaDraft = normalizeClassificationMetaDraft({
       ...classificationMetaDraft,
       principalGroupId: normalizedSelection.principalGroupId,
@@ -729,6 +737,8 @@ function StudioInner() {
     setClassificationMetaDraft(nextClassificationMetaDraft);
     setSelectedTicketId(nextTicketId);
     setSelectedSeriesId("");
+    setTicketSearch(nextTicketSearch);
+    setTicketSearchResults(nextTicketSearchResults);
 
     classificationDraftSnapshotRef.current = {
       principalGroupId: normalizedSelection.principalGroupId,
@@ -741,8 +751,8 @@ function StudioInner() {
       selectedTicketId: nextTicketId,
       selectedSeriesId: "",
       ticketStatusDraft,
-      ticketSearch,
-      ticketSearchResults: [...ticketSearchResults],
+      ticketSearch: nextTicketSearch,
+      ticketSearchResults: nextTicketSearchResults,
       createTicketTitle,
       selectionTouched: nextSelectionTouched,
     };
@@ -752,8 +762,6 @@ function StudioInner() {
     getEmailGroupRelations,
     groupMap,
     labelCatalogEntries,
-    ticketSearch,
-    ticketSearchResults,
     ticketStatusDraft,
   ]);
   const syncClassificationCaseEmails = useCallback((nextCaseValue: IntermediateCase, options?: {
@@ -2173,7 +2181,6 @@ function StudioInner() {
       || snapshot.selectedTicketId !== selectedTicketId
       || snapshot.selectedSeriesId !== selectedSeriesId
       || snapshot.ticketStatusDraft !== ticketStatusDraft
-      || snapshot.ticketSearch !== ticketSearch
       || snapshot.createTicketTitle !== createTicketTitle;
   }, [
     classificationMetaDraft,
@@ -2186,7 +2193,6 @@ function StudioInner() {
     selectedLabels,
     selectedSeriesId,
     selectedTicketId,
-    ticketSearch,
     ticketStatusDraft,
   ]);
   const canApplyFromClassificationEditor = hasPendingClassificationChanges || canApplyClassification;
@@ -2518,11 +2524,24 @@ function StudioInner() {
   }, [selectedSeriesId, selectedTicketId]);
 
   useEffect(() => {
+    const currentSelectedEmail = selectedEmailRef.current;
+    if (currentSelectedEmail) {
+      rehydrateClassificationEditorFromCaseEmail(currentSelectedEmail);
+      return;
+    }
     setSelectionTouched({ principal: false, references: false, ticket: false });
+    setPrincipalGroupId("");
+    setPrincipalSearch("");
+    setReferenceGroupIds([]);
+    setReferenceSearch("");
     setSelectedLabels([]);
     setLabelDrafts({});
-    setClassificationMetaDraft(normalizeClassificationMetaDraft(selectedEmail?.classificationMeta));
-  }, [selectedEmailKey]);
+    setClassificationMetaDraft(normalizeClassificationMetaDraft(null));
+    setSelectedTicketId("");
+    setSelectedSeriesId("");
+    setTicketSearch("");
+    setTicketSearchResults([]);
+  }, [rehydrateClassificationEditorFromCaseEmail, selectedEmailKey]);
 
   useEffect(() => {
     if (!labelCatalogReady) return;
