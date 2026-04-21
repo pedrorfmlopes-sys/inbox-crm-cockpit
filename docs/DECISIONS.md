@@ -2,6 +2,7 @@
 
 | Decisao | Estado | Motivo | Impacto | Quando rever |
 | --- | --- | --- | --- | --- |
+| Grupos v1: no `Classificar`, o `IntermediateCase` passa a ser a base interna principal sempre que existir | Ativa | O caso canonico ja chegava ao studio, mas o interior ainda dependia demasiado de listas legacy e reconstrucao vaga | `classificationCase`, ancora, conjunto contextual e total conhecido passam a nascer primeiro do `IntermediateCase`; `seedKey`, `prepareSeedKey`, leituras de servidor e listas legacy ficam como fallback/enriquecimento para cenarios sem caso canonico ou com dados parciais | Rever quando a dependencia legacy interna puder ser reduzida outra vez sem risco e antes da promocao final |
 | ChatGPT atua como gestor tecnico/orientador | Ativa | Garantir continuidade estrategica, priorizacao e coerencia entre rondas | A direcao tecnica nao depende do contexto parcial de um executor isolado | Rever se o modelo de coordenacao mudar |
 | Agents externos trabalham por turno | Ativa | Reduzir conflito de contexto e tornar cada intervencao auditavel | Cada ronda deve ter ambito claro, validacao propria e handoff explicito | Rever se houver workflow multi-agent concorrente formalizado |
 | Git e a fonte de verdade | Ativa | Conversas e memorias antigas podem divergir do estado real do projeto | Toda a analise e implementacao deve partir do repo e nao de contexto informal | Nunca, salvo mudanca total de processo |

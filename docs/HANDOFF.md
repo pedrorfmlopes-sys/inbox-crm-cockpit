@@ -1,5 +1,23 @@
 # HANDOFF
 
+## Grupos v1: `Classificar` passa a hidratar-se internamente a partir do `IntermediateCase` (Abril 2026)
+- **O que passou a nascer diretamente do caso canonico**:
+  - `classificationCase` como base interna explicita do studio
+  - email ancora a partir do caso canonico, respeitando `anchorEmailKey`
+  - emails do conjunto/contexto do studio a partir dos emails do caso canonico
+  - total conhecido do studio a partir do caso canonico, com enriquecimento legacy apenas como complemento
+- **Reducao de reconstrucao vaga**:
+  - `emailPool`, `caseScopeEmails`, quick documents e listas de contexto deixam de depender primeiro de `relatedEmails` / `knownEmails` quando o caso canonico existe
+  - a escolha do email ancora deixa de cair apenas em heuristicas da lista visivel e passa a respeitar a ancora do caso
+  - mutacoes locais de anexos/visibilidade e refresh contextual passam a reconciliar tambem o bootstrap canonico quando ele existe
+- **O que continua legado nesta ronda**:
+  - `seedKey` e `prepareSeedKey` continuam como fallback para cenarios sem `IntermediateCase`
+  - leituras de servidor e listas legacy continuam como enriquecimento/fallback para nao partir o fluxo atual
+- **Fora do scope mantido**:
+  - sem promocao real para servidor
+  - sem limpeza real do intermédio
+  - sem refactor profundo total do `Classificar`
+
 ## Data
 - 2026-04-06
 

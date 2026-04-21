@@ -566,36 +566,75 @@ function StudioInner() {
 
   const currentSeed = useMemo(() => readSeedEmail(params), [params]);
   const fallbackIdentity = useMemo(() => buildFallbackEmail(params), [params]);
-  const canonicalAnchorEmail = useMemo(() => {
-    const caseValue = intermediateCaseBootstrap.caseValue;
-    if (!caseValue) return null;
-    const preferredAnchorKey = String(params.anchorEmailKey || caseValue.anchorEmailKey || "").trim();
+  const classificationCase = useMemo(
+    () => intermediateCaseBootstrap.status === "ready" ? intermediateCaseBootstrap.caseValue : null,
+    [intermediateCaseBootstrap.caseValue, intermediateCaseBootstrap.status]
+  );
+  const classificationCaseEmails = useMemo(
+    () => classificationCase ? dedupeEmails(intermediateCaseBootstrap.emails) : [],
+    [classificationCase, intermediateCaseBootstrap.emails]
+  );
+  const classificationAnchorEmailKey = useMemo(
+    () => String(params.anchorEmailKey || classificationCase?.anchorEmailKey || "").trim(),
+    [classificationCase?.anchorEmailKey, params.anchorEmailKey]
+  );
+  const classificationAnchorEmail = useMemo(() => {
+    if (!classificationCase) return null;
+    const preferredAnchorKey = classificationAnchorEmailKey;
     if (preferredAnchorKey) {
-      const byPreferredKey = intermediateCaseBootstrap.emails.find((email) => makeEmailKey(email) === preferredAnchorKey);
+      const byPreferredKey = classificationCaseEmails.find((email) => makeEmailKey(email) === preferredAnchorKey);
       if (byPreferredKey) return byPreferredKey;
     }
-    return intermediateCaseBootstrap.emails.find((email) => makeEmailKey(email) === caseValue.anchorEmailKey) || intermediateCaseBootstrap.emails[0] || null;
-  }, [intermediateCaseBootstrap.caseValue, intermediateCaseBootstrap.emails, params.anchorEmailKey]);
+    return classificationCaseEmails.find((email) => makeEmailKey(email) === classificationCase.anchorEmailKey) || classificationCaseEmails[0] || null;
+  }, [classificationAnchorEmailKey, classificationCase, classificationCaseEmails]);
+  const classificationRelatedEmails = useMemo(() => {
+    if (!classificationCase) return [];
+    const anchorKey = makeEmailKey(classificationAnchorEmail || {}) || classificationAnchorEmailKey;
+    return classificationCaseEmails.filter((email) => makeEmailKey(email) !== anchorKey);
+  }, [classificationAnchorEmail, classificationAnchorEmailKey, classificationCase, classificationCaseEmails]);
+  const classificationContextEmails = useMemo(
+    () => classificationCase ? classificationCaseEmails : dedupeEmails(relatedEmails),
+    [classificationCase, classificationCaseEmails, relatedEmails]
+  );
+  const classificationKnownEmails = useMemo(
+    () => classificationCase
+      ? dedupeEmails([...classificationCaseEmails, ...relatedEmails, ...knownEmails])
+      : dedupeEmails([...relatedEmails, ...knownEmails]),
+    [classificationCase, classificationCaseEmails, knownEmails, relatedEmails]
+  );
+  const mergeEmailsIntoClassificationCase = useCallback((incomingEmails: RelatedEmailEntry[]) => {
+    setIntermediateCaseBootstrap((current) => {
+      if (current.status !== "ready" || !current.caseValue || !incomingEmails.length) return current;
+      return {
+        ...current,
+        emails: dedupeEmails([...current.emails, ...incomingEmails]),
+      };
+    });
+  }, []);
+  const mergeEmailIntoClassificationCase = useCallback((incomingEmail: RelatedEmailEntry | null) => {
+    if (!incomingEmail) return;
+    mergeEmailsIntoClassificationCase([incomingEmail]);
+  }, [mergeEmailsIntoClassificationCase]);
   const currentContext = useMemo(() => ({
-    conversationId: String(params.conversationId || canonicalAnchorEmail?.conversationId || currentSeed?.conversationId || fallbackIdentity?.conversationId || "").trim(),
-    internetMessageId: String(params.internetMessageId || canonicalAnchorEmail?.internetMessageId || currentSeed?.internetMessageId || fallbackIdentity?.internetMessageId || "").trim(),
-    itemId: String(params.itemId || canonicalAnchorEmail?.itemId || currentSeed?.itemId || fallbackIdentity?.itemId || "").trim(),
-    subject: String(params.subject || canonicalAnchorEmail?.subject || currentSeed?.subject || fallbackIdentity?.subject || "").trim(),
-    fromEmail: String(params.fromEmail || canonicalAnchorEmail?.fromEmail || currentSeed?.fromEmail || fallbackIdentity?.fromEmail || "").trim(),
-    fromName: String(params.fromName || canonicalAnchorEmail?.fromName || currentSeed?.fromName || fallbackIdentity?.fromName || "").trim(),
+    conversationId: String(params.conversationId || classificationAnchorEmail?.conversationId || currentSeed?.conversationId || fallbackIdentity?.conversationId || "").trim(),
+    internetMessageId: String(params.internetMessageId || classificationAnchorEmail?.internetMessageId || currentSeed?.internetMessageId || fallbackIdentity?.internetMessageId || "").trim(),
+    itemId: String(params.itemId || classificationAnchorEmail?.itemId || currentSeed?.itemId || fallbackIdentity?.itemId || "").trim(),
+    subject: String(params.subject || classificationAnchorEmail?.subject || currentSeed?.subject || fallbackIdentity?.subject || "").trim(),
+    fromEmail: String(params.fromEmail || classificationAnchorEmail?.fromEmail || currentSeed?.fromEmail || fallbackIdentity?.fromEmail || "").trim(),
+    fromName: String(params.fromName || classificationAnchorEmail?.fromName || currentSeed?.fromName || fallbackIdentity?.fromName || "").trim(),
     receivedAtIso: String(
       params.receivedAtIso ||
-      canonicalAnchorEmail?.receivedAtIso ||
-      canonicalAnchorEmail?.messageDateIso ||
+      classificationAnchorEmail?.receivedAtIso ||
+      classificationAnchorEmail?.messageDateIso ||
       currentSeed?.receivedAtIso ||
       currentSeed?.messageDateIso ||
       fallbackIdentity?.receivedAtIso ||
       fallbackIdentity?.messageDateIso ||
       ""
     ).trim(),
-  }), [canonicalAnchorEmail, currentSeed, fallbackIdentity, params]);
+  }), [classificationAnchorEmail, currentSeed, fallbackIdentity, params]);
   const bootstrapEmailPayload = useMemo<RelevantEmailPayload | null>(() => {
-    const base = canonicalAnchorEmail || currentSeed || fallbackIdentity;
+    const base = classificationAnchorEmail || currentSeed || fallbackIdentity;
     if (!base) return null;
     return buildRelevantEmailPayloadFromRelatedEmail({
       ...base,
@@ -609,7 +648,7 @@ function StudioInner() {
       messageDateIso: String(base.messageDateIso || currentContext.receivedAtIso || base.receivedAtIso || "").trim() || undefined,
     });
   }, [
-    canonicalAnchorEmail,
+    classificationAnchorEmail,
     currentContext.conversationId,
     currentContext.fromEmail,
     currentContext.fromName,
@@ -765,25 +804,20 @@ function StudioInner() {
           ...(related.emails || []),
           ...(!hasCurrentEmailFromServer && bootstrapContextEmail ? [bootstrapContextEmail] : []),
         ]);
-        const canonicalContextualEmails = intermediateCaseBootstrap.status === "ready"
-          ? dedupeEmails(intermediateCaseBootstrap.emails)
-          : [];
-        const contextualEmails = canonicalContextualEmails.length
-          ? canonicalContextualEmails
-          : serverContextualEmails;
+        const canonicalContextualEmails = classificationCaseEmails;
         const mergedEmails = dedupeEmails([
-          ...contextualEmails,
+          ...canonicalContextualEmails,
           ...(canonicalContextualEmails.length ? serverContextualEmails : []),
           ...(emails || []),
         ]);
-        const preferredAnchorEmailKey = canonicalAnchorEmail
-          ? makeEmailKey(canonicalAnchorEmail)
-          : String(params.anchorEmailKey || "").trim();
+        const preferredAnchorEmailKey = classificationAnchorEmail
+          ? makeEmailKey(classificationAnchorEmail)
+          : classificationAnchorEmailKey;
         setAllGroups(mergedGroups);
         setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
         setTicketSeries(Array.isArray(series) ? series : []);
         setRelatedTickets(Array.isArray(related.tickets) ? related.tickets : []);
-        setRelatedEmails(contextualEmails);
+        setRelatedEmails(serverContextualEmails);
         setKnownEmails(mergedEmails);
         setSelectedEmailKey((current) => {
           if (current && mergedEmails.some((email) => makeEmailKey(email) === current)) return current;
@@ -823,7 +857,9 @@ function StudioInner() {
     return () => { cancelled = true; };
   }, [
     bootstrapEmailPayload,
-    canonicalAnchorEmail,
+    classificationAnchorEmail,
+    classificationAnchorEmailKey,
+    classificationCaseEmails,
     currentContext,
     currentContext.conversationId,
     currentContext.fromEmail,
@@ -832,7 +868,6 @@ function StudioInner() {
     currentContext.itemId,
     currentContext.receivedAtIso,
     currentContext.subject,
-    intermediateCaseBootstrap.emails,
     intermediateCaseBootstrap.lookup,
     intermediateCaseBootstrap.status,
     params.anchorEmailKey,
@@ -855,7 +890,10 @@ function StudioInner() {
     () => currentCaseGroups.filter((group) => String(group?.kind || "").trim().toLowerCase() !== "conversation"),
     [currentCaseGroups]
   );
-  const emailPool = useMemo(() => (scopeMode === "related" ? dedupeEmails(relatedEmails) : dedupeEmails([...relatedEmails, ...knownEmails])), [knownEmails, relatedEmails, scopeMode]);
+  const emailPool = useMemo(
+    () => (scopeMode === "related" ? classificationContextEmails : classificationKnownEmails),
+    [classificationContextEmails, classificationKnownEmails, scopeMode]
+  );
   const contextualGroups = useMemo(() => {
     const rows = new Map<string, LinkGroupEntry>();
     for (const email of emailPool) {
@@ -967,12 +1005,18 @@ function StudioInner() {
   }, [contextualLabels, labelFilterValue]);
 
   const selectedEmail = useMemo(
-    () => visibleEmails.find((email) => makeEmailKey(email) === selectedEmailKey) || emailPool.find((email) => makeEmailKey(email) === selectedEmailKey) || visibleEmails[0] || emailPool[0] || null,
-    [emailPool, selectedEmailKey, visibleEmails]
+    () =>
+      visibleEmails.find((email) => makeEmailKey(email) === selectedEmailKey)
+      || emailPool.find((email) => makeEmailKey(email) === selectedEmailKey)
+      || (classificationAnchorEmail ? emailPool.find((email) => makeEmailKey(email) === makeEmailKey(classificationAnchorEmail)) : null)
+      || visibleEmails[0]
+      || emailPool[0]
+      || null,
+    [classificationAnchorEmail, emailPool, selectedEmailKey, visibleEmails]
   );
   const selectedEmailInRelatedContext = useMemo(
-    () => Boolean(selectedEmail && relatedEmails.some((email) => makeEmailKey(email) === makeEmailKey(selectedEmail))),
-    [relatedEmails, selectedEmail]
+    () => Boolean(selectedEmail && classificationContextEmails.some((email) => makeEmailKey(email) === makeEmailKey(selectedEmail))),
+    [classificationContextEmails, selectedEmail]
   );
 
   const selectedEmailIsCurrent = useMemo(() => {
@@ -1008,8 +1052,10 @@ function StudioInner() {
     [emailPool, selectedTargetEmailKeys]
   );
   const caseScopeEmails = useMemo(
-    () => dedupeEmails([...(selectedEmail ? [selectedEmail] : []), ...relatedEmails]),
-    [relatedEmails, selectedEmail]
+    () => classificationCase
+      ? classificationCaseEmails
+      : dedupeEmails([...(selectedEmail ? [selectedEmail] : []), ...classificationContextEmails]),
+    [classificationCase, classificationCaseEmails, classificationContextEmails, selectedEmail]
   );
 
   useEffect(() => {
@@ -1017,9 +1063,9 @@ function StudioInner() {
     if (prepareSeedHandledKeyRef.current === prepareSeedBootstrap.key) return;
 
     const bootstrapSeed = prepareSeedBootstrap.seed;
-    const availableEmails = dedupeEmails([...relatedEmails, ...knownEmails]);
+    const availableEmails = classificationKnownEmails;
     const availableEmailKeys = new Set(availableEmails.map((email) => makeEmailKey(email)).filter(Boolean));
-    const relatedEmailKeys = new Set(relatedEmails.map((email) => makeEmailKey(email)).filter(Boolean));
+    const relatedEmailKeys = new Set(classificationContextEmails.map((email) => makeEmailKey(email)).filter(Boolean));
     const selectedSeedKeys = bootstrapSeed.selectedEmailKeys.filter((key) => availableEmailKeys.has(key));
     const selectedSeedAttachmentKeys = resolvePrepareSeedAttachmentKey(availableEmails, bootstrapSeed.selectedAttachmentKeys);
     const anchorAvailable = Boolean(
@@ -1108,7 +1154,7 @@ function StudioInner() {
         ? `Contexto importado de Preparar: ${bootstrapSummary}.`
         : "Contexto de Preparar consumido. O Classificar abriu com bootstrap local."
     );
-  }, [knownEmails, loading, prepareSeedBootstrap, relatedEmails]);
+  }, [classificationContextEmails, classificationKnownEmails, loading, prepareSeedBootstrap]);
 
   const principalScopeEmails = useMemo(() => {
     if (!principalAnchorGroupId) return [];
@@ -1286,7 +1332,7 @@ function StudioInner() {
   }, [selectedEmail?.attachments]);
 
   const quickDocumentAttachments = useMemo(() => {
-    const emails = dedupeEmails([selectedEmail, ...relatedEmails].filter(Boolean) as RelatedEmailEntry[]);
+    const emails = dedupeEmails([selectedEmail, ...classificationContextEmails].filter(Boolean) as RelatedEmailEntry[]);
     const list: Array<{ email: RelatedEmailEntry; attachment: any }> = [];
     emails.forEach((email) => {
       const attachments = (email?.attachments || [])
@@ -1301,10 +1347,10 @@ function StudioInner() {
       });
     });
     return list;
-  }, [selectedEmail, relatedEmails, showHiddenQuickDocuments]);
+  }, [classificationContextEmails, selectedEmail, showHiddenQuickDocuments]);
 
   const quickDocumentHiddenCount = useMemo(() => {
-    const emails = dedupeEmails([selectedEmail, ...relatedEmails].filter(Boolean) as RelatedEmailEntry[]);
+    const emails = dedupeEmails([selectedEmail, ...classificationContextEmails].filter(Boolean) as RelatedEmailEntry[]);
     let count = 0;
     emails.forEach((email) => {
       (email?.attachments || []).forEach((att) => {
@@ -1315,7 +1361,7 @@ function StudioInner() {
       });
     });
     return count;
-  }, [selectedEmail, relatedEmails]);
+  }, [classificationContextEmails, selectedEmail]);
   useEffect(() => {
     setExpandedQuickDocumentKeys((current) =>
       current.filter((key) => quickDocumentAttachments.some((item) => makeAttachmentKey(item.attachment) === key))
@@ -1759,7 +1805,7 @@ function StudioInner() {
     const selectedPartner = normalizeSearchValue(`${derivePartnerName(selectedEmail)} ${selectedEmail.fromEmail || ""}`);
     const selectedGroups = new Set(selectedEmailGroups.map((group) => group.id));
     const selectedTickets = new Set(selectedEmailTicketIds);
-    const emailUniverse = dedupeEmails([...relatedEmails, ...knownEmails]);
+    const emailUniverse = classificationKnownEmails;
     return emailUniverse
       .filter((email) => makeEmailKey(email) && makeEmailKey(email) !== selectedKey)
       .map((email) => {
@@ -1791,7 +1837,7 @@ function StudioInner() {
       .filter((entry) => entry.score > 0)
       .sort((a, b) => b.score - a.score || String(b.email.messageDateIso || b.email.receivedAtIso || "").localeCompare(String(a.email.messageDateIso || a.email.receivedAtIso || "")))
       .slice(0, 6);
-  }, [detectedCaseType, documentReferences, emailContextMeta, getEmailGroupRelations, knownEmails, relatedEmails, selectedEmail, selectedEmailGroups, selectedEmailTicketIds, contextualTickets]);
+  }, [classificationKnownEmails, detectedCaseType, documentReferences, emailContextMeta, getEmailGroupRelations, selectedEmail, selectedEmailGroups, selectedEmailTicketIds, contextualTickets]);
   const selectedTicket = useMemo(() => availableTicketChoices.find((ticket) => ticket.id === selectedTicketId) || relatedTickets.find((ticket) => ticket.id === selectedTicketId) || null, [availableTicketChoices, relatedTickets, selectedTicketId]);
   const principalGroup = useMemo(() => (principalGroupId ? groupMap.get(principalGroupId) || null : null), [groupMap, principalGroupId]);
   const favoritePrincipalGroups = useMemo(
@@ -2034,7 +2080,7 @@ function StudioInner() {
     const caseEmails = dedupeEmails([
       ...(selectedEmail ? [selectedEmail] : []),
       ...managedGroupEmails,
-      ...relatedEmails,
+      ...classificationContextEmails,
     ]);
     const candidates = caseEmails.flatMap((email) => {
       const company = inferCompanyName(email.fromName, email.fromEmail);
@@ -2050,7 +2096,7 @@ function StudioInner() {
       ...(selectedManagedGroup?.contacts || []),
       ...candidates,
     ]);
-  }, [managedGroupEmails, relatedEmails, selectedEmail, selectedManagedGroup?.contacts]);
+  }, [classificationContextEmails, managedGroupEmails, selectedEmail, selectedManagedGroup?.contacts]);
 
   const managedGroupEntityCandidates = useMemo(() => {
     const contactEntities = managedGroupContactCandidates
@@ -2429,6 +2475,7 @@ function StudioInner() {
     });
     setRelatedEmails(contextualEmails);
     setKnownEmails((current) => dedupeEmails([...contextualEmails, ...current]));
+    mergeEmailsIntoClassificationCase(contextualEmails);
     return related;
   }
 
@@ -2858,6 +2905,7 @@ function StudioInner() {
     try {
       setRelatedEmails((current) => current.map((email) => makeEmailKey(email) === makeEmailKey(updatedEmail) ? updatedEmail : email));
       setKnownEmails((current) => current.map((email) => makeEmailKey(email) === makeEmailKey(updatedEmail) ? updatedEmail : email));
+      mergeEmailIntoClassificationCase(updatedEmail);
       setAttachmentPlan((current) => ({
         ...current,
         [attachmentKey]: {
@@ -3573,6 +3621,7 @@ function StudioInner() {
     try {
       setRelatedEmails((current) => current.map((e) => makeEmailKey(e) === makeEmailKey(updatedEmail) ? updatedEmail : e));
       setKnownEmails((current) => current.map((e) => makeEmailKey(e) === makeEmailKey(updatedEmail) ? updatedEmail : e));
+      mergeEmailIntoClassificationCase(updatedEmail);
       const latestSettings = await getSettings().catch(() => null);
       const payload = buildRelevantEmailPayloadFromRelatedEmail(updatedEmail);
       if (payload) {
@@ -4470,8 +4519,8 @@ function StudioInner() {
           <div style={S.card}>
             <div style={S.cardTitle}>Resultado atual</div>
             <div style={S.summaryRow}><span>Emails visiveis</span><strong>{visibleEmails.length}</strong></div>
-            <div style={S.summaryRow}><span>Emails relacionados</span><strong>{relatedEmails.length}</strong></div>
-            <div style={S.summaryRow}><span>Total conhecido</span><strong>{dedupeEmails([...relatedEmails, ...knownEmails]).length}</strong></div>
+            <div style={S.summaryRow}><span>Emails relacionados</span><strong>{classificationCase ? classificationRelatedEmails.length : classificationContextEmails.length}</strong></div>
+            <div style={S.summaryRow}><span>Total conhecido</span><strong>{classificationKnownEmails.length}</strong></div>
             <div style={S.summaryRow}><span>Grupos neste conjunto</span><strong>{contextualGroups.length}</strong></div>
             <div style={S.summaryRow}><span>Tickets neste conjunto</span><strong>{contextualTickets.length}</strong></div>
             <div style={S.summaryRow}><span>Etiquetas neste conjunto</span><strong>{contextualLabels.length}</strong></div>
