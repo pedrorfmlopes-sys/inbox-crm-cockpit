@@ -1516,14 +1516,22 @@ function StudioInner() {
     () => Boolean(String(classificationLabelInput || "").trim() && !exactClassificationLabel),
     [classificationLabelInput, exactClassificationLabel]
   );
-  const availableTicketChoices = useMemo(() => {
-    const rows = [...relatedTickets, ...ticketSearchResults].reduce<GroupTicketEntry[]>((acc, ticket) => {
+  const canonicalTicketChoices = useMemo(() => {
+    const rows = [...relatedTickets].reduce<GroupTicketEntry[]>((acc, ticket) => {
       if (!ticket?.id || acc.some((entry) => entry.id === ticket.id)) return acc;
       acc.push(ticket);
       return acc;
     }, []);
     return rows.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
-  }, [relatedTickets, ticketSearchResults]);
+  }, [relatedTickets]);
+  const ticketPickerChoices = useMemo(() => {
+    const rows = [...canonicalTicketChoices, ...ticketSearchResults].reduce<GroupTicketEntry[]>((acc, ticket) => {
+      if (!ticket?.id || acc.some((entry) => entry.id === ticket.id)) return acc;
+      acc.push(ticket);
+      return acc;
+    }, []);
+    return rows.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+  }, [canonicalTicketChoices, ticketSearchResults]);
   const selectedEmailAttachments = useMemo(() => {
     return (selectedEmail?.attachments || [])
       .map((attachment) => normalizeStudioAttachment(attachment))
@@ -1879,8 +1887,8 @@ function StudioInner() {
   );
   const suggestedExistingGroups = useMemo(() => splitSuggestionsFocused(allGroups, detectionText, documentReferences), [allGroups, detectionText, documentReferences]);
   const suggestedExistingTickets = useMemo(
-    () => suggestTicketsFocused(availableTicketChoices, detectionText, documentReferences),
-    [availableTicketChoices, detectionText, documentReferences]
+    () => suggestTicketsFocused(canonicalTicketChoices, detectionText, documentReferences),
+    [canonicalTicketChoices, detectionText, documentReferences]
   );
   const suggestedLabelSeeds = useMemo(() => {
     const values = new Set<string>();
@@ -2038,7 +2046,22 @@ function StudioInner() {
       .sort((a, b) => b.score - a.score || String(b.email.messageDateIso || b.email.receivedAtIso || "").localeCompare(String(a.email.messageDateIso || a.email.receivedAtIso || "")))
       .slice(0, 6);
   }, [classificationKnownEmails, detectedCaseType, documentReferences, emailContextMeta, getEmailGroupRelations, selectedEmail, selectedEmailGroups, selectedEmailTicketIds, contextualTickets]);
-  const selectedTicket = useMemo(() => availableTicketChoices.find((ticket) => ticket.id === selectedTicketId) || relatedTickets.find((ticket) => ticket.id === selectedTicketId) || null, [availableTicketChoices, relatedTickets, selectedTicketId]);
+  const canonicalSelectedTicketId = useMemo(() => {
+    const fromClassificationMeta = normalizeComparableString((selectedEmail?.classificationMeta as any)?.ticketId);
+    if (fromClassificationMeta) return fromClassificationMeta;
+    if (selectedEmailTicketIds.length === 1) return normalizeComparableString(selectedEmailTicketIds[0]);
+    return "";
+  }, [selectedEmail?.classificationMeta, selectedEmailTicketIds]);
+  const resolvedSelectedTicketId = useMemo(
+    () => normalizeComparableString(selectionTouched.ticket ? selectedTicketId : (canonicalSelectedTicketId || selectedTicketId)),
+    [canonicalSelectedTicketId, selectedTicketId, selectionTouched.ticket]
+  );
+  const selectedTicket = useMemo(() => {
+    if (!resolvedSelectedTicketId) return null;
+    return canonicalTicketChoices.find((ticket) => ticket.id === resolvedSelectedTicketId)
+      || relatedTickets.find((ticket) => ticket.id === resolvedSelectedTicketId)
+      || (selectionTouched.ticket ? ticketSearchResults.find((ticket) => ticket.id === resolvedSelectedTicketId) || null : null);
+  }, [canonicalTicketChoices, relatedTickets, resolvedSelectedTicketId, selectionTouched.ticket, ticketSearchResults]);
   const principalGroup = useMemo(() => (principalGroupId ? groupMap.get(principalGroupId) || null : null), [groupMap, principalGroupId]);
   const favoritePrincipalGroups = useMemo(
     () => favoriteGroupIds
@@ -2487,18 +2510,18 @@ function StudioInner() {
 
   useEffect(() => {
     if (selectionTouched.ticket) return;
-    if (selectedEmailTicketIds.length === 1) {
-      setSelectedTicketId(selectedEmailTicketIds[0]);
+    if (canonicalSelectedTicketId) {
+      setSelectedTicketId(canonicalSelectedTicketId);
       return;
     }
     if (!selectedEmailTicketIds.length) {
       setSelectedTicketId((current) => (
-        current && availableTicketChoices.some((ticket) => ticket.id === current)
+        current && canonicalTicketChoices.some((ticket) => ticket.id === current)
           ? current
           : ""
       ));
     }
-  }, [availableTicketChoices, selectedEmailTicketIds, selectionTouched.ticket]);
+  }, [canonicalSelectedTicketId, canonicalTicketChoices, selectedEmailTicketIds.length, selectionTouched.ticket]);
 
   useEffect(() => {
     if (!selectedSeriesId || !selectedTicketId) return;
@@ -2672,8 +2695,8 @@ function StudioInner() {
     setCurrentCaseGroups(Array.isArray(related.groups) ? related.groups as CaseGroupEntry[] : []);
     setRelatedTickets((current) => {
       const nextTickets = Array.isArray(related.tickets) ? related.tickets : [];
-      const preservedSelectedTicket = selectedTicketId
-        ? current.find((ticket) => ticket.id === selectedTicketId) || null
+      const preservedSelectedTicket = resolvedSelectedTicketId
+        ? current.find((ticket) => ticket.id === resolvedSelectedTicketId) || null
         : null;
       if (preservedSelectedTicket && !nextTickets.some((ticket) => ticket.id === preservedSelectedTicket.id)) {
         return [preservedSelectedTicket, ...nextTickets];
@@ -2871,7 +2894,7 @@ function StudioInner() {
   function resolveSuggestionTicketId(suggestion: ReadingSuggestionChip) {
     if (suggestion.kind === "ticket") return suggestion.value;
     const normalized = normalizeSearchValue(String(suggestion.label || suggestion.value || ""));
-    const match = availableTicketChoices.find((ticket) => normalizeSearchValue(String(ticket.code || "")) === normalized);
+    const match = canonicalTicketChoices.find((ticket) => normalizeSearchValue(String(ticket.code || "")) === normalized);
     return String(match?.id || "").trim();
   }
 
@@ -3421,11 +3444,7 @@ function StudioInner() {
         const removedInheritedLabels = inheritedLabels.filter((label) => !selectedLabels.includes(label));
         const emailOwnedSelectedLabels = selectedLabels.filter((label) => !inheritedLabels.includes(label));
         const latestSettings = await getSettings().catch(() => null);
-        const currentOutlookTicket = selectedTicketId
-          ? (availableTicketChoices.find((ticket) => ticket.id === selectedTicketId)
-            || relatedTickets.find((ticket) => ticket.id === selectedTicketId)
-            || null)
-          : null;
+        const currentOutlookTicket = selectedTicket;
         const desiredTicketStatus = String(ticketStatusDraft || "").trim();
 
         let finalTicket: GroupTicketEntry | null = null;
@@ -3512,9 +3531,9 @@ function StudioInner() {
           setSelectedTicketId(finalTicket.id);
         }
 
-        if (selectedTicketId && desiredTicketStatus !== String(currentOutlookTicket?.status || "").trim()) {
+        if (resolvedSelectedTicketId && desiredTicketStatus !== String(currentOutlookTicket?.status || "").trim()) {
           setStatus("A atualizar estado do ticket...");
-          finalTicket = await updateGroupTicket(selectedTicketId, { status: desiredTicketStatus });
+          finalTicket = await updateGroupTicket(resolvedSelectedTicketId, { status: desiredTicketStatus });
           setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
         }
 
@@ -3540,7 +3559,7 @@ function StudioInner() {
           const targetGroups = getEmailGroupRelations(targetEmail);
           const currentGroupIds = targetGroups.map((group) => String(group.id || "").trim()).filter(Boolean);
           const groupsToRemove = currentGroupIds.filter((groupId) => !allGroupIds.includes(groupId));
-          const ticketIdsToRemove = ((emailContextMeta.get(targetEmailKey)?.ticketIds || []) as string[]).filter((ticketId) => ticketId !== selectedTicketId && ticketId !== finalTicket?.id);
+          const ticketIdsToRemove = ((emailContextMeta.get(targetEmailKey)?.ticketIds || []) as string[]).filter((ticketId) => ticketId !== resolvedSelectedTicketId && ticketId !== finalTicket?.id);
 
           for (const groupId of groupsToRemove) {
             await removeEmailFromLinkGroup(groupId, {
@@ -3574,7 +3593,7 @@ function StudioInner() {
             ...buildAttachmentStorageOptions(latestSettings),
           });
 
-          const targetTicketId = finalTicket?.id || selectedTicketId;
+          const targetTicketId = finalTicket?.id || resolvedSelectedTicketId;
           if (targetTicketId && !(finalTicket && targetEmailKey === baseTargetKey)) {
             const linked = await linkEmailToGroupTicket(targetTicketId, {
               email: classifiedEmailPayload,
@@ -3600,7 +3619,7 @@ function StudioInner() {
           removedInheritedLabels,
           labelStates: selectedLabelStates,
           categorizedLabelNames: categorizableLabels,
-          ticketIds: [String(resolvedCaseTicket?.id || selectedTicketId || "").trim()].filter(Boolean),
+          ticketIds: [String(resolvedCaseTicket?.id || resolvedSelectedTicketId || "").trim()].filter(Boolean),
           ticketCodes: [String(resolvedCaseTicket?.code || "").trim()].filter(Boolean),
           state: localClassificationState || undefined,
           status: emailLabelStatus || undefined,
@@ -4597,7 +4616,7 @@ function StudioInner() {
                 </button>
               </div>
               <div style={S.chips}>
-                {(ticketSearchResults.length ? ticketSearchResults : availableTicketChoices.slice(0, 12)).map((ticket) => (
+                {(ticketSearchResults.length ? ticketSearchResults : ticketPickerChoices.slice(0, 12)).map((ticket) => (
                   <button
                     key={ticket.id}
                     type="button"
@@ -5289,7 +5308,7 @@ function StudioInner() {
                     LABEL_STATUS_OPTIONS={LABEL_STATUS_OPTIONS}
                     normalizedTicketSearch={normalizedTicketSearch}
                     ticketSearchResults={ticketSearchResults}
-                    availableTicketChoices={availableTicketChoices}
+                    availableTicketChoices={ticketPickerChoices}
                     selectedTicket={selectedTicket}
                     selectedSeriesId={selectedSeriesId}
                     ticketEditorMode={ticketEditorMode}

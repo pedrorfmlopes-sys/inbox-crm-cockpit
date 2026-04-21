@@ -1,5 +1,22 @@
 # HANDOFF
 
+## Grupos v1: bloco de tickets do `Classificar` fica mais coerente entre ticket canonico e pesquisa editorial (Abril 2026)
+- **O que passa a ficar mais claramente canonico**:
+  - o ticket real do email passa a ser resolvido primeiro a partir do proprio email/caso (`classificationMeta.ticketId` e fallback dos `ticketIds` do contexto)
+  - `selectedTicket` deixa de nascer de uma mistura vaga entre resultados de pesquisa e tickets do caso; primeiro resolve o ticket canonico, e so cai em resultados de pesquisa quando o utilizador esta mesmo a editar o ticket manualmente
+  - a reidratacao de email e o pos-apply continuam a limpar `ticketSearch` / `ticketSearchResults`, para o ticket canonico do caso voltar a mandar logo que exista
+- **O que continua editorial/local**:
+  - `ticketSearch` e `ticketSearchResults` ficam apenas como ferramenta de procura
+  - `createTicketTitle` e `ticketStatusDraft` continuam drafts locais de edicao
+- **Reducao de duplicacao/ambiguidade nesta ronda**:
+  - `canonicalTicketChoices` passa a representar tickets reais/contextuais
+  - `ticketPickerChoices` passa a representar a combinacao usada no picker visual, incluindo pesquisa, sem contaminar a verdade principal
+  - sugestoes e preservacao do ticket selecionado deixam de depender da lista que mistura pesquisa com contexto canonico
+- **Guardas mantidas**:
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+  - o apply por scope continua por email alvo, sem virar classificacao global cega do caso
+
 ## Grupos v1: reducao de estados paralelos editoriais no `Classificar` (Abril 2026)
 - **O que passou a depender menos de estado paralelo**:
   - a mudanca de email selecionado deixa de fazer apenas uma limpeza parcial do editor e passa a reidratar grupo principal, referencias, labels canonicas, `ticketId` canonico e `classificationMetaDraft` derivavel diretamente do `IntermediateCase`
