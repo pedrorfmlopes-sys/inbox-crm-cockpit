@@ -430,14 +430,15 @@ export const GroupsPrepareCockpit: React.FC = () => {
     emailKey: "",
     signature: getGroupsPrepareSessionSignature(DEFAULT_GROUPS_PREPARE_SESSION_STATE),
   });
-  const runtime = useMemo(
-    () => resolveGroupStorageRuntime(settings),
-    [settings]
+  const legacyStorageRuntime = useMemo(
+    () => resolveGroupStorageRuntime(settings?.groupStorage || null),
+    [settings?.groupStorage]
   );
+  const ignoreInlineAttachmentsFromLegacyStorage = legacyStorageRuntime.attachmentPolicy.ignoreInlineAttachments;
   const canPersistRemotePrepareWorkset = false;
   const canPersistWorkset = Boolean(settings)
     && canPersistRemotePrepareWorkset
-    && (runtime.mode === "supabase" || runtime.mode === "hybrid");
+    && (legacyStorageRuntime.mode === "supabase" || legacyStorageRuntime.mode === "hybrid");
   const hasStoredSessionRef = useRef(false);
   const persistedWorksetRef = useRef<GroupWorksetManifest | null>(null);
   const preferredGroupAppliedForEmailRef = useRef("");
@@ -608,7 +609,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     }
     try {
       const saved = await savePrimaryGroupWorkset({
-        runtime,
+        runtime: legacyStorageRuntime,
         manifest,
         current: persistedWorksetRef.current,
         keepalive: options?.keepalive === true || reason === "before_exit",
@@ -629,7 +630,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       }
       return false;
     }
-  }, [canPersistWorkset, runtime, setMsg]);
+  }, [canPersistWorkset, legacyStorageRuntime, setMsg]);
 
   useEffect(() => {
     setPersistedCurrentEmail(null);
@@ -905,7 +906,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     let cancelled = false;
     void loadPrimaryGroupWorkset({
       anchorEmailKey: currentEmailKey,
-      runtime,
+      runtime: legacyStorageRuntime,
     })
       .then((manifest) => {
         if (cancelled || !manifest) return;
@@ -949,7 +950,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [canPersistWorkset, currentEmailKey, groupsAccessLimited, runtime, sessionReady]);
+  }, [canPersistWorkset, currentEmailKey, groupsAccessLimited, legacyStorageRuntime, sessionReady]);
 
   useEffect(() => {
     if (groupsAccessLimited) return;
@@ -1093,7 +1094,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
   const attachmentRows = useMemo<PrepareAttachmentRow[]>(() => {
     const rows: PrepareAttachmentRow[] = [];
-    const ignoreInline = settings?.groupStorage?.ignoreInlineAttachments === true;
+    const ignoreInline = ignoreInlineAttachmentsFromLegacyStorage;
 
     for (const email of attachmentSourceEmails) {
       const emailKey = makeEmailKey(email);
@@ -1126,7 +1127,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       if (a.emailDateIso !== b.emailDateIso) return b.emailDateIso.localeCompare(a.emailDateIso);
       return a.name.localeCompare(b.name, "pt-PT");
     });
-  }, [attachmentSourceEmails, currentEmailKey, currentEmailPayload.attachments, settings?.groupStorage?.ignoreInlineAttachments]);
+  }, [attachmentSourceEmails, currentEmailKey, currentEmailPayload.attachments, ignoreInlineAttachmentsFromLegacyStorage]);
 
   useEffect(() => {
     if (groupsAccessLimited) return;
@@ -1221,8 +1222,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const worksetManifest = useMemo(
     () => !canPersistWorkset ? null : buildPrepareWorksetManifest({
       anchorEmailKey: currentEmailKey,
-      settings: runtime.settings,
-      runtime,
+      settings: legacyStorageRuntime.settings,
+      runtime: legacyStorageRuntime,
       selectedEmailKeys,
       selectedAttachmentKeys,
       attachmentRows,
@@ -1240,7 +1241,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       currentEmailKey,
       filterQuery,
       groupMode,
-      runtime,
+      legacyStorageRuntime,
       selectedAttachmentKeys,
       selectedEmailKeys,
       workingGroup,

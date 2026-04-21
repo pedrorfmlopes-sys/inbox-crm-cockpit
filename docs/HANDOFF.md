@@ -758,3 +758,19 @@
   - `validateLocationOnOpen`, `warnIfUnavailable`, `autoRetryValidation`, `cleanup*`, `warning*`, `attachment*`, `migration*` e `maintenance` continuam apenas persistidos, sem motor real por baixo
 - **Proximo passo recomendado**:
   - validar em Outlook real a combinacao de `groupsTabEnabled` e `storageMode`, confirmando que a aba mostra bloqueio claro e reversivel sem fingir capacidades de storage que ainda nao existem
+
+## Grupos v1: alinhamento local de `Preparar` com `groupsTabSettings` (Abril 2026)
+- **O que passou a depender de `groupsTabSettings` como fonte principal**:
+  - gating leve do modulo (`groupsTabEnabled`)
+  - gating leve de armazenamento ativo/desativado (`storageMode`)
+  - resumo visual do estado (`locationStatus`, `baseFolderPath`, `quickDiagnostic`)
+  - mensagens locais de bloqueio e disponibilidade do fluxo de `Preparar`
+- **O que deixou de depender diretamente de `groupStorage` no cockpit**:
+  - a montagem local de anexos deixou de ler `settings.groupStorage.ignoreInlineAttachments` diretamente; o cockpit passa a usar apenas um runtime tecnico legado encapsulado
+- **O que ainda ficou pendurado no legado tecnico (`groupStorage`)**:
+  - resolucao de `legacyStorageRuntime` para workset/storage
+  - politica tecnica de ignorar anexos inline, atraves de `legacyStorageRuntime.attachmentPolicy.ignoreInlineAttachments`
+- **Porque ficou assim nesta ronda**:
+  - estes pontos pertencem ao contrato tecnico da frente de storage/anexos e ainda nao tem equivalente funcional fechado em `groupsTabSettings`; mover agora sem storage real abriria semantica falsa
+- **Fora do scope mantido**:
+  - storage real, filesystem real, migracao real, limpeza/avisos reais, politica real de anexos, refactor profundo de `Preparar` e `Classificar`
