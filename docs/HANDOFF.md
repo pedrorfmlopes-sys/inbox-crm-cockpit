@@ -1,5 +1,25 @@
 # HANDOFF
 
+## Grupos v1: projecao local no `IntermediateCase` sai do handler principal e passa para helper proprio no `Classificar` (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - a construcao do `localClassificationDraft`
+  - a resolucao de `localClassificationState`
+  - a aplicacao da classificacao local por email no `IntermediateCase`, incluindo a projecao canonica de anexos ja suportada por `applyClassificationToIntermediateCase(...)`
+  - o studio passa a delegar esta etapa para `projectApplyIntoIntermediateCase(...)`
+- **O que ainda fica no handler principal**:
+  - `writeCase(...)`
+  - mensagens/status da operacao
+  - sync imediato do caso no studio
+  - refresh/reidratacao
+  - sincronizacao Outlook/categorias
+- **Acoplamentos reduzidos**:
+  - o handler deixa de montar inline o draft local e a projecao do caso
+  - fica mais claro o corte entre plano remoto, ticket base, execucao por target, projecao local e persistencia
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: execucao do ticket base sai do handler principal e passa para helper proprio no `Classificar` (Abril 2026)
 - **O que foi extraido nesta ronda**:
   - a decisao/executacao de criar ticket novo e atualizar estado do ticket existente sai do `handleApplyClassification()`

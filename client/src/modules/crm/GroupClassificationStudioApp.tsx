@@ -28,7 +28,6 @@ import {
   type GroupPreparationSeed,
 } from "@/modules/crm/groups-v1/prepareSession";
 import { hydrateIntermediateCaseEmailsToRelatedEntries, mapIntermediateEmailToRelatedEmailEntry } from "@/modules/crm/groups-v1/storage/intermediateCaseAdapters";
-import { applyClassificationToIntermediateCase, type IntermediateCaseClassificationDraft } from "@/modules/crm/groups-v1/storage/intermediateCaseClassification";
 import { resolveClassificationIntermediateCase } from "@/modules/crm/groups-v1/storage/resolveClassificationIntermediateCase";
 import type { IntermediateCase } from "@/modules/crm/groups-v1/storage/intermediateCaseTypes";
 import "../../global.css";
@@ -65,7 +64,6 @@ import {
 } from "./group-classification/documentUtils";
 import {
   buildResolvedStudioApplySelection,
-  buildResolvedIntermediateCaseClassificationDraft,
   buildResolvedRemoteApplyExecutionPlan,
   buildRemoteApplyFallbackCurrentCategoryEmail,
 } from "./group-classification/applyResolution";
@@ -73,6 +71,7 @@ import {
   executeLegacyBaseTicketApply,
   executeLegacyRemoteApplyForTarget,
 } from "./group-classification/legacyRemoteApply";
+import { projectApplyIntoIntermediateCase } from "./group-classification/localCaseProjection";
 
 import EmailsCard from "./group-classification/components/EmailsCard";
 import QuickDocumentsCard from "./group-classification/components/QuickDocumentsCard";
@@ -3578,28 +3577,18 @@ function StudioInner() {
           });
         }
 
-        const resolvedCaseTicket = finalTicket || currentOutlookTicket;
-        const localClassificationState = String(
-          (classificationMetaDraft.ticketStatusEnabled ? desiredTicketStatus || resolvedCaseTicket?.status : "")
-          || (classificationMetaDraft.principalStatusEnabled ? applySelection.principalGroup?.status : "")
-          || ""
-        ).trim();
-        const localClassificationDraft: IntermediateCaseClassificationDraft = buildResolvedIntermediateCaseClassificationDraft({
-          resolvedApplySelection: applySelection,
-          resolvedCaseTicket,
-          localClassificationState,
-        });
-
         if (classificationCase) {
           setStatus("A gravar classificacao local no caso...");
           const classificationStorage = await resolveClassificationIntermediateCase({
             caseId: classificationCase.caseId,
             anchorEmailKey: classificationCase.anchorEmailKey,
           });
-          const nextClassificationCase = applyClassificationToIntermediateCase({
-            caseValue: classificationCase,
+          const { nextClassificationCase } = projectApplyIntoIntermediateCase({
+            classificationCase,
+            resolvedApplySelection: applySelection,
+            resolvedCaseTicket: finalTicket || currentOutlookTicket,
             targetEmails: effectiveTargetEmails,
-            draft: localClassificationDraft,
+            classificationMetaDraft,
           });
           await classificationStorage.storage.repository.writeCase(nextClassificationCase);
           appliedClassificationCase = nextClassificationCase;
