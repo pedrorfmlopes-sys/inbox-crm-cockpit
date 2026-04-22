@@ -146,7 +146,10 @@ export async function executeLegacyRemoteApplyForTarget(args: {
 
   const linked = await linkEmailToGroupTicket(targetTicketId, {
     email: classifiedEmailPayload,
-    applyGroups: resolvedApplySelection.allGroupIds.length > 0,
+    // Group memberships are already written explicitly above as principal/referencia.
+    // Ticket linking in the final store should only attach the email to the ticket and
+    // expand ticket.groupIds when needed, without reclassifying memberships.
+    applyGroups: false,
     groupIds: resolvedApplySelection.allGroupIds,
     membershipKind: resolvedApplySelection.targetMembershipKind,
   });

@@ -1,5 +1,44 @@
 # HANDOFF
 
+## Grupos v1: fecho da estrutura de escrita e armazenamento deixa explicita a fronteira entre intermadio e final (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - o `IntermediateCase` passa a ficar explicitamente fechado como camada **intermedia** de draft, continuidade de sessao, reidratacao controlada e ponte `Preparar -> Classificar`
+  - a persistencia **final** desta fase fica explicitamente assumida como a promovida pelo pipeline `/api/links/*` sobre `server/src/linkStore.js`
+  - a etapa final do apply deixa de ficar ambiguamente “bem gravada no caso” mas ainda indefinida no store principal
+- **O que ja existia e foi confirmado no repo**:
+  - `resolveIntermediateCaseStorage(...)` continua a usar `IndexedDB` namespaced por `baseFolderPath` quando o storage intermadio esta `ready`; `missing_location` e `disabled` ficam em memoria
+  - `IntermediateCaseRepository` persiste `case.json` e blobs locais do caso
+  - `registerRelevantEmail(...)` / `upsertEmail(...)` guardam identidade do email, assunto, remetente, datas, corpo, labels, `removedInheritedLabels`, `labelStates`, `classificationMeta` e anexos
+  - `addEmailToLinkGroup(...)` / `removeEmailFromLinkGroup(...)` guardam memberships finais por grupo
+  - `createGroupTicket(...)`, `updateGroupTicket(...)` e `linkEmailToGroupTicket(...)` guardam ligacao operacional a tickets
+  - `saveGroupDocuments(...)` guarda documentos finais do grupo
+- **Risco real encontrado e corrigido**:
+  - a ligacao do email ao ticket ainda podia reimpor `membershipKind` unico a todos os `groupIds` finais do ticket, o que abria risco de degradar referencias para principal na persistencia final
+  - a correcao passa a fazer o apply final de grupos/referencias explicitamente por `addEmailToLinkGroup(...)` e a usar `linkEmailToGroupTicket(...)` apenas para ligar email + ticket e atualizar `ticket.groupIds`, sem reclassificar memberships
+- **Politica final desta fase para anexos**:
+  - no `IntermediateCase`, anexos continuam com papel de draft/local (`storageDecision`, `localRef`, `serverRef`, `previewReady`)
+  - na persistencia final por email:
+    - metadata do anexo fica sempre no store final quando o anexo entra no payload
+    - provider `cloud`: o conteudo pode continuar no proprio store final atual
+    - provider `local` / `onedrive`: o backend tenta gravar binario real para caminho local/sincronizado; quando consegue, persiste refs (`storageBasePath`, `storagePathHint`) e limpa `content`
+    - payload parcial nao limpa anexos antigos sem `replaceAttachments: true`
+  - em documentos do grupo, `saveGroupDocuments(...)` segue a mesma separacao: metadata sempre, binario real apenas quando o provider/path suportam escrita segura
+- **O que fica intermadio vs final**:
+  - intermadio:
+    - `IntermediateCase`
+    - sessao/seeds de continuidade
+    - estados de decisao de anexos ainda nao promovidos
+  - final:
+    - email classificado e respetiva classificacao por email
+    - memberships finais de grupo principal/referencias
+    - ligacoes a ticket
+    - documentos do grupo
+- **O que ainda fica limitado pelo host/contrato atual**:
+  - `to` / `cc` ainda nao entram no contrato atual de `RelevantEmailPayload` / `RelatedEmailEntry`, por isso nao ficaram fechados nesta ronda sem abrir API nova
+  - URLs web de OneDrive/SharePoint continuam fora do caminho final suportado; o backend so fecha escrita real para pasta sincronizada local / UNC
+  - esta ronda nao abriu `Explorar`, `Explorador de Grupos` nem `Gestor do Grupo`; apenas deixou a base final mais pronta para eles
+  - nao houve redesign de UI nem nova frente funcional paralela
+
 ## Grupos v1: smoke/regression do pipeline de apply confirma a cadeia principal e corrige regressao no link do ticket base quando havia update de estado (Abril 2026)
 - **O que foi validado nesta ronda**:
   - **Cenario A**: apply sobre um unico email com grupo principal, referencias, labels e ticket existente sem criacao de ticket novo

@@ -1,5 +1,69 @@
 # Grupos v1: arquitetura de storage
 
+## Fecho de fase: `Preparar` + `Classificar` (Abril 2026)
+
+### Fronteira canonica desta fase
+- `IntermediateCase`
+  - e **intermedio**
+  - vive no host local (`IndexedDB` namespaced por `baseFolderPath` quando a localizacao existe; memoria quando o storage intermadio esta `missing_location`/`disabled`)
+  - serve para:
+    - draft
+    - continuidade de sessao
+    - reidratacao controlada
+    - ponte `Preparar -> Classificar`
+- Persistencia final classificada
+  - vive no storage principal atual da frente via `client/src/api.ts` + `server/src/linkStore.js`
+  - serve para:
+    - emails classificados
+    - memberships finais de grupo principal/referencias
+    - ligacoes a ticket
+    - documentos do grupo
+    - base futura para `Explorar` e `Gestor do Grupo`
+
+### O que fica intermadio
+- `IntermediateCase.case.json`
+- blobs locais do caso quando o adapter suporta binario
+- seeds/sessao de handoff e reabertura controlada
+- estados de decisao de anexos ainda nao promovidos (`storageDecision`, `requiresDecision`, etc.)
+
+### O que fica final nesta fase
+- Por email classificado, via `registerRelevantEmail(...)` / `upsertEmail(...)`:
+  - identidade forte (`itemId`, `internetMessageId`, `conversationId`, `emailKey` derivavel)
+  - assunto, remetente, datas, corpo e metadata de leitura futura
+  - labels, `removedInheritedLabels`, `labelStates`, `classificationMeta`
+  - anexos do email com `documentState`, `isHidden`, `hasContent`, `storageProvider`, `storageBasePath`, `storagePathHint`
+- Por pertença relacional:
+  - grupo principal e referencias via `addEmailToLinkGroup(...)`
+  - ticket via `createGroupTicket(...)` / `updateGroupTicket(...)` / `linkEmailToGroupTicket(...)`
+  - documentos de grupo via `saveGroupDocuments(...)`
+
+### Regra de promocao desta fase
+1. `Preparar`/`Classificar` trabalham no `IntermediateCase`
+2. o apply continua por email alvo / por scope
+3. a classificacao e promovida para persistencia final pelo pipeline `/api/links/*`
+4. o `IntermediateCase` volta a ser escrito apenas como draft/sessao coerente pos-apply
+
+### Politica final desta fase para anexos
+- No `IntermediateCase`
+  - o anexo pode manter estado intermadio (`storageDecision`, `localRef`, `serverRef`, `previewReady`)
+  - serve para continuidade local, preview e reabertura controlada
+- Na persistencia final por email (`registerRelevantEmail`)
+  - se o payload trouxer `attachments` com conteudo:
+    - `cloud`: o store final guarda metadata + conteudo/base64 no proprio store atual
+    - `local` / `onedrive`: o backend tenta gravar binario para a pasta configurada; quando consegue, limpa `content` e fica com `storageBasePath` + `storagePathHint` + `hasContent`
+  - se o payload final nao trouxer conteudo mas ja existir anexo persistido:
+    - o backend preserva storage refs/binario anterior
+  - payload parcial nao apaga anexos antigos, salvo `replaceAttachments: true`
+- Em documentos do grupo (`saveGroupDocuments`)
+  - a regra e paralela: metadata sempre, binario real apenas quando o provider/path suportam escrita segura
+- `requiresDecision`
+  - continua a ser regra intermadio/sessao, nao contrato do storage final
+
+### Limitacoes reais que continuam nesta fase
+- `to` / `cc` ainda nao fazem parte do contrato atual de `RelevantEmailPayload` / `RelatedEmailEntry`; ficam fora da escrita final desta ronda para nao abrir contrato de API novo
+- `OneDrive/SharePoint` por URL web continua nao suportado como destino final de ficheiros; o host atual so fecha a escrita real para caminho sincronizado local / UNC
+- o `IntermediateCase` continua local ao host e nao substitui a persistencia final
+
 ## Objetivo
 - Tornar explicita a separacao entre:
   - sessao temporaria do add-in
