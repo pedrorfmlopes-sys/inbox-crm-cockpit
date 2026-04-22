@@ -1,5 +1,23 @@
 # HANDOFF
 
+## Grupos v1: execucao do ticket base sai do handler principal e passa para helper proprio no `Classificar` (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - a decisao/executacao de criar ticket novo e atualizar estado do ticket existente sai do `handleApplyClassification()`
+  - o studio passa a delegar essa etapa para `executeLegacyBaseTicketApply(...)`, alimentado por `resolvedApplySelection`, `remoteApplyPlan`, `currentContext` e `currentOutlookTicket`
+- **O que ainda fica no handler principal**:
+  - mensagens/status da operacao
+  - execucao remota por target via `executeLegacyRemoteApplyForTarget(...)`
+  - projecao local no `IntermediateCase`
+  - refresh/reidratacao
+  - sincronizacao Outlook/categorias
+- **Acoplamentos reduzidos**:
+  - o handler deixa de carregar inline a logica de `createGroupTicket` / `updateGroupTicket`
+  - fica mais claro o corte entre plano remoto, ticket base, execucao por target e projecao local
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: execucao remota legacy por email sai do loop inline do `Classificar` e passa para helper proprio (Abril 2026)
 - **O que foi extraido nesta ronda**:
   - a execucao remota por email alvo (`removeEmailFromLinkGroup`, `addEmailToLinkGroup`, `unlinkEmailFromGroupTicket`, `registerRelevantEmail`, `linkEmailToGroupTicket`) sai do loop inline do `handleApplyClassification()`

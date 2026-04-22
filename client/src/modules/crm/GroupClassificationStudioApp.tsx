@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentContentUrl, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, updateGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { addEmailToLinkGroup, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentContentUrl, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { clientLog } from "@/logger";
 import { beginOutlookCategoryOperation, completeOutlookCategoryOperation, enqueueOutlookCategorySyncRequest, getManagedOutlookCategorySnapshot, OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY, requestCockpitHostAction, setOutlookCategoryOperationPhase, waitForOutlookCategorySyncResult } from "@/office";
 import { buildOutlookCategoryPlan, buildOutlookCategorySourceFromRelatedContext, getOutlookCategoryPlanSignature, getOutlookCategorySourceSignature } from "@/outlookCategories";
@@ -65,12 +65,14 @@ import {
 } from "./group-classification/documentUtils";
 import {
   buildResolvedStudioApplySelection,
-  buildResolvedClassifiedEmailPayload,
   buildResolvedIntermediateCaseClassificationDraft,
   buildResolvedRemoteApplyExecutionPlan,
   buildRemoteApplyFallbackCurrentCategoryEmail,
 } from "./group-classification/applyResolution";
-import { executeLegacyRemoteApplyForTarget } from "./group-classification/legacyRemoteApply";
+import {
+  executeLegacyBaseTicketApply,
+  executeLegacyRemoteApplyForTarget,
+} from "./group-classification/legacyRemoteApply";
 
 import EmailsCard from "./group-classification/components/EmailsCard";
 import QuickDocumentsCard from "./group-classification/components/QuickDocumentsCard";
@@ -3540,35 +3542,27 @@ function StudioInner() {
         const currentOutlookTicket = applySelection.selectedTicket;
         const desiredTicketStatus = applySelection.desiredTicketStatus;
 
-        let finalTicket: GroupTicketEntry | null = null;
         if (remoteApplyPlan.shouldCreateTicket) {
           setStatus("A criar ticket Odoo...");
-          const baseClassifiedEmailPayload = remoteApplyPlan.targetPlans[0]?.classifiedEmailPayload
-            || buildResolvedClassifiedEmailPayload({
-              targetEmail: remoteApplyPlan.baseTargetEmail,
-              currentContext,
-              resolvedApplySelection: applySelection,
-            });
-          finalTicket = await createGroupTicket({
-            seriesId: applySelection.selectedSeriesId,
-            title: String(createTicketTitle || remoteApplyPlan.baseTargetEmail?.subject || "Ticket").trim(),
-            description: String(remoteApplyPlan.baseTargetEmail?.bodyText || "").trim().slice(0, 4000),
-            labels: applySelection.labels,
-            groupIds: applySelection.allGroupIds,
-            email: baseClassifiedEmailPayload,
-            membershipKind: applySelection.targetMembershipKind,
-          });
-          if (desiredTicketStatus && desiredTicketStatus !== String(finalTicket?.status || "").trim()) {
-            finalTicket = await updateGroupTicket(finalTicket.id, { status: desiredTicketStatus });
-          }
-          setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
-          setSelectedTicketId(finalTicket.id);
         }
 
         if (remoteApplyPlan.shouldUpdateTicketStatus && desiredTicketStatus !== String(currentOutlookTicket?.status || "").trim()) {
           setStatus("A atualizar estado do ticket...");
-          finalTicket = await updateGroupTicket(applySelection.selectedTicketId, { status: desiredTicketStatus });
+        }
+
+        const ticketExecution = await executeLegacyBaseTicketApply({
+          remoteApplyPlan,
+          resolvedApplySelection: applySelection,
+          currentContext,
+          createTicketTitle,
+          currentOutlookTicket,
+        });
+        let finalTicket: GroupTicketEntry | null = ticketExecution.finalTicket;
+        if (finalTicket) {
           setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
+        }
+        if (ticketExecution.createdTicket && finalTicket?.id) {
+          setSelectedTicketId(finalTicket.id);
         }
 
         let emailCounter = 0;

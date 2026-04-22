@@ -1,18 +1,86 @@
 import {
   addEmailToLinkGroup,
+  createGroupTicket,
   linkEmailToGroupTicket,
   registerRelevantEmail,
   removeEmailFromLinkGroup,
   unlinkEmailFromGroupTicket,
+  updateGroupTicket,
   type GroupTicketEntry,
 } from "@/api";
 
 import type {
+  ApplyCurrentContext,
   RemoteApplyTargetPlan,
+  ResolvedRemoteApplyExecutionPlan,
   ResolvedStudioApplySelection,
 } from "./applyResolution";
+import { buildResolvedClassifiedEmailPayload } from "./applyResolution";
 
 export type LegacyRemoteApplyAttachmentStorageOptions = Record<string, unknown>;
+
+export type ExecuteLegacyBaseTicketApplyResult = {
+  finalTicket: GroupTicketEntry | null;
+  createdTicket: boolean;
+  updatedTicketStatus: boolean;
+};
+
+export async function executeLegacyBaseTicketApply(args: {
+  remoteApplyPlan: ResolvedRemoteApplyExecutionPlan;
+  resolvedApplySelection: ResolvedStudioApplySelection;
+  currentContext: ApplyCurrentContext;
+  createTicketTitle?: string;
+  currentOutlookTicket: GroupTicketEntry | null;
+}): Promise<ExecuteLegacyBaseTicketApplyResult> {
+  const {
+    remoteApplyPlan,
+    resolvedApplySelection,
+    currentContext,
+    createTicketTitle,
+    currentOutlookTicket,
+  } = args;
+
+  const desiredTicketStatus = resolvedApplySelection.desiredTicketStatus;
+  let finalTicket: GroupTicketEntry | null = null;
+  let createdTicket = false;
+  let updatedTicketStatus = false;
+
+  if (remoteApplyPlan.shouldCreateTicket) {
+    const baseClassifiedEmailPayload = remoteApplyPlan.targetPlans[0]?.classifiedEmailPayload
+      || buildResolvedClassifiedEmailPayload({
+        targetEmail: remoteApplyPlan.baseTargetEmail,
+        currentContext,
+        resolvedApplySelection,
+      });
+    finalTicket = await createGroupTicket({
+      seriesId: resolvedApplySelection.selectedSeriesId,
+      title: String(createTicketTitle || remoteApplyPlan.baseTargetEmail?.subject || "Ticket").trim(),
+      description: String(remoteApplyPlan.baseTargetEmail?.bodyText || "").trim().slice(0, 4000),
+      labels: resolvedApplySelection.labels,
+      groupIds: resolvedApplySelection.allGroupIds,
+      email: baseClassifiedEmailPayload,
+      membershipKind: resolvedApplySelection.targetMembershipKind,
+    });
+    createdTicket = true;
+
+    if (desiredTicketStatus && desiredTicketStatus !== String(finalTicket?.status || "").trim()) {
+      finalTicket = await updateGroupTicket(finalTicket.id, { status: desiredTicketStatus });
+      updatedTicketStatus = true;
+    }
+  } else if (
+    remoteApplyPlan.shouldUpdateTicketStatus
+    && desiredTicketStatus !== String(currentOutlookTicket?.status || "").trim()
+  ) {
+    finalTicket = await updateGroupTicket(resolvedApplySelection.selectedTicketId, { status: desiredTicketStatus });
+    updatedTicketStatus = true;
+  }
+
+  return {
+    finalTicket,
+    createdTicket,
+    updatedTicketStatus,
+  };
+}
 
 export async function executeLegacyRemoteApplyForTarget(args: {
   targetPlan: RemoteApplyTargetPlan;
