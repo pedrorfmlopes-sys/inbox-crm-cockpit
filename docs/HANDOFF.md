@@ -1483,6 +1483,39 @@
   - URLs web reais de OneDrive / SharePoint continuam fora; a escrita final suportada continua a depender de caminho local/sincronizado quando o provider nao e `cloud`
 # HANDOFF
 
+## Hotfix: estabilizacao de host/settings e semantica de auth no `main` publicado (Abril 2026)
+- **Causa raiz corrigida do erro `window.prompt is not supported`**:
+  - a aba `Groups` publicada ainda usava `window.prompt` em `client/src/modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx` para editar `baseFolderPath` e `migrationTarget`
+  - esse caminho e incompatível com o host do add-in e rebentava ao abrir/usar os settings
+  - o painel passa agora a usar um editor inline dentro do proprio modal:
+    - `PathEditorState`
+    - `openPathEditor(...)`
+    - `applyPathEditor(...)`
+  - deixamos de depender de `window.prompt`, `alert` ou `confirm` no caminho real de `Groups/settings`
+- **Causa raiz corrigida de `Unknown Odoo error` no arranque sem sessao**:
+  - o backend devolvia `GET /api/auth/check -> { ok:false }` para ausencia normal de sessao
+  - `client/src/api.ts#getJsonErrorMessage(...)` tratava qualquer `ok:false` sem detalhes como `"Unknown Odoo error"`
+  - `CockpitProvider` chamava `apiCheckAuth()` no arranque e apanhava esse caso como erro generico em vez de estado normal de nao autenticado
+  - o contrato foi corrigido para:
+    - backend: `/api/auth/check -> { ok:true, authenticated:false, reason:"no_session" }`
+    - frontend: `AuthCheckResponse`
+    - `CockpitProvider` passa a distinguir `ok && authenticated` de ausencia normal de sessao
+- **Sweep curto de APIs modais do browser nesta frente**:
+  - dentro de `client/src/modules/crm/groups-v1/**` nao ficam usos ativos de `window.prompt`, `window.alert` ou `window.confirm`
+  - continuam a existir usos fora desta frente, por exemplo em `AiCockpit`, `DialogApp`, `GroupsCockpit` e `GroupManagerCockpit`, mas ficaram fora desta ronda por nao pertencerem ao caminho real pedido
+- **Validacao desta ronda**:
+  - `npm.cmd install` no worktree limpo para disponibilizar dependencias locais
+  - `npm.cmd -w client exec -- eslint src/modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx src/components/shell/CockpitProvider.tsx src/api.ts`
+  - `npm.cmd -w client run build`
+  - `node --check server/src/index.js`
+  - `git diff --check`
+  - validacao funcional:
+    - browser/Playwright em `https://localhost:5173`
+    - `Groups` abre sem erro fatal
+    - settings abre em taskpane estreito
+    - `Definir namespace` abre editor inline, sem `window.prompt`
+    - `GET /api/auth/check` sem sessao responde `200 {"ok":true,"authenticated":false,"reason":"no_session"}`
+
 ## Hotfix: estabilizacao imediata da aba Groups publicada (Abril 2026)
 - **404 de workset no arranque**:
   - a causa raiz nao era chave invalida nem falha de derivacao

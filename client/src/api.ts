@@ -498,7 +498,14 @@ export async function login(credentials: any): Promise<AuthResponse> {
   });
 }
 
-export async function checkAuth(): Promise<{ ok: boolean; meta?: OdooMeta }> {
+export type AuthCheckResponse = {
+  ok: boolean;
+  authenticated: boolean;
+  meta?: OdooMeta;
+  reason?: string;
+};
+
+export async function checkAuth(): Promise<AuthCheckResponse> {
   return await requestJSON(`/api/auth/check`);
 }
 

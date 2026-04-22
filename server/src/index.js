@@ -406,9 +406,9 @@ app.get("/api/auth/check", async (req, res) => {
   if (authHeader && authHeader.startsWith("Session ")) {
     const token = authHeader.split(" ")[1];
     const session = sessionManager.getSession(token);
-    if (session?.client?.meta) return res.json({ ok: true, meta: session.client.meta });
+    if (session?.client?.meta) return res.json({ ok: true, authenticated: true, meta: session.client.meta });
   }
-  return res.json({ ok: false });
+  return res.json({ ok: true, authenticated: false, reason: "no_session" });
 });
 
 app.get("/api/odoo/meta", async (req, res) => {

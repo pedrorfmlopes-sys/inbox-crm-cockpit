@@ -38,6 +38,12 @@ type SectionEntry = {
   icon: React.ReactNode;
 };
 
+type PathEditorState = {
+  field: "baseFolderPath" | "migrationTarget";
+  label: string;
+  value: string;
+};
+
 const SECTION_ENTRIES: SectionEntry[] = [
   { id: "general", label: "General", icon: <Icons.Settings size={12} /> },
   { id: "intermediate_storage", label: "Storage intermedio", icon: <Icons.Database size={12} /> },
@@ -75,13 +81,6 @@ const MIGRATION_MODE_LABELS: Record<GroupsSettingsMigrationMode, string> = {
 
 function buildDraft(value: GroupsTabSettings | null | undefined): GroupsTabSettings {
   return normalizeGroupsTabSettings(value || null);
-}
-
-function promptForPath(label: string, currentValue: string): string | null {
-  if (typeof window === "undefined" || typeof window.prompt !== "function") return null;
-  const nextValue = window.prompt(`Defina ${label.toLowerCase()}`, currentValue || "");
-  if (nextValue == null) return null;
-  return nextValue.trim();
 }
 
 function SectionButton({
@@ -309,10 +308,34 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
   const [maintenanceMessage, setMaintenanceMessage] = useState("");
   const [maintenanceError, setMaintenanceError] = useState("");
   const [isCompactLayout, setIsCompactLayout] = useState(false);
+  const [pathEditor, setPathEditor] = useState<PathEditorState | null>(null);
 
   const applyDraftPatch = (patch: Partial<GroupsTabSettings>) => {
     setDraft((current) => normalizeGroupsTabSettings({ ...current, ...patch }));
   };
+
+  const openPathEditor = useCallback(
+    (field: PathEditorState["field"], label: string) => {
+      setPathEditor({
+        field,
+        label,
+        value: String(draft[field] || "").trim(),
+      });
+    },
+    [draft]
+  );
+
+  const closePathEditor = useCallback(() => {
+    setPathEditor(null);
+  }, []);
+
+  const applyPathEditor = useCallback(() => {
+    if (!pathEditor) return;
+    applyDraftPatch({
+      [pathEditor.field]: String(pathEditor.value || "").trim(),
+    } as Partial<GroupsTabSettings>);
+    setPathEditor(null);
+  }, [pathEditor]);
 
   useEffect(() => {
     if (!open) return;
@@ -321,6 +344,7 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
     setIsSaving(false);
     setMaintenanceMessage("");
     setMaintenanceError("");
+    setPathEditor(null);
   }, [open, value]);
 
   useEffect(() => {
@@ -452,11 +476,7 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
             chooseLabel="Definir namespace"
             showValidate={false}
             showOpen={false}
-            onChoose={() => {
-              const nextPath = promptForPath("o namespace do storage intermedio", draft.baseFolderPath);
-              if (nextPath == null) return;
-              applyDraftPatch({ baseFolderPath: nextPath });
-            }}
+            onChoose={() => openPathEditor("baseFolderPath", "Namespace do storage intermedio")}
           />
           <FieldRow label="Estado" hint="Resumo do modo intermedio realmente executavel.">
             <div style={S.inlineValue}>{draft.locationStatus}</div>
@@ -666,11 +686,7 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
             hint="Namespace alvo para copiar/mover os casos intermédios persistidos."
             value={draft.migrationTarget}
             chooseLabel="Definir destino"
-            onChoose={() => {
-              const nextPath = promptForPath("o namespace de destino da migracao", draft.migrationTarget);
-              if (nextPath == null) return;
-              applyDraftPatch({ migrationTarget: nextPath });
-            }}
+            onChoose={() => openPathEditor("migrationTarget", "Namespace de destino da migracao")}
           />
           <FieldRow label="Modo guardado">
             <select
@@ -765,7 +781,7 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
         </InfoBlock>
       </SectionShell>
     );
-  }, [activeSection, draft, handleCleanupNow, handleMigrationNow, isSaving]);
+  }, [activeSection, draft, handleCleanupNow, handleMigrationNow, isSaving, openPathEditor]);
 
   if (!open) return null;
 
@@ -811,6 +827,28 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
           </div>
           <div style={isCompactLayout ? { ...S.content, ...S.contentCompact } : S.content}>{content}</div>
         </div>
+        {pathEditor ? (
+          <div style={S.pathEditorShell}>
+            <div style={S.pathEditorHeader}>
+              <div style={S.pathEditorTitle}>{pathEditor.label}</div>
+              <div style={S.pathEditorSubtitle}>Edicao suportada no taskpane, sem usar APIs modais do browser.</div>
+            </div>
+            <input
+              autoFocus
+              type="text"
+              style={S.input}
+              value={pathEditor.value}
+              onChange={(event) =>
+                setPathEditor((current) => (current ? { ...current, value: event.target.value } : current))
+              }
+              placeholder="Introduz o valor pretendido"
+            />
+            <div style={S.pathEditorActions}>
+              <ActionButton label="Cancelar" onClick={closePathEditor} disabled={isSaving} />
+              <ActionButton label="Aplicar" onClick={applyPathEditor} disabled={isSaving} />
+            </div>
+          </div>
+        ) : null}
         {maintenanceMessage ? (
           <div style={{ ...S.infoBlock, margin: "0 10px 10px" }}>
             <div style={S.infoBlockTitle}>Operacao concluida</div>
@@ -1012,6 +1050,33 @@ const S: Record<string, React.CSSProperties> = {
   },
   contentCompact: {
     padding: 8,
+  },
+  pathEditorShell: {
+    display: "grid",
+    gap: 8,
+    padding: "10px",
+    borderTop: "1px solid rgba(148,163,184,0.16)",
+    background: "rgba(255,255,255,0.9)",
+  },
+  pathEditorHeader: {
+    display: "grid",
+    gap: 2,
+  },
+  pathEditorTitle: {
+    fontSize: 10.4,
+    fontWeight: 650,
+    color: "#243244",
+  },
+  pathEditorSubtitle: {
+    fontSize: 8.8,
+    color: "#64748b",
+    lineHeight: 1.35,
+  },
+  pathEditorActions: {
+    display: "flex",
+    gap: 6,
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
   },
   sectionShell: {
     display: "grid",
