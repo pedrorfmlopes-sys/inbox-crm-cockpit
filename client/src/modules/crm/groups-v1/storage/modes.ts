@@ -8,15 +8,15 @@ export const GROUP_STORAGE_MODE_OPTIONS: GroupStorageMode[] = [
 ];
 
 export const GROUP_STORAGE_MODE_LABELS: Record<GroupStorageMode, string> = {
-  supabase: "Tudo no Supabase",
-  local_device: "Local neste PC",
-  chosen_folder: "Local em pasta escolhida",
-  hybrid: "Hibrido",
+  supabase: "Cockpit Cloud",
+  local_device: "Local neste PC (nao suportado nesta fase)",
+  chosen_folder: "Pasta local / sincronizada",
+  hybrid: "Hibrido (nao suportado nesta fase)",
 };
 
 export const GROUP_STORAGE_MODE_DESCRIPTIONS: Record<GroupStorageMode, string> = {
-  supabase: "Persistencia principal e promotavel no Supabase, sem sessao local passar a fonte canonica.",
-  local_device: "Persistencia principal em storage local deste dispositivo, com Supabase apenas por promocao futura.",
-  chosen_folder: "Persistencia principal numa pasta escolhida pelo utilizador, com Supabase apenas por promocao futura.",
-  hybrid: "Persistencia principal local ou pasta escolhida, com promocao remota controlada e separada.",
+  supabase: "Persistencia final atual da app, com metadata sempre e binario no store cloud quando o payload o traz.",
+  local_device: "Modo legado ainda nao fechado como opcao executavel nesta fase.",
+  chosen_folder: "Persistencia binaria best-effort para pasta local ou sincronizada por caminho local/UNC, mantendo a persistencia final da app.",
+  hybrid: "Modo legado ainda nao fechado como opcao executavel nesta fase.",
 };

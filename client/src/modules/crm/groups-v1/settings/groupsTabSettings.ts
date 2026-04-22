@@ -1,4 +1,4 @@
-export type GroupsSettingsStorageMode = "onedrive_sharepoint" | "disabled";
+export type GroupsSettingsStorageMode = "local_indexeddb" | "disabled";
 export type GroupsSettingsAttachmentStrategy = "server" | "outside" | "by_size";
 export type GroupsSettingsFrequency = "manual" | "daily" | "weekly";
 export type GroupsSettingsMigrationMode = "always_ask" | "move" | "copy";
@@ -47,9 +47,9 @@ export type GroupsTabSettings = {
 
 export const DEFAULT_GROUPS_TAB_SETTINGS: GroupsTabSettings = {
   groupsTabEnabled: true,
-  storageMode: "onedrive_sharepoint",
+  storageMode: "local_indexeddb",
   baseFolderPath: "",
-  locationStatus: "Sem localização definida",
+  locationStatus: "Sem namespace definido",
   autoCreateCaseOnNewEmail: true,
   reopenExistingCase: true,
   recreateIntermediateCopy: true,
@@ -84,7 +84,7 @@ export const DEFAULT_GROUPS_TAB_SETTINGS: GroupsTabSettings = {
   explorerOpenStoredAttachments: true,
   explorerGenerateReply: true,
   groupsVersion: "Grupos v1",
-  quickDiagnostic: "Sem localização definida",
+  quickDiagnostic: "Sem namespace definido",
 };
 
 function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
@@ -94,7 +94,10 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
 }
 
 function normalizeStorageMode(value: unknown): GroupsSettingsStorageMode {
-  return String(value || "").trim().toLowerCase() === "disabled" ? "disabled" : "onedrive_sharepoint";
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "disabled") return "disabled";
+  if (normalized === "local_indexeddb" || normalized === "onedrive_sharepoint") return "local_indexeddb";
+  return "local_indexeddb";
 }
 
 function normalizeAttachmentStrategy(value: unknown): GroupsSettingsAttachmentStrategy {
@@ -118,25 +121,31 @@ function normalizeMigrationMode(value: unknown): GroupsSettingsMigrationMode {
 export function deriveGroupsLocationStatus(
   settings: Pick<GroupsTabSettings, "storageMode" | "baseFolderPath">
 ): string {
-  if (settings.storageMode === "disabled") return "Modo desativado";
-  return String(settings.baseFolderPath || "").trim() ? "Localização configurada" : "Sem localização definida";
+  if (settings.storageMode === "disabled") return "Intermedio desativado";
+  return String(settings.baseFolderPath || "").trim()
+    ? "Namespace IndexedDB configurado"
+    : "Namespace IndexedDB por definir";
 }
 
 export function deriveGroupsQuickDiagnostic(
   settings: Pick<
     GroupsTabSettings,
-    | "storageMode"
-    | "baseFolderPath"
-    | "warnUnclassifiedEmails"
-    | "warnMixedCases"
-    | "validateLocationOnOpen"
+    "storageMode" | "baseFolderPath" | "warnUnclassifiedEmails" | "warnMixedCases" | "validateLocationOnOpen"
   >
 ): string {
-  if (settings.storageMode === "disabled") return "Settings ativos com armazenamento intermédio desativado";
-  if (!String(settings.baseFolderPath || "").trim()) return "Settings ativos, falta definir a localização base";
-  if (!settings.validateLocationOnOpen) return "Localização configurada sem validação automática à abertura";
-  if (!settings.warnUnclassifiedEmails && !settings.warnMixedCases) return "Localização configurada com avisos desativados";
-  return "Localização configurada e pronta para as próximas rondas";
+  if (settings.storageMode === "disabled") {
+    return "Storage intermedio desligado; a aba trabalha sem persistencia local do caso";
+  }
+  if (!String(settings.baseFolderPath || "").trim()) {
+    return "Storage intermedio local ativo, mas sem namespace persistente; o fallback continua em memoria";
+  }
+  if (!settings.validateLocationOnOpen) {
+    return "Namespace configurado sem verificacao leve ao abrir";
+  }
+  if (!settings.warnUnclassifiedEmails && !settings.warnMixedCases) {
+    return "Namespace configurado com avisos leves desativados";
+  }
+  return "Storage intermedio local pronto em IndexedDB; a persistencia final continua a ser feita no apply";
 }
 
 export function normalizeGroupsTabSettings(input: Partial<GroupsTabSettings> | null | undefined): GroupsTabSettings {
@@ -160,15 +169,45 @@ export function normalizeGroupsTabSettings(input: Partial<GroupsTabSettings> | n
     attachmentStrategy: normalizeAttachmentStrategy(merged.attachmentStrategy),
     saveAttachmentsOnServer: merged.saveAttachmentsOnServer !== false,
     saveAttachmentsOutsideServer: merged.saveAttachmentsOutsideServer !== false,
-    attachmentServerLimitMb: clampInteger(merged.attachmentServerLimitMb, DEFAULT_GROUPS_TAB_SETTINGS.attachmentServerLimitMb, 1, 2048),
-    attachmentIntermediateLimitMb: clampInteger(merged.attachmentIntermediateLimitMb, DEFAULT_GROUPS_TAB_SETTINGS.attachmentIntermediateLimitMb, 1, 4096),
+    attachmentServerLimitMb: clampInteger(
+      merged.attachmentServerLimitMb,
+      DEFAULT_GROUPS_TAB_SETTINGS.attachmentServerLimitMb,
+      1,
+      2048
+    ),
+    attachmentIntermediateLimitMb: clampInteger(
+      merged.attachmentIntermediateLimitMb,
+      DEFAULT_GROUPS_TAB_SETTINGS.attachmentIntermediateLimitMb,
+      1,
+      4096
+    ),
     externalAttachmentFolder: String(merged.externalAttachmentFolder || "").trim(),
     showAttachmentMetadataOnServer: merged.showAttachmentMetadataOnServer !== false,
     requireImmediatePreview: merged.requireImmediatePreview !== false,
-    mixedCaseWarningDays: clampInteger(merged.mixedCaseWarningDays, DEFAULT_GROUPS_TAB_SETTINGS.mixedCaseWarningDays, 1, 3650),
-    localAbandonedWarningDays: clampInteger(merged.localAbandonedWarningDays, DEFAULT_GROUPS_TAB_SETTINGS.localAbandonedWarningDays, 1, 3650),
-    cleanupClosedCaseDays: clampInteger(merged.cleanupClosedCaseDays, DEFAULT_GROUPS_TAB_SETTINGS.cleanupClosedCaseDays, 1, 3650),
-    cleanupAbandonedCaseDays: clampInteger(merged.cleanupAbandonedCaseDays, DEFAULT_GROUPS_TAB_SETTINGS.cleanupAbandonedCaseDays, 1, 3650),
+    mixedCaseWarningDays: clampInteger(
+      merged.mixedCaseWarningDays,
+      DEFAULT_GROUPS_TAB_SETTINGS.mixedCaseWarningDays,
+      1,
+      3650
+    ),
+    localAbandonedWarningDays: clampInteger(
+      merged.localAbandonedWarningDays,
+      DEFAULT_GROUPS_TAB_SETTINGS.localAbandonedWarningDays,
+      1,
+      3650
+    ),
+    cleanupClosedCaseDays: clampInteger(
+      merged.cleanupClosedCaseDays,
+      DEFAULT_GROUPS_TAB_SETTINGS.cleanupClosedCaseDays,
+      1,
+      3650
+    ),
+    cleanupAbandonedCaseDays: clampInteger(
+      merged.cleanupAbandonedCaseDays,
+      DEFAULT_GROUPS_TAB_SETTINGS.cleanupAbandonedCaseDays,
+      1,
+      3650
+    ),
     cleanupFrequency: normalizeFrequency(merged.cleanupFrequency, DEFAULT_GROUPS_TAB_SETTINGS.cleanupFrequency),
     neverDeleteMixedSilently: merged.neverDeleteMixedSilently !== false,
     warnUnclassifiedEmails: merged.warnUnclassifiedEmails !== false,
@@ -183,7 +222,9 @@ export function normalizeGroupsTabSettings(input: Partial<GroupsTabSettings> | n
     explorerServerPrimary: merged.explorerServerPrimary !== false,
     explorerOpenStoredAttachments: merged.explorerOpenStoredAttachments !== false,
     explorerGenerateReply: merged.explorerGenerateReply !== false,
-    groupsVersion: String(merged.groupsVersion || DEFAULT_GROUPS_TAB_SETTINGS.groupsVersion).trim() || DEFAULT_GROUPS_TAB_SETTINGS.groupsVersion,
+    groupsVersion:
+      String(merged.groupsVersion || DEFAULT_GROUPS_TAB_SETTINGS.groupsVersion).trim() ||
+      DEFAULT_GROUPS_TAB_SETTINGS.groupsVersion,
     quickDiagnostic: "",
   };
 

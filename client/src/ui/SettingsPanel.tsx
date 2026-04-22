@@ -19,7 +19,7 @@ import { applySkin } from "./skins";
 import * as Icons from "./icons";
 import { useCockpit } from "../components/shell/CockpitProvider";
 import { aiListModels, validateCrm2OdooLayout, type Crm2LayoutValidationResult } from "../api";
-import { GROUP_STORAGE_MODE_LABELS, GROUP_STORAGE_MODE_OPTIONS } from "../modules/crm/groups-v1/storage/modes";
+import { GROUP_STORAGE_MODE_LABELS } from "../modules/crm/groups-v1/storage/modes";
 import { resolveGroupStorageRuntime } from "../modules/crm/groups-v1/storage/resolveStorageMode";
 import { PanelState, type PanelStateTone } from "./PanelState";
 import { previewReferenceCode } from "../referenceCodes";
@@ -65,6 +65,19 @@ const SKIN_OPTIONS: Array<{ value: SkinId; label: string }> = [
   { value: "mailmaestro", label: "MailMaestro" },
   { value: "vibrant", label: "Vibrant (Cockpit 3.0)" },
 ];
+
+const EXECUTABLE_GROUP_STORAGE_MODE_OPTIONS: Array<{ value: GroupStorageMode; label: string }> = [
+  { value: "supabase", label: "Cockpit Cloud" },
+  { value: "chosen_folder", label: "Pasta local / sincronizada" },
+];
+
+function isUnsupportedExecutableGroupStorageMode(mode: GroupStorageMode): boolean {
+  return mode === "local_device" || mode === "hybrid";
+}
+
+function looksLikeWebStoragePath(value: string | undefined): boolean {
+  return /^https?:\/\//i.test(String(value || "").trim());
+}
 
 const REFERENCE_ENTITY_LABELS: Record<ReferenceEntityKey, string> = {
   lead: "Lead",
@@ -157,6 +170,9 @@ export function SettingsPanel(): JSX.Element {
     () => (model ? resolveGroupStorageRuntime(model) : null),
     [model]
   );
+  const groupStorageModeUnsupported = model ? isUnsupportedExecutableGroupStorageMode(model.groupStorage.mode) : false;
+  const groupStorageWebPathUnsupported = model ? looksLikeWebStoragePath(model.groupStorage.baseFolderPath || "") : false;
+  const groupStoragePathRequired = model ? model.groupStorage.mode === "chosen_folder" : false;
 
   async function onSave() {
     if (!model) return;
@@ -1042,9 +1058,15 @@ export function SettingsPanel(): JSX.Element {
 
               <PanelState
                 compact
-                tone="info"
-                title="Configuração documental dos grupos"
-                description="Definimos aqui a localização base e as regras para a futura gestão de anexos por grupo, sem mexer já na operação diária do cockpit."
+                tone={groupStorageModeUnsupported || groupStorageWebPathUnsupported ? "warning" : "info"}
+                title="Politica executavel de storage desta fase"
+                description={
+                  groupStorageModeUnsupported
+                    ? "Nesta fase, os modos executaveis ficam reduzidos a Cockpit Cloud e pasta local/sincronizada. Os modos Local neste PC e Hibrido ficam marcados como indisponiveis."
+                    : groupStorageWebPathUnsupported
+                      ? "O caminho configurado parece uma URL web. OneDrive/SharePoint por URL web nao fica suportado nesta fase; usa uma pasta sincronizada local ou caminho UNC."
+                      : "A persistencia final continua na app (`/api/links/*`). Este bloco fecha apenas o destino binario e as regras reais de anexos que o codigo ja suporta."
+                }
               />
 
               <div style={S.referenceCard}>
@@ -1082,24 +1104,30 @@ export function SettingsPanel(): JSX.Element {
                     })
                   }
                 >
-                  {GROUP_STORAGE_MODE_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {GROUP_STORAGE_MODE_LABELS[value]}
+                  {groupStorageModeUnsupported ? (
+                    <option value={model.groupStorage.mode} disabled>
+                      {GROUP_STORAGE_MODE_LABELS[model.groupStorage.mode]}
+                    </option>
+                  ) : null}
+                  {EXECUTABLE_GROUP_STORAGE_MODE_OPTIONS.map((entry) => (
+                    <option key={entry.value} value={entry.value}>
+                      {entry.label}
                     </option>
                   ))}
                 </select>
                 <div style={S.hint}>
-                  Cockpit Cloud = armazenamento central da app. Pasta local e OneDrive/SharePoint representam destinos externos do utilizador, não o servidor onde o cockpit corre.
+                  Modos oficialmente suportados nesta fase: <b>Cockpit Cloud</b> e <b>Pasta local / sincronizada</b>.
                 </div>
                 <div style={S.hint}>
-                  Nesta fase estamos a preparar a origem documental dos grupos. A cópia real de anexos será ligada sobre esta base.
+                  `local_device` e `hybrid` continuam no contrato legado, mas ficam fora como opcao executavel ate haver fecho ponta a ponta.
                 </div>
               </Field>
 
-              <Field label="Pasta base / localização">
+              <Field label="Pasta local / sincronizada">
                 <input
                   style={S.input}
                   value={model.groupStorage.baseFolderPath || ""}
+                  disabled={!groupStoragePathRequired}
                   onChange={(e) =>
                     setModel({
                       ...model,
@@ -1117,10 +1145,10 @@ export function SettingsPanel(): JSX.Element {
                       },
                     })
                   }
-                  placeholder={model.groupStorage.mode === "supabase" ? "Nao aplicavel neste modo" : model.groupStorage.provider === "onedrive" ? "URL ou caminho da biblioteca/document library" : "C:\\Documentos\\InboxCockpit\\Grupos"}
+                  placeholder={groupStoragePathRequired ? "C:\\Documentos\\InboxCockpit\\Grupos" : "Nao usado no modo Cockpit Cloud"}
                 />
                 <div style={S.hint}>
-                  Cada grupo poderá usar esta localização como raiz para criar ou localizar a sua própria pasta.
+                  Usa apenas <b>caminho local, pasta sincronizada local ou UNC</b>. URLs web de OneDrive/SharePoint ficam fora nesta fase.
                 </div>
               </Field>
 
@@ -1142,7 +1170,7 @@ export function SettingsPanel(): JSX.Element {
                   }
                 />
                 <div style={S.hint}>
-                  Acima deste limiar os anexos devem pedir decisao do utilizador antes de qualquer promocao binaria.
+                  Metadata do anexo sobe sempre com o email classificado; binario fora do Cockpit Cloud fica best-effort e continua a pedir caminho real suportado.
                 </div>
               </Field>
 
@@ -1150,6 +1178,7 @@ export function SettingsPanel(): JSX.Element {
                 <input
                   type="checkbox"
                   checked={model.groupStorage.autoCreateFolderOnGroupCreate}
+                  disabled
                   onChange={(e) =>
                     setModel({
                       ...model,
@@ -1162,7 +1191,7 @@ export function SettingsPanel(): JSX.Element {
                 />
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Criar pasta automaticamente ao criar grupo</div>
-                  <div style={S.hint}>Útil quando quisermos que os grupos nasçam já preparados para receber anexos selecionados.</div>
+                  <div style={S.hint}>Mantido apenas como legado de configuracao. Esta automatizacao ainda nao fica executavel nesta fase.</div>
                 </div>
               </label>
 
@@ -1182,7 +1211,7 @@ export function SettingsPanel(): JSX.Element {
                 />
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ignorar anexos inline e imagens de assinatura</div>
-                  <div style={S.hint}>Ajuda a reduzir ruído quando começarmos a escolher anexos úteis para guardar por grupo.</div>
+                  <div style={S.hint}>Esta guarda continua real e afeta a preparacao/persistencia de anexos para reduzir ruido.</div>
                 </div>
               </label>
 
@@ -1190,6 +1219,7 @@ export function SettingsPanel(): JSX.Element {
                 <select
                   style={S.select}
                   value={model.groupStorage.suggestedViewer}
+                  disabled
                   onChange={(e) =>
                     setModel({
                       ...model,
@@ -1203,19 +1233,28 @@ export function SettingsPanel(): JSX.Element {
                   <option value="inline">Viewer interno do cockpit</option>
                   <option value="system">Aplicação do sistema</option>
                 </select>
+                <div style={S.hint}>
+                  Preferencia mantida apenas como legado local. Ainda nao existe caminho executavel fechado que a use de ponta a ponta nesta fase.
+                </div>
               </Field>
 
               <div style={S.referenceCard}>
-                <div style={S.fieldLabel}>Resumo atual</div>
+                <div style={S.fieldLabel}>Resumo executavel desta fase</div>
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={S.hint}>
                     Modo escolhido: <b>{resolvedGroupStorage?.modeLabel || GROUP_STORAGE_MODE_LABELS[model.groupStorage.mode]}</b>
                   </div>
                   <div style={S.hint}>
-                    Localização base: <b>{model.groupStorage.baseFolderPath || "Por definir"}</b>
+                    Persistencia final: <b>sempre na app via /api/links/*</b>
                   </div>
                   <div style={S.hint}>
-                    Pastas automáticas: <b>{model.groupStorage.autoCreateFolderOnGroupCreate ? "Sim" : "Não"}</b>
+                    Binario de anexos/documentos: <b>{model.groupStorage.mode === "supabase" ? "Cockpit Cloud quando o payload traz conteudo" : groupStorageWebPathUnsupported ? "fallback para metadata/cloud enquanto o caminho web nao for suportado" : "pasta local/sincronizada quando o caminho e real; caso contrario metadata/cloud"}</b>
+                  </div>
+                  <div style={S.hint}>
+                    Persistencia intermedia: <b>{model.groupsTabSettings.storageMode === "disabled" ? "desativada" : "IndexedDB local do add-in, com namespace logico"}</b>
+                  </div>
+                  <div style={S.hint}>
+                    Sessao/cache: <b>prepareSession, seeds temporarios e fallback em memoria</b>
                   </div>
                 </div>
               </div>

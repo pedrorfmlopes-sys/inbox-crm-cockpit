@@ -495,18 +495,18 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const groupsStorageReady = resolvedStorageAvailability === "ready";
   const groupsStorageMissingLocation = resolvedStorageAvailability === "missing_location";
   const groupsAccessLimited = !groupsTabEnabled || resolvedStorageAvailability === "disabled";
-  const storageModeLabel = groupsStorageEnabled ? "OneDrive / SharePoint" : "Armazenamento desativado";
-  const locationPathLabel = String(groupsSettings.baseFolderPath || "").trim() || "Sem localizacao definida";
+  const storageModeLabel = groupsStorageEnabled ? "Storage local do add-in (IndexedDB)" : "Armazenamento desativado";
+  const locationPathLabel = String(groupsSettings.baseFolderPath || "").trim() || "Sem namespace definido";
   const resolvedStorageLabel = groupsStorageReady
     ? "Pronto"
     : groupsStorageMissingLocation
-      ? "Sem localizacao valida"
+      ? "Sem namespace persistente"
       : "Desativado";
   const resolvedStorageBadgeStyle = groupsStorageReady ? S.localBadge : S.warningBadge;
   const resolvedStorageHint = groupsStorageReady
     ? intermediateCaseStorage.reason
     : groupsStorageMissingLocation
-      ? "Sem localizacao configurada para persistencia real. A aba continua em modo transitorio em memoria nesta fase."
+      ? "Sem namespace configurado para persistencia local. A aba continua em modo transitorio em memoria nesta fase."
       : intermediateCaseStorage.reason;
   const settingsDiagnosticHint = groupsStorageReady
     ? intermediateCaseStorage.reason
@@ -1730,7 +1730,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       return;
     }
     if (groupsStorageMissingLocation) {
-      setMsg("Sem localizacao configurada para persistencia real. O trabalho atual segue apenas em memoria nesta fase.");
+      setMsg("Sem namespace configurado para persistencia local em IndexedDB. O trabalho atual segue apenas em memoria nesta fase.");
     }
     flushSession("before_classify", {
       emailKey: currentEmailKey,
@@ -1943,7 +1943,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
           <span style={S.currentGroupLine}>{groupsSettings.locationStatus}</span>
         </div>
         <div style={S.settingsStatusRow}>
-          <span style={S.settingsStatusLabel}>Localizacao</span>
+          <span style={S.settingsStatusLabel}>Namespace</span>
           <span style={S.currentGroupLine}>{locationPathLabel}</span>
         </div>
       </div>

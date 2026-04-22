@@ -36,15 +36,38 @@ type SectionEntry = {
 
 const SECTION_ENTRIES: SectionEntry[] = [
   { id: "general", label: "General", icon: <Icons.Settings size={12} /> },
-  { id: "intermediate_storage", label: "Armazenamento intermédio", icon: <Icons.Database size={12} /> },
+  { id: "intermediate_storage", label: "Storage intermedio", icon: <Icons.Database size={12} /> },
   { id: "attachments", label: "Anexos", icon: <Icons.Paperclip size={12} /> },
   { id: "cleanup", label: "Limpeza", icon: <Icons.RefreshCw size={12} /> },
   { id: "warnings", label: "Avisos", icon: <Icons.AlertCircle size={12} /> },
-  { id: "migration", label: "Migração", icon: <Icons.Upload size={12} /> },
-  { id: "maintenance", label: "Manutenção", icon: <Icons.Trash size={12} /> },
+  { id: "migration", label: "Migracao", icon: <Icons.Upload size={12} /> },
+  { id: "maintenance", label: "Manutencao", icon: <Icons.Trash size={12} /> },
   { id: "explore", label: "Explorar", icon: <Icons.Search size={12} /> },
   { id: "about", label: "Sobre", icon: <Icons.MessageSquare size={12} /> },
 ];
+
+const STORAGE_MODE_OPTIONS: Array<{ value: GroupsSettingsStorageMode; label: string }> = [
+  { value: "local_indexeddb", label: "Storage local do add-in (IndexedDB)" },
+  { value: "disabled", label: "Desativado" },
+];
+
+const ATTACHMENT_STRATEGY_LABELS: Record<GroupsSettingsAttachmentStrategy, string> = {
+  server: "Server metadata first",
+  outside: "Fora do server quando suportado",
+  by_size: "Metadata first com decisao por tamanho",
+};
+
+const FREQUENCY_LABELS: Record<GroupsSettingsFrequency, string> = {
+  manual: "Manual",
+  daily: "Diaria",
+  weekly: "Semanal",
+};
+
+const MIGRATION_MODE_LABELS: Record<GroupsSettingsMigrationMode, string> = {
+  always_ask: "Perguntar sempre",
+  move: "Mover quando confirmado",
+  copy: "Copiar quando confirmado",
+};
 
 function buildDraft(value: GroupsTabSettings | null | undefined): GroupsTabSettings {
   return normalizeGroupsTabSettings(value || null);
@@ -98,17 +121,36 @@ function SectionShell({
   );
 }
 
+function InfoBlock({
+  tone = "neutral",
+  title,
+  children,
+}: {
+  tone?: "neutral" | "warning";
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={tone === "warning" ? S.infoBlockWarning : S.infoBlock}>
+      <div style={S.infoBlockTitle}>{title}</div>
+      <div style={S.infoBlockBody}>{children}</div>
+    </div>
+  );
+}
+
 function FieldRow({
   label,
   hint,
+  disabled = false,
   children,
 }: {
   label: string;
   hint?: string;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <label style={S.row}>
+    <label style={disabled ? S.rowDisabled : S.row}>
       <div style={S.rowLabelWrap}>
         <span style={S.rowLabel}>{label}</span>
         {hint ? <SettingHint text={hint} /> : null}
@@ -122,20 +164,28 @@ function ToggleRow({
   label,
   hint,
   checked,
+  disabled = false,
   onChange,
 }: {
   label: string;
   hint?: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (next: boolean) => void;
 }) {
   return (
-    <div style={S.row}>
+    <div style={disabled ? S.rowDisabled : S.row}>
       <div style={S.rowLabelWrap}>
         <span style={S.rowLabel}>{label}</span>
         {hint ? <SettingHint text={hint} /> : null}
       </div>
-      <button type="button" style={checked ? S.toggleOn : S.toggleOff} onClick={() => onChange(!checked)} aria-pressed={checked}>
+      <button
+        type="button"
+        style={disabled ? S.toggleDisabled : checked ? S.toggleOn : S.toggleOff}
+        onClick={() => !disabled && onChange(!checked)}
+        aria-pressed={checked}
+        disabled={disabled}
+      >
         <span style={S.toggleThumb} />
       </button>
     </div>
@@ -145,14 +195,21 @@ function ToggleRow({
 function ActionButton({
   label,
   tone = "neutral",
+  disabled = false,
   onClick,
 }: {
   label: string;
   tone?: "neutral" | "danger";
+  disabled?: boolean;
   onClick?: () => void;
 }) {
   return (
-    <button type="button" style={tone === "danger" ? S.actionButtonDanger : S.actionButton} onClick={onClick}>
+    <button
+      type="button"
+      style={disabled ? S.actionButtonDisabled : tone === "danger" ? S.actionButtonDanger : S.actionButton}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+    >
       {label}
     </button>
   );
@@ -163,19 +220,21 @@ function ActionRow({
   hint,
   actionLabel,
   tone = "neutral",
+  disabled = false,
 }: {
   label: string;
   hint?: string;
   actionLabel: string;
   tone?: "neutral" | "danger";
+  disabled?: boolean;
 }) {
   return (
-    <div style={S.row}>
+    <div style={disabled ? S.rowDisabled : S.row}>
       <div style={S.rowLabelWrap}>
         <span style={S.rowLabel}>{label}</span>
         {hint ? <SettingHint text={hint} /> : null}
       </div>
-      <ActionButton label={actionLabel} tone={tone} />
+      <ActionButton label={actionLabel} tone={tone} disabled={disabled} />
     </div>
   );
 }
@@ -184,9 +243,10 @@ function PathFieldRow({
   label,
   hint,
   value,
-  chooseLabel = "Escolher localização",
-  showValidate = true,
-  showOpen = true,
+  chooseLabel = "Definir",
+  showValidate = false,
+  showOpen = false,
+  disabled = false,
   onChoose,
 }: {
   label: string;
@@ -195,26 +255,32 @@ function PathFieldRow({
   chooseLabel?: string;
   showValidate?: boolean;
   showOpen?: boolean;
+  disabled?: boolean;
   onChoose?: () => void;
 }) {
+  const displayValue = value || "Nao definido nesta fase";
   return (
-    <div style={S.row}>
+    <div style={disabled ? S.rowDisabled : S.row}>
       <div style={S.rowLabelWrap}>
         <span style={S.rowLabel}>{label}</span>
         {hint ? <SettingHint text={hint} /> : null}
       </div>
       <div style={S.pathControl}>
-        <div style={S.pathValue} title={value || "Sem localização definida"}>
-          {value || "Sem localização definida"}
+        <div style={S.pathValue} title={displayValue}>
+          {displayValue}
         </div>
         <div style={S.pathActions}>
-          <ActionButton label={chooseLabel} onClick={onChoose} />
-          {showValidate ? <ActionButton label="Validar" /> : null}
-          {showOpen ? <ActionButton label="Abrir pasta" /> : null}
+          <ActionButton label={chooseLabel} onClick={onChoose} disabled={disabled} />
+          {showValidate ? <ActionButton label="Validar" disabled /> : null}
+          {showOpen ? <ActionButton label="Abrir pasta" disabled /> : null}
         </div>
       </div>
     </div>
   );
+}
+
+function readOnlyBoolean(value: boolean): string {
+  return value ? "Ativo" : "Desativado";
 }
 
 export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JSX.Element | null {
@@ -254,200 +320,332 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
   const content = useMemo(() => {
     if (activeSection === "general") {
       return (
-        <SectionShell title="General" subtitle="Estado base desta configuração da aba Grupos.">
+        <SectionShell title="General" subtitle="Estado base da aba Groups nesta fase executavel.">
           <ToggleRow
-            label="Aba Grupos ativa"
-            hint="Mantém esta aba ativa nas definições da aplicação."
+            label="Aba Groups ativa"
+            hint="Este switch continua real e controla o gating local da aba."
             checked={draft.groupsTabEnabled}
             onChange={(next) => applyDraftPatch({ groupsTabEnabled: next })}
           />
-          <FieldRow label="Estado" hint="Resumo curto desta configuração.">
-            <div style={S.inlineValue}>{draft.groupsTabEnabled ? "Aba ativa nesta configuração" : "Aba desativada nesta configuração"}</div>
+          <FieldRow label="Versao desta fase" hint="Referencia curta do bloco funcional em uso.">
+            <div style={S.inlineValue}>{draft.groupsVersion}</div>
           </FieldRow>
+          <FieldRow label="Diagnostico rapido" hint="Resumo honesto do modo de gravacao atual.">
+            <div style={S.inlineValue}>{draft.quickDiagnostic}</div>
+          </FieldRow>
+          <InfoBlock title="Fronteira executavel desta fase">
+            <ul style={S.infoList}>
+              <li>Intermedio: IndexedDB local do add-in quando existe namespace; memoria quando nao existe.</li>
+              <li>Final: persistencia classificada via pipeline atual da app (`/api/links/*`).</li>
+              <li>Sessao/cache: seeds locais e rascunhos temporarios nao contam como gravacao final.</li>
+            </ul>
+          </InfoBlock>
         </SectionShell>
       );
     }
 
     if (activeSection === "intermediate_storage") {
       return (
-        <SectionShell title="Armazenamento intermédio" subtitle="Preferências persistidas da base intermédia, sem abrir ligação real nesta ronda.">
-          <FieldRow label="Modo de armazenamento" hint="Escolhe se a base intermédia fica ativa para OneDrive / SharePoint ou desativada.">
+        <SectionShell
+          title="Storage intermedio"
+          subtitle="Nesta fase, o intermedio e apenas a ponte local entre Preparar e Classificar."
+        >
+          <FieldRow label="Modo de storage" hint="So existe storage local do add-in ou modo desligado nesta fase.">
             <select
               style={S.select}
               value={draft.storageMode}
               onChange={(event) => applyDraftPatch({ storageMode: event.target.value as GroupsSettingsStorageMode })}
             >
-              <option value="onedrive_sharepoint">OneDrive / SharePoint</option>
-              <option value="disabled">Desativado</option>
+              {STORAGE_MODE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </FieldRow>
           <PathFieldRow
-            label="Pasta base"
-            hint="Mostra a localização base preparada para a aba Grupos."
+            label="Namespace persistente"
+            hint="Chave logica usada para namespacing do IndexedDB local. Nao e uma pasta real nem um path web."
             value={draft.baseFolderPath}
+            chooseLabel="Definir namespace"
+            showValidate={false}
+            showOpen={false}
             onChoose={() => {
-              const nextPath = promptForPath("a localização da pasta base", draft.baseFolderPath);
+              const nextPath = promptForPath("o namespace do storage intermedio", draft.baseFolderPath);
               if (nextPath == null) return;
               applyDraftPatch({ baseFolderPath: nextPath });
             }}
           />
-          <FieldRow label="Estado da ligação" hint="Resumo leve da localização configurada, sem validação real da pasta.">
+          <FieldRow label="Estado" hint="Resumo do modo intermedio realmente executavel.">
             <div style={S.inlineValue}>{draft.locationStatus}</div>
           </FieldRow>
-          <ToggleRow label="Criar caso automaticamente ao abrir email novo" hint="Prepara a abertura direta de um novo caso para a aba Grupos." checked={draft.autoCreateCaseOnNewEmail} onChange={(next) => applyDraftPatch({ autoCreateCaseOnNewEmail: next })} />
-          <ToggleRow label="Reabrir caso existente a partir da base intermédia" hint="Mantém ativa a retoma de um caso já presente na base intermédia." checked={draft.reopenExistingCase} onChange={(next) => applyDraftPatch({ reopenExistingCase: next })} />
-          <ToggleRow label="Recriar cópia intermédia quando o histórico só existir no servidor" hint="Mantém preparada uma cópia local de trabalho quando o histórico só existir no servidor." checked={draft.recreateIntermediateCopy} onChange={(next) => applyDraftPatch({ recreateIntermediateCopy: next })} />
-          <ToggleRow label="Validar a localização ao abrir a aba Grupos" hint="Guarda a preferência de validação logo ao abrir esta aba." checked={draft.validateLocationOnOpen} onChange={(next) => applyDraftPatch({ validateLocationOnOpen: next })} />
-          <ToggleRow label="Bloquear a aba Grupos se a localização não estiver acessível" hint="Mantém a preferência de bloqueio quando a localização principal não responder." checked={draft.blockTabIfUnavailable} onChange={(next) => applyDraftPatch({ blockTabIfUnavailable: next })} />
-          <ToggleRow label="Mostrar aviso se a pasta deixar de estar acessível" hint="Mostra um aviso curto se a localização configurada deixar de responder." checked={draft.warnIfUnavailable} onChange={(next) => applyDraftPatch({ warnIfUnavailable: next })} />
-          <ToggleRow label="Tentar revalidar automaticamente" hint="Guarda a preferência de nova tentativa automática após uma falha." checked={draft.autoRetryValidation} onChange={(next) => applyDraftPatch({ autoRetryValidation: next })} />
+          <InfoBlock title="O que grava de verdade">
+            <ul style={S.infoList}>
+              <li>Com namespace: `IntermediateCase` em IndexedDB local do host.</li>
+              <li>Sem namespace: fallback em memoria, sem persistencia local duravel.</li>
+              <li>Desativado: sem storage intermedio e sem promessa de retoma local.</li>
+            </ul>
+          </InfoBlock>
+          <InfoBlock tone="warning" title="Preferencias ainda nao executaveis">
+            <div style={S.inlineValue}>
+              Os toggles abaixo continuam apenas como shell herdada. Nao abrem validacao real de pasta,
+              migracao, nem bridge para OneDrive/SharePoint nesta fase.
+            </div>
+          </InfoBlock>
+          <ToggleRow
+            label="Criar caso automaticamente ao abrir email novo"
+            hint="Mantido como preferencia herdada; ainda nao muda o runtime de ponta a ponta nesta fase."
+            checked={draft.autoCreateCaseOnNewEmail}
+            disabled
+            onChange={() => undefined}
+          />
+          <ToggleRow
+            label="Reabrir caso existente"
+            hint="A reabertura real existe, mas este toggle ainda nao e o contrato executavel que a controla."
+            checked={draft.reopenExistingCase}
+            disabled
+            onChange={() => undefined}
+          />
+          <ToggleRow
+            label="Recriar copia intermedia a partir do servidor"
+            hint="Preferencia reservada; sem motor independente adicional nesta fase."
+            checked={draft.recreateIntermediateCopy}
+            disabled
+            onChange={() => undefined}
+          />
+          <ToggleRow
+            label="Validar localizacao ao abrir"
+            hint="Nao existe validacao real de pasta porque o storage intermedio nao usa pasta fisica."
+            checked={draft.validateLocationOnOpen}
+            disabled
+            onChange={() => undefined}
+          />
+          <ToggleRow
+            label="Bloquear a aba se a localizacao falhar"
+            hint="Nao existe localizacao fisica a validar; o bloqueio real continua a ser por modo/namespace."
+            checked={draft.blockTabIfUnavailable}
+            disabled
+            onChange={() => undefined}
+          />
+          <ToggleRow
+            label="Avisar indisponibilidade"
+            hint="Preferencia herdada, sem motor de monitorizacao real nesta fase."
+            checked={draft.warnIfUnavailable}
+            disabled
+            onChange={() => undefined}
+          />
+          <ToggleRow
+            label="Revalidar automaticamente"
+            hint="Nao existe ciclo automatico real de revalidacao nesta fase."
+            checked={draft.autoRetryValidation}
+            disabled
+            onChange={() => undefined}
+          />
         </SectionShell>
       );
     }
 
     if (activeSection === "attachments") {
       return (
-        <SectionShell title="Anexos" subtitle="Preferências persistidas da política de anexos, ainda sem storage final ligado.">
-          <FieldRow label="Estratégia de armazenamento" hint="Define a regra principal que a app deverá aplicar aos anexos classificados.">
-            <select
-              style={S.select}
-              value={draft.attachmentStrategy}
-              onChange={(event) => applyDraftPatch({ attachmentStrategy: event.target.value as GroupsSettingsAttachmentStrategy })}
-            >
-              <option value="server">Todos no servidor</option>
-              <option value="outside">Todos fora do servidor</option>
-              <option value="by_size">Por tamanho</option>
-            </select>
+        <SectionShell
+          title="Anexos"
+          subtitle="Politica executavel desta fase: metadata sempre, binario real apenas onde o provider atual suporta."
+        >
+          <FieldRow label="Estrategia guardada" hint="Estado atual da shell de anexos desta aba.">
+            <div style={S.inlineValue}>{ATTACHMENT_STRATEGY_LABELS[draft.attachmentStrategy]}</div>
           </FieldRow>
-          <ToggleRow label="Guardar anexos no servidor" hint="Mantém a preferência principal para anexos guardados no servidor." checked={draft.saveAttachmentsOnServer} onChange={(next) => applyDraftPatch({ saveAttachmentsOnServer: next })} />
-          <ToggleRow label="Guardar anexos fora do servidor" hint="Mantém a preferência para anexos guardados fora do servidor." checked={draft.saveAttachmentsOutsideServer} onChange={(next) => applyDraftPatch({ saveAttachmentsOutsideServer: next })} />
-          <FieldRow label="Limite para guardar no servidor (MB)" hint="Valor usado como referência para a regra por tamanho.">
-            <input style={S.input} type="number" min={1} value={draft.attachmentServerLimitMb} onChange={(event) => applyDraftPatch({ attachmentServerLimitMb: Number(event.target.value || 0) })} />
+          <FieldRow label="Limite server (MB)" hint="Limiar hoje usado para decisoes best-effort no pipeline atual.">
+            <div style={S.inlineValue}>{draft.attachmentServerLimitMb} MB</div>
           </FieldRow>
-          <FieldRow label="Limite intermédio opcional (MB)" hint="Faixa intermédia preparada para a regra por tamanho.">
-            <input style={S.input} type="number" min={1} value={draft.attachmentIntermediateLimitMb} onChange={(event) => applyDraftPatch({ attachmentIntermediateLimitMb: Number(event.target.value || 0) })} />
+          <FieldRow label="Limite intermadio (MB)" hint="Referencia guardada para a shell; nao representa um provider novo.">
+            <div style={S.inlineValue}>{draft.attachmentIntermediateLimitMb} MB</div>
           </FieldRow>
-          <PathFieldRow
-            label="Pasta externa de anexos classificados"
-            hint="Mostra a localização prevista para anexos guardados fora do servidor."
-            value={draft.externalAttachmentFolder}
-            onChoose={() => {
-              const nextPath = promptForPath("a pasta externa de anexos classificados", draft.externalAttachmentFolder);
-              if (nextPath == null) return;
-              applyDraftPatch({ externalAttachmentFolder: nextPath });
-            }}
+          <FieldRow label="Metadata no server" hint="Este comportamento continua real na persistencia final atual.">
+            <div style={S.inlineValue}>{readOnlyBoolean(draft.showAttachmentMetadataOnServer)}</div>
+          </FieldRow>
+          <InfoBlock title="Politica executavel desta fase">
+            <ul style={S.infoList}>
+              <li>Metadata de anexo sobe sempre quando o payload final inclui o anexo.</li>
+              <li>Binario real so e tentado em `cloud` ou em caminho local/sincronizado realmente acessivel.</li>
+              <li>`replaceAttachments: false` preserva anexos anteriores quando o payload e parcial.</li>
+              <li>Sem provider/path real, fica referencia e metadata; nao ha promessa falsa de escrita binaria.</li>
+            </ul>
+          </InfoBlock>
+          <InfoBlock tone="warning" title="Opcoes ainda nao executaveis nesta shell">
+            <div style={S.inlineValue}>
+              Pasta externa, preview imediato e switches detalhados abaixo continuam como configuracao herdada.
+              O destino final efetivo continua a ser decidido pelo pipeline atual da app.
+            </div>
+          </InfoBlock>
+          <ToggleRow
+            label="Guardar anexos no servidor"
+            hint="Preferencia herdada; o comportamento real e decidido pelo provider final atual."
+            checked={draft.saveAttachmentsOnServer}
+            disabled
+            onChange={() => undefined}
           />
-          <ToggleRow label="Mostrar sempre metadados de todos os anexos no servidor" hint="Mantém visível o inventário de anexos mesmo quando o ficheiro ficar fora do servidor." checked={draft.showAttachmentMetadataOnServer} onChange={(next) => applyDraftPatch({ showAttachmentMetadataOnServer: next })} />
-          <ToggleRow label="Exigir preview imediato para anexos marcados como guardados" hint="Guarda a preferência para preview imediato dos anexos assinalados." checked={draft.requireImmediatePreview} onChange={(next) => applyDraftPatch({ requireImmediatePreview: next })} />
+          <ToggleRow
+            label="Guardar anexos fora do servidor"
+            hint="Preferencia herdada; nao ativa por si so um destino novo."
+            checked={draft.saveAttachmentsOutsideServer}
+            disabled
+            onChange={() => undefined}
+          />
+          <PathFieldRow
+            label="Destino externo herdado"
+            hint="Nao e um destino oficialmente suportado por esta shell nesta fase."
+            value={draft.externalAttachmentFolder}
+            chooseLabel="Indisponivel"
+            disabled
+            onChoose={() => undefined}
+          />
+          <ToggleRow
+            label="Preview imediato"
+            hint="Abertura/preview continua dependente do host e do storage realmente disponivel."
+            checked={draft.requireImmediatePreview}
+            disabled
+            onChange={() => undefined}
+          />
         </SectionShell>
       );
     }
 
     if (activeSection === "cleanup") {
       return (
-        <SectionShell title="Limpeza" subtitle="Parâmetros persistidos de aviso e limpeza, ainda sem rotinas reais.">
-          <FieldRow label="Dias para aviso de caso misto" hint="Número de dias até aparecer o aviso de caso misto.">
-            <input style={S.input} type="number" min={1} value={draft.mixedCaseWarningDays} onChange={(event) => applyDraftPatch({ mixedCaseWarningDays: Number(event.target.value || 0) })} />
+        <SectionShell title="Limpeza" subtitle="A shell existe, mas nao abre limpeza real nesta fase.">
+          <InfoBlock tone="warning" title="Indisponivel nesta fase">
+            <div style={S.inlineValue}>
+              Nao existe rotina executavel de limpeza automatica do intermedio ou do storage final.
+              Os valores abaixo ficam apenas como referencia guardada.
+            </div>
+          </InfoBlock>
+          <FieldRow label="Dias para aviso de caso misto">
+            <div style={S.inlineValue}>{draft.mixedCaseWarningDays} dias</div>
           </FieldRow>
-          <FieldRow label="Dias para aviso de caso local abandonado" hint="Número de dias até aparecer o aviso para um caso local sem atividade.">
-            <input style={S.input} type="number" min={1} value={draft.localAbandonedWarningDays} onChange={(event) => applyDraftPatch({ localAbandonedWarningDays: Number(event.target.value || 0) })} />
+          <FieldRow label="Dias para aviso de abandono local">
+            <div style={S.inlineValue}>{draft.localAbandonedWarningDays} dias</div>
           </FieldRow>
-          <FieldRow label="Dias para limpeza de caso fechado" hint="Prazo previsto antes da limpeza de um caso fechado.">
-            <input style={S.input} type="number" min={1} value={draft.cleanupClosedCaseDays} onChange={(event) => applyDraftPatch({ cleanupClosedCaseDays: Number(event.target.value || 0) })} />
+          <FieldRow label="Dias para limpeza de caso fechado">
+            <div style={S.inlineValue}>{draft.cleanupClosedCaseDays} dias</div>
           </FieldRow>
-          <FieldRow label="Dias para limpeza de caso local abandonado" hint="Prazo previsto antes da limpeza de um caso local abandonado.">
-            <input style={S.input} type="number" min={1} value={draft.cleanupAbandonedCaseDays} onChange={(event) => applyDraftPatch({ cleanupAbandonedCaseDays: Number(event.target.value || 0) })} />
+          <FieldRow label="Dias para limpeza de abandono">
+            <div style={S.inlineValue}>{draft.cleanupAbandonedCaseDays} dias</div>
           </FieldRow>
-          <FieldRow label="Frequência da verificação" hint="Cadência prevista para esta verificação.">
-            <select style={S.select} value={draft.cleanupFrequency} onChange={(event) => applyDraftPatch({ cleanupFrequency: event.target.value as GroupsSettingsFrequency })}>
-              <option value="manual">Manual</option>
-              <option value="daily">Diária</option>
-              <option value="weekly">Semanal</option>
-            </select>
+          <FieldRow label="Frequencia">
+            <div style={S.inlineValue}>{FREQUENCY_LABELS[draft.cleanupFrequency]}</div>
           </FieldRow>
-          <ToggleRow label="Nunca apagar em silêncio casos mistos" hint="Mantém confirmação visível antes de qualquer limpeza deste tipo." checked={draft.neverDeleteMixedSilently} onChange={(next) => applyDraftPatch({ neverDeleteMixedSilently: next })} />
+          <ToggleRow
+            label="Nunca apagar casos mistos em silencio"
+            checked={draft.neverDeleteMixedSilently}
+            disabled
+            onChange={() => undefined}
+          />
         </SectionShell>
       );
     }
 
     if (activeSection === "warnings") {
       return (
-        <SectionShell title="Avisos" subtitle="Preferências persistidas de aviso, sem disparo real nesta ronda.">
-          <ToggleRow label="Avisar emails por classificar" hint="Guarda a preferência de aviso para emails ainda por classificar." checked={draft.warnUnclassifiedEmails} onChange={(next) => applyDraftPatch({ warnUnclassifiedEmails: next })} />
-          <ToggleRow label="Avisar casos mistos sem atividade" hint="Guarda a preferência de aviso para casos mistos sem atividade recente." checked={draft.warnMixedCases} onChange={(next) => applyDraftPatch({ warnMixedCases: next })} />
-          <FieldRow label="Frequência dos avisos" hint="Cadência prevista para estes avisos.">
-            <select style={S.select} value={draft.warningFrequency} onChange={(event) => applyDraftPatch({ warningFrequency: event.target.value as GroupsSettingsFrequency })}>
-              <option value="manual">Manual</option>
-              <option value="daily">Diária</option>
-              <option value="weekly">Semanal</option>
-            </select>
+        <SectionShell title="Avisos" subtitle="Avisos guardados como shell; sem motor novo nesta fase.">
+          <InfoBlock title="Estado atual">
+            <ul style={S.infoList}>
+              <li>Os avisos executaveis desta frente continuam a ser locais e leves no cockpit.</li>
+              <li>Esta shell nao liga monitorizacao separada, tarefas futuras ou processos recorrentes.</li>
+            </ul>
+          </InfoBlock>
+          <ToggleRow label="Avisar emails por classificar" checked={draft.warnUnclassifiedEmails} disabled onChange={() => undefined} />
+          <ToggleRow label="Avisar casos mistos" checked={draft.warnMixedCases} disabled onChange={() => undefined} />
+          <FieldRow label="Frequencia">
+            <div style={S.inlineValue}>{FREQUENCY_LABELS[draft.warningFrequency]}</div>
           </FieldRow>
-          <ToggleRow label="Preparar integração com futura área de tarefas" hint="Reserva esta preferência para a futura área de tarefas." checked={draft.prepareTasksBridge} onChange={(next) => applyDraftPatch({ prepareTasksBridge: next })} />
+          <ToggleRow label="Preparar ponte futura para tarefas" checked={draft.prepareTasksBridge} disabled onChange={() => undefined} />
         </SectionShell>
       );
     }
 
     if (activeSection === "migration") {
       return (
-        <SectionShell title="Migração" subtitle="Preferências persistidas de migração, sem mover dados nesta ronda.">
+        <SectionShell title="Migracao" subtitle="Nao existe migracao real de storage nesta fase.">
+          <InfoBlock tone="warning" title="Indisponivel nesta fase">
+            <div style={S.inlineValue}>
+              Como o intermedio real desta fase vive em IndexedDB local, nao existe mover/copiar pasta,
+              nem migracao de biblioteca cloud a partir desta shell.
+            </div>
+          </InfoBlock>
           <PathFieldRow
-            label="Alterar localização da base intermédia"
-            hint="Mostra o destino previsto para a base intermédia."
+            label="Destino guardado"
+            hint="Campo herdado; nao dispara migracao real."
             value={draft.migrationTarget}
-            onChoose={() => {
-              const nextPath = promptForPath("a nova localização da base intermédia", draft.migrationTarget);
-              if (nextPath == null) return;
-              applyDraftPatch({ migrationTarget: nextPath });
-            }}
+            chooseLabel="Indisponivel"
+            disabled
+            onChoose={() => undefined}
           />
-          <FieldRow label="Ao alterar localização" hint="Define como a app deve reagir antes de qualquer migração real.">
-            <select style={S.select} value={draft.migrationMode} onChange={(event) => applyDraftPatch({ migrationMode: event.target.value as GroupsSettingsMigrationMode })}>
-              <option value="always_ask">Perguntar sempre</option>
-              <option value="move">Mover quando confirmado</option>
-              <option value="copy">Criar cópia quando confirmado</option>
-            </select>
+          <FieldRow label="Modo guardado">
+            <div style={S.inlineValue}>{MIGRATION_MODE_LABELS[draft.migrationMode]}</div>
           </FieldRow>
-          <ToggleRow label="Permitir mover dados existentes" hint="Guarda a preferência para mover dados atuais quando a migração for confirmada." checked={draft.allowMoveExistingData} onChange={(next) => applyDraftPatch({ allowMoveExistingData: next })} />
-          <FieldRow label="Regra de segurança na migração" hint="Mantém esta regra ativa e só de leitura nesta shell.">
-            <div style={S.inlineValue}>{draft.strictMigrationSafety ? "Ativa (só leitura)" : "Desativada"}</div>
+          <ToggleRow label="Permitir mover dados existentes" checked={draft.allowMoveExistingData} disabled onChange={() => undefined} />
+          <FieldRow label="Seguranca estrita">
+            <div style={S.inlineValue}>{readOnlyBoolean(draft.strictMigrationSafety)}</div>
           </FieldRow>
-          <ToggleRow label="Fundir com dados já existentes na nova pasta" hint="Decide se a nova localização pode aproveitar dados já existentes." checked={draft.mergeExistingData} onChange={(next) => applyDraftPatch({ mergeExistingData: next })} />
+          <ToggleRow label="Fundir dados existentes" checked={draft.mergeExistingData} disabled onChange={() => undefined} />
         </SectionShell>
       );
     }
 
     if (activeSection === "maintenance") {
       return (
-        <SectionShell title="Manutenção" subtitle="Ações preparadas visualmente, sem execução real nesta ronda.">
-          <ActionRow label="Criar backup" hint="Prepara a criação de um backup da base intermédia." actionLabel="Criar backup" />
-          <ActionRow label="Repor backup" hint="Prepara a reposição de um backup existente." actionLabel="Repor backup" />
-          <ActionRow label="Reset da base intermédia" hint="Ação sensível, mantida apenas como botão visual." actionLabel="Reset base" tone="danger" />
-          <ActionRow label="Reset do servidor" hint="Ação sensível, sem ligação real nesta shell." actionLabel="Reset servidor" tone="danger" />
-          <ActionRow label="Reset total" hint="Ação mais sensível, mantida apenas como placeholder visual." actionLabel="Reset total" tone="danger" />
-          <ActionRow label="Refazer categorização" hint="Prepara uma revalidação de categorias numa ronda própria." actionLabel="Refazer" />
-          <ActionRow label="Revalidar dados" hint="Prepara um diagnóstico curto dos dados atuais." actionLabel="Revalidar" />
+        <SectionShell title="Manutencao" subtitle="Sem ferramentas novas de manutencao nesta fase.">
+          <InfoBlock tone="warning" title="Acoes desativadas">
+            <div style={S.inlineValue}>
+              Limpeza profunda, rebuild, verificacao de blobs e tarefas de manutencao continuam fora desta ronda.
+            </div>
+          </InfoBlock>
+          <ActionRow label="Revalidar storage intermedio" actionLabel="Indisponivel" disabled />
+          <ActionRow label="Reconstruir indices locais" actionLabel="Indisponivel" disabled />
+          <ActionRow label="Limpar dados orfaos" actionLabel="Indisponivel" tone="danger" disabled />
         </SectionShell>
       );
     }
 
     if (activeSection === "explore") {
       return (
-        <SectionShell title="Explorar" subtitle="Preferências persistidas da futura frente de Explorar, sem a abrir já.">
-          <ToggleRow label="Usar servidor como base principal do Explorador" hint="Guarda a preferência principal de base para o Explorador." checked={draft.explorerServerPrimary} onChange={(next) => applyDraftPatch({ explorerServerPrimary: next })} />
-          <ToggleRow label="Permitir abrir anexos guardados" hint="Mantém ativa a possibilidade de abrir anexos já guardados." checked={draft.explorerOpenStoredAttachments} onChange={(next) => applyDraftPatch({ explorerOpenStoredAttachments: next })} />
-          <ToggleRow label="Permitir gerar resposta e reenvio" hint="Reserva a preferência para resposta e reenvio futuros." checked={draft.explorerGenerateReply} onChange={(next) => applyDraftPatch({ explorerGenerateReply: next })} />
+        <SectionShell title="Explorar" subtitle="Mantido explicitamente fora desta fase.">
+          <InfoBlock tone="warning" title="Nao aberto nesta ronda">
+            <div style={S.inlineValue}>
+              `Explorar` e `Gestor do Grupo` continuam fora de scope. Os campos abaixo ficam apenas como
+              shell desativada para nao prometer comportamento que ainda nao existe.
+            </div>
+          </InfoBlock>
+          <ToggleRow label="Servidor como base principal" checked={draft.explorerServerPrimary} disabled onChange={() => undefined} />
+          <ToggleRow label="Abrir anexos guardados" checked={draft.explorerOpenStoredAttachments} disabled onChange={() => undefined} />
+          <ToggleRow label="Permitir gerar resposta e reenvio" checked={draft.explorerGenerateReply} disabled onChange={() => undefined} />
         </SectionShell>
       );
     }
 
     return (
-      <SectionShell title="Sobre" subtitle="Resumo curto desta janela de configuração da aba Grupos.">
-        <FieldRow label="Versão do módulo Grupos" hint="Identificador simples desta configuração.">
-          <div style={S.inlineValue}>{draft.groupsVersion}</div>
-        </FieldRow>
-        <FieldRow label="Diagnóstico rápido" hint="Resumo leve do estado atual desta área.">
-          <div style={S.inlineValue}>{draft.quickDiagnostic}</div>
-        </FieldRow>
+      <SectionShell title="Sobre" subtitle="Resumo da politica executavel de gravacao da aba Groups nesta fase.">
+        <InfoBlock title="Intermedio">
+          <ul style={S.infoList}>
+            <li>`IntermediateCase` em IndexedDB local quando existe namespace configurado.</li>
+            <li>Fallback em memoria quando nao existe namespace ou quando o modo esta desligado.</li>
+            <li>Serve para draft, continuidade de sessao e ponte Preparar - Classificar.</li>
+          </ul>
+        </InfoBlock>
+        <InfoBlock title="Final">
+          <ul style={S.infoList}>
+            <li>Persistencia final atual via pipeline `/api/links/*` da app.</li>
+            <li>Sobem email classificado, memberships, tickets e metadata de anexos.</li>
+            <li>Binario real so sobe quando o provider/path da frente atual o suporta de verdade.</li>
+          </ul>
+        </InfoBlock>
+        <InfoBlock title="Fora de scope nesta fase">
+          <ul style={S.infoList}>
+            <li>OneDrive/SharePoint por URL web como destino final.</li>
+            <li>Migracao/limpeza automatica.</li>
+            <li>Explorar, Gestor do Grupo e nova superficie funcional.</li>
+          </ul>
+        </InfoBlock>
       </SectionShell>
     );
   }, [activeSection, draft]);
@@ -455,29 +653,35 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
   if (!open) return null;
 
   return (
-    <div style={S.overlay} onClick={() => !isSaving && onClose()}>
-      <div style={S.modal} onClick={(event) => event.stopPropagation()}>
+    <div style={S.backdrop} role="presentation" onClick={() => !isSaving && onClose()}>
+      <div style={S.modal} role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <div style={S.modalHeader}>
-          <div style={S.modalTitleWrap}>
-            <div style={S.modalKicker}>Groups</div>
-            <div style={S.modalTitle}>Settings</div>
+          <div style={S.modalHeaderText}>
+            <div style={S.modalEyebrow}>Groups</div>
+            <div style={S.modalTitle}>Settings da aba Groups</div>
           </div>
           <div style={S.modalActions}>
-            <button type="button" style={S.headerButtonSecondary} onClick={onClose} disabled={isSaving}>Fechar</button>
-            <button type="button" style={isSaving ? S.headerButtonPrimaryDisabled : S.headerButtonPrimary} onClick={() => void handleSave()} disabled={isSaving}>
+            <button type="button" style={S.headerButtonSecondary} onClick={onClose} disabled={isSaving}>
+              Fechar
+            </button>
+            <button
+              type="button"
+              style={isSaving ? S.headerButtonPrimaryDisabled : S.headerButtonPrimary}
+              onClick={handleSave}
+              disabled={isSaving}
+            >
               <Icons.Save size={12} />
-              {isSaving ? "A guardar..." : "Guardar"}
+              {isSaving ? "A guardar" : "Guardar"}
             </button>
           </div>
         </div>
-
         <div style={S.modalBody}>
-          <aside style={S.sidebar}>
+          <div style={S.sidebar}>
             {SECTION_ENTRIES.map((entry) => (
               <SectionButton key={entry.id} entry={entry} active={entry.id === activeSection} onClick={() => setActiveSection(entry.id)} />
             ))}
-          </aside>
-          <main style={S.content}>{content}</main>
+          </div>
+          <div style={S.content}>{content}</div>
         </div>
       </div>
     </div>
@@ -485,44 +689,41 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
 }
 
 const S: Record<string, React.CSSProperties> = {
-  overlay: {
+  backdrop: {
     position: "fixed",
     inset: 0,
-    zIndex: 60,
-    background: "rgba(15,23,42,0.18)",
+    background: "rgba(15,23,42,0.24)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: 10,
-    boxSizing: "border-box",
+    padding: 18,
+    zIndex: 70,
   },
   modal: {
-    width: "min(720px, 100%)",
-    maxHeight: "min(680px, calc(100vh - 20px))",
+    width: "min(960px, calc(100vw - 24px))",
+    height: "min(700px, calc(100vh - 24px))",
+    borderRadius: 18,
+    overflow: "hidden",
+    background: "linear-gradient(180deg,#f8fbff 0%, #f3f7fb 100%)",
+    boxShadow: "0 24px 70px rgba(15,23,42,0.22)",
     display: "grid",
     gridTemplateRows: "auto minmax(0, 1fr)",
-    borderRadius: 18,
-    border: "1px solid rgba(148,163,184,0.22)",
-    background: "rgba(248,250,252,0.98)",
-    boxShadow: "0 18px 40px rgba(15,23,42,0.16)",
-    overflow: "hidden",
   },
   modalHeader: {
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 10,
     padding: "10px 12px",
     borderBottom: "1px solid rgba(148,163,184,0.16)",
-    background: "rgba(255,255,255,0.9)",
+    background: "rgba(255,255,255,0.82)",
   },
-  modalTitleWrap: {
+  modalHeaderText: {
     display: "grid",
     gap: 1,
-    minWidth: 0,
   },
-  modalKicker: {
-    fontSize: 8,
+  modalEyebrow: {
+    fontSize: 8.4,
     fontWeight: 700,
     textTransform: "uppercase",
     letterSpacing: "0.05em",
@@ -665,6 +866,17 @@ const S: Record<string, React.CSSProperties> = {
     border: "1px solid rgba(148,163,184,0.14)",
     background: "rgba(255,255,255,0.88)",
   },
+  rowDisabled: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(180px, 240px)",
+    gap: 10,
+    alignItems: "center",
+    padding: "7px 8px",
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.14)",
+    background: "rgba(241,245,249,0.82)",
+    opacity: 0.82,
+  },
   rowLabelWrap: {
     display: "inline-flex",
     alignItems: "center",
@@ -755,6 +967,18 @@ const S: Record<string, React.CSSProperties> = {
     justifyContent: "flex-start",
     cursor: "pointer",
   },
+  toggleDisabled: {
+    width: 31,
+    height: 18,
+    borderRadius: 999,
+    border: "1px solid rgba(148,163,184,0.22)",
+    background: "rgba(148,163,184,0.34)",
+    padding: 1,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    cursor: "not-allowed",
+  },
   toggleThumb: {
     width: 13,
     height: 13,
@@ -781,6 +1005,48 @@ const S: Record<string, React.CSSProperties> = {
     fontSize: 9,
     fontWeight: 650,
     cursor: "pointer",
+  },
+  actionButtonDisabled: {
+    borderRadius: 10,
+    border: "1px solid rgba(148,163,184,0.18)",
+    background: "rgba(241,245,249,0.88)",
+    color: "#94a3b8",
+    padding: "5px 8px",
+    fontSize: 9,
+    fontWeight: 650,
+    cursor: "not-allowed",
+  },
+  infoBlock: {
+    display: "grid",
+    gap: 6,
+    padding: "9px 10px",
+    borderRadius: 12,
+    border: "1px solid rgba(59,130,246,0.14)",
+    background: "rgba(239,246,255,0.82)",
+  },
+  infoBlockWarning: {
+    display: "grid",
+    gap: 6,
+    padding: "9px 10px",
+    borderRadius: 12,
+    border: "1px solid rgba(245,158,11,0.18)",
+    background: "rgba(255,251,235,0.94)",
+  },
+  infoBlockTitle: {
+    fontSize: 9.4,
+    fontWeight: 700,
+    color: "#243244",
+  },
+  infoBlockBody: {
+    fontSize: 9.4,
+    color: "#334155",
+    lineHeight: 1.4,
+  },
+  infoList: {
+    margin: 0,
+    paddingLeft: 16,
+    display: "grid",
+    gap: 4,
   },
 };
 

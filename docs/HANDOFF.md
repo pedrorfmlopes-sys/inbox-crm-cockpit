@@ -1,5 +1,46 @@
 # HANDOFF
 
+## Grupos v1: fecho operacional da politica executavel de gravacao alinha shell, storage intermedio e persistencia final real (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - a shell de Settings da aba `Groups` deixa de vender `OneDrive / SharePoint`, migracao, limpeza e `Explorar` como se fossem capacidades prontas nesta fase
+  - o storage intermedio desta frente fica explicitamente reduzido a:
+    - `IndexedDB` local do add-in quando existe `baseFolderPath` configurado como namespace logico
+    - memoria quando o namespace nao existe ou quando o modo esta `disabled`
+  - os settings globais de `groupStorage` passam a tratar como modos executaveis apenas:
+    - `Cockpit Cloud`
+    - `Pasta local / sincronizada`
+  - `local_device`, `hybrid` e caminhos web de OneDrive/SharePoint ficam marcados como indisponiveis nesta fase
+- **O que o codigo passa a deixar explicito**:
+  - `GroupsSettingsPanel.tsx` foi reescrito para separar:
+    - intermedio real
+    - shell herdada nao executavel
+    - fora de scope desta fase
+  - `groupsTabSettings.ts` passa a normalizar o modo intermedio canonico como `local_indexeddb | disabled` e a diagnosticar o namespace do `IndexedDB` em vez de fingir uma pasta real
+  - `GroupsPrepareCockpit.tsx` passa a mostrar `Namespace` em vez de `Localizacao`
+- **Politica executavel desta fase**:
+  - intermedio:
+    - `IntermediateCase` em `IndexedDB` local do host quando existe namespace
+    - fallback em memoria sem namespace
+  - final:
+    - persistencia classificada via `/api/links/*` e `linkStore`
+    - apply continua por email alvo e por scope
+  - sessao/cache:
+    - `prepareSession`, seeds temporarias e memoria transitiva do add-in
+    - nao contam como persistencia final
+- **Politica executavel para anexos**:
+  - metadata sobe sempre quando o payload final inclui anexos
+  - binario real so e tentado quando o provider atual o suporta de verdade:
+    - `cloud`
+    - caminho local/sincronizado/UNC real
+  - URL web de OneDrive/SharePoint continua fora do caminho suportado
+  - `replaceAttachments: false` preserva anexos anteriores em payload parcial
+- **O que ficou explicitamente fora nesta ronda**:
+  - `Explorar`
+  - `Gestor do Grupo`
+  - migracao real de storage
+  - limpeza real do intermedio
+  - backend novo grande
+
 ## Grupos v1: fecho da estrutura de escrita e armazenamento deixa explicita a fronteira entre intermadio e final (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - o `IntermediateCase` passa a ficar explicitamente fechado como camada **intermedia** de draft, continuidade de sessao, reidratacao controlada e ponte `Preparar -> Classificar`

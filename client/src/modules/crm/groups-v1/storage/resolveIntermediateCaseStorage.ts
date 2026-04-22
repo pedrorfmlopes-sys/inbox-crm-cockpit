@@ -19,7 +19,7 @@ export function resolveIntermediateCaseStorage(settings: GroupsTabSettings): Res
       repository: createIntermediateCaseRepository(adapter),
       mode: "memory",
       availability: "disabled",
-      reason: "Storage intermédio desligado nos Settings.",
+      reason: "Storage intermedio desligado nos Settings da aba Groups.",
     };
   }
 
@@ -31,7 +31,7 @@ export function resolveIntermediateCaseStorage(settings: GroupsTabSettings): Res
       repository: createIntermediateCaseRepository(adapter),
       mode: "memory",
       availability: "missing_location",
-      reason: "Sem bridge real para a localização escolhida; fallback transitório em memória até existir integração de pasta/OneDrive.",
+      reason: "Sem namespace configurado para o IndexedDB local; o caso intermedio fica apenas em memoria nesta fase.",
     };
   }
 
@@ -42,6 +42,6 @@ export function resolveIntermediateCaseStorage(settings: GroupsTabSettings): Res
     mode: "indexeddb",
     availability: "ready",
     namespace,
-    reason: "Storage intermédio real suportado nesta ronda via IndexedDB do host, namespaced pela localização configurada.",
+    reason: "Storage intermedio real desta fase via IndexedDB local do host, namespaced pela chave configurada.",
   };
 }
