@@ -713,12 +713,22 @@ function StudioInner() {
     if (!incomingEmail) return;
     mergeEmailsIntoClassificationCase([incomingEmail]);
   }, [mergeEmailsIntoClassificationCase]);
+  function getEmailGroupRelations(email: RelatedEmailEntry | null) {
+    if (!email) return [];
+    const list = [
+      ...(email.relatedGroups || []),
+      ...(email.groupId ? [{ id: email.groupId, name: email.groupName, relationKind: email.membershipKind }] : []),
+    ];
+    return list.reduce<Array<{ id: string; name?: string; relationKind?: string }>>((acc, row) => {
+      if (!row?.id || acc.some((entry) => entry.id === row.id)) return acc;
+      const groupKind = String((row as any)?.kind || groupMap.get(row.id)?.kind || "").trim().toLowerCase();
+      if (groupKind === "conversation") return acc;
+      acc.push(row);
+      return acc;
+    }, []);
+  }
 
-  useEffect(() => {
-    selectedEmailRef.current = selectedEmail;
-  }, [selectedEmail]);
-
-  const rehydrateClassificationEditorFromCaseEmail = useCallback((email: RelatedEmailEntry | null) => {
+  function rehydrateClassificationEditorFromCaseEmail(email: RelatedEmailEntry | null) {
     if (!email) return;
     const principalGroupId = normalizeComparableString(email.groupId || email.classificationMeta?.principalGroupId);
     const relationGroups = getEmailGroupRelations(email);
@@ -778,13 +788,7 @@ function StudioInner() {
       createTicketTitle,
       selectionTouched: nextSelectionTouched,
     };
-  }, [
-    classificationMetaDraft,
-    createTicketTitle,
-    getEmailGroupRelations,
-    labelCatalogEntries,
-    ticketStatusDraft,
-  ]);
+  }
   const syncClassificationCaseEmails = useCallback((nextCaseValue: IntermediateCase, options?: {
     preferredSelectedEmailKey?: string;
     preferredTargetEmailKeys?: string[];
@@ -1251,6 +1255,9 @@ function StudioInner() {
       || null,
     [classificationAnchorEmail, emailPool, selectedEmailKey, visibleEmails]
   );
+  useEffect(() => {
+    selectedEmailRef.current = selectedEmail;
+  }, [selectedEmail]);
   const selectedEmailInRelatedContext = useMemo(
     () => Boolean(selectedEmail && classificationContextEmails.some((email) => makeEmailKey(email) === makeEmailKey(selectedEmail))),
     [classificationContextEmails, selectedEmail]
@@ -1260,24 +1267,9 @@ function StudioInner() {
     return isCurrentContextEmail(selectedEmail || {}, currentContext);
   }, [currentContext, selectedEmail]);
 
-  const getEmailGroupRelations = useCallback((email: RelatedEmailEntry | null) => {
-    if (!email) return [];
-    const list = [
-      ...(email.relatedGroups || []),
-      ...(email.groupId ? [{ id: email.groupId, name: email.groupName, relationKind: email.membershipKind }] : []),
-    ];
-    return list.reduce<Array<{ id: string; name?: string; relationKind?: string }>>((acc, row) => {
-      if (!row?.id || acc.some((entry) => entry.id === row.id)) return acc;
-      const groupKind = String((row as any)?.kind || groupMap.get(row.id)?.kind || "").trim().toLowerCase();
-      if (groupKind === "conversation") return acc;
-      acc.push(row);
-      return acc;
-    }, []);
-  }, [groupMap]);
-
   const selectedEmailGroups = useMemo(() => {
     return getEmailGroupRelations(selectedEmail);
-  }, [getEmailGroupRelations, selectedEmail]);
+  }, [groupMap, selectedEmail]);
 
   const canonicalGroupSelection = useMemo(() => {
     const principalGroupId = normalizeComparableString(selectedEmail?.groupId || selectedEmail?.classificationMeta?.principalGroupId);
@@ -1289,7 +1281,7 @@ function StudioInner() {
       principalGroupId,
       referenceGroupIds,
     });
-  }, [getEmailGroupRelations, selectedEmail]);
+  }, [groupMap, selectedEmail]);
   const effectivePrincipalGroupId = useMemo(
     () => normalizeComparableString(selectionTouched.principal ? principalGroupId : (canonicalGroupSelection.principalGroupId || principalGroupId)),
     [canonicalGroupSelection.principalGroupId, principalGroupId, selectionTouched.principal]
@@ -2292,7 +2284,7 @@ function StudioInner() {
       selectedLabels,
       inheritedLabels,
       selectedLabelStates,
-      categorizedLabelNames: categorizableLabels,
+      categorizedLabelNames: summaryLabels.filter((label) => labelDrafts[label]?.categorize === true),
       selectedTicketId,
       selectedSeriesId,
       selectedTicket,
@@ -2304,11 +2296,11 @@ function StudioInner() {
       existingSelectedEmailStatus: selectedEmail?.status,
     }),
     [
-      categorizableLabels,
       classificationMetaDraft,
       effectivePrincipalGroupId,
       effectiveReferenceGroupIds,
       inheritedLabels,
+      labelDrafts,
       principalGroup,
       referenceGroups,
       selectedEmail?.status,
@@ -2320,6 +2312,7 @@ function StudioInner() {
       selectedSeriesId,
       selectedTicket,
       selectedTicketId,
+      summaryLabels,
       ticketStatusDraft,
     ]
   );

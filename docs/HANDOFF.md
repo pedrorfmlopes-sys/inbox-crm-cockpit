@@ -1563,3 +1563,38 @@
   - `picker/path real`: fechado
   - `OneDrive/SharePoint por URL web`: nao fechado
   - enquanto URL web se mantiver requisito obrigatorio, a fundacao ainda nao pode ser dada como totalmente encerrada
+
+## Pre-verificacao antes de promover `codex/groups-v1-host-auth-stability` para `main` (Abril 2026)
+- **Sweep curto do caminho ativo**:
+  - no caminho real de arranque + `Groups` + settings de `Groups` ja nao ficam usos ativos de `window.prompt`, `window.alert` ou `window.confirm`
+  - os usos restantes encontrados no repo ficam fora desta frente e fora do caminho minimo validado
+- **Auth/startup**:
+  - `/api/auth/check` sem sessao continua alinhado com o contrato `200 { ok:true, authenticated:false, reason:"no_session" }`
+  - `CockpitProvider` continua a distinguir ausencia normal de sessao de erro real
+- **Blocker real encontrado no smoke minimo**:
+  - `GroupClassificationStudioApp.tsx` ainda tinha uma cadeia de TDZ no arranque do studio
+  - causas confirmadas nesta ronda:
+    - `selectedEmailRef.current = selectedEmail` antes da declaracao de `selectedEmail`
+    - dependencia prematura entre `rehydrateClassificationEditorFromCaseEmail` e `getEmailGroupRelations`
+    - uso prematuro de labels derivadas (`categorizableLabels`) na construcao do bloco de apply
+  - correcoes feitas nesta ronda:
+    - sincronizacao de `selectedEmailRef` movida para depois da inicializacao de `selectedEmail`
+    - `getEmailGroupRelations` simplificado para helper local sem dependencia prematura de hook
+    - `categorizedLabelNames` no resolved apply deixou de depender da inicializacao adiantada de `categorizableLabels`
+  - **estado final desta pre-verificacao**:
+    - o studio continua **nao pronto** para promover para `main`
+    - permanece um blocker do mesmo tipo no arranque de `Classificar`: `ReferenceError: Cannot access 'inheritedLabels' before initialization`
+    - isto prova que ainda existe pelo menos mais uma dependencia cruzada/ordem de inicializacao errada em `GroupClassificationStudioApp.tsx`, pelo que a branch nao deve ser promovida sem fechar essa cadeia primeiro
+- **Validacao desta pre-verificacao**:
+  - browser/Playwright:
+    - app arranca
+    - `Groups` abre
+    - settings de `Groups` abrem
+    - editor inline abre e fecha sem APIs modais incompatíveis
+    - regressar ao taskpane principal e voltar a `Groups` nao rebenta o painel
+    - `group-classification-studio` continua a falhar no arranque com TDZ residual (`inheritedLabels`)
+  - tecnico:
+    - `npm.cmd -w client exec -- eslint src/modules/crm/GroupClassificationStudioApp.tsx src/modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx src/components/shell/CockpitProvider.tsx src/api.ts`
+    - `node --check server/src/index.js`
+    - `npm.cmd -w client run build`
+    - `git diff --check`
