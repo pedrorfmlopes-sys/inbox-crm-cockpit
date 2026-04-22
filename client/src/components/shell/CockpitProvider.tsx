@@ -140,6 +140,17 @@ const WARM_BOOT_MAX_AGE_MS = 10 * 60 * 1000;
 const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
 const LINKS_CACHE_MESSAGE_PREFIX = "iccc_links_cache_msg_v1:";
 const LINKS_CACHE_ITEM_PREFIX = "iccc_links_cache_item_v1:";
+const AI_CACHE_STORAGE_KEY = "iccc_ai_cache_v1";
+const AI_CACHE_MAX_CONVERSATIONS = 6;
+const AI_CACHE_MAX_PROMPT_CHARS = 2000;
+const AI_CACHE_MAX_OUTPUT_CHARS = 6000;
+const AI_CACHE_MAX_HISTORY_ITEMS = 12;
+const AI_CACHE_MAX_HISTORY_CHARS = 1000;
+const AI_CACHE_MAX_SMART_REPLIES = 6;
+const AI_CACHE_MAX_SMART_REPLY_CHARS = 300;
+const AI_CACHE_MAX_RECIPIENTS = 8;
+const AI_CACHE_MAX_SUBJECT_CHARS = 500;
+const AI_CACHE_MAX_TOTAL_CHARS = 120_000;
 const INITIAL_EMAIL_INGESTION_STATUS: EmailIngestionStatus = {
     identity: "",
     tone: "red",
@@ -157,6 +168,152 @@ const STARTUP_CHECK_BLUEPRINT: Array<{ id: StartupCheckId; label: string; detail
 
 function createStartupChecks(): StartupCheck[] {
     return STARTUP_CHECK_BLUEPRINT.map((check) => ({ ...check, status: "pending" as StartupCheckStatus }));
+}
+
+function createEmptyAiState(): AiState {
+    return {
+        prompt: "",
+        output: "",
+        tone: "neutro",
+        locale: "auto",
+        history: [],
+        smartReplies: [],
+        action: "reply",
+        suggestedTo: [],
+        suggestedCc: [],
+        suggestedSubject: "",
+    };
+}
+
+function trimPersistedText(value: string | undefined, maxChars: number): string {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (raw.length <= maxChars) return raw;
+    return raw.slice(0, maxChars).trimEnd();
+}
+
+function trimPersistedStringArray(values: string[] | undefined, maxItems: number, maxChars: number): string[] {
+    return Array.isArray(values)
+        ? values
+            .map((value) => trimPersistedText(value, maxChars))
+            .filter(Boolean)
+            .slice(-maxItems)
+        : [];
+}
+
+function normalizePersistedAiState(state: Partial<AiState> | null | undefined, compact = false): AiState {
+    const historyItemLimit = compact ? Math.min(6, AI_CACHE_MAX_HISTORY_ITEMS) : AI_CACHE_MAX_HISTORY_ITEMS;
+    const historyCharLimit = compact ? Math.min(400, AI_CACHE_MAX_HISTORY_CHARS) : AI_CACHE_MAX_HISTORY_CHARS;
+    const smartReplyLimit = compact ? Math.min(3, AI_CACHE_MAX_SMART_REPLIES) : AI_CACHE_MAX_SMART_REPLIES;
+    const smartReplyCharLimit = compact ? Math.min(180, AI_CACHE_MAX_SMART_REPLY_CHARS) : AI_CACHE_MAX_SMART_REPLY_CHARS;
+    const promptLimit = compact ? Math.min(1000, AI_CACHE_MAX_PROMPT_CHARS) : AI_CACHE_MAX_PROMPT_CHARS;
+    const outputLimit = compact ? Math.min(2500, AI_CACHE_MAX_OUTPUT_CHARS) : AI_CACHE_MAX_OUTPUT_CHARS;
+
+    return {
+        prompt: trimPersistedText(state?.prompt, promptLimit),
+        output: trimPersistedText(state?.output, outputLimit),
+        tone: state?.tone || "neutro",
+        locale: state?.locale || "auto",
+        history: Array.isArray(state?.history)
+            ? state.history
+                .filter((entry) => entry && (entry.role === "user" || entry.role === "assistant"))
+                .slice(-historyItemLimit)
+                .map((entry) => ({
+                    role: entry.role,
+                    content: trimPersistedText(entry.content, historyCharLimit),
+                }))
+                .filter((entry) => entry.content)
+            : [],
+        smartReplies: trimPersistedStringArray(state?.smartReplies, smartReplyLimit, smartReplyCharLimit),
+        action: trimPersistedText(state?.action, 80) || "reply",
+        suggestedTo: trimPersistedStringArray(state?.suggestedTo, AI_CACHE_MAX_RECIPIENTS, 160),
+        suggestedCc: trimPersistedStringArray(state?.suggestedCc, AI_CACHE_MAX_RECIPIENTS, 160),
+        suggestedSubject: trimPersistedText(state?.suggestedSubject, AI_CACHE_MAX_SUBJECT_CHARS),
+    };
+}
+
+function normalizeAiCacheForPersistence(
+    cache: Record<string, AiState> | null | undefined,
+    compact = false
+): Record<string, AiState> {
+    const entries = Object.entries(cache || {})
+        .map(([conversationId, state]) => [String(conversationId || "").trim(), normalizePersistedAiState(state, compact)] as const)
+        .filter(([conversationId]) => conversationId)
+        .slice(-AI_CACHE_MAX_CONVERSATIONS);
+    return Object.fromEntries(entries);
+}
+
+function serializeAiCacheForPersistence(cache: Record<string, AiState>): string {
+    const fullSnapshot = normalizeAiCacheForPersistence(cache, false);
+    const fullJson = JSON.stringify(fullSnapshot);
+    if (fullJson.length <= AI_CACHE_MAX_TOTAL_CHARS) return fullJson;
+
+    const compactSnapshot = normalizeAiCacheForPersistence(cache, true);
+    const compactEntries = Object.entries(compactSnapshot);
+    while (compactEntries.length > 1) {
+        const nextJson = JSON.stringify(Object.fromEntries(compactEntries));
+        if (nextJson.length <= AI_CACHE_MAX_TOTAL_CHARS) return nextJson;
+        compactEntries.shift();
+    }
+
+    return JSON.stringify(Object.fromEntries(compactEntries));
+}
+
+function readPersistedAiCache(): Record<string, AiState> {
+    try {
+        const saved = localStorage.getItem(AI_CACHE_STORAGE_KEY);
+        if (!saved) return {};
+        const parsed = JSON.parse(saved);
+        if (!parsed || typeof parsed !== "object") return {};
+        return normalizeAiCacheForPersistence(parsed as Record<string, AiState>);
+    } catch {
+        return {};
+    }
+}
+
+function isQuotaExceededStorageError(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false;
+    const candidate = error as { name?: string; code?: number; message?: string };
+    return candidate.name === "QuotaExceededError"
+        || candidate.code === 22
+        || /quota/i.test(String(candidate.message || ""));
+}
+
+function persistAiCacheSnapshot(cache: Record<string, AiState>) {
+    const normalizedCache = normalizeAiCacheForPersistence(cache);
+    if (!Object.keys(normalizedCache).length) {
+        localStorage.removeItem(AI_CACHE_STORAGE_KEY);
+        return;
+    }
+
+    try {
+        localStorage.setItem(AI_CACHE_STORAGE_KEY, serializeAiCacheForPersistence(normalizedCache));
+        return;
+    } catch (error) {
+        if (!isQuotaExceededStorageError(error)) throw error;
+    }
+
+    const compactCache = normalizeAiCacheForPersistence(cache, true);
+    if (!Object.keys(compactCache).length) {
+        localStorage.removeItem(AI_CACHE_STORAGE_KEY);
+        return;
+    }
+
+    try {
+        localStorage.setItem(AI_CACHE_STORAGE_KEY, serializeAiCacheForPersistence(compactCache));
+    } catch (error) {
+        if (!isQuotaExceededStorageError(error)) throw error;
+        localStorage.removeItem(AI_CACHE_STORAGE_KEY);
+        throw error;
+    }
+}
+
+function upsertAiCacheEntry(cache: Record<string, AiState>, conversationId: string, nextState: AiState): Record<string, AiState> {
+    const normalizedConversationId = String(conversationId || "").trim();
+    if (!normalizedConversationId) return cache;
+    const nextEntries = Object.entries(cache || {}).filter(([key]) => key !== normalizedConversationId);
+    nextEntries.push([normalizedConversationId, nextState]);
+    return Object.fromEntries(nextEntries.slice(-AI_CACHE_MAX_CONVERSATIONS));
 }
 
 function isSettingsPanelSection(value: string | null): value is SettingsPanelSection {
@@ -531,34 +688,24 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }, []);
 
     // AI History Persistence
+    const aiCacheRef = useRef<Record<string, AiState>>({});
     const [aiCache, setAiCache] = useState<Record<string, AiState>>(() => {
-        try {
-            const saved = localStorage.getItem("iccc_ai_cache_v1");
-            return saved ? JSON.parse(saved) : {};
-        } catch { return {}; }
+        const persisted = readPersistedAiCache();
+        aiCacheRef.current = persisted;
+        return persisted;
     });
 
     // Save AI cache whenever it changes
     useEffect(() => {
         try {
-            localStorage.setItem("iccc_ai_cache_v1", JSON.stringify(aiCache));
+            aiCacheRef.current = aiCache;
+            persistAiCacheSnapshot(aiCache);
         } catch (e) {
             clientLog("error", "[Cockpit] Failed to save AI cache to localStorage", e);
         }
     }, [aiCache]);
 
-    const [currentAiState, setCurrentAiState] = useState<AiState>({
-        prompt: "",
-        output: "",
-        tone: "neutro",
-        locale: "auto",
-        history: [],
-        smartReplies: [],
-        action: "reply",
-        suggestedTo: [],
-        suggestedCc: [],
-        suggestedSubject: "",
-    });
+    const [currentAiState, setCurrentAiState] = useState<AiState>(createEmptyAiState);
 
     const ctxLoadSeqRef = useRef(0);
     const lastItemTokenRef = useRef<string>("");
@@ -1005,17 +1152,10 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
 
             if (c.conversationId) {
-                setAiCache(prev => {
-                    const cached = prev[c.conversationId!];
-                    if (cached) {
-                        setCurrentAiState(cached);
-                    } else {
-                        setCurrentAiState({
-                            prompt: "", output: "", tone: "neutro", locale: "auto", history: [], smartReplies: [], action: "reply", suggestedTo: [], suggestedCc: [], suggestedSubject: "",
-                        });
-                    }
-                    return prev;
-                });
+                const cached = aiCacheRef.current[c.conversationId];
+                setCurrentAiState(cached ? normalizePersistedAiState(cached) : createEmptyAiState());
+            } else {
+                setCurrentAiState(createEmptyAiState());
             }
 
             clientLog("info", `[Cockpit] ctx updated (${reason || 'unknown'}) conversationId=${c.conversationId || ''}`);
@@ -1539,10 +1679,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (!ctx.conversationId) return;
         setCurrentAiState(prev => {
             const newState = { ...prev, ...update };
-            setAiCache(cache => ({
-                ...cache,
-                [ctx.conversationId!]: newState
-            }));
+            setAiCache((cache) => upsertAiCacheEntry(cache, ctx.conversationId!, newState));
             return newState;
         });
     };

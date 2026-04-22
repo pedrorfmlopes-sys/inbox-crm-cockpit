@@ -1,5 +1,32 @@
 # HANDOFF
 
+## Hotfix de estabilizacao da publicacao: aba Groups + quota da cache IA (Abril 2026)
+- **Causa raiz do branco na aba Groups**:
+  - `GroupsPrepareCockpit` usava `intermediateCaseBinarySources` num `useEffect` antes da propria declaracao do `useMemo`
+  - isto criava uma TDZ real em runtime (`Cannot access 'intermediateCaseBinarySources' before initialization`) e deixava a tab totalmente branca ao abrir `Grupos`
+- **Correcao aplicada**:
+  - `intermediateCaseBinarySources` passa a ser resolvido antes do efeito que persiste `prepareIntermediateCase`
+  - a tab `Grupos` volta a abrir sem erro fatal de inicializacao
+- **Erro adicional do mesmo release encontrado e corrigido**:
+  - `makeEmailKey(...)` em `GroupsPrepareCockpit` devolvia `|||` quando nao havia identidade suficiente do email
+  - isso fazia a tab tentar ler o workset `groups_v1_workset:|||` e gerar 404 no arranque sem ancora real
+  - a fallback key agora so e construida quando existe pelo menos um segmento util; caso contrario devolve string vazia
+- **Causa raiz da quota em `iccc_ai_cache_v1`**:
+  - `CockpitProvider` serializava o objeto completo `aiCache` para `localStorage` em cada alteracao, sem limites por conversa, sem poda de historico e sem teto total de payload
+  - isto fazia o release rebentar quota quando havia outputs/historicos grandes acumulados
+- **Correcao aplicada na cache IA**:
+  - leitura passa a normalizar e podar o cache persistido
+  - escrita passa a limitar numero de conversas, tamanho de `prompt`/`output`, historico, smart replies, recipients e tamanho total do JSON persistido
+  - em quota pressure, a persistencia tenta uma versao compacta antes de remover a chave e falhar de forma controlada
+- **Validacao objetiva desta ronda**:
+  - reproduzido o branco da aba `Grupos` em browser local antes da correcao
+  - confirmada a abertura da tab `Grupos` sem fatal error apos a correcao
+  - injectado payload artificialmente grande em `iccc_ai_cache_v1` (~429 KB) e confirmado re-shrink automatico para ~23 KB apos reload, sem erros de consola
+- **Fora de scope mantido**:
+  - sem novas features
+  - sem redesign
+  - sem refactor estrutural grande do apply/storage
+
 ## Grupos v1: fundacao sem Graph/admin fica finalmente fechada, com URL web explicitamente fora do runtime executavel (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - o perimetro desta frente passa a ser explicitamente **sem Graph e sem permissoes admin**

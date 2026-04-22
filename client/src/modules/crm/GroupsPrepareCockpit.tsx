@@ -94,17 +94,20 @@ function normalizeMessageId(value: string | undefined): string {
 
 function makeEmailKey(email: Partial<RelatedEmailEntry | RelevantEmailPayload>): string {
   const candidate = email as EmailKeyCandidate;
-  return (
+  const explicitKey = (
     String(candidate.emailKey || "").trim()
     || String(email?.itemId || "").trim()
     || normalizeMessageId(email?.internetMessageId)
-    || [
-      String(email?.conversationId || "").trim(),
-      String(email?.subject || "").trim().toLowerCase(),
-      String(email?.fromEmail || "").trim().toLowerCase(),
-      String(candidate.messageDateIso || candidate.receivedAtIso || "").trim(),
-    ].join("|")
   );
+  if (explicitKey) return explicitKey;
+
+  const fallbackParts = [
+    String(email?.conversationId || "").trim(),
+    String(email?.subject || "").trim().toLowerCase(),
+    String(email?.fromEmail || "").trim().toLowerCase(),
+    String(candidate.messageDateIso || candidate.receivedAtIso || "").trim(),
+  ];
+  return fallbackParts.some(Boolean) ? fallbackParts.join("|") : "";
 }
 
 function formatDate(value: string | undefined): string {
@@ -1346,23 +1349,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
     if (preferredGroup) setWorkingGroupQuery(preferredGroup.name);
   }, [currentEmailKey, currentPrincipalGroup, groups, groupsAccessLimited, preferredWorkingGroupId, sessionReady, workingGroupId]);
 
-  useEffect(() => {
-    if (!prepareIntermediateCase) return;
-    void (async () => {
-      await intermediateCaseStorage.repository.writeCase(prepareIntermediateCase);
-      await persistIntermediateCaseAttachmentBinaries({
-        adapter: intermediateCaseStorage.adapter,
-        caseValue: prepareIntermediateCase,
-        binarySources: intermediateCaseBinarySources,
-      });
-    })();
-  }, [intermediateCaseBinarySources, intermediateCaseStorage, prepareIntermediateCase]);
-
-  const casePrepareEmails = useMemo(
-    () => (prepareIntermediateCase?.emails || []).map((email) => mapIntermediateEmailToRelatedEmailEntry(email)),
-    [prepareIntermediateCase]
-  );
-
   const intermediateCaseBinarySources = useMemo(
     () =>
       !currentCaseId
@@ -1382,6 +1368,23 @@ export const GroupsPrepareCockpit: React.FC = () => {
             });
           }),
     [currentCaseId, rawCaseCandidateEmails]
+  );
+
+  useEffect(() => {
+    if (!prepareIntermediateCase) return;
+    void (async () => {
+      await intermediateCaseStorage.repository.writeCase(prepareIntermediateCase);
+      await persistIntermediateCaseAttachmentBinaries({
+        adapter: intermediateCaseStorage.adapter,
+        caseValue: prepareIntermediateCase,
+        binarySources: intermediateCaseBinarySources,
+      });
+    })();
+  }, [intermediateCaseBinarySources, intermediateCaseStorage, prepareIntermediateCase]);
+
+  const casePrepareEmails = useMemo(
+    () => (prepareIntermediateCase?.emails || []).map((email) => mapIntermediateEmailToRelatedEmailEntry(email)),
+    [prepareIntermediateCase]
   );
 
   const activePrepareEmails = useMemo(
