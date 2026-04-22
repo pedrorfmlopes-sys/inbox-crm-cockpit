@@ -1989,9 +1989,9 @@ app.get("/api/links/groups/worksets/:worksetKey", async (req, res) => {
       },
     });
     if (!manifest) {
-      return res.status(404).json({ ok: false, error: "group_workset_not_found" });
+      return res.json({ ok: true, exists: false, manifest: null });
     }
-    return res.json({ ok: true, manifest });
+    return res.json({ ok: true, exists: true, manifest });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_workset_load_failed", details: String(e?.message || e) });

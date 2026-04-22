@@ -87,14 +87,28 @@ function promptForPath(label: string, currentValue: string): string | null {
 function SectionButton({
   entry,
   active,
+  compact = false,
   onClick,
 }: {
   entry: SectionEntry;
   active: boolean;
+  compact?: boolean;
   onClick: () => void;
 }) {
   return (
-    <button type="button" style={active ? S.sidebarButtonActive : S.sidebarButton} onClick={onClick}>
+    <button
+      type="button"
+      style={
+        active
+          ? compact
+            ? { ...S.sidebarButtonActive, ...S.sidebarButtonCompactActive }
+            : S.sidebarButtonActive
+          : compact
+            ? { ...S.sidebarButton, ...S.sidebarButtonCompact }
+            : S.sidebarButton
+      }
+      onClick={onClick}
+    >
       <span style={S.sidebarIcon}>{entry.icon}</span>
       <span style={S.sidebarLabel}>{entry.label}</span>
     </button>
@@ -259,6 +273,31 @@ function PathFieldRow({
   );
 }
 
+function ActionRow({
+  label,
+  actionLabel,
+  tone = "neutral",
+  disabled = false,
+}: {
+  label: string;
+  actionLabel: string;
+  tone?: "neutral" | "danger";
+  disabled?: boolean;
+}) {
+  return (
+    <div style={disabled ? S.rowDisabled : S.row}>
+      <div style={S.rowLabelWrap}>
+        <span style={S.rowLabel}>{label}</span>
+      </div>
+      <div style={S.rowControl}>
+        <div style={S.pathActions}>
+          <ActionButton label={actionLabel} tone={tone} disabled={disabled} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function readOnlyBoolean(value: boolean): string {
   return value ? "Ativo" : "Desativado";
 }
@@ -269,6 +308,7 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
   const [isSaving, setIsSaving] = useState(false);
   const [maintenanceMessage, setMaintenanceMessage] = useState("");
   const [maintenanceError, setMaintenanceError] = useState("");
+  const [isCompactLayout, setIsCompactLayout] = useState(false);
 
   const applyDraftPatch = (patch: Partial<GroupsTabSettings>) => {
     setDraft((current) => normalizeGroupsTabSettings({ ...current, ...patch }));
@@ -291,6 +331,14 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isSaving, onClose, open]);
+
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return;
+    const syncLayoutMode = () => setIsCompactLayout(window.innerWidth <= 760);
+    syncLayoutMode();
+    window.addEventListener("resize", syncLayoutMode);
+    return () => window.removeEventListener("resize", syncLayoutMode);
+  }, [open]);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -723,13 +771,18 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
 
   return (
     <div style={S.backdrop} role="presentation" onClick={() => !isSaving && onClose()}>
-      <div style={S.modal} role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-        <div style={S.modalHeader}>
+      <div
+        style={isCompactLayout ? { ...S.modal, ...S.modalCompact } : S.modal}
+        role="dialog"
+        aria-modal="true"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div style={isCompactLayout ? { ...S.modalHeader, ...S.modalHeaderCompact } : S.modalHeader}>
           <div style={S.modalHeaderText}>
             <div style={S.modalEyebrow}>Groups</div>
             <div style={S.modalTitle}>Settings da aba Groups</div>
           </div>
-          <div style={S.modalActions}>
+          <div style={isCompactLayout ? { ...S.modalActions, ...S.modalActionsCompact } : S.modalActions}>
             <button type="button" style={S.headerButtonSecondary} onClick={onClose} disabled={isSaving}>
               Fechar
             </button>
@@ -744,13 +797,19 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
             </button>
           </div>
         </div>
-        <div style={S.modalBody}>
-          <div style={S.sidebar}>
+        <div style={isCompactLayout ? { ...S.modalBody, ...S.modalBodyCompact } : S.modalBody}>
+          <div style={isCompactLayout ? { ...S.sidebar, ...S.sidebarCompact } : S.sidebar}>
             {SECTION_ENTRIES.map((entry) => (
-              <SectionButton key={entry.id} entry={entry} active={entry.id === activeSection} onClick={() => setActiveSection(entry.id)} />
+              <SectionButton
+                key={entry.id}
+                entry={entry}
+                active={entry.id === activeSection}
+                compact={isCompactLayout}
+                onClick={() => setActiveSection(entry.id)}
+              />
             ))}
           </div>
-          <div style={S.content}>{content}</div>
+          <div style={isCompactLayout ? { ...S.content, ...S.contentCompact } : S.content}>{content}</div>
         </div>
         {maintenanceMessage ? (
           <div style={{ ...S.infoBlock, margin: "0 10px 10px" }}>
@@ -790,6 +849,11 @@ const S: Record<string, React.CSSProperties> = {
     display: "grid",
     gridTemplateRows: "auto minmax(0, 1fr)",
   },
+  modalCompact: {
+    width: "min(420px, calc(100vw - 12px))",
+    height: "min(760px, calc(100vh - 12px))",
+    borderRadius: 16,
+  },
   modalHeader: {
     display: "flex",
     alignItems: "center",
@@ -798,6 +862,10 @@ const S: Record<string, React.CSSProperties> = {
     padding: "10px 12px",
     borderBottom: "1px solid rgba(148,163,184,0.16)",
     background: "rgba(255,255,255,0.82)",
+  },
+  modalHeaderCompact: {
+    alignItems: "stretch",
+    flexDirection: "column",
   },
   modalHeaderText: {
     display: "grid",
@@ -821,6 +889,10 @@ const S: Record<string, React.CSSProperties> = {
     gap: 6,
     flexWrap: "wrap",
     justifyContent: "flex-end",
+  },
+  modalActionsCompact: {
+    width: "100%",
+    justifyContent: "flex-start",
   },
   headerButtonSecondary: {
     borderRadius: 11,
@@ -863,6 +935,10 @@ const S: Record<string, React.CSSProperties> = {
     gridTemplateColumns: "168px minmax(0, 1fr)",
     minHeight: 0,
   },
+  modalBodyCompact: {
+    gridTemplateColumns: "minmax(0, 1fr)",
+    gridTemplateRows: "auto minmax(0, 1fr)",
+  },
   sidebar: {
     display: "grid",
     alignContent: "start",
@@ -871,6 +947,15 @@ const S: Record<string, React.CSSProperties> = {
     borderRight: "1px solid rgba(148,163,184,0.16)",
     background: "rgba(255,255,255,0.72)",
     overflowY: "auto",
+  },
+  sidebarCompact: {
+    display: "flex",
+    gap: 6,
+    padding: "8px 8px 6px",
+    borderRight: "none",
+    borderBottom: "1px solid rgba(148,163,184,0.16)",
+    overflowX: "auto",
+    overflowY: "hidden",
   },
   sidebarButton: {
     width: "100%",
@@ -900,6 +985,16 @@ const S: Record<string, React.CSSProperties> = {
     color: "#1e3a5f",
     textAlign: "left",
   },
+  sidebarButtonCompact: {
+    width: "auto",
+    minWidth: 120,
+    padding: "8px 10px",
+  },
+  sidebarButtonCompactActive: {
+    width: "auto",
+    minWidth: 120,
+    padding: "8px 10px",
+  },
   sidebarIcon: {
     display: "inline-flex",
     alignItems: "center",
@@ -914,6 +1009,9 @@ const S: Record<string, React.CSSProperties> = {
     minWidth: 0,
     overflowY: "auto",
     padding: 10,
+  },
+  contentCompact: {
+    padding: 8,
   },
   sectionShell: {
     display: "grid",
@@ -939,9 +1037,9 @@ const S: Record<string, React.CSSProperties> = {
   },
   row: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(180px, 240px)",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: 10,
-    alignItems: "center",
+    alignItems: "start",
     padding: "7px 8px",
     borderRadius: 12,
     border: "1px solid rgba(148,163,184,0.14)",
@@ -949,9 +1047,9 @@ const S: Record<string, React.CSSProperties> = {
   },
   rowDisabled: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(180px, 240px)",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: 10,
-    alignItems: "center",
+    alignItems: "start",
     padding: "7px 8px",
     borderRadius: 12,
     border: "1px solid rgba(148,163,184,0.14)",
@@ -997,7 +1095,7 @@ const S: Record<string, React.CSSProperties> = {
     display: "flex",
     gap: 5,
     flexWrap: "wrap",
-    justifyContent: "flex-end",
+    justifyContent: "flex-start",
   },
   input: {
     width: "100%",
