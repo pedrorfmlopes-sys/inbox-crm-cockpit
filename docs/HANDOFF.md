@@ -1,5 +1,25 @@
 # HANDOFF
 
+## Grupos v1: camada Outlook/categorias do pos-apply sai do handler principal e passa para helper proprio no `Classificar` (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - abertura da operacao Outlook com fase inicial de `saving`
+  - construcao do fallback do email atual para projecao Outlook
+  - construcao do `source` e `plan` de categorias
+  - `enqueue` / `requestCockpitHostAction` / `waitForOutlookCategorySyncResult`
+  - `completeOutlookCategoryOperation(...)` nos cenarios de sucesso, timeout e falha
+  - o studio passa a delegar esta etapa para `beginApplyOutlookCategoryOperation(...)` e `executePostApplyOutlookCategorySync(...)`
+- **O que ainda fica no handler principal**:
+  - mensagens/status gerais do apply
+  - orquestracao entre plano remoto, ticket base, execucao por target, projecao local e persistencia
+  - catch/final fallback para fechar a operacao se alguma excecao escapar antes do helper a completar
+- **Acoplamentos reduzidos**:
+  - o handler deixa de concentrar inline a maior parte da logica host-specific de Outlook/categorias
+  - fica mais claro o corte entre pipeline local de apply e camada Outlook
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: persistencia local e reidratacao pos-apply do `Classificar` saem do handler principal e passam para helper proprio (Abril 2026)
 - **O que foi extraido nesta ronda**:
   - `resolveClassificationIntermediateCase(...)`

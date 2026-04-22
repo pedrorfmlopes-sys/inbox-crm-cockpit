@@ -2,8 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import * as pdfjsLib from "pdfjs-dist";
 import { addEmailToLinkGroup, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentContentUrl, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { clientLog } from "@/logger";
-import { beginOutlookCategoryOperation, completeOutlookCategoryOperation, enqueueOutlookCategorySyncRequest, getManagedOutlookCategorySnapshot, OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY, requestCockpitHostAction, setOutlookCategoryOperationPhase, waitForOutlookCategorySyncResult } from "@/office";
-import { buildOutlookCategoryPlan, buildOutlookCategorySourceFromRelatedContext, getOutlookCategoryPlanSignature, getOutlookCategorySourceSignature } from "@/outlookCategories";
+import { completeOutlookCategoryOperation, getManagedOutlookCategorySnapshot, OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY, requestCockpitHostAction, setOutlookCategoryOperationPhase } from "@/office";
 import {
   findGroupLabelCatalogEntry,
   getGroupLabelCatalogLabels,
@@ -64,12 +63,15 @@ import {
 import {
   buildResolvedStudioApplySelection,
   buildResolvedRemoteApplyExecutionPlan,
-  buildRemoteApplyFallbackCurrentCategoryEmail,
 } from "./group-classification/applyResolution";
 import {
   executeLegacyBaseTicketApply,
   executeLegacyRemoteApplyForTarget,
 } from "./group-classification/legacyRemoteApply";
+import {
+  beginApplyOutlookCategoryOperation,
+  executePostApplyOutlookCategorySync,
+} from "./group-classification/outlookCategoryApply";
 import { persistAndRefreshClassificationCase } from "./group-classification/casePersistence";
 import { projectApplyIntoIntermediateCase } from "./group-classification/localCaseProjection";
 
@@ -3496,7 +3498,6 @@ function StudioInner() {
       setActionBusy(true);
       setStatus("A iniciar aplicacao...");
       let activeCategoryOperationId = "";
-      let activeCategoryRequestId = "";
       let categoryOperationClosed = false;
       let coreSuccess = false;
       let appliedClassificationCase: IntermediateCase | null = null;
@@ -3520,21 +3521,14 @@ function StudioInner() {
         const currentTargetIdentity = remoteApplyPlan.currentTargetIdentity;
         const includesCurrentTarget = remoteApplyPlan.includesCurrentTarget;
 
-        if (currentTargetIdentity) {
-          const openedOperation = beginOutlookCategoryOperation({
-            owner: "classification",
-            target: currentTargetIdentity,
-          });
-          if (!openedOperation.ok) {
-            const reasonMsg = openedOperation.reason === "locked"
-              ? "Ja existe outra classificacao em curso para este email. Aguarda um momento."
-              : "Nao foi possivel identificar o email atual para confirmar a classificacao.";
-            setStatus(reasonMsg);
-            return { ok: false, coreSuccess: false, error: reasonMsg };
-          }
-          activeCategoryOperationId = openedOperation.operation.operationId;
-          setOutlookCategoryOperationPhase(activeCategoryOperationId, "saving");
+        const outlookCategoryOperation = beginApplyOutlookCategoryOperation({
+          currentTargetIdentity,
+        });
+        if (!outlookCategoryOperation.ok) {
+          setStatus(outlookCategoryOperation.error);
+          return { ok: false, coreSuccess: false, error: outlookCategoryOperation.error };
         }
+        activeCategoryOperationId = outlookCategoryOperation.activeCategoryOperationId;
 
         const latestSettings = await getSettings().catch(() => null);
         const attachmentStorageOptions = buildAttachmentStorageOptions(latestSettings);
@@ -3601,18 +3595,6 @@ function StudioInner() {
         coreSuccess = true;
         setStatus("A atualizar dados locais...");
 
-        let fallbackCurrentCategoryEmail: RelatedEmailEntry | null = null;
-        if (currentTargetIdentity) {
-          const currentTargetEmail = effectiveTargetEmails.find((email) => isCurrentContextEmail(email, currentContext))
-            || (selectedEmailKey === selectedEmailKey && selectedEmail && isCurrentContextEmail(selectedEmail, currentContext) ? selectedEmail : null);
-
-          fallbackCurrentCategoryEmail = buildRemoteApplyFallbackCurrentCategoryEmail({
-            currentTargetEmail,
-            currentContext,
-            resolvedApplySelection: applySelection,
-          });
-        }
-
         setSelectionTouched({ principal: false, references: false, ticket: false });
 
         if (activeCategoryOperationId) {
@@ -3627,138 +3609,26 @@ function StudioInner() {
           });
         }
 
-        if (includesCurrentTarget && currentTargetIdentity) {
-          if (activeCategoryOperationId) {
-            setOutlookCategoryOperationPhase(activeCategoryOperationId, "rehydrating");
-          }
-          const refreshedCategoryEmailCandidates = dedupeEmails([
-            ...(refreshedContext?.email ? [refreshedContext.email] : []),
-            ...(Array.isArray(refreshedContext?.emails) ? refreshedContext.emails : []),
-            ...(fallbackCurrentCategoryEmail ? [fallbackCurrentCategoryEmail] : []),
-          ]);
-          const refreshedCategoryEmail = refreshedCategoryEmailCandidates.find((email) => isCurrentContextEmail(email, currentContext))
-            || fallbackCurrentCategoryEmail;
-
-          if (refreshedCategoryEmail) {
-            if (activeCategoryOperationId) {
-              setOutlookCategoryOperationPhase(activeCategoryOperationId, "planning");
-            }
-            const refreshedSnapshot = await getManagedOutlookCategorySnapshot(labelCatalog).catch(() => null);
-            const refreshedCategorySource = buildOutlookCategorySourceFromRelatedContext({
-              email: refreshedCategoryEmail,
-              groups: Array.isArray(refreshedContext?.groups) ? refreshedContext.groups : [principalGroup, ...referenceGroups].filter(Boolean) as LinkGroupEntry[],
-              tickets: Array.isArray(refreshedContext?.tickets) ? refreshedContext.tickets : [finalTicket, currentOutlookTicket].filter(Boolean) as GroupTicketEntry[],
-              settings: latestSettings,
-              currentOutlookLabelNames: refreshedSnapshot?.labelNames || [],
-            });
-
-            const categoryRequestId = `classification-final:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-            const categoryRequestedAtIso = new Date().toISOString();
-            const categoryPlan = buildOutlookCategoryPlan(refreshedCategorySource);
-            
-            activeCategoryRequestId = categoryRequestId;
-
-            logClassificationOutlookCategorySync("final-request", {
-              requestId: categoryRequestId,
-              operationId: activeCategoryOperationId || undefined,
-              target: currentTargetIdentity,
-              sourceSignature: getOutlookCategorySourceSignature(refreshedCategorySource),
-              planSignature: getOutlookCategoryPlanSignature(categoryPlan),
-              desiredCategories: categoryPlan.desiredCategories,
-            });
-
-            enqueueOutlookCategorySyncRequest({
-              requestId: categoryRequestId,
-              operationId: activeCategoryOperationId || undefined,
-              createdAtIso: categoryRequestedAtIso,
-              reason: "classification-final",
-              mode: "source",
-              target: currentTargetIdentity,
-              source: refreshedCategorySource,
-            });
-
-            if (activeCategoryOperationId) {
-              setOutlookCategoryOperationPhase(activeCategoryOperationId, "writingOutlook", {
-                requestId: categoryRequestId,
-              });
-            }
-
-            setStatus("A projetar categorias no Outlook...");
-            const writerSubmitted = await requestCockpitHostAction({
-              type: "sync-managed-categories",
-              payload: refreshedCategorySource,
-              requestId: categoryRequestId,
-              operationId: activeCategoryOperationId || undefined,
-              requestedAtIso: categoryRequestedAtIso,
-              reason: "classification-final",
-              target: currentTargetIdentity,
-            }).catch(() => false);
-
-            if (!writerSubmitted) {
-              throw new Error("A classificacao foi guardada, mas nao foi possivel submeter a projecao Outlook.");
-            }
-
-            if (activeCategoryOperationId) {
-              setOutlookCategoryOperationPhase(activeCategoryOperationId, "verifying", {
-                requestId: categoryRequestId,
-              });
-            }
-
-            const writerResult = await waitForOutlookCategorySyncResult(categoryRequestId, {
-              timeoutMs: 20_000,
-            });
-
-            if (!writerResult) {
-              clientLog.warn("[TEMP][outlook-category-apply] writer-timeout", {
-                itemId: currentTargetIdentity.itemId,
-                requestId: categoryRequestId,
-                categoriesRequested: categoryPlan.desiredCategories,
-                reason: "waitForOutlookCategorySyncResult timeout",
-              });
-              if (activeCategoryOperationId) {
-                completeOutlookCategoryOperation(activeCategoryOperationId, {
-                  result: "timeout",
-                  requestId: categoryRequestId,
-                  detail: "writer-timeout",
-                });
-                categoryOperationClosed = true;
-              }
-              throw new Error("A classificacao foi guardada, mas o Outlook nao confirmou a aplicacao das categorias a tempo.");
-            }
-
-            if (activeCategoryOperationId) {
-              completeOutlookCategoryOperation(activeCategoryOperationId, {
-                result: writerResult.result,
-                requestId: categoryRequestId,
-                detail: writerResult.detail,
-              });
-              categoryOperationClosed = true;
-            }
-
-            if (writerResult.result !== "success" && writerResult.result !== "duplicate") {
-              const writerDetail = String(writerResult.detail || "").trim();
-              clientLog.warn("[TEMP][outlook-category-apply] writer-degraded-result", {
-                itemId: currentTargetIdentity.itemId,
-                requestId: categoryRequestId,
-                categoriesRequested: categoryPlan.desiredCategories,
-                writerResult: writerResult.result,
-                detail: writerDetail || undefined,
-              });
-              throw new Error(
-                writerDetail
-                  ? `A classificacao foi guardada, mas o Outlook nao confirmou a aplicacao das categorias (${writerDetail}).`
-                  : "A classificacao foi guardada, mas o Outlook nao confirmou a aplicacao das categorias."
-              );
-            }
-          } else if (activeCategoryOperationId) {
-            completeOutlookCategoryOperation(activeCategoryOperationId, {
-              result: "failed",
-              detail: "missing-refreshed-email",
-            });
-            categoryOperationClosed = true;
-            throw new Error("A classificacao foi guardada, mas nao foi possivel rehidratar o email final para projetar as categorias.");
-          }
-        }
+        const categorySyncResult = await executePostApplyOutlookCategorySync({
+          activeCategoryOperationId,
+          currentTargetIdentity,
+          includesCurrentTarget,
+          effectiveTargetEmails,
+          selectedEmail,
+          selectedEmailKey,
+          currentContext,
+          resolvedApplySelection: applySelection,
+          refreshedContext,
+          latestSettings,
+          labelCatalog,
+          principalGroup,
+          referenceGroups,
+          finalTicket,
+          currentOutlookTicket,
+          setStatus,
+          logSync: logClassificationOutlookCategorySync,
+        });
+        categoryOperationClosed = categorySyncResult.categoryOperationClosed;
 
         setStatus(
           effectiveTargetEmails.length > 1
