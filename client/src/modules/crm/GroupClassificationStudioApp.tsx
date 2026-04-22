@@ -75,6 +75,7 @@ import {
 import { persistAndRefreshClassificationCase } from "./group-classification/casePersistence";
 import { projectApplyIntoIntermediateCase } from "./group-classification/localCaseProjection";
 import {
+  type ApplyOperationResult,
   finalizeFailedApplyOperation,
   finalizeSuccessfulApplyOperation,
 } from "./group-classification/applyOperationFinalization";
@@ -3476,7 +3477,7 @@ function StudioInner() {
     });
   }
 
-  async function handleApplyClassification(targetEmailsOverride?: RelatedEmailEntry[]): Promise<{ ok: boolean; coreSuccess: boolean; error?: string }> {
+  async function handleApplyClassification(targetEmailsOverride?: RelatedEmailEntry[]): Promise<ApplyOperationResult> {
     if (applyInProgressRef.current) {
       logClassificationOutlookCategorySync("apply-aborted-busy", { operationId: "" });
       return { ok: false, coreSuccess: false, error: "Ja existe outra classificacao em curso." };
@@ -3619,7 +3620,6 @@ function StudioInner() {
           includesCurrentTarget,
           effectiveTargetEmails,
           selectedEmail,
-          selectedEmailKey,
           currentContext,
           resolvedApplySelection: applySelection,
           refreshedContext,

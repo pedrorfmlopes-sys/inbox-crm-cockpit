@@ -73,6 +73,9 @@ function normalizeStringList(values: unknown[]): string[] {
   return Array.from(new Set(values.map((value) => normalizeString(value)).filter(Boolean)));
 }
 
+type RelatedEmailAttachmentEntry = NonNullable<RelatedEmailEntry["attachments"]>[number];
+type RelatedEmailGroupEntry = NonNullable<RelatedEmailEntry["relatedGroups"]>[number];
+
 export function buildResolvedStudioApplySelection(args: {
   targetEmails: RelatedEmailEntry[];
   principalGroupId?: string;
@@ -149,7 +152,7 @@ export function buildResolvedApplyTargetPayload(args: {
 }): RelevantEmailPayload {
   const { targetEmail, currentContext } = args;
   const targetIsCurrent = isCurrentContextEmail(targetEmail, currentContext);
-  const targetAttachments = (targetEmail.attachments || []).map((attachment) => ({
+  const targetAttachments = (targetEmail.attachments || []).map((attachment: RelatedEmailAttachmentEntry) => ({
     key: attachment.key,
     id: attachment.id,
     name: attachment.name,
@@ -158,12 +161,12 @@ export function buildResolvedApplyTargetPayload(args: {
     size: attachment.size,
     isInline: attachment.isInline,
     contentId: attachment.contentId,
-    storageProvider: (attachment as any).storageProvider,
-    storageBasePath: (attachment as any).storageBasePath,
-    storagePathHint: (attachment as any).storagePathHint,
-    documentState: normalizeDocumentLifecycleState((attachment as any)?.documentState, "ingested"),
-    hasContent: (attachment as any)?.hasContent === true || Boolean(String(attachment.content || "").trim()),
-    isHidden: typeof (attachment as any)?.isHidden === "boolean" ? (attachment as any).isHidden : undefined,
+    storageProvider: attachment.storageProvider,
+    storageBasePath: attachment.storageBasePath,
+    storagePathHint: attachment.storagePathHint,
+    documentState: normalizeDocumentLifecycleState(attachment.documentState, "ingested"),
+    hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+    isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
   }));
   return {
     itemId: normalizeString(targetEmail?.itemId || (targetIsCurrent ? currentContext.itemId : "")) || undefined,
@@ -185,12 +188,12 @@ export function buildResolvedApplyTargetPayload(args: {
       isInline: attachment.isInline,
       contentId: attachment.contentId,
       content: attachment.content,
-      storageProvider: (attachment as any).storageProvider,
-      storageBasePath: (attachment as any).storageBasePath,
-      storagePathHint: (attachment as any).storagePathHint,
-      documentState: (attachment as any).documentState,
-      hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
-      isHidden: typeof (attachment as any)?.isHidden === "boolean" ? (attachment as any).isHidden : undefined,
+      storageProvider: attachment.storageProvider,
+      storageBasePath: attachment.storageBasePath,
+      storagePathHint: attachment.storagePathHint,
+      documentState: attachment.documentState,
+      hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+      isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
     })),
   };
 }
@@ -265,7 +268,7 @@ export function buildResolvedRemoteApplyExecutionPlan(args: {
       currentContext: args.currentContext,
       resolvedApplySelection: args.resolvedApplySelection,
     });
-    const targetGroups = ((targetEmail as any)?.relatedGroups || []) as Array<{ id?: string }>;
+    const targetGroups = (targetEmail.relatedGroups || []) as RelatedEmailGroupEntry[];
     const currentGroupIds = targetGroups.map((group) => normalizeString(group.id)).filter(Boolean);
     const groupsToRemove = currentGroupIds.filter((groupId) => !args.resolvedApplySelection.allGroupIds.includes(groupId));
     const ticketIdsToRemove = ((args.emailContextMeta.get(targetEmailKey)?.ticketIds || []) as string[])

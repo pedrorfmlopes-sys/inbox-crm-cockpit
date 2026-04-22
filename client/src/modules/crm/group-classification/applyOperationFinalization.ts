@@ -30,7 +30,7 @@ export function closeApplyOutlookOperationSafely(args: {
     return args.categoryOperationClosed;
   }
 
-  const detail = extractApplyOperationErrorMessage(args.actionError);
+  const detail = getApplyOperationErrorMessage(args.actionError);
   completeOutlookCategoryOperation(args.activeCategoryOperationId, {
     result: "failed",
     detail: detail || undefined,
@@ -51,7 +51,7 @@ export function finalizeFailedApplyOperation(args: {
     actionError: args.actionError,
   });
 
-  const errorMsg = extractApplyOperationErrorMessage(args.actionError)
+  const errorMsg = getApplyOperationErrorMessage(args.actionError)
     || "Nao foi possivel aplicar a classificacao.";
   args.setStatus(errorMsg);
 
@@ -62,7 +62,7 @@ export function finalizeFailedApplyOperation(args: {
   return { ok: false, coreSuccess: false, error: errorMsg };
 }
 
-function extractApplyOperationErrorMessage(actionError: unknown): string {
+export function getApplyOperationErrorMessage(actionError: unknown): string {
   if (actionError instanceof Error) {
     return String(actionError.message || "").trim();
   }

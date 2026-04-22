@@ -7,6 +7,7 @@ import {
   unlinkEmailFromGroupTicket,
   updateGroupTicket,
   type GroupTicketEntry,
+  type RelevantEmailPayload,
 } from "@/api";
 
 import type {
@@ -17,7 +18,10 @@ import type {
 } from "./applyResolution";
 import { buildResolvedClassifiedEmailPayload } from "./applyResolution";
 
-export type LegacyRemoteApplyAttachmentStorageOptions = Record<string, unknown>;
+export type LegacyRemoteApplyAttachmentStorageOptions = Pick<
+  RelevantEmailPayload,
+  "attachmentStorageProvider" | "attachmentStorageBasePath"
+>;
 
 export type ExecuteLegacyBaseTicketApplyResult = {
   finalTicket: GroupTicketEntry | null;

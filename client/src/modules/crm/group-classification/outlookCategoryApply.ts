@@ -23,17 +23,26 @@ import {
   type ApplyCurrentContext,
   type ResolvedStudioApplySelection,
 } from "./applyResolution";
+import { getApplyOperationErrorMessage } from "./applyOperationFinalization";
 
-type RefreshedClassificationContext = {
+export type RefreshedClassificationContext = {
   email: RelatedEmailEntry | null;
   emails: RelatedEmailEntry[];
   groups: LinkGroupEntry[];
   tickets: GroupTicketEntry[];
 };
 
+export type BeginApplyOutlookCategoryOperationResult =
+  | { ok: true; activeCategoryOperationId: string }
+  | { ok: false; error: string };
+
+export type PostApplyOutlookCategorySyncResult = {
+  categoryOperationClosed: boolean;
+};
+
 export function beginApplyOutlookCategoryOperation(args: {
   currentTargetIdentity?: OutlookCategorySyncTarget | null;
-}): { ok: true; activeCategoryOperationId: string } | { ok: false; error: string } {
+}): BeginApplyOutlookCategoryOperationResult {
   if (!args.currentTargetIdentity) {
     return { ok: true, activeCategoryOperationId: "" };
   }
@@ -64,7 +73,6 @@ export async function executePostApplyOutlookCategorySync(args: {
   includesCurrentTarget: boolean;
   effectiveTargetEmails: RelatedEmailEntry[];
   selectedEmail: RelatedEmailEntry | null;
-  selectedEmailKey?: string;
   currentContext: ApplyCurrentContext;
   resolvedApplySelection: ResolvedStudioApplySelection;
   refreshedContext: RefreshedClassificationContext | null;
@@ -76,14 +84,13 @@ export async function executePostApplyOutlookCategorySync(args: {
   currentOutlookTicket: GroupTicketEntry | null;
   setStatus: (status: string) => void;
   logSync?: (phase: string, data: unknown) => void;
-}): Promise<{ categoryOperationClosed: boolean }> {
+}): Promise<PostApplyOutlookCategorySyncResult> {
   const {
     activeCategoryOperationId,
     currentTargetIdentity,
     includesCurrentTarget,
     effectiveTargetEmails,
     selectedEmail,
-    selectedEmailKey,
     currentContext,
     resolvedApplySelection,
     refreshedContext,
@@ -111,7 +118,7 @@ export async function executePostApplyOutlookCategorySync(args: {
         : String(email?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "")
             === String(currentContext.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "")
     )) || (
-      selectedEmailKey === selectedEmailKey && selectedEmail && (
+      selectedEmail && (
         String(selectedEmail?.itemId || "").trim()
           ? String(selectedEmail?.itemId || "").trim() === String(currentContext.itemId || "").trim()
           : String(selectedEmail?.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "")
@@ -263,7 +270,7 @@ export async function executePostApplyOutlookCategorySync(args: {
     if (activeCategoryOperationId && !categoryOperationClosed) {
       completeOutlookCategoryOperation(activeCategoryOperationId, {
         result: "failed",
-        detail: String((error as any)?.message || "").trim() || undefined,
+        detail: getApplyOperationErrorMessage(error) || undefined,
       });
       categoryOperationClosed = true;
     }

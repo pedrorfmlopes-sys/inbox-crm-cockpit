@@ -1,5 +1,23 @@
 # HANDOFF
 
+## Grupos v1: hardening do pipeline de apply no `Classificar` afina contratos, resultados e tipagem sem abrir nova frente funcional (Abril 2026)
+- **O que foi afinado nesta ronda**:
+  - `handleApplyClassification()` passa a declarar explicitamente `ApplyOperationResult` como resultado operacional comum
+  - `beginApplyOutlookCategoryOperation(...)` e `executePostApplyOutlookCategorySync(...)` passam a expor tipos de resultado nomeados, em vez de contratos inline mais soltos
+  - `persistAndRefreshClassificationCase(...)` passa a expor tipos nomeados para sync options e resultado de persist/reidratacao
+  - `executeLegacyRemoteApplyForTarget(...)` deixa de aceitar `attachmentStorageOptions` como `Record<string, unknown>` e passa a usar um contrato mais estreito e explicito
+  - `outlookCategoryApply.ts` passa a reutilizar o extrator comum de mensagens de erro do fecho operacional e deixa de depender de `any` evitavel nesse ponto
+  - o fallback de `selectedEmail` no fluxo Outlook deixa de depender de um check redundante (`selectedEmailKey === selectedEmailKey`) e fica mais claro como guarda de reidratacao do email atual
+  - `applyResolution.ts` reduz casts evitaveis em anexos e grupos relacionados, aproximando a projecao de payload dos tipos reais de `RelatedEmailEntry` e `RelevantEmailPayload`
+- **Pontos ambiguos corrigidos**:
+  - resultados de sucesso/erro/falha degradada ficam mais alinhados entre helpers
+  - contratos de persistencia e sync deixam de depender tanto de tipos anonimos inline
+  - a camada Outlook usa a mesma normalizacao de mensagem de erro do fecho operacional
+- **Divida tecnica pequena que ainda fica**:
+  - warnings antigos do `GroupClassificationStudioApp.tsx` continuam fora desta ronda
+  - o `finally` minimo do handler continua inline por ainda pertencer ao ciclo de vida do componente
+  - nao houve nova extracao estrutural; esta ronda foi apenas de robustez e regressao
+
 ## Grupos v1: fecho operacional do apply no `Classificar` sai do handler principal e passa para helper proprio (Abril 2026)
 - **O que foi extraido nesta ronda**:
   - normalizacao do resultado final de sucesso do apply
