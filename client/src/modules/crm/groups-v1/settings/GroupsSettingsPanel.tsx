@@ -1,6 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { HelpHint } from "@/ui/HelpHint";
 import * as Icons from "@/ui/icons";
+import {
+  cleanupIntermediateCases,
+  migrateIntermediateCaseNamespace,
+} from "../storage/intermediateCaseMaintenance";
 import {
   normalizeGroupsTabSettings,
   type GroupsSettingsAttachmentStrategy,
@@ -215,30 +219,6 @@ function ActionButton({
   );
 }
 
-function ActionRow({
-  label,
-  hint,
-  actionLabel,
-  tone = "neutral",
-  disabled = false,
-}: {
-  label: string;
-  hint?: string;
-  actionLabel: string;
-  tone?: "neutral" | "danger";
-  disabled?: boolean;
-}) {
-  return (
-    <div style={disabled ? S.rowDisabled : S.row}>
-      <div style={S.rowLabelWrap}>
-        <span style={S.rowLabel}>{label}</span>
-        {hint ? <SettingHint text={hint} /> : null}
-      </div>
-      <ActionButton label={actionLabel} tone={tone} disabled={disabled} />
-    </div>
-  );
-}
-
 function PathFieldRow({
   label,
   hint,
@@ -287,6 +267,8 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
   const [activeSection, setActiveSection] = useState<GroupsSettingsSection>("general");
   const [draft, setDraft] = useState<GroupsTabSettings>(() => buildDraft(value));
   const [isSaving, setIsSaving] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState("");
+  const [maintenanceError, setMaintenanceError] = useState("");
 
   const applyDraftPatch = (patch: Partial<GroupsTabSettings>) => {
     setDraft((current) => normalizeGroupsTabSettings({ ...current, ...patch }));
@@ -297,6 +279,8 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
     setDraft(buildDraft(value));
     setActiveSection("general");
     setIsSaving(false);
+    setMaintenanceMessage("");
+    setMaintenanceError("");
   }, [open, value]);
 
   useEffect(() => {
@@ -316,6 +300,56 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
       setIsSaving(false);
     }
   };
+
+  const handleCleanupNow = useCallback(async () => {
+    setIsSaving(true);
+    setMaintenanceMessage("");
+    setMaintenanceError("");
+    try {
+      const result = await cleanupIntermediateCases(draft);
+      setMaintenanceMessage(
+        result.inspectedCases
+          ? `Limpeza concluida: ${result.deletedCases} caso(s) apagado(s), ${result.skippedMixedCases} misto(s) preservado(s).`
+          : "Nao havia casos intermédios persistidos para limpar neste namespace."
+      );
+    } catch (error) {
+      setMaintenanceError(error instanceof Error ? error.message : "Nao foi possivel executar a limpeza real do intermédio.");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [draft]);
+
+  const handleMigrationNow = useCallback(async () => {
+    setIsSaving(true);
+    setMaintenanceMessage("");
+    setMaintenanceError("");
+    try {
+      const sourceNamespace = String(draft.baseFolderPath || "").trim();
+      const targetNamespace = String(draft.migrationTarget || "").trim();
+      if (!sourceNamespace || !targetNamespace) {
+        throw new Error("Define namespaces de origem e destino antes de correr a migracao real do intermédio.");
+      }
+      const mode = draft.migrationMode === "move" ? "move" : "copy";
+      const result = await migrateIntermediateCaseNamespace({
+        sourceNamespace,
+        targetNamespace,
+        mode,
+      });
+      const nextDraft = normalizeGroupsTabSettings({
+        ...draft,
+        baseFolderPath: targetNamespace,
+      });
+      setDraft(nextDraft);
+      await onSave(nextDraft);
+      setMaintenanceMessage(
+        `Migracao ${mode === "copy" ? "por copia" : "por movimento"} concluida: ${result.migratedCases} caso(s), ${result.copiedAttachments} anexo(s) copiado(s).`
+      );
+    } catch (error) {
+      setMaintenanceError(error instanceof Error ? error.message : "Nao foi possivel executar a migracao real do intermédio.");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [draft, onSave]);
 
   const content = useMemo(() => {
     if (activeSection === "general") {
@@ -515,8 +549,8 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
         <SectionShell title="Limpeza" subtitle="A shell existe, mas nao abre limpeza real nesta fase.">
           <InfoBlock tone="warning" title="Indisponivel nesta fase">
             <div style={S.inlineValue}>
-              Nao existe rotina executavel de limpeza automatica do intermedio ou do storage final.
-              Os valores abaixo ficam apenas como referencia guardada.
+              A limpeza automatica total continua fora desta ronda, mas a limpeza manual real do
+              `IntermediateCase` ja esta disponivel para o namespace atual.
             </div>
           </InfoBlock>
           <FieldRow label="Dias para aviso de caso misto">
@@ -537,9 +571,16 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
           <ToggleRow
             label="Nunca apagar casos mistos em silencio"
             checked={draft.neverDeleteMixedSilently}
-            disabled
-            onChange={() => undefined}
+            onChange={(next) => applyDraftPatch({ neverDeleteMixedSilently: next })}
           />
+          <div style={S.pathActions}>
+            <ActionButton
+              label={isSaving ? "A executar" : "Limpar agora"}
+              disabled={isSaving || !draft.baseFolderPath || draft.storageMode === "disabled"}
+              tone="danger"
+              onClick={() => void handleCleanupNow()}
+            />
+          </div>
         </SectionShell>
       );
     }
@@ -565,29 +606,57 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
 
     if (activeSection === "migration") {
       return (
-        <SectionShell title="Migracao" subtitle="Nao existe migracao real de storage nesta fase.">
-          <InfoBlock tone="warning" title="Indisponivel nesta fase">
+        <SectionShell title="Migracao" subtitle="Migracao executavel do intermédio por namespace, sem fingir migracao total do storage final.">
+          <InfoBlock tone="warning" title="Migracao real do intermédio">
             <div style={S.inlineValue}>
-              Como o intermedio real desta fase vive em IndexedDB local, nao existe mover/copiar pasta,
-              nem migracao de biblioteca cloud a partir desta shell.
+              Nesta ronda a migracao real passa a cobrir o `IntermediateCase` entre namespaces de
+              IndexedDB. Migracao historica do storage final continua fora desta shell.
             </div>
           </InfoBlock>
           <PathFieldRow
             label="Destino guardado"
-            hint="Campo herdado; nao dispara migracao real."
+            hint="Namespace alvo para copiar/mover os casos intermédios persistidos."
             value={draft.migrationTarget}
-            chooseLabel="Indisponivel"
-            disabled
-            onChoose={() => undefined}
+            chooseLabel="Definir destino"
+            onChoose={() => {
+              const nextPath = promptForPath("o namespace de destino da migracao", draft.migrationTarget);
+              if (nextPath == null) return;
+              applyDraftPatch({ migrationTarget: nextPath });
+            }}
           />
           <FieldRow label="Modo guardado">
-            <div style={S.inlineValue}>{MIGRATION_MODE_LABELS[draft.migrationMode]}</div>
+            <select
+              style={S.select}
+              value={draft.migrationMode}
+              onChange={(event) => applyDraftPatch({ migrationMode: event.target.value as GroupsSettingsMigrationMode })}
+            >
+              {Object.entries(MIGRATION_MODE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
           </FieldRow>
-          <ToggleRow label="Permitir mover dados existentes" checked={draft.allowMoveExistingData} disabled onChange={() => undefined} />
+          <ToggleRow
+            label="Permitir mover dados existentes"
+            checked={draft.allowMoveExistingData}
+            onChange={(next) => applyDraftPatch({ allowMoveExistingData: next })}
+          />
           <FieldRow label="Seguranca estrita">
             <div style={S.inlineValue}>{readOnlyBoolean(draft.strictMigrationSafety)}</div>
           </FieldRow>
-          <ToggleRow label="Fundir dados existentes" checked={draft.mergeExistingData} disabled onChange={() => undefined} />
+          <ToggleRow
+            label="Fundir dados existentes"
+            checked={draft.mergeExistingData}
+            onChange={(next) => applyDraftPatch({ mergeExistingData: next })}
+          />
+          <div style={S.pathActions}>
+            <ActionButton
+              label={isSaving ? "A migrar" : "Migrar agora"}
+              disabled={isSaving || !draft.baseFolderPath || !draft.migrationTarget}
+              onClick={() => void handleMigrationNow()}
+            />
+          </div>
         </SectionShell>
       );
     }
@@ -648,7 +717,7 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
         </InfoBlock>
       </SectionShell>
     );
-  }, [activeSection, draft]);
+  }, [activeSection, draft, handleCleanupNow, handleMigrationNow, isSaving]);
 
   if (!open) return null;
 
@@ -683,6 +752,18 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
           </div>
           <div style={S.content}>{content}</div>
         </div>
+        {maintenanceMessage ? (
+          <div style={{ ...S.infoBlock, margin: "0 10px 10px" }}>
+            <div style={S.infoBlockTitle}>Operacao concluida</div>
+            <div style={S.infoBlockBody}>{maintenanceMessage}</div>
+          </div>
+        ) : null}
+        {maintenanceError ? (
+          <div style={{ ...S.infoBlockWarning, margin: "0 10px 10px" }}>
+            <div style={S.infoBlockTitle}>Operacao bloqueada</div>
+            <div style={S.infoBlockBody}>{maintenanceError}</div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -50,9 +50,12 @@ export function resolveGroupStorageRuntime(settingsLike?: { groupStorage?: Parti
     attachmentPolicy,
     promotionPolicy,
     legacyBridge: {
-      provider: provider.legacyProvider,
+      provider:
+        primaryLocation.provider === "local" || primaryLocation.provider === "onedrive" || primaryLocation.provider === "cloud"
+          ? primaryLocation.provider
+          : provider.legacyProvider,
       baseFolderPath: String(primaryLocation.basePath || "").trim(),
-      usesFileBackedStorage: provider.legacyProvider !== "cloud",
+      usesFileBackedStorage: primaryLocation.provider === "local" || primaryLocation.provider === "onedrive",
     },
   };
 }

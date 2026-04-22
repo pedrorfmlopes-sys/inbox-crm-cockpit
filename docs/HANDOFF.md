@@ -1,5 +1,52 @@
 # HANDOFF
 
+## Grupos v1: fundacao de storage/settings passa a usar validacao real de destinos, worksets reativos e manutencao executavel do intermédio (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - `local_device`, `chosen_folder` e `hybrid` deixam de ficar apenas bloqueados por texto e passam a depender de **validacao real** do destino no servidor
+  - `Preparar` deixa de ter worksets artificialmente desligados para estes modos; a persistencia principal do workset volta a correr em todos os modos e o servidor tenta espelhar o manifesto para o destino file-backed quando ele e valido
+  - a shell de settings da aba `Groups` deixa de ter migracao/limpeza puramente decorativas e passa a executar:
+    - migracao real do `IntermediateCase` entre namespaces de `IndexedDB`
+    - limpeza real do `IntermediateCase` por regras de retention
+- **Backend real fechado nesta ronda**:
+  - `POST /api/links/groups/storage/validate`
+    - valida de forma real se o path file-backed e acessivel ao processo do servidor
+    - escreve/le um ficheiro probe
+    - bloqueia explicitamente URL web de OneDrive/SharePoint
+  - `POST /api/links/groups/worksets/migrate`
+    - migra/regrava o manifesto de workset para o destino alvo
+  - `groupWorksetStore` passa a:
+    - ler manifestos do store central e de mirror file-backed
+    - gravar mirror JSON do workset em destino local validado quando aplicavel
+- **Guardas tecnicas confirmadas no repo**:
+  - `local_device` nesta arquitetura significa **path local/UNC acessivel ao host do servidor**, nao “o disco do utilizador” por magia
+  - picker verdadeiro de pasta continua bloqueado pelo host atual; a alternativa real fechada nesta ronda e `path manual + validacao real`
+  - OneDrive/SharePoint por URL web continua bloqueado com prova tecnica:
+    - `linkStore` escreve binario via filesystem
+    - sem Graph/SharePoint API nao ha escrita real por URL web
+- **Politica executavel desta ronda**:
+  - intermedio:
+    - `IndexedDB` namespaced por `baseFolderPath`
+    - migracao e limpeza reais do intermédio na shell da aba
+  - final:
+    - persistencia classificada continua central em `/api/links/*`
+    - file-backed modes passam a ser destinos reais para mirror/binario apenas quando o path e validado
+  - sessao/cache:
+    - `prepareSession` e fallback em memoria continuam fora da persistencia funcional final
+- **Politica de anexos alinhada com o codigo**:
+  - metadata sobe sempre
+  - binario real so em `cloud` ou path local/sincronizado/UNC validado
+  - URL web continua bloqueada
+  - `replaceAttachments: false` continua a preservar payload existente em updates parciais
+- **O que continua bloqueado por arquitetura/host**:
+  - picker nativo que entregue path reutilizavel ao backend
+  - OneDrive/SharePoint por URL web
+  - migracao historica total dos binarios ja promovidos no `linkStore` sem job backend dedicado
+- **Fora do scope mantido**:
+  - `Explorar`
+  - `Gestor do Grupo`
+  - redesign geral da UI
+  - backend novo gigante
+
 ## Grupos v1: fecho operacional da politica executavel de gravacao alinha shell, storage intermedio e persistencia final real (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - a shell de Settings da aba `Groups` deixa de vender `OneDrive / SharePoint`, migracao, limpeza e `Explorar` como se fossem capacidades prontas nesta fase

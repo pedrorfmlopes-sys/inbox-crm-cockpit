@@ -21,6 +21,8 @@ import { useCockpit } from "../components/shell/CockpitProvider";
 import { aiListModels, validateCrm2OdooLayout, type Crm2LayoutValidationResult } from "../api";
 import { GROUP_STORAGE_MODE_LABELS } from "../modules/crm/groups-v1/storage/modes";
 import { resolveGroupStorageRuntime } from "../modules/crm/groups-v1/storage/resolveStorageMode";
+import { buildGroupStorageValidationPayload, describeGroupStorageCapabilities } from "../modules/crm/groups-v1/storage/storageCapabilities";
+import { validateGroupStorageTarget, type GroupStorageValidationResult } from "../modules/crm/groups-v1/storage/worksetApi";
 import { PanelState, type PanelStateTone } from "./PanelState";
 import { previewReferenceCode } from "../referenceCodes";
 
@@ -68,16 +70,10 @@ const SKIN_OPTIONS: Array<{ value: SkinId; label: string }> = [
 
 const EXECUTABLE_GROUP_STORAGE_MODE_OPTIONS: Array<{ value: GroupStorageMode; label: string }> = [
   { value: "supabase", label: "Cockpit Cloud" },
+  { value: "local_device", label: "Local acessivel ao servidor" },
   { value: "chosen_folder", label: "Pasta local / sincronizada" },
+  { value: "hybrid", label: "Hibrido" },
 ];
-
-function isUnsupportedExecutableGroupStorageMode(mode: GroupStorageMode): boolean {
-  return mode === "local_device" || mode === "hybrid";
-}
-
-function looksLikeWebStoragePath(value: string | undefined): boolean {
-  return /^https?:\/\//i.test(String(value || "").trim());
-}
 
 const REFERENCE_ENTITY_LABELS: Record<ReferenceEntityKey, string> = {
   lead: "Lead",
@@ -106,6 +102,8 @@ export function SettingsPanel(): JSX.Element {
   const [sigImgLocal, setSigImgLocal] = useState<Partial<Record<AppLocale, string>>>({});
   const [availableModels, setAvailableModels] = useState<{ openai: string[]; gemini: string[] }>({ openai: [], gemini: [] });
   const [fetchingModels, setFetchingModels] = useState(false);
+  const [groupStorageValidation, setGroupStorageValidation] = useState<GroupStorageValidationResult | null>(null);
+  const [validatingGroupStorage, setValidatingGroupStorage] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -170,16 +168,101 @@ export function SettingsPanel(): JSX.Element {
     () => (model ? resolveGroupStorageRuntime(model) : null),
     [model]
   );
-  const groupStorageModeUnsupported = model ? isUnsupportedExecutableGroupStorageMode(model.groupStorage.mode) : false;
-  const groupStorageWebPathUnsupported = model ? looksLikeWebStoragePath(model.groupStorage.baseFolderPath || "") : false;
-  const groupStoragePathRequired = model ? model.groupStorage.mode === "chosen_folder" : false;
+  const groupStoragePathRequired = model ? model.groupStorage.mode !== "supabase" : false;
+  const groupStorageCapabilities = useMemo(
+    () => (model && resolvedGroupStorage
+      ? describeGroupStorageCapabilities({
+          settings: model.groupStorage,
+          runtime: resolvedGroupStorage,
+          validation: groupStorageValidation,
+        })
+      : []),
+    [groupStorageValidation, model, resolvedGroupStorage]
+  );
+
+  const validateCurrentGroupStorage = async (settingsModel: CockpitSettingsV1): Promise<GroupStorageValidationResult | null> => {
+    if (settingsModel.groupStorage.mode === "supabase") {
+      const result: GroupStorageValidationResult = {
+        mode: "supabase",
+        provider: "cloud",
+        fileBacked: false,
+        supported: true,
+        basePath: "",
+        normalizedBasePath: "",
+        isWebUrl: false,
+        requiresServerAccessiblePath: false,
+        canStoreManifest: true,
+        canStoreBinary: true,
+        pickerAvailable: false,
+        notes: ["Modo cloud validado localmente."],
+      };
+      setGroupStorageValidation(result);
+      return result;
+    }
+
+    setValidatingGroupStorage(true);
+    try {
+      const result = await validateGroupStorageTarget(buildGroupStorageValidationPayload(settingsModel.groupStorage));
+      setGroupStorageValidation(result);
+      return result;
+    } finally {
+      setValidatingGroupStorage(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!model || section !== "groups") return;
+    void validateCurrentGroupStorage(model);
+  }, [
+    model,
+    model?.groupStorage.mode,
+    model?.groupStorage.baseFolderPath,
+    model?.groupStorage.chosenFolder.kind,
+    model?.groupStorage.hybrid.primaryTarget,
+    section,
+  ]);
 
   async function onSave() {
     if (!model) return;
     setSaving(true);
     setStatus(null);
     try {
-      await saveSettings(model);
+      let nextModel = model;
+      const validation = await validateCurrentGroupStorage(model);
+      if (model.groupStorage.mode !== "supabase") {
+        if (!validation?.supported) {
+          setStatus({
+            tone: "error",
+            title: "Destino de storage bloqueado",
+            description: validation?.blockingReason || "Define um destino realmente acessivel ao servidor antes de guardar.",
+          });
+          return;
+        }
+        const normalizedBasePath = String(validation.normalizedBasePath || model.groupStorage.baseFolderPath || "").trim();
+        nextModel = {
+          ...model,
+          groupStorage: {
+            ...model.groupStorage,
+            baseFolderPath: normalizedBasePath,
+            localDevice: {
+              ...model.groupStorage.localDevice,
+              rootPath:
+                model.groupStorage.mode === "local_device" || model.groupStorage.hybrid.primaryTarget === "local_device"
+                  ? normalizedBasePath
+                  : model.groupStorage.localDevice.rootPath,
+            },
+            chosenFolder: {
+              ...model.groupStorage.chosenFolder,
+              path:
+                model.groupStorage.mode === "chosen_folder" || model.groupStorage.hybrid.primaryTarget === "chosen_folder"
+                  ? normalizedBasePath
+                  : model.groupStorage.chosenFolder.path,
+            },
+          },
+        };
+      }
+      await saveSettings(nextModel);
+      setModel(nextModel);
       setStatus({ tone: "success", title: "Definições guardadas", description: "As alterações já estão disponíveis no cockpit." });
       setTimeout(() => setStatus(null), 1800);
     } catch (e: any) {
@@ -1058,14 +1141,20 @@ export function SettingsPanel(): JSX.Element {
 
               <PanelState
                 compact
-                tone={groupStorageModeUnsupported || groupStorageWebPathUnsupported ? "warning" : "info"}
+                tone={
+                  validatingGroupStorage
+                    ? "loading"
+                    : groupStorageValidation?.supported === false
+                      ? "warning"
+                      : "info"
+                }
                 title="Politica executavel de storage desta fase"
                 description={
-                  groupStorageModeUnsupported
-                    ? "Nesta fase, os modos executaveis ficam reduzidos a Cockpit Cloud e pasta local/sincronizada. Os modos Local neste PC e Hibrido ficam marcados como indisponiveis."
-                    : groupStorageWebPathUnsupported
-                      ? "O caminho configurado parece uma URL web. OneDrive/SharePoint por URL web nao fica suportado nesta fase; usa uma pasta sincronizada local ou caminho UNC."
-                      : "A persistencia final continua na app (`/api/links/*`). Este bloco fecha apenas o destino binario e as regras reais de anexos que o codigo ja suporta."
+                  validatingGroupStorage
+                    ? "A validar o destino de gravacao no host atual do servidor."
+                    : groupStorageValidation?.supported === false
+                      ? groupStorageValidation.blockingReason || "O destino configurado ainda nao fecha de forma executavel nesta arquitetura."
+                      : "A persistencia final continua na app (`/api/links/*`). Os modos file-backed passam a depender de validacao real do caminho e nao apenas de labels."
                 }
               />
 
@@ -1104,11 +1193,6 @@ export function SettingsPanel(): JSX.Element {
                     })
                   }
                 >
-                  {groupStorageModeUnsupported ? (
-                    <option value={model.groupStorage.mode} disabled>
-                      {GROUP_STORAGE_MODE_LABELS[model.groupStorage.mode]}
-                    </option>
-                  ) : null}
                   {EXECUTABLE_GROUP_STORAGE_MODE_OPTIONS.map((entry) => (
                     <option key={entry.value} value={entry.value}>
                       {entry.label}
@@ -1116,17 +1200,71 @@ export function SettingsPanel(): JSX.Element {
                   ))}
                 </select>
                 <div style={S.hint}>
-                  Modos oficialmente suportados nesta fase: <b>Cockpit Cloud</b> e <b>Pasta local / sincronizada</b>.
+                  Todos os modos continuam visiveis no contrato, mas os file-backed so ficam validos quando o caminho e realmente acessivel ao servidor.
                 </div>
                 <div style={S.hint}>
-                  `local_device` e `hybrid` continuam no contrato legado, mas ficam fora como opcao executavel ate haver fecho ponta a ponta.
+                  `local_device` significa path local/UNC visivel para o host do servidor; nao representa automaticamente o disco do utilizador sem bridge nativa.
                 </div>
               </Field>
 
-              <Field label="Pasta local / sincronizada">
+              {model.groupStorage.mode === "hybrid" ? (
+                <Field label="Primario do modo hibrido">
+                  <select
+                    style={S.select}
+                    value={model.groupStorage.hybrid.primaryTarget}
+                    onChange={(e) =>
+                      setModel({
+                        ...model,
+                        groupStorage: {
+                          ...model.groupStorage,
+                          hybrid: {
+                            ...model.groupStorage.hybrid,
+                            primaryTarget: e.target.value === "local_device" ? "local_device" : "chosen_folder",
+                          },
+                        },
+                      })
+                    }
+                  >
+                    <option value="chosen_folder">Pasta escolhida</option>
+                    <option value="local_device">Local acessivel ao servidor</option>
+                  </select>
+                </Field>
+              ) : null}
+
+              {model.groupStorage.mode !== "supabase" && model.groupStorage.mode !== "local_device" ? (
+                <Field label="Tipo de destino escolhido">
+                  <select
+                    style={S.select}
+                    value={model.groupStorage.chosenFolder.kind}
+                    onChange={(e) =>
+                      setModel({
+                        ...model,
+                        groupStorage: {
+                          ...model.groupStorage,
+                          chosenFolder: {
+                            ...model.groupStorage.chosenFolder,
+                            kind: e.target.value === "document_library" ? "document_library" : "filesystem",
+                          },
+                        },
+                      })
+                    }
+                  >
+                    <option value="filesystem">Pasta fisica / sincronizada</option>
+                    <option value="document_library">URL web de OneDrive / SharePoint</option>
+                  </select>
+                </Field>
+              ) : null}
+
+              <Field label={model.groupStorage.mode === "local_device" ? "Destino local acessivel ao servidor" : "Destino principal"}>
                 <input
                   style={S.input}
-                  value={model.groupStorage.baseFolderPath || ""}
+                  value={
+                    model.groupStorage.mode === "local_device"
+                      ? model.groupStorage.localDevice.rootPath || ""
+                      : model.groupStorage.mode === "supabase"
+                        ? ""
+                        : model.groupStorage.chosenFolder.path || model.groupStorage.baseFolderPath || ""
+                  }
                   disabled={!groupStoragePathRequired}
                   onChange={(e) =>
                     setModel({
@@ -1140,17 +1278,66 @@ export function SettingsPanel(): JSX.Element {
                         },
                         localDevice: {
                           ...model.groupStorage.localDevice,
-                          rootPath: model.groupStorage.mode === "local_device" ? e.target.value : model.groupStorage.localDevice.rootPath,
+                          rootPath:
+                            model.groupStorage.mode === "local_device" || model.groupStorage.hybrid.primaryTarget === "local_device"
+                              ? e.target.value
+                              : model.groupStorage.localDevice.rootPath,
                         },
                       },
                     })
                   }
-                  placeholder={groupStoragePathRequired ? "C:\\Documentos\\InboxCockpit\\Grupos" : "Nao usado no modo Cockpit Cloud"}
+                  placeholder={groupStoragePathRequired ? "C:\\Documentos\\InboxCockpit\\Grupos ou \\\\servidor\\partilha\\Grupos" : "Nao usado no modo Cockpit Cloud"}
                 />
                 <div style={S.hint}>
-                  Usa apenas <b>caminho local, pasta sincronizada local ou UNC</b>. URLs web de OneDrive/SharePoint ficam fora nesta fase.
+                  Usa apenas <b>caminho local do host, pasta sincronizada local ou UNC</b>. URL web fica auditada e bloqueada explicitamente se o backend nao a suportar.
                 </div>
               </Field>
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  style={S.btnGhost}
+                  onClick={() => model && void validateCurrentGroupStorage(model)}
+                  disabled={validatingGroupStorage}
+                >
+                  {validatingGroupStorage ? "A validar..." : "Validar destino"}
+                </button>
+                <div style={S.hint}>
+                  Picker real de pasta continua bloqueado pelo host atual; a alternativa suportada nesta arquitetura e path manual + validacao real no servidor.
+                </div>
+              </div>
+
+              {groupStorageValidation ? (
+                <div style={S.referenceCard}>
+                  <div style={S.fieldLabel}>Validacao real do destino</div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={S.hint}>
+                      Estado: <b>{groupStorageValidation.supported ? "Suportado neste host" : "Bloqueado neste host"}</b>
+                    </div>
+                    <div style={S.hint}>
+                      Provider efetivo: <b>{groupStorageValidation.provider}</b>
+                    </div>
+                    <div style={S.hint}>
+                      Caminho normalizado: <b>{groupStorageValidation.normalizedBasePath || "n/a"}</b>
+                    </div>
+                    <div style={S.hint}>
+                      Manifesto espelhado: <b>{groupStorageValidation.canStoreManifest ? "Sim" : "Nao"}</b>
+                    </div>
+                    <div style={S.hint}>
+                      Binario real: <b>{groupStorageValidation.canStoreBinary ? "Sim" : "Nao"}</b>
+                    </div>
+                    {groupStorageValidation.blockingReason ? (
+                      <div style={S.hint}>
+                        Bloqueio: <b>{groupStorageValidation.blockingReason}</b>
+                      </div>
+                    ) : null}
+                    {groupStorageValidation.pickerBlockedReason ? (
+                      <div style={S.hint}>
+                        Picker/path: <b>{groupStorageValidation.pickerBlockedReason}</b>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
 
               <Field label="Limiar para decisao de anexos (MB)">
                 <input
@@ -1248,7 +1435,7 @@ export function SettingsPanel(): JSX.Element {
                     Persistencia final: <b>sempre na app via /api/links/*</b>
                   </div>
                   <div style={S.hint}>
-                    Binario de anexos/documentos: <b>{model.groupStorage.mode === "supabase" ? "Cockpit Cloud quando o payload traz conteudo" : groupStorageWebPathUnsupported ? "fallback para metadata/cloud enquanto o caminho web nao for suportado" : "pasta local/sincronizada quando o caminho e real; caso contrario metadata/cloud"}</b>
+                    Binario de anexos/documentos: <b>{model.groupStorage.mode === "supabase" ? "Cockpit Cloud quando o payload traz conteudo" : groupStorageValidation?.supported ? "path validado no host atual + fallback controlado para metadata/cloud" : "bloqueado ate existir path fisico validado no servidor"}</b>
                   </div>
                   <div style={S.hint}>
                     Persistencia intermedia: <b>{model.groupsTabSettings.storageMode === "disabled" ? "desativada" : "IndexedDB local do add-in, com namespace logico"}</b>
@@ -1256,6 +1443,22 @@ export function SettingsPanel(): JSX.Element {
                   <div style={S.hint}>
                     Sessao/cache: <b>prepareSession, seeds temporarios e fallback em memoria</b>
                   </div>
+                </div>
+              </div>
+
+              <div style={S.referenceCard}>
+                <div style={S.fieldLabel}>Tabela real de modos</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {groupStorageCapabilities.map((entry) => (
+                    <div key={entry.mode} style={{ display: "grid", gap: 3, padding: "8px 10px", borderRadius: 10, border: "1px solid var(--iccc-card-border)", background: "#fff" }}>
+                      <div style={S.hint}>
+                        <b>{entry.label}</b> - {entry.supported ? "Suportado / validado" : "Bloqueado ou dependente de validacao"}
+                      </div>
+                      <div style={S.hint}>Como grava: <b>{entry.howItWrites}</b></div>
+                      <div style={S.hint}>Onde grava: <b>{entry.whereItWrites}</b></div>
+                      <div style={S.hint}>Limitacao real: <b>{entry.limitations}</b></div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

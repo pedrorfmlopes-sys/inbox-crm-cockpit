@@ -13,6 +13,13 @@ export async function loadPrimaryGroupWorkset(input: {
   }
   const worksetKey = buildGroupWorksetKey(input.anchorEmailKey);
   if (!worksetKey) return null;
-  const manifest = await getGroupWorksetManifestApi(worksetKey);
+  const manifest = await getGroupWorksetManifestApi(worksetKey, {
+    mode: input.runtime.mode,
+    basePath: input.runtime.primaryLocation.basePath,
+    chosenFolderKind: input.runtime.primaryLocation.kind === "document_library" ? "document_library" : "filesystem",
+    primaryTarget: input.runtime.mode === "hybrid"
+      ? input.runtime.settings.hybrid.primaryTarget
+      : undefined,
+  });
   return normalizeGroupWorksetManifest(manifest);
 }

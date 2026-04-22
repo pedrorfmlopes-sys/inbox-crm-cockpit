@@ -563,10 +563,10 @@ export const GroupsPrepareCockpit: React.FC = () => {
     [settings?.groupStorage]
   );
   const ignoreInlineAttachmentsFromLegacyStorage = legacyStorageRuntime.attachmentPolicy.ignoreInlineAttachments;
-  const canPersistRemotePrepareWorkset = false;
+  const canPersistRemotePrepareWorkset = true;
   const canPersistWorkset = Boolean(settings)
     && canPersistRemotePrepareWorkset
-    && (legacyStorageRuntime.mode === "supabase" || legacyStorageRuntime.mode === "hybrid");
+    && Boolean(legacyStorageRuntime.mode);
   const hasStoredSessionRef = useRef(false);
   const persistedWorksetRef = useRef<GroupWorksetManifest | null>(null);
   const preferredGroupAppliedForEmailRef = useRef("");

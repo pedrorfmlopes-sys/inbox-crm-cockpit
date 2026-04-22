@@ -10,7 +10,7 @@ export function buildGroupWorksetKey(anchorEmailKey: string | null | undefined):
 }
 
 export function supportsPrimaryGroupWorksetPersistence(mode: GroupStorageMode): boolean {
-  return mode === "supabase" || mode === "hybrid";
+  return mode === "supabase" || mode === "hybrid" || mode === "local_device" || mode === "chosen_folder";
 }
 
 export function hasMeaningfulGroupWorksetPayload(input: Partial<GroupWorksetManifest> | null | undefined): boolean {
