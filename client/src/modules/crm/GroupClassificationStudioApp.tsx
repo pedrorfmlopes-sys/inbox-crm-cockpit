@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import * as pdfjsLib from "pdfjs-dist";
 import { addEmailToLinkGroup, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentContentUrl, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { clientLog } from "@/logger";
-import { completeOutlookCategoryOperation, getManagedOutlookCategorySnapshot, OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY, requestCockpitHostAction, setOutlookCategoryOperationPhase } from "@/office";
+import { getManagedOutlookCategorySnapshot, OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY, requestCockpitHostAction, setOutlookCategoryOperationPhase } from "@/office";
 import {
   findGroupLabelCatalogEntry,
   getGroupLabelCatalogLabels,
@@ -74,6 +74,10 @@ import {
 } from "./group-classification/outlookCategoryApply";
 import { persistAndRefreshClassificationCase } from "./group-classification/casePersistence";
 import { projectApplyIntoIntermediateCase } from "./group-classification/localCaseProjection";
+import {
+  finalizeFailedApplyOperation,
+  finalizeSuccessfulApplyOperation,
+} from "./group-classification/applyOperationFinalization";
 
 import EmailsCard from "./group-classification/components/EmailsCard";
 import QuickDocumentsCard from "./group-classification/components/QuickDocumentsCard";
@@ -3630,26 +3634,22 @@ function StudioInner() {
         });
         categoryOperationClosed = categorySyncResult.categoryOperationClosed;
 
-        setStatus(
-          effectiveTargetEmails.length > 1
-            ? `Classificacao aplicada a ${effectiveTargetEmails.length} emails.`
-            : "Classificacao aplicada ao email selecionado."
-        );
-        lastAppliedSignatureRef.current = currentSignature;
-        return { ok: true, coreSuccess: true };
-      } catch (actionError: any) {
-        if (activeCategoryOperationId && !categoryOperationClosed) {
-          completeOutlookCategoryOperation(activeCategoryOperationId, {
-            result: "failed",
-            detail: String(actionError?.message || "").trim() || undefined,
-          });
-        }
-        const errorMsg = actionError?.message || "Nao foi possivel aplicar a classificacao.";
-        setStatus(errorMsg);
-        if (coreSuccess) {
-          return { ok: true, coreSuccess: true, error: `Guardado com avisos: ${errorMsg}` };
-        }
-        return { ok: false, coreSuccess: false, error: errorMsg };
+        return finalizeSuccessfulApplyOperation({
+          effectiveTargetCount: effectiveTargetEmails.length,
+          currentSignature,
+          setStatus,
+          setLastAppliedSignature: (signature) => {
+            lastAppliedSignatureRef.current = signature;
+          },
+        });
+      } catch (actionError: unknown) {
+        return finalizeFailedApplyOperation({
+          activeCategoryOperationId,
+          categoryOperationClosed,
+          actionError,
+          setStatus,
+          coreSuccess,
+        });
       } finally {
         setActionBusy(false);
         applyInProgressRef.current = null;

@@ -1,5 +1,23 @@
 # HANDOFF
 
+## Grupos v1: fecho operacional do apply no `Classificar` sai do handler principal e passa para helper proprio (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - normalizacao do resultado final de sucesso do apply
+  - normalizacao do resultado final de erro/degradado
+  - fecho seguro da operacao Outlook quando uma excecao escapa depois de abrir a operacao
+  - o studio passa a delegar esta etapa para `finalizeSuccessfulApplyOperation(...)`, `finalizeFailedApplyOperation(...)` e `closeApplyOutlookOperationSafely(...)`
+- **O que ainda fica no handler principal**:
+  - mensagens/status intermédios de cada etapa do pipeline
+  - orquestracao entre resolucao comum, plano remoto, ticket base, execucao por target, projecao local, persistencia/reidratacao e Outlook
+  - `finally` minimo para libertar `actionBusy` e `applyInProgressRef`
+- **Acoplamentos reduzidos**:
+  - o `catch` deixa de fechar inline a operacao Outlook e de reconstruir manualmente o resultado final do apply
+  - o caminho de sucesso/erro fica mais uniforme e legivel no fim do handler
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: camada Outlook/categorias do pos-apply sai do handler principal e passa para helper proprio no `Classificar` (Abril 2026)
 - **O que foi extraido nesta ronda**:
   - abertura da operacao Outlook com fase inicial de `saving`
