@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentContentUrl, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, linkEmailToGroupTicket, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, unlinkEmailFromGroupTicket, updateGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
+import { addEmailToLinkGroup, createGroupTicket, createLinkGroup, deleteGroupDocument, extractAttachmentTexts, getEmailAttachmentContentBase64, getEmailAttachmentContentUrl, getEmailAttachmentTextContent, getGroupDocumentContentUrl, getGroupDocuments, getGroupEmails, getRelatedEmailContext, listLinkGroups, listGroupTicketSeries, registerRelevantEmail, removeEmailFromLinkGroup, saveGroupDocuments, searchGroupTickets, searchKnownEmails, updateGroupTicket, updateLinkGroup, type GroupDocumentEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type LinkGroupEntry, type RelatedEmailEntry, type RelevantEmailPayload } from "@/api";
 import { clientLog } from "@/logger";
 import { beginOutlookCategoryOperation, completeOutlookCategoryOperation, enqueueOutlookCategorySyncRequest, getManagedOutlookCategorySnapshot, OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY, requestCockpitHostAction, setOutlookCategoryOperationPhase, waitForOutlookCategorySyncResult } from "@/office";
 import { buildOutlookCategoryPlan, buildOutlookCategorySourceFromRelatedContext, getOutlookCategoryPlanSignature, getOutlookCategorySourceSignature } from "@/outlookCategories";
@@ -70,6 +70,7 @@ import {
   buildResolvedRemoteApplyExecutionPlan,
   buildRemoteApplyFallbackCurrentCategoryEmail,
 } from "./group-classification/applyResolution";
+import { executeLegacyRemoteApplyForTarget } from "./group-classification/legacyRemoteApply";
 
 import EmailsCard from "./group-classification/components/EmailsCard";
 import QuickDocumentsCard from "./group-classification/components/QuickDocumentsCard";
@@ -3535,6 +3536,7 @@ function StudioInner() {
         }
 
         const latestSettings = await getSettings().catch(() => null);
+        const attachmentStorageOptions = buildAttachmentStorageOptions(latestSettings);
         const currentOutlookTicket = applySelection.selectedTicket;
         const desiredTicketStatus = applySelection.desiredTicketStatus;
 
@@ -3573,51 +3575,13 @@ function StudioInner() {
         for (const targetPlan of remoteApplyPlan.targetPlans) {
           emailCounter++;
           setStatus(`A aplicar classificacao (${emailCounter}/${effectiveTargetEmails.length})...`);
-          const { targetEmail, targetEmailKey, targetEmailPayload, classifiedEmailPayload } = targetPlan;
-          const ticketIdsToRemove = targetPlan.ticketIdsToRemove.filter((ticketId) => ticketId !== finalTicket?.id);
-
-          for (const groupId of targetPlan.groupsToRemove) {
-            await removeEmailFromLinkGroup(groupId, {
-              ...targetEmailPayload,
-              emailKey: String(targetEmail?.emailKey || "").trim() || undefined,
-            });
-          }
-
-          if (applySelection.principalGroupId) {
-            await addEmailToLinkGroup(applySelection.principalGroupId, {
-              ...classifiedEmailPayload,
-              membershipKind: "principal",
-            });
-          }
-          for (const groupId of applySelection.referenceGroupIds) {
-            await addEmailToLinkGroup(groupId, {
-              ...classifiedEmailPayload,
-              membershipKind: "referencia",
-            });
-          }
-
-          for (const ticketId of ticketIdsToRemove) {
-            await unlinkEmailFromGroupTicket(ticketId, {
-              email: targetEmailPayload,
-              emailKey: String(targetEmail?.emailKey || "").trim() || undefined,
-            });
-          }
-
-          await registerRelevantEmail({
-            ...classifiedEmailPayload,
-            ...buildAttachmentStorageOptions(latestSettings),
+          finalTicket = await executeLegacyRemoteApplyForTarget({
+            targetPlan,
+            resolvedApplySelection: applySelection,
+            finalTicket,
+            attachmentStorageOptions,
+            skipTicketLink: Boolean(finalTicket && targetPlan.targetEmailKey === remoteApplyPlan.baseTargetKey),
           });
-
-          const targetTicketId = finalTicket?.id || applySelection.selectedTicketId;
-          if (targetTicketId && !(finalTicket && targetEmailKey === remoteApplyPlan.baseTargetKey)) {
-            const linked = await linkEmailToGroupTicket(targetTicketId, {
-              email: classifiedEmailPayload,
-              applyGroups: applySelection.allGroupIds.length > 0,
-              groupIds: applySelection.allGroupIds,
-              membershipKind: applySelection.targetMembershipKind,
-            });
-            finalTicket = linked.ticket;
-          }
         }
 
         const resolvedCaseTicket = finalTicket || currentOutlookTicket;
