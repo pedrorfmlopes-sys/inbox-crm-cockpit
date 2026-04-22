@@ -1483,6 +1483,36 @@
   - URLs web reais de OneDrive / SharePoint continuam fora; a escrita final suportada continua a depender de caminho local/sincronizado quando o provider nao e `cloud`
 # HANDOFF
 
+## Hotfix: estabilizacao imediata da aba Groups publicada (Abril 2026)
+- **404 de workset no arranque**:
+  - a causa raiz nao era chave invalida nem falha de derivacao
+  - o cliente pedia legitimamente o workset do email ancora e o servidor respondia `404 group_workset_not_found` quando ainda nao existia manifesto persistido
+  - isso era um miss normal de bootstrap, mas aparecia como erro vermelho destrutivo no browser/taskpane
+  - `server/src/index.js` passa a devolver `200` com `exists: false` e `manifest: null` para workset inexistente, preservando `500` apenas para falha real de carregamento
+- **Cenario de 2 emails com o mesmo assunto**:
+  - a auditoria concluiu que mostrar apenas 1 email nao e, por si so, regressao
+  - o conjunto de trabalho em `GroupsPrepareCockpit` nao usa "mesmo assunto" como regra de relacao
+  - os emails adicionais entram por identidade forte, relacoes conhecidas do servidor, conversa persistida, grupo/ticket/entidades ou pesquisa/filtro auxiliar
+  - por isso, abrir dois emails com o mesmo assunto sem outra relacao conhecida pode continuar a mostrar apenas o email ancora
+- **Settings da aba Groups em taskpane estreito**:
+  - a causa raiz era estrutural no layout de `GroupsSettingsPanel.tsx`
+  - o modal usava sempre grelha fixa de duas colunas (`168px + 1fr`) e rows com segunda coluna fixa (`180px-240px`), o que esmagava sidebar, labels e controls no Outlook estreito
+  - o painel passa a colapsar para modo compacto quando a largura da janela e reduzida:
+    - header em stack
+    - navegacao das secoes em faixa horizontal no topo
+    - content com padding reduzido
+    - rows com grelha elastica `auto-fit`, sem esmagar controlos
+    - actions de path alinhadas a esquerda no modo estreito
+- **Fecho tecnico adicional**:
+  - `GroupsSettingsPanel.tsx` ficou com `ActionRow` local explicito; deixamos de depender de uma referencia JSX solta dentro da secao de manutencao
+- **Validacao desta ronda**:
+  - `npm.cmd -w client exec -- eslint src/modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx src/modules/crm/GroupsPrepareCockpit.tsx`
+  - `node --check server/src/index.js`
+  - `npm.cmd -w client run build`
+  - `git diff --check`
+  - validacao browser com Playwright em `340x760`: aba `Grupos` abre e o painel de settings fica utilizavel sem erro fatal
+  - validacao HTTP direta ao endpoint de workset inexistente: `200 {"ok":true,"exists":false,"manifest":null}`
+
 ## Grupos v1: picker/path fica fechado por fluxo manual validado; URL web fica formalmente provada como bloqueio arquitetural (Abril 2026)
 - **Picker/path real**:
   - fica assumido como fechado nesta arquitetura por `path manual + normalizacao + validacao real no servidor`
