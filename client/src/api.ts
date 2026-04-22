@@ -147,6 +147,11 @@ export type LinkEntry = {
   updatedAt?: string;
 };
 
+export type EmailRecipientEntry = {
+  email: string;
+  name?: string;
+};
+
 export type RelevantEmailPayload = {
   itemId?: string;
   internetMessageId?: string;
@@ -158,6 +163,8 @@ export type RelevantEmailPayload = {
   messageDateIso?: string;
   sentAtIso?: string;
   receivedAtIso?: string;
+  toRecipients?: EmailRecipientEntry[];
+  ccRecipients?: EmailRecipientEntry[];
   bodyText?: string;
   bodyHtml?: string;
   status?: "em_analise" | "em_progresso" | "concluido" | string;
@@ -332,6 +339,8 @@ export type RelatedEmailEntry = Omit<LinkEntry, "model" | "recordId" | "recordNa
   labels?: string[];
   removedInheritedLabels?: string[];
   labelStates?: Record<string, string>;
+  toRecipients?: EmailRecipientEntry[];
+  ccRecipients?: EmailRecipientEntry[];
   classificationMeta?: {
     principalCategorize?: boolean;
     principalStatusEnabled?: boolean;
@@ -588,6 +597,15 @@ function normalizeLinkEntry(link: any): LinkEntry {
 }
 
 function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
+  const normalizeRecipients = (value: any): EmailRecipientEntry[] =>
+    Array.isArray(value)
+      ? value
+          .map((recipient: any) => ({
+            email: String(recipient?.email || "").trim(),
+            name: String(recipient?.name || "").trim() || undefined,
+          }))
+          .filter((recipient) => recipient.email)
+      : [];
   const normalizedLabelStates = entry?.labelStates && typeof entry.labelStates === "object"
     ? Object.fromEntries(
         Object.entries(entry.labelStates)
@@ -617,6 +635,8 @@ function normalizeRelatedEmailEntry(entry: any): RelatedEmailEntry {
     labels: Array.isArray(entry?.labels) ? entry.labels.map((label: any) => String(label || "").trim()).filter(Boolean) : [],
     removedInheritedLabels: Array.isArray(entry?.removedInheritedLabels) ? entry.removedInheritedLabels.map((label: any) => String(label || "").trim()).filter(Boolean) : [],
     labelStates: normalizedLabelStates,
+    toRecipients: normalizeRecipients(entry?.toRecipients),
+    ccRecipients: normalizeRecipients(entry?.ccRecipients),
     classificationMeta: normalizedClassificationMeta,
     membershipKind: String(entry?.membershipKind || "").trim() || undefined,
     bodyText: String(entry?.bodyText || "").trim(),

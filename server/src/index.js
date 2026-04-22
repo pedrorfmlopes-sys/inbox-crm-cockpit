@@ -45,7 +45,9 @@ import {
 } from "./linkStore.js";
 import {
   getGroupWorksetManifest,
+  migrateGroupWorksetManifest,
   saveGroupWorksetManifest,
+  validateGroupStorageLocation,
 } from "./groupWorksetStore.js";
 import { extractTextFromPdfBuffer } from "./ai/pdfHelper.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
@@ -1978,7 +1980,14 @@ app.post("/api/links/groups/:groupId/documents", async (req, res) => {
 
 app.get("/api/links/groups/worksets/:worksetKey", async (req, res) => {
   try {
-    const manifest = await getGroupWorksetManifest(req.params.worksetKey);
+    const manifest = await getGroupWorksetManifest(req.params.worksetKey, {
+      location: {
+        mode: req.query?.mode,
+        baseFolderPath: req.query?.basePath,
+        chosenFolderKind: req.query?.chosenFolderKind,
+        primaryTarget: req.query?.primaryTarget,
+      },
+    });
     if (!manifest) {
       return res.status(404).json({ ok: false, error: "group_workset_not_found" });
     }
@@ -1996,6 +2005,26 @@ app.post("/api/links/groups/worksets", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_workset_save_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/worksets/migrate", async (req, res) => {
+  try {
+    const result = await migrateGroupWorksetManifest(req.body || {});
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_workset_migrate_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/storage/validate", async (req, res) => {
+  try {
+    const result = validateGroupStorageLocation(req.body || {});
+    return res.json({ ok: true, result });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_storage_validate_failed", details: String(e?.message || e) });
   }
 });
 

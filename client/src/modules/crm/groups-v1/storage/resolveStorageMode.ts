@@ -6,7 +6,7 @@ import type { GroupStorageProviderAdapter } from "./providers/providerTypes";
 import { supabaseProvider } from "./providers/supabaseProvider";
 import { resolveGroupPromotionPolicy } from "./promotionPolicy";
 import { GROUP_STORAGE_MODE_LABELS } from "./modes";
-import { normalizeGroupStorageSettings } from "./settings";
+import { isGraphAdminBlockedGroupStorageConfig, normalizeGroupStorageSettings } from "./settings";
 import type { GroupStorageLocationPointer, GroupStorageSettings } from "./types";
 
 function pickProvider(settings: GroupStorageSettings): GroupStorageProviderAdapter {
@@ -24,6 +24,11 @@ export type ResolvedGroupStorageRuntime = {
   remotePromotionLocation: GroupStorageLocationPointer | null;
   attachmentPolicy: ReturnType<typeof resolveGroupAttachmentStoragePolicy>;
   promotionPolicy: ReturnType<typeof resolveGroupPromotionPolicy>;
+  projectSupport: {
+    supported: boolean;
+    requiresGraphOrAdmin: boolean;
+    blockingReason: string | null;
+  };
   legacyBridge: {
     provider: GroupStorageSettings["provider"];
     baseFolderPath: string;
@@ -41,6 +46,17 @@ export function resolveGroupStorageRuntime(settingsLike?: { groupStorage?: Parti
   const remotePromotionLocation = provider.describeRemote(settings);
   const attachmentPolicy = resolveGroupAttachmentStoragePolicy(settings);
   const promotionPolicy = resolveGroupPromotionPolicy(settings, primaryLocation, remotePromotionLocation);
+  const requiresGraphOrAdmin = isGraphAdminBlockedGroupStorageConfig(settings);
+  const supported = !requiresGraphOrAdmin;
+  const blockingReason = requiresGraphOrAdmin
+    ? "URL web de OneDrive/SharePoint exige Graph/SharePoint API e permissoes fora do perimetro desta fase."
+    : null;
+  const legacyProvider = !supported
+    ? "cloud"
+    : primaryLocation.provider === "local" || primaryLocation.provider === "onedrive" || primaryLocation.provider === "cloud"
+      ? primaryLocation.provider
+      : provider.legacyProvider;
+  const legacyBaseFolderPath = !supported ? "" : String(primaryLocation.basePath || "").trim();
   return {
     settings,
     mode: settings.mode,
@@ -49,10 +65,15 @@ export function resolveGroupStorageRuntime(settingsLike?: { groupStorage?: Parti
     remotePromotionLocation,
     attachmentPolicy,
     promotionPolicy,
+    projectSupport: {
+      supported,
+      requiresGraphOrAdmin,
+      blockingReason,
+    },
     legacyBridge: {
-      provider: provider.legacyProvider,
-      baseFolderPath: String(primaryLocation.basePath || "").trim(),
-      usesFileBackedStorage: provider.legacyProvider !== "cloud",
+      provider: legacyProvider,
+      baseFolderPath: legacyBaseFolderPath,
+      usesFileBackedStorage: supported && (primaryLocation.provider === "local" || primaryLocation.provider === "onedrive"),
     },
   };
 }

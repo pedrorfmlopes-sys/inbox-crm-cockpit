@@ -1,161 +1,184 @@
-# Grupos v1: arquitetura de storage
+# Grupos v1: fundacao executavel de storage/settings
 
-## Objetivo
-- Tornar explicita a separacao entre:
-  - sessao temporaria do add-in
-  - persistencia principal do conjunto de trabalho
-  - promocao remota para Supabase
-- Reduzir escrita prematura e egress desnecessario.
+## Objetivo desta fase
+- fechar o que `Preparar` e `Classificar` gravam de verdade
+- distinguir claramente intermedio, final e sessao/cache
+- alinhar settings com capacidades reais do host e do backend atual
+- deixar a base pronta para teste real antes de abrir `Explorar` ou `Gestor do Grupo`
 
-## Camadas canonicas
+## Fronteira canonica
 
-### 1. Sessao temporaria
-- Vive no add-in.
-- Serve apenas para:
-  - filtros
-  - selecoes
-  - sub-vista
-  - grupo em trabalho
-  - anexos preparados
-  - progresso local / rascunho
-- Nao e persistencia final.
-- Nao substitui a base principal.
-- Nao sobe automaticamente para Supabase.
+### 1. Intermedio
+- Base: `IntermediateCase`
+- Onde grava:
+  - `IndexedDB` local do add-in quando `groupsTabSettings.baseFolderPath` existe como namespace logico
+  - memoria quando o modo esta `disabled` ou quando nao existe namespace
+- Papel:
+  - draft
+  - continuidade de sessao
+  - reidratacao controlada
+  - ponte `Preparar -> Classificar`
+- Operacoes reais desta ronda:
+  - migracao entre namespaces de `IndexedDB`
+  - limpeza real de casos promovidos/abandonados no namespace atual
 
-### 2. Persistencia principal
-- E a base real de trabalho escolhida pelo utilizador.
-- E onde devem viver emails e anexos de trabalho quando saem do estado de rascunho.
-- Modos suportados:
-  - `supabase`
-  - `local_device`
-  - `chosen_folder`
-  - `hybrid`
+### 2. Persistencia final
+- Base: pipeline atual da app via `/api/links/*`
+- Backend: `server/src/linkStore.js`
+- O que sobe de forma final/coerente:
+  - email classificado
+  - memberships finais de grupo principal e referencias
+  - tickets ligados ao email
+  - metadata e refs finais de anexos/documentos
+- O que continua central mesmo nos modos file-backed:
+  - metadata canonica
+  - ligacoes grupo/ticket/email
+  - reabertura funcional futura
 
-### 3. Promocao remota
-- E uma fase separada da sessao e da persistencia principal.
-- Supabase recebe apenas o que for promovido para la.
-- Regra geral:
-  - manifestos e metadata podem ser promovidos por politica
-  - binarios nao devem ser promovidos automaticamente por defeito
-  - anexos grandes pedem decisao
-  - payloads pobres nao podem apagar dados bons
+### 3. Sessao / cache
+- `prepareSession`
+- seeds temporarias de bootstrap
+- fallback em memoria quando o intermedio nao tem namespace
+- nao conta como persistencia funcional final
 
-## Modos
+## Politica executavel desta fase
 
-### Tudo no Supabase
-- `mode: "supabase"`
-- Persistencia principal remota.
-- Continua a existir sessao local de rascunho.
-- Promocao binaria automatica fica desligada por defeito.
+### Intermedio
+- `local_indexeddb`
+  - com namespace: `IntermediateCase` persistido em `IndexedDB`
+  - sem namespace: fallback em memoria
+- `disabled`
+  - sem persistencia intermedia
 
-### Local neste PC
-- `mode: "local_device"`
-- Persistencia principal local ao dispositivo.
-- Supabase fica fora do caminho normal, salvo promocao posterior.
-- Limite atual:
-  - continua a precisar de caminho base configurado; ainda nao existe picker dedicado nesta fase
+### Final
+- o apply continua por email alvo e por scope
+- o `IntermediateCase` e projetado localmente e depois promovido para a persistencia final atual
+- worksets de `Preparar` deixam de ficar desligados a forceps:
+  - passam a ser persistidos via `/api/links/groups/worksets`
+  - quando o modo principal e file-backed e o caminho e valido, o servidor tambem escreve um mirror JSON do workset nesse destino
 
-### Local em pasta escolhida
-- `mode: "chosen_folder"`
-- Persistencia principal numa pasta definida pelo utilizador.
-- Pode representar filesystem local ou biblioteca sincronizada.
-- Limite atual:
-  - URLs web de OneDrive/SharePoint nao sao suportadas como destino final pelo `linkStore`; e preciso caminho sincronizado local ou UNC
+## Modos e estado real
 
-### Hibrido
-- `mode: "hybrid"`
-- Persistencia principal local/pasta escolhida.
-- Supabase fica disponivel como camada de promocao controlada.
-- Mantem separacao explicita entre gravacao principal e promocao remota.
+| Modo | Estado | Como grava | Onde grava | Limitacoes reais |
+| --- | --- | --- | --- | --- |
+| `supabase` | Suportado | Persistencia final central da app; binario cloud quando o payload traz conteudo | `/api/links/*` + store central | Nao cria copia local adicional por si so |
+| `local_device` | Suportado com validacao | Metadata final continua central; worksets e binario tentam usar path file-backed validado | Caminho local/UNC acessivel ao processo do servidor | Nao representa automaticamente o disco do utilizador sem bridge nativa |
+| `chosen_folder` | Suportado com validacao | Metadata final continua central; worksets/binario usam a pasta configurada quando o caminho e fisico | Pasta local/sincronizada/UNC validada no servidor | URL web de OneDrive/SharePoint continua bloqueada |
+| `hybrid` | Suportado com validacao | Persistencia final central + mirror local de worksets/binario no destino primario | App central + path local validado | Continua a exigir path fisico acessivel ao servidor |
+| OneDrive/SharePoint por URL web | Nao suportado | Sem escrita real nesta arquitetura | n/a | O backend atual grava binario via filesystem; sem Graph/SharePoint API nao ha escrita por URL web |
 
-## Politica de anexos
-- Limiar configuravel em `attachmentPromptThresholdMb`.
-- Acima do limiar:
-  - o binario deve pedir decisao do utilizador
-  - nao segue por promocao binaria automatica
-- Por defeito:
-  - `ignoreInlineAttachments = true`
-  - promocao binaria automatica para Supabase = desligada
-- Em modos locais/hibridos:
-  - estrategia principal tende a `store_reference`
-- Em `supabase`:
-  - a estrategia principal pode aceitar binario, mas a promocao remota binaria continua desligada por defeito
+## Picker/path real
 
-## Manifest / workset
-- O modelo tecnico do conjunto de trabalho fica em `client/src/modules/crm/groups-v1/storage/worksetManifest.ts`.
-- O manifesto contem:
-  - email ancora
-  - emails incluidos
-  - grupo em trabalho
-  - filtros
-  - anexos preparados
-  - modo de storage
-  - localizacao principal
-  - localizacao de promocao remota
-  - estado de promocao
+- O repo nao tem bridge nativa que entregue ao backend um caminho local do utilizador atraves de um picker verdadeiro.
+- Nesta arquitetura, o caminho suportado nesta fase e:
+  - input manual
+  - validacao real no servidor
+  - bloqueio explicito quando o destino nao e acessivel
+- O settings deixa isto explicito; nao vende picker falso.
+- Portanto, o requisito funcional de `picker/path real` fica fechado por esta alternativa executavel:
+  - path manual
+  - normalizacao
+  - probe de escrita/leitura real no servidor
 
-## Save semantics
-- Sessao local:
-  - rascunho / progresso
-- Persistencia principal:
-  - gravacao real do workset
-- Promocao remota:
-  - fase separada, com politica e controlo proprio
+## Politica executavel para anexos
 
-## Implementacao nesta ronda
-- Contratos e tipos:
-  - `client/src/modules/crm/groups-v1/storage/types.ts`
-- Defaults e normalizacao:
-  - `client/src/modules/crm/groups-v1/storage/settings.ts`
-- Resolucao central do modo ativo:
-  - `client/src/modules/crm/groups-v1/storage/resolveStorageMode.ts`
-- Politica de anexos:
-  - `client/src/modules/crm/groups-v1/storage/attachmentPolicy.ts`
-- Politica de promocao:
-  - `client/src/modules/crm/groups-v1/storage/promotionPolicy.ts`
-- Manifesto:
-  - `client/src/modules/crm/groups-v1/storage/worksetManifest.ts`
-- Sessao draft:
-  - `client/src/modules/crm/groups-v1/storage/sessionDraft.ts`
-- Providers/adapters pequenos:
-  - `providers/supabaseProvider.ts`
-  - `providers/localDeviceProvider.ts`
-  - `providers/chosenFolderProvider.ts`
-  - `providers/hybridProvider.ts`
+### Regra geral
+- metadata do anexo sobe sempre quando o payload final inclui o anexo
+- `replaceAttachments: false` preserva anexos anteriores quando o payload e parcial
 
-## Integracao minima feita
-- `settings.ts` passou a normalizar `groupStorage` pelo modelo canonico novo.
-- Os fluxos atuais de `Preparar`, `Classificar`, `Gestor`, `GroupsCockpit`, `AI` e bootstrap do cockpit passaram a ler o destino de anexos atraves do resolver central.
-- O backend nao foi reaberto nesta ronda.
+### Binario real
+- `cloud`
+  - o store atual pode manter metadata + conteudo
+- `local` / `onedrive`
+  - o backend tenta escrever binario apenas para caminho local/sincronizado/UNC realmente acessivel
+  - quando consegue, ficam `storageBasePath`, `storagePathHint` e refs finais
+- sem path/provider real
+  - fica metadata + referencia
+  - nao ha promessa de escrita binaria
 
-## Estado funcional atual
-- `supabase`
-  - ja consegue servir como persistencia principal funcional do workset
-  - o manifesto e salvo/carregado por backend pequeno dedicado
-  - continua sem promocao binaria agressiva
-- `hybrid`
-  - ja consegue servir como persistencia principal funcional do manifesto/workset
-  - o manifesto guarda pointers locais e politica remote-first/controlada
-  - a execucao final do destino local continua parcial
-- `local_device`
-  - continua parcial
-  - falta fechar picker/caminho final e escrita principal fora do manifesto
-- `chosen_folder`
-  - continua parcial
-  - falta fechar picker/caminho final e escrita principal fora do manifesto
+### Intermedio
+- pode manter `storageDecision`, `localRef`, `serverRef`, `previewReady`
+- estes campos continuam com papel de draft/sessao
 
-## Persistencia principal minima introduzida
-- O manifesto de workset passou a ter save/load real via:
-  - `server/src/groupWorksetStore.js`
-  - `server/src/groupWorksetManifest.js`
-  - `/api/links/groups/worksets`
-- Em `Preparar`, a sessao continua a ser o draft local.
-- Quando o modo ativo e `supabase` ou `hybrid`, o workset passa a ter checkpoint principal persistido.
-- A reabertura de `Preparar` pode rehidratar do workset persistido quando nao existe sessao local.
+## Migracao real desta fase
 
-## Fora do scope
-- Picker final de pasta
-- sincronizacao remota pesada
-- nova UX de `Preparar` / `Explorar` / `Gestor`
-- aba principal `Tarefas`
-- promocao final completa de worksets para Supabase
+### Ja executavel
+- migracao real do `IntermediateCase` entre namespaces de `IndexedDB`
+  - copia/move `case.json`
+  - copia blobs de anexos locais
+  - pode remover a origem em modo `move`
+- migracao de workset
+  - existe endpoint para migrar o manifesto e reescreve-lo com o destino novo
+  - quando o destino e file-backed valido, o mirror JSON passa a ser regravado nesse destino
+
+### Ainda bloqueado
+- migracao historica da persistencia final central (`linkStore`) para novo provider file-backed
+- mover todos os anexos/documentos ja promovidos para um novo destino sem job backend dedicado
+
+## Limpeza real desta fase
+
+### Ja executavel
+- limpeza manual real do intermedio na shell da aba `Groups`
+- regras:
+  - `promoted` com idade acima de `cleanupClosedCaseDays` -> apaga
+  - `local_only` com idade acima de `cleanupAbandonedCaseDays` -> apaga
+  - `mixed` so apaga quando `neverDeleteMixedSilently = false`
+- apagar um caso remove a respetiva arvore `Groups/cases/<caseId>/...` no namespace do `IndexedDB`
+
+### Ainda fora
+- limpeza automatica total agendada
+- cleanup de storage final central/historico remoto
+
+## Settings alinhados com a realidade desta fase
+
+### Aba Groups
+- continua a representar o intermedio:
+  - namespace
+  - migracao real de namespace
+  - limpeza real do intermédio
+- deixa de fingir validacao de pasta cloud ou migracao final total
+
+### Settings globais
+- `groupStorage` deixa de tratar `local_device` e `hybrid` como meras shells
+- o utilizador pode:
+  - escolher o modo
+  - definir o path
+  - validar o destino no servidor
+- se o destino file-backed falhar:
+  - o save fica bloqueado
+  - o bloqueio tecnico fica visivel
+
+## Bloqueios tecnicos reais desta arquitetura
+
+### OneDrive / SharePoint por URL web
+- bloqueado e fora desta fase porque o backend atual faz escrita binaria por filesystem
+- manifests do add-in no repo continuam apenas com `ReadWriteMailbox`
+- `client/src/office.ts` so pede `Mail.Read`, `User.Read` e `People.Read`
+- nao existe uploader Graph/SharePoint dedicado no backend atual
+- o runtime e a validacao do servidor tratam `document_library` apenas como bloqueio tecnico, nunca como modo executavel desta fundacao
+- para fechar URL web de verdade seria necessaria integracao dedicada com Graph/SharePoint, autenticacao associada e upload/download por API em vez de filesystem
+
+## Estado de fecho desta frente
+- `picker/path real`: fechado pela via manual validada
+- `OneDrive/SharePoint por URL web`: explicitamente fora desta fase sem Graph/admin
+- dentro do perimetro atual (`IndexedDB`, persistencia central da app, paths locais/UNC e pasta sincronizada local), a fundacao de storage/settings pode ser dada como fechada
+
+### Picker real de pasta
+- bloqueado porque o host atual nao expõe ao backend um caminho local do utilizador atraves de picker browser reutilizavel
+- a alternativa real desta fase e path manual + validacao real no servidor
+
+### Migracao final total de binarios historicos
+- bloqueada sem job backend dedicado para enumerar, copiar e reescrever refs dos documentos/anexos ja persistidos
+
+## O que fica preparado para a fase seguinte
+- worksets deixam de estar artificialmente desligados em `local_device` / `chosen_folder` / `hybrid`
+- validacao de destino passa a ser real
+- settings deixam de prometer capacidades sem prova
+- o intermedio ja tem motor real de migracao/limpeza
+
+## Fora de scope mantido
+- `Explorar`
+- `Gestor do Grupo`
+- backend novo gigante
+- integracao Graph/SharePoint
+- redesign geral da UI

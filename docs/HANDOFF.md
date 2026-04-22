@@ -1,5 +1,509 @@
 # HANDOFF
 
+## Grupos v1: fundacao sem Graph/admin fica finalmente fechada, com URL web explicitamente fora do runtime executavel (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - o perimetro desta frente passa a ser explicitamente **sem Graph e sem permissoes admin**
+  - `local_device`, `chosen_folder`, `hybrid`, `local_indexeddb` e `cloud` ficam como base executavel final desta fase
+  - `document_library` / URL web de OneDrive/SharePoint deixa de contaminar o runtime como se fosse submodo meio suportado
+- **Correcao estrutural em codigo**:
+  - `resolveGroupStorageRuntime(...)` passa a expor `projectSupport`
+  - quando a configuracao pede `document_library` ou URL web:
+    - `projectSupport.supported = false`
+    - worksets deixam de ser persistidos como se o modo file-backed estivesse valido
+    - o `legacyBridge` deixa de propagar path/provider web para anexos/worksets desta frente
+  - `supportsPrimaryGroupWorksetPersistence(...)` deixa de decidir so por `mode`; passa a exigir runtime suportado dentro deste perimetro
+  - `validateGroupStorageTarget(...)` no servidor passa a bloquear tanto URL web como `document_library` explicito, mesmo que apareca com path fisico legado
+  - `buildGroupWorksetMirrorFileLocation(...)` deixa de aceitar `document_library` como mirror file-backed
+- **Settings alinhados com a engine**:
+  - o selector de destino deixa de apresentar `document_library` como tipo ativo
+  - `chosen_folder` e `hybrid` mostram apenas "Pasta fisica / sincronizada"
+  - continua a existir prova tecnica do bloqueio web, mas agora como bloqueio fora de fase, nao como promessa por fechar nesta base
+- **Resultado operacional desta frente**:
+  - a fundacao de storage/settings pode ser dada como fechada **no perimetro sem Graph/admin**
+  - OneDrive/SharePoint por URL web continua explicitamente bloqueado e fora desta fase
+- **Fora do scope mantido**:
+  - `Explorar`
+  - `Gestor do Grupo`
+  - Graph
+  - permissoes admin
+  - redesign geral da UI
+
+## Grupos v1: fundacao de storage/settings passa a usar validacao real de destinos, worksets reativos e manutencao executavel do intermédio (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - `local_device`, `chosen_folder` e `hybrid` deixam de ficar apenas bloqueados por texto e passam a depender de **validacao real** do destino no servidor
+  - `Preparar` deixa de ter worksets artificialmente desligados para estes modos; a persistencia principal do workset volta a correr em todos os modos e o servidor tenta espelhar o manifesto para o destino file-backed quando ele e valido
+  - a shell de settings da aba `Groups` deixa de ter migracao/limpeza puramente decorativas e passa a executar:
+    - migracao real do `IntermediateCase` entre namespaces de `IndexedDB`
+    - limpeza real do `IntermediateCase` por regras de retention
+- **Backend real fechado nesta ronda**:
+  - `POST /api/links/groups/storage/validate`
+    - valida de forma real se o path file-backed e acessivel ao processo do servidor
+    - escreve/le um ficheiro probe
+    - bloqueia explicitamente URL web de OneDrive/SharePoint
+  - `POST /api/links/groups/worksets/migrate`
+    - migra/regrava o manifesto de workset para o destino alvo
+  - `groupWorksetStore` passa a:
+    - ler manifestos do store central e de mirror file-backed
+    - gravar mirror JSON do workset em destino local validado quando aplicavel
+- **Guardas tecnicas confirmadas no repo**:
+  - `local_device` nesta arquitetura significa **path local/UNC acessivel ao host do servidor**, nao “o disco do utilizador” por magia
+  - picker verdadeiro de pasta continua bloqueado pelo host atual; a alternativa real fechada nesta ronda e `path manual + validacao real`
+  - OneDrive/SharePoint por URL web continua bloqueado com prova tecnica:
+    - `linkStore` escreve binario via filesystem
+    - sem Graph/SharePoint API nao ha escrita real por URL web
+- **Politica executavel desta ronda**:
+  - intermedio:
+    - `IndexedDB` namespaced por `baseFolderPath`
+    - migracao e limpeza reais do intermédio na shell da aba
+  - final:
+    - persistencia classificada continua central em `/api/links/*`
+    - file-backed modes passam a ser destinos reais para mirror/binario apenas quando o path e validado
+  - sessao/cache:
+    - `prepareSession` e fallback em memoria continuam fora da persistencia funcional final
+- **Politica de anexos alinhada com o codigo**:
+  - metadata sobe sempre
+  - binario real so em `cloud` ou path local/sincronizado/UNC validado
+  - URL web continua bloqueada
+  - `replaceAttachments: false` continua a preservar payload existente em updates parciais
+- **O que continua bloqueado por arquitetura/host**:
+  - picker nativo que entregue path reutilizavel ao backend
+  - OneDrive/SharePoint por URL web
+  - migracao historica total dos binarios ja promovidos no `linkStore` sem job backend dedicado
+- **Fora do scope mantido**:
+  - `Explorar`
+  - `Gestor do Grupo`
+  - redesign geral da UI
+  - backend novo gigante
+
+## Grupos v1: fecho operacional da politica executavel de gravacao alinha shell, storage intermedio e persistencia final real (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - a shell de Settings da aba `Groups` deixa de vender `OneDrive / SharePoint`, migracao, limpeza e `Explorar` como se fossem capacidades prontas nesta fase
+  - o storage intermedio desta frente fica explicitamente reduzido a:
+    - `IndexedDB` local do add-in quando existe `baseFolderPath` configurado como namespace logico
+    - memoria quando o namespace nao existe ou quando o modo esta `disabled`
+  - os settings globais de `groupStorage` passam a tratar como modos executaveis apenas:
+    - `Cockpit Cloud`
+    - `Pasta local / sincronizada`
+  - `local_device`, `hybrid` e caminhos web de OneDrive/SharePoint ficam marcados como indisponiveis nesta fase
+- **O que o codigo passa a deixar explicito**:
+  - `GroupsSettingsPanel.tsx` foi reescrito para separar:
+    - intermedio real
+    - shell herdada nao executavel
+    - fora de scope desta fase
+  - `groupsTabSettings.ts` passa a normalizar o modo intermedio canonico como `local_indexeddb | disabled` e a diagnosticar o namespace do `IndexedDB` em vez de fingir uma pasta real
+  - `GroupsPrepareCockpit.tsx` passa a mostrar `Namespace` em vez de `Localizacao`
+- **Politica executavel desta fase**:
+  - intermedio:
+    - `IntermediateCase` em `IndexedDB` local do host quando existe namespace
+    - fallback em memoria sem namespace
+  - final:
+    - persistencia classificada via `/api/links/*` e `linkStore`
+    - apply continua por email alvo e por scope
+  - sessao/cache:
+    - `prepareSession`, seeds temporarias e memoria transitiva do add-in
+    - nao contam como persistencia final
+- **Politica executavel para anexos**:
+  - metadata sobe sempre quando o payload final inclui anexos
+  - binario real so e tentado quando o provider atual o suporta de verdade:
+    - `cloud`
+    - caminho local/sincronizado/UNC real
+  - URL web de OneDrive/SharePoint continua fora do caminho suportado
+  - `replaceAttachments: false` preserva anexos anteriores em payload parcial
+- **O que ficou explicitamente fora nesta ronda**:
+  - `Explorar`
+  - `Gestor do Grupo`
+  - migracao real de storage
+  - limpeza real do intermedio
+  - backend novo grande
+
+## Grupos v1: fecho da estrutura de escrita e armazenamento deixa explicita a fronteira entre intermadio e final (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - o `IntermediateCase` passa a ficar explicitamente fechado como camada **intermedia** de draft, continuidade de sessao, reidratacao controlada e ponte `Preparar -> Classificar`
+  - a persistencia **final** desta fase fica explicitamente assumida como a promovida pelo pipeline `/api/links/*` sobre `server/src/linkStore.js`
+  - a etapa final do apply deixa de ficar ambiguamente “bem gravada no caso” mas ainda indefinida no store principal
+- **O que ja existia e foi confirmado no repo**:
+  - `resolveIntermediateCaseStorage(...)` continua a usar `IndexedDB` namespaced por `baseFolderPath` quando o storage intermadio esta `ready`; `missing_location` e `disabled` ficam em memoria
+  - `IntermediateCaseRepository` persiste `case.json` e blobs locais do caso
+  - `registerRelevantEmail(...)` / `upsertEmail(...)` guardam identidade do email, assunto, remetente, datas, corpo, labels, `removedInheritedLabels`, `labelStates`, `classificationMeta` e anexos
+  - `addEmailToLinkGroup(...)` / `removeEmailFromLinkGroup(...)` guardam memberships finais por grupo
+  - `createGroupTicket(...)`, `updateGroupTicket(...)` e `linkEmailToGroupTicket(...)` guardam ligacao operacional a tickets
+  - `saveGroupDocuments(...)` guarda documentos finais do grupo
+- **Risco real encontrado e corrigido**:
+  - a ligacao do email ao ticket ainda podia reimpor `membershipKind` unico a todos os `groupIds` finais do ticket, o que abria risco de degradar referencias para principal na persistencia final
+  - a correcao passa a fazer o apply final de grupos/referencias explicitamente por `addEmailToLinkGroup(...)` e a usar `linkEmailToGroupTicket(...)` apenas para ligar email + ticket e atualizar `ticket.groupIds`, sem reclassificar memberships
+- **Politica final desta fase para anexos**:
+  - no `IntermediateCase`, anexos continuam com papel de draft/local (`storageDecision`, `localRef`, `serverRef`, `previewReady`)
+  - na persistencia final por email:
+    - metadata do anexo fica sempre no store final quando o anexo entra no payload
+    - provider `cloud`: o conteudo pode continuar no proprio store final atual
+    - provider `local` / `onedrive`: o backend tenta gravar binario real para caminho local/sincronizado; quando consegue, persiste refs (`storageBasePath`, `storagePathHint`) e limpa `content`
+    - payload parcial nao limpa anexos antigos sem `replaceAttachments: true`
+  - em documentos do grupo, `saveGroupDocuments(...)` segue a mesma separacao: metadata sempre, binario real apenas quando o provider/path suportam escrita segura
+- **O que fica intermadio vs final**:
+  - intermadio:
+    - `IntermediateCase`
+    - sessao/seeds de continuidade
+    - estados de decisao de anexos ainda nao promovidos
+  - final:
+    - email classificado e respetiva classificacao por email
+    - memberships finais de grupo principal/referencias
+    - ligacoes a ticket
+    - documentos do grupo
+- **O que ainda fica limitado pelo host/contrato atual**:
+  - `to` / `cc` ainda nao entram no contrato atual de `RelevantEmailPayload` / `RelatedEmailEntry`, por isso nao ficaram fechados nesta ronda sem abrir API nova
+  - URLs web de OneDrive/SharePoint continuam fora do caminho final suportado; o backend so fecha escrita real para pasta sincronizada local / UNC
+  - esta ronda nao abriu `Explorar`, `Explorador de Grupos` nem `Gestor do Grupo`; apenas deixou a base final mais pronta para eles
+  - nao houve redesign de UI nem nova frente funcional paralela
+
+## Grupos v1: smoke/regression do pipeline de apply confirma a cadeia principal e corrige regressao no link do ticket base quando havia update de estado (Abril 2026)
+- **O que foi validado nesta ronda**:
+  - **Cenario A**: apply sobre um unico email com grupo principal, referencias, labels e ticket existente sem criacao de ticket novo
+    - validado por fluxo/codigo: `resolvedApplySelection -> remoteApplyPlan -> executeLegacyBaseTicketApply(...) -> executeLegacyRemoteApplyForTarget(...)`
+    - confirmado que grupos, referencias e labels continuam a ser aplicados por email alvo
+  - **Cenario B**: apply sobre um unico email com criacao de ticket novo, projecao local e persistencia/reidratacao
+    - validado por fluxo/codigo: `executeLegacyBaseTicketApply(...) -> projectApplyIntoIntermediateCase(...) -> persistAndRefreshClassificationCase(...)`
+  - **Cenario C**: apply sobre varios emails alvo no mesmo scope
+    - validado por fluxo/codigo que `remoteApplyPlan.targetPlans` e `projectApplyIntoIntermediateCase(... targetEmails)` continuam por email, sem virar apply global cego do caso
+  - **Cenario D**: apply com alteracao de anexos/documentState/isHidden
+    - validado por fluxo/codigo que `applyClassificationToIntermediateCase(...)` continua a projetar anexos por `emailKey` dono do anexo
+  - **Cenario E**: apply com current target incluido e camada Outlook/categorias ativa
+    - validado por fluxo/codigo que `beginApplyOutlookCategoryOperation(...)`, `executePostApplyOutlookCategorySync(...)` e o fecho operacional continuam encadeados sem reabrir o handler
+  - **Cenario F**: erro/degradacao a meio
+    - validado por fluxo/codigo que `finalizeFailedApplyOperation(...)` continua a distinguir erro total vs `Guardado com avisos`, com fecho seguro da operacao Outlook
+- **Regressao real encontrada e corrigida**:
+  - quando existia `ticket` ja selecionado e havia apenas `update` do estado do ticket, o `base target` podia saltar indevidamente o `linkEmailToGroupTicket(...)`
+  - a causa era `skipTicketLink` depender de `finalTicket`, o que confundia `ticket criado` com `ticket existente atualizado`
+  - a correcao passou `skipTicketLink` a depender apenas de `ticketExecution.createdTicket` no email base
+- **O que nao foi possivel validar com total seguranca**:
+  - comportamento runtime real do host Outlook/Office.js e confirmacao de categorias fora do browser local
+  - confirmacao ponta-a-ponta com Odoo real e efeitos remotos em ambiente de producao
+- **Guardas mantidas**:
+  - sem nova frente funcional
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: hardening do pipeline de apply no `Classificar` afina contratos, resultados e tipagem sem abrir nova frente funcional (Abril 2026)
+- **O que foi afinado nesta ronda**:
+  - `handleApplyClassification()` passa a declarar explicitamente `ApplyOperationResult` como resultado operacional comum
+  - `beginApplyOutlookCategoryOperation(...)` e `executePostApplyOutlookCategorySync(...)` passam a expor tipos de resultado nomeados, em vez de contratos inline mais soltos
+  - `persistAndRefreshClassificationCase(...)` passa a expor tipos nomeados para sync options e resultado de persist/reidratacao
+  - `executeLegacyRemoteApplyForTarget(...)` deixa de aceitar `attachmentStorageOptions` como `Record<string, unknown>` e passa a usar um contrato mais estreito e explicito
+  - `outlookCategoryApply.ts` passa a reutilizar o extrator comum de mensagens de erro do fecho operacional e deixa de depender de `any` evitavel nesse ponto
+  - o fallback de `selectedEmail` no fluxo Outlook deixa de depender de um check redundante (`selectedEmailKey === selectedEmailKey`) e fica mais claro como guarda de reidratacao do email atual
+  - `applyResolution.ts` reduz casts evitaveis em anexos e grupos relacionados, aproximando a projecao de payload dos tipos reais de `RelatedEmailEntry` e `RelevantEmailPayload`
+- **Pontos ambiguos corrigidos**:
+  - resultados de sucesso/erro/falha degradada ficam mais alinhados entre helpers
+  - contratos de persistencia e sync deixam de depender tanto de tipos anonimos inline
+  - a camada Outlook usa a mesma normalizacao de mensagem de erro do fecho operacional
+- **Divida tecnica pequena que ainda fica**:
+  - warnings antigos do `GroupClassificationStudioApp.tsx` continuam fora desta ronda
+  - o `finally` minimo do handler continua inline por ainda pertencer ao ciclo de vida do componente
+  - nao houve nova extracao estrutural; esta ronda foi apenas de robustez e regressao
+
+## Grupos v1: fecho operacional do apply no `Classificar` sai do handler principal e passa para helper proprio (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - normalizacao do resultado final de sucesso do apply
+  - normalizacao do resultado final de erro/degradado
+  - fecho seguro da operacao Outlook quando uma excecao escapa depois de abrir a operacao
+  - o studio passa a delegar esta etapa para `finalizeSuccessfulApplyOperation(...)`, `finalizeFailedApplyOperation(...)` e `closeApplyOutlookOperationSafely(...)`
+- **O que ainda fica no handler principal**:
+  - mensagens/status intermédios de cada etapa do pipeline
+  - orquestracao entre resolucao comum, plano remoto, ticket base, execucao por target, projecao local, persistencia/reidratacao e Outlook
+  - `finally` minimo para libertar `actionBusy` e `applyInProgressRef`
+- **Acoplamentos reduzidos**:
+  - o `catch` deixa de fechar inline a operacao Outlook e de reconstruir manualmente o resultado final do apply
+  - o caminho de sucesso/erro fica mais uniforme e legivel no fim do handler
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: camada Outlook/categorias do pos-apply sai do handler principal e passa para helper proprio no `Classificar` (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - abertura da operacao Outlook com fase inicial de `saving`
+  - construcao do fallback do email atual para projecao Outlook
+  - construcao do `source` e `plan` de categorias
+  - `enqueue` / `requestCockpitHostAction` / `waitForOutlookCategorySyncResult`
+  - `completeOutlookCategoryOperation(...)` nos cenarios de sucesso, timeout e falha
+  - o studio passa a delegar esta etapa para `beginApplyOutlookCategoryOperation(...)` e `executePostApplyOutlookCategorySync(...)`
+- **O que ainda fica no handler principal**:
+  - mensagens/status gerais do apply
+  - orquestracao entre plano remoto, ticket base, execucao por target, projecao local e persistencia
+  - catch/final fallback para fechar a operacao se alguma excecao escapar antes do helper a completar
+- **Acoplamentos reduzidos**:
+  - o handler deixa de concentrar inline a maior parte da logica host-specific de Outlook/categorias
+  - fica mais claro o corte entre pipeline local de apply e camada Outlook
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: persistencia local e reidratacao pos-apply do `Classificar` saem do handler principal e passam para helper proprio (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - `resolveClassificationIntermediateCase(...)`
+  - `writeCase(...)`
+  - sync imediato do caso no studio
+  - refresh/reidratacao pos-apply
+  - sync do caso novamente apos o refresh
+  - o studio passa a delegar esta etapa para `persistAndRefreshClassificationCase(...)`
+- **O que ainda fica no handler principal**:
+  - mensagens/status da operacao
+  - orquestracao entre ticket base, execucao por target e projecao local
+  - sincronizacao Outlook/categorias
+- **Acoplamentos reduzidos**:
+  - o handler deixa de concentrar inline a persistencia do caso e a reidratacao basica pos-apply
+  - fica mais claro o corte entre projecao local, persist/sync/reidratacao e logica de Outlook
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - a ancora continua a ser preservada por `preferredSelectedEmailKey`
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: projecao local no `IntermediateCase` sai do handler principal e passa para helper proprio no `Classificar` (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - a construcao do `localClassificationDraft`
+  - a resolucao de `localClassificationState`
+  - a aplicacao da classificacao local por email no `IntermediateCase`, incluindo a projecao canonica de anexos ja suportada por `applyClassificationToIntermediateCase(...)`
+  - o studio passa a delegar esta etapa para `projectApplyIntoIntermediateCase(...)`
+- **O que ainda fica no handler principal**:
+  - `writeCase(...)`
+  - mensagens/status da operacao
+  - sync imediato do caso no studio
+  - refresh/reidratacao
+  - sincronizacao Outlook/categorias
+- **Acoplamentos reduzidos**:
+  - o handler deixa de montar inline o draft local e a projecao do caso
+  - fica mais claro o corte entre plano remoto, ticket base, execucao por target, projecao local e persistencia
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: execucao do ticket base sai do handler principal e passa para helper proprio no `Classificar` (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - a decisao/executacao de criar ticket novo e atualizar estado do ticket existente sai do `handleApplyClassification()`
+  - o studio passa a delegar essa etapa para `executeLegacyBaseTicketApply(...)`, alimentado por `resolvedApplySelection`, `remoteApplyPlan`, `currentContext` e `currentOutlookTicket`
+- **O que ainda fica no handler principal**:
+  - mensagens/status da operacao
+  - execucao remota por target via `executeLegacyRemoteApplyForTarget(...)`
+  - projecao local no `IntermediateCase`
+  - refresh/reidratacao
+  - sincronizacao Outlook/categorias
+- **Acoplamentos reduzidos**:
+  - o handler deixa de carregar inline a logica de `createGroupTicket` / `updateGroupTicket`
+  - fica mais claro o corte entre plano remoto, ticket base, execucao por target e projecao local
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: execucao remota legacy por email sai do loop inline do `Classificar` e passa para helper proprio (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - a execucao remota por email alvo (`removeEmailFromLinkGroup`, `addEmailToLinkGroup`, `unlinkEmailFromGroupTicket`, `registerRelevantEmail`, `linkEmailToGroupTicket`) sai do loop inline do `handleApplyClassification()`
+  - o studio passa a delegar essa parte para `executeLegacyRemoteApplyForTarget(...)`, alimentado por `resolvedApplySelection` + `remoteApplyPlan`
+- **O que ainda fica no handler principal**:
+  - criacao/atualizacao do ticket base (`createGroupTicket` / `updateGroupTicket`)
+  - projecao local no `IntermediateCase`
+  - refresh/reidratacao do studio
+  - sincronizacao Outlook/categorias
+- **Acoplamentos reduzidos**:
+  - o loop principal deixa de repetir payloads e operacoes remotas por target no meio da orquestracao
+  - fica mais claro o corte entre resolucao comum, plano remoto, execucao por target e projecao local
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: execucao remota legacy do apply no `Classificar` fica mais explicita e menos espalhada (Abril 2026)
+- **O que foi isolado nesta ronda**:
+  - o studio passa a gerar um `remoteApplyPlan` explicito para a execucao remota legacy, com emails alvo, payloads por email, grupos a remover, ticketIds a desligar, base target para ticket e contexto do email atual para categorias Outlook
+  - o fallback do email atual usado na projecao Outlook/categorias passa a ser construido por helper proprio, em vez de ficar montado inline dentro do handler
+- **Duplicacoes reduzidas**:
+  - a execucao remota deixa de recalcular no meio do handler a mesma informacao de targets, payload base e payload classificado
+  - a ordem remota fica mais legivel: operacao Outlook -> ticket create/update -> loop por email alvo -> projecao local no caso -> refresh/reidratacao -> categorias Outlook
+- **O que continua acoplado nesta ronda**:
+  - as chamadas remotas legacy (`createGroupTicket`, `updateGroupTicket`, grupos, tickets, `registerRelevantEmail`) continuam no `GroupClassificationStudioApp`
+  - a projecao Outlook/categorias continua no handler porque depende diretamente do host e do ciclo de operacao atual
+- **Guardas mantidas**:
+  - `resolvedApplySelection` continua a ser a base comum
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: pipeline local de apply do `Classificar` fica mais coerente e menos duplicado (Abril 2026)
+- **O que foi consolidado nesta ronda**:
+  - o studio passa a ter uma resolucao comum de apply (`resolvedApplySelection`) para targets, grupo principal, referencias, labels, ticket, metadados e semantica de scope
+  - a construcao de payload por email deixa de ser duplicada em varios pontos do `handleApplyClassification()` e passa a sair de helpers dedicados
+  - a projecao no `IntermediateCase` deixa de reconstruir a classificacao local a partir de logica paralela e passa a beber da mesma resolucao comum do apply
+- **Duplicacoes reduzidas**:
+  - selecao de emails alvo e respetivas chaves
+  - payload base por email vs payload classificado por email
+  - draft local para `IntermediateCase`
+  - criterios de `canApplyClassification`
+- **O que ainda continua separado por seguranca**:
+  - chamadas remotas legacy (`registerRelevantEmail`, grupos, tickets, Outlook categories) continuam separadas do helper puro de resolucao
+  - drafts editoriais ricos (`classificationMetaDraft`, pesquisa, previews, planos locais) continuam locais e nao foram forcados para canonicidade falsa
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - o email ancora continua protegido; a resolucao comum nao transforma o caso num apply global cego
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: bloco de anexos/documentos do `Classificar` fica mais coerente entre estado canonico do caso e estado editorial/local (Abril 2026)
+- **O que passa a ficar mais claramente canonico**:
+  - a lista base de anexos do email selecionado passa a nascer primeiro do `IntermediateCase` / email canonico, em vez de depender de chaves editoriais demasiado globais
+  - quick docs, preview ativo e reidratacao passam a usar chave composta por `emailKey + attachmentKey`, evitando mistura silenciosa entre anexos de emails diferentes
+  - `documentState` e `isHidden` do anexo continuam a ser a verdade funcional e passam a mandar mais claramente na reidratacao do preview e dos quick docs
+- **O que continua editorial/local**:
+  - `showHiddenQuickDocuments`
+  - `expandedQuickDocumentKeys`
+  - preview aberto/fechado e estado remoto de preview
+  - `attachmentPlan` (`analyze` / `save` / `forward`) enquanto plano local de trabalho
+- **Reducao de ambiguidade nesta ronda**:
+  - o studio separa melhor a colecao canonica de anexos da camada visual filtrada
+  - a selecao de preview deixa de depender apenas de `selectedEmail` e passa a conseguir respeitar o par `email + anexo`
+  - quick docs e picker de anexos deixam de tratar anexos de emails diferentes como se partilhassem sempre a mesma chave local
+- **Guardas mantidas**:
+  - alteracoes continuam a ser feitas por email alvo; nao ha alteracao global cega de anexos do caso inteiro
+  - preview, expand/collapse e filtros temporarios continuam fora do caso canonico
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: bloco de grupos e referencias do `Classificar` fica mais coerente entre base canonica e pesquisa editorial (Abril 2026)
+- **O que passa a ficar mais claramente canonico**:
+  - `effectivePrincipalGroupId` e `effectiveReferenceGroupIds` passam a representar a verdade funcional do email quando o caso canonico ja existe
+  - o grupo principal e as referencias usados em resumos, chips ativos, favoritos, apply e reidratacao deixam de depender apenas do estado bruto do editor e passam a respeitar primeiro a selecao canonica do email/caso
+  - a reidratacao do editor volta a limpar `principalSearch` e `referenceSearch`, para que a pesquisa nao fique a parecer o estado aplicado
+- **O que continua editorial/local**:
+  - `principalSearch` e `referenceSearch` continuam como texto de pesquisa/criacao
+  - resultados temporarios, sugestoes e drafts ricos de `classificationMetaDraft` continuam locais
+- **Reducao de ambiguidade nesta ronda**:
+  - pesquisar grupo ou referencia deixa de funcionar como espelho implicito do grupo/referencia canonicos
+  - `hasPendingClassificationChanges` deixa de contar o texto de pesquisa como alteracao funcional pendente
+  - o apply e os resumos passam a usar os ids efetivos do caso, sem reabrir classificacao global cega
+- **Guardas mantidas**:
+  - o email selecionado/ancora continua protegido pela `preferred key` / ancora do caso
+  - o apply por scope continua por email alvo
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: bloco de tickets do `Classificar` fica mais coerente entre ticket canonico e pesquisa editorial (Abril 2026)
+- **O que passa a ficar mais claramente canonico**:
+  - o ticket real do email passa a ser resolvido primeiro a partir do proprio email/caso (`classificationMeta.ticketId` e fallback dos `ticketIds` do contexto)
+  - `selectedTicket` deixa de nascer de uma mistura vaga entre resultados de pesquisa e tickets do caso; primeiro resolve o ticket canonico, e so cai em resultados de pesquisa quando o utilizador esta mesmo a editar o ticket manualmente
+  - a reidratacao de email e o pos-apply continuam a limpar `ticketSearch` / `ticketSearchResults`, para o ticket canonico do caso voltar a mandar logo que exista
+- **O que continua editorial/local**:
+  - `ticketSearch` e `ticketSearchResults` ficam apenas como ferramenta de procura
+  - `createTicketTitle` e `ticketStatusDraft` continuam drafts locais de edicao
+- **Reducao de duplicacao/ambiguidade nesta ronda**:
+  - `canonicalTicketChoices` passa a representar tickets reais/contextuais
+  - `ticketPickerChoices` passa a representar a combinacao usada no picker visual, incluindo pesquisa, sem contaminar a verdade principal
+  - sugestoes e preservacao do ticket selecionado deixam de depender da lista que mistura pesquisa com contexto canonico
+- **Guardas mantidas**:
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+  - o apply por scope continua por email alvo, sem virar classificacao global cega do caso
+
+## Grupos v1: reducao de estados paralelos editoriais no `Classificar` (Abril 2026)
+- **O que passou a depender menos de estado paralelo**:
+  - a mudanca de email selecionado deixa de fazer apenas uma limpeza parcial do editor e passa a reidratar grupo principal, referencias, labels canonicas, `ticketId` canonico e `classificationMetaDraft` derivavel diretamente do `IntermediateCase`
+  - a pesquisa de ticket deixa de contar como sinal de alteracao funcional pendente; `ticketSearch` continua a existir, mas fica explicitamente como ferramenta editorial
+  - a reidratacao canonica passa tambem a limpar `ticketSearch` / `ticketSearchResults`, para que o ticket canonico do email volte a mandar logo que o caso atualizado esta disponivel
+- **Separacao mais clara entre canonico e editorial**:
+  - canonico/derivavel do caso: email selecionado, grupo principal, referencias, labels canonicas, `ticketId` canonico e metadados de classificacao por email
+  - editorial/transitorio: texto de pesquisa de ticket, resultados de pesquisa, `createTicketTitle`, `ticketStatusDraft` e partes ainda ricas de `classificationMetaDraft`
+- **O que ainda continua paralelo nesta ronda**:
+  - `ticketSearch` / `ticketSearchResults` continuam locais como UX de apoio
+  - `createTicketTitle`, `ticketStatusDraft` e toggles ricos de `classificationMetaDraft` continuam editoriais porque ainda nao representam contrato canonico final por email
+- **Guardas mantidas**:
+  - a identidade do email selecionado continua a ser reidratada pela `preferred key` / ancora do caso, sem regressar ao padrao do primeiro item da lista
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
+## Grupos v1: reidratacao local pos-apply no `Classificar` passa a voltar explicitamente ao `IntermediateCase` (Abril 2026)
+- **O que passou a ser reidratado diretamente do caso apos apply**:
+  - email selecionado/ancora preservado por `emailKey`, sem cair no primeiro da lista
+  - emails do conjunto canonico voltam a sobrepor os equivalentes legacy em `relatedEmails` / `knownEmails`
+  - etiquetas selecionadas, removidas herdadas, estados por etiqueta e categorizadas voltam a semear o editor a partir do caso
+  - grupo principal, referencias e `ticketId` canonico do email selecionado voltam a ser refletidos logo apos o apply
+  - selecao de emails alvo do apply volta a ser reconciliada com o conjunto do caso atualizado
+- **Estados stale reduzidos nesta ronda**:
+  - o studio deixa de depender apenas do `refreshSelectedEmailContext()` para refletir o caso atualizado
+  - o `IntermediateCase` atualizado passa a ser sincronizado imediatamente apos o `writeCase(...)` e reaplicado novamente depois do refresh legacy, para que a base canonica volte a mandar
+  - listas case-backed deixam de ser reinjetadas por merge vago quando o mesmo email ja existe no caso canonico
+- **O que ainda fica paralelo/legacy nesta ronda**:
+  - `ticketSearch`, `ticketSearchResults` e parte dos toggles ricos de `classificationMetaDraft`
+  - tickets/grupos carregados do servidor continuam a enriquecer o studio para nomes, estados e contexto, mas deixam de mandar na identidade do email e na classificacao canonica ja persistida
+- **Fora do scope mantido**:
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+  - sem endpoints novos
+
+## Grupos v1: etiquetas locais do `Classificar` passam a reabrir com fidelidade a partir do `IntermediateCase` (Abril 2026)
+- **O que passa a ficar canonicamente guardado por email no caso**:
+  - `labels` deixam de representar apenas labels "owned" do apply local e passam a guardar a lista final de etiquetas ativas do email
+  - `removedInheritedLabels` passa a guardar as etiquetas herdadas removidas explicitamente
+  - `labelStates` passa a guardar o estado por etiqueta ja estabilizado no studio
+  - `categorizedLabelNames` passa a guardar as etiquetas marcadas para categorizacao quando essa parte ja esta estavel
+- **Como isto e escrito no apply local**:
+  - o apply continua a respeitar o scope por email do studio
+  - por cada email alvo, o `IntermediateCase` passa a receber a lista final de etiquetas selecionadas, removidas herdadas, estados por etiqueta e etiquetas categorizadas
+  - o caso atualizado e regravado no storage intermédio da frente
+- **Como o `Classificar` reabre isto**:
+  - `hydrateIntermediateCaseEmailsToRelatedEntries(...)` passa a devolver `labels`, `removedInheritedLabels`, `labelStates` e `categorizedLabelNames` diretamente do caso canonico
+  - o studio volta a semear `selectedLabels` e a parte canonica de `labelDrafts` a partir destes campos antes de cair em heuristicas legacy
+- **O que continua draft local puro nesta micro-ronda**:
+  - os toggles mais ricos de `classificationMetaDraft` que ainda nao tem contrato canonico fechado
+  - o objeto completo de `labelDrafts` enquanto editor rico; o caso guarda apenas a parte estavel necessaria para reabertura fiel
+- **Legado que continua**:
+  - fallback legacy continua a existir para cenarios antigos sem `IntermediateCase` ou sem estes campos ainda persistidos
+  - quando o caso canonico ja traz a informacao de etiquetas, ele passa a ser a base principal desta parte do studio
+
+## Grupos v1: classificacao local do studio passa a ser projetada por email no `IntermediateCase` (Abril 2026)
+- **O que passa a ser escrito no caso canonico**:
+  - grupo principal e nome do grupo principal
+  - grupos de referencia
+  - labels proprias do email
+  - `ticketIds` / `ticketCodes` quando ja existem no fluxo atual
+  - `status` e `state` locais derivados do apply atual
+  - `classifiedAt` e `classifiedSource`
+  - `documentState` e `isHidden` dos anexos do email alvo
+- **Como o scope e aplicado**:
+  - o apply continua a respeitar `current`, `selected` e os outros scopes ja existentes no studio
+  - o `IntermediateCase` e atualizado por email alvo, nunca por caso inteiro de forma cega
+  - quando ha caso canonico, ele e regravado no storage intermédio e o bootstrap do studio e atualizado a partir desse caso
+- **O que ainda fica draft local puro nesta ronda**:
+  - `labelDrafts`
+  - `classificationMetaDraft` completo
+  - `selectedSeriesId`
+  - `ticketStatusDraft` enquanto draft de edicao
+  - `attachmentPlan` (`analyze` / `save` / `forward`)
+- **Legado que continua**:
+  - o apply legacy/remoto continua a coexistir para nao partir o fluxo atual
+  - o `IntermediateCase` passa a ser a verdade local principal onde ja existe, e o legado fica como compatibilidade/transicao
+- **Fora do scope mantido**:
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermédio
+  - sem endpoints novos
+
+## Grupos v1: `Classificar` passa a hidratar-se internamente a partir do `IntermediateCase` (Abril 2026)
+- **O que passou a nascer diretamente do caso canonico**:
+  - `classificationCase` como base interna explicita do studio
+  - email ancora a partir do caso canonico, respeitando `anchorEmailKey`
+  - emails do conjunto/contexto do studio a partir dos emails do caso canonico
+  - total conhecido do studio a partir do caso canonico, com enriquecimento legacy apenas como complemento
+- **Reducao de reconstrucao vaga**:
+  - `emailPool`, `caseScopeEmails`, quick documents e listas de contexto deixam de depender primeiro de `relatedEmails` / `knownEmails` quando o caso canonico existe
+  - a escolha do email ancora deixa de cair apenas em heuristicas da lista visivel e passa a respeitar a ancora do caso
+  - mutacoes locais de anexos/visibilidade e refresh contextual passam a reconciliar tambem o bootstrap canonico quando ele existe
+- **O que continua legado nesta ronda**:
+  - `seedKey` e `prepareSeedKey` continuam como fallback para cenarios sem `IntermediateCase`
+  - leituras de servidor e listas legacy continuam como enriquecimento/fallback para nao partir o fluxo atual
+- **Fora do scope mantido**:
+  - sem promocao real para servidor
+  - sem limpeza real do intermédio
+  - sem refactor profundo total do `Classificar`
+
 ## Data
 - 2026-04-06
 
@@ -732,3 +1236,240 @@
   - criar, editar, duplicar, reordenar e apagar MODS em Settings > IA
   - confirmar no Outlook que o MOD aparece/desaparece no menu MODS do `AiCockpit`
   - gerar resposta com um MOD e confirmar que a instrucao influencia o texto sem virar texto fixo, salvo quando o proprio MOD for texto fechado
+- **Groups settings shell (UI only)**:
+  - `client/src/modules/crm/GroupsPrepareCockpit.tsx` passou a expor um icon pequeno de engrenagem no cabecalho de `Groups`, abrindo um modal compacto de settings dentro da propria aba
+  - `client/src/modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx` implementa a shell visual com menu lateral, uma secao ativa de cada vez, tooltips discretos em hover e botoes `Fechar` / `Guardar`
+  - scope desta ronda fica limitado a interface/estrutura: `General`, `Armazenamento intermedio`, `Anexos`, `Limpeza`, `Avisos`, `Migracao`, `Manutencao`, `Explorar` e `Sobre`
+  - campos, toggles e acoes estao stubados/local-state only; nao foi ligada logica pesada de storage real, servidor, migracao, backup, reset, `Preparar` profundo ou `Classificar`
+  - afinacao seguinte da mesma shell corrige apenas linguagem e defaults user-facing: `Modo de armazenamento` mostra so `OneDrive / SharePoint` e `Desativado`; `Estrategia de armazenamento` mostra `Todos no servidor`, `Todos fora do servidor` e `Por tamanho`; defaults de `Limpeza`, `Avisos`, `Anexos`, `Migracao` e `Explorar` passam a bater com o contrato fechado, sem alterar a estrutura nem ligar logica real
+  - afinacao final da shell: `General` passa a mostrar `Aba Grupos ativa` como controlo visual real; campos de localizacao deixam de usar input livre como controlo principal e passam a leitura + acoes; textos user-facing ficam em PT-PT legivel com acentos, sem redesenhar a shell nem mexer na logica pesada
+  - wiring seguinte da shell: `client/src/settings.ts` passa a persistir um bloco proprio `groupsTabSettings`; `client/src/modules/crm/groups-v1/settings/groupsTabSettings.ts` define defaults/normalizacao; `GroupsSettingsPanel` abre com valores reais, edita draft local e `Guardar` persiste via `saveSettings`
+  - `locationStatus` e `quickDiagnostic` continuam leves e derivados do proprio bloco de settings; `groupsVersion` fica estatico nesta ronda
+  - continuam explicitamente fora do scope: validacao real de localizacao, OneDrive/SharePoint real, migracao real, backup/reset reais, limpeza real, avisos reais, storage final, servidor, `Preparar` profundo e `Classificar` profundo
+
+## Grupos v1: efeitos reais leves dos `groupsTabSettings` na aba `Groups` (Abril 2026)
+- **O que passou a ter efeito real nesta ronda**:
+  - `groupsTabEnabled` passa a bloquear o uso local da aba `Groups` quando desligado; a vista deixa de expor o fluxo de `Preparar` e mostra um estado claro de modulo desativado
+  - `storageMode = disabled` passa a bloquear localmente o fluxo de `Preparar`; a aba deixa de agir como se a base intermedia estivesse ativa e mostra um estado coerente com o storage desligado
+  - `locationStatus`, `baseFolderPath` e `quickDiagnostic` passam a aparecer de forma visivel na propria aba, como resumo leve do estado configurado
+  - os Settings da aba `Groups` continuam acessiveis mesmo quando o modulo ou o storage estao limitados
+- **Guardas mantidas**:
+  - sem validacao real de pasta
+  - sem OneDrive / SharePoint real
+  - sem migracao, backup, reset, limpeza ou avisos reais
+  - sem refactor profundo de `Preparar` ou `Classificar`
+- **Comportamento deliberadamente fora desta ronda**:
+  - `validateLocationOnOpen`, `warnIfUnavailable`, `autoRetryValidation`, `cleanup*`, `warning*`, `attachment*`, `migration*` e `maintenance` continuam apenas persistidos, sem motor real por baixo
+- **Proximo passo recomendado**:
+  - validar em Outlook real a combinacao de `groupsTabEnabled` e `storageMode`, confirmando que a aba mostra bloqueio claro e reversivel sem fingir capacidades de storage que ainda nao existem
+
+## Grupos v1: alinhamento local de `Preparar` com `groupsTabSettings` (Abril 2026)
+- **O que passou a depender de `groupsTabSettings` como fonte principal**:
+  - gating leve do modulo (`groupsTabEnabled`)
+  - gating leve de armazenamento ativo/desativado (`storageMode`)
+  - resumo visual do estado (`locationStatus`, `baseFolderPath`, `quickDiagnostic`)
+  - mensagens locais de bloqueio e disponibilidade do fluxo de `Preparar`
+- **O que deixou de depender diretamente de `groupStorage` no cockpit**:
+  - a montagem local de anexos deixou de ler `settings.groupStorage.ignoreInlineAttachments` diretamente; o cockpit passa a usar apenas um runtime tecnico legado encapsulado
+- **O que ainda ficou pendurado no legado tecnico (`groupStorage`)**:
+  - resolucao de `legacyStorageRuntime` para workset/storage
+  - politica tecnica de ignorar anexos inline, atraves de `legacyStorageRuntime.attachmentPolicy.ignoreInlineAttachments`
+- **Porque ficou assim nesta ronda**:
+  - estes pontos pertencem ao contrato tecnico da frente de storage/anexos e ainda nao tem equivalente funcional fechado em `groupsTabSettings`; mover agora sem storage real abriria semantica falsa
+- **Fora do scope mantido**:
+  - storage real, filesystem real, migracao real, limpeza/avisos reais, politica real de anexos, refactor profundo de `Preparar` e `Classificar`
+
+## Grupos v1: modelo canonico da base intermedia por caso (Abril 2026)
+- **Objetivo fechado nesta ronda**:
+  - criar o contrato canonico do caso intermedio que vai servir de fonte de verdade para `Preparar` e, depois, para `Classificar`, sem abrir ainda storage real ou refactor profundo do fluxo
+- **Estrutura do modelo**:
+  - `IntermediateCase` passa a separar explicitamente:
+    - top-level do caso (`schemaVersion`, `caseId`, `anchorEmailKey`, `conversationId`, `createdAt`, `updatedAt`, `lastAccessedAt`)
+    - lista de emails (`IntermediateCaseEmail[]`)
+    - classificacao por email (`IntermediateEmailClassification`)
+    - anexos por email (`IntermediateCaseAttachment[]`)
+    - resumos derivados (`sourceSummary`, `classificationSummary`, `retentionSummary`, `diagnosticSummary`)
+- **Casos mistos suportados no contrato**:
+  - emails novos vindos do Outlook coexistem com historico ja no servidor
+  - alguns emails podem estar classificados e outros nao
+  - anexos podem ter decisoes distintas (`local`, `server`, `hybrid`, `metadata_only`, `pending`)
+  - o caso pode ficar `local_only`, `mixed` ou `promoted` para preparacao futura da limpeza segura
+- **Estrutura fisica alvo da base intermedia**:
+  - `Groups/cases/<caseId>/case.json`
+  - `Groups/cases/<caseId>/attachments/<emailKey>/...`
+  - o `case.json` passa a ser o manifesto canonico do caso; anexos ficam referenciados por `localRef` / `serverRef`, sem obrigar ainda a filesystem real
+  - apagar um caso intermedio significa apagar a arvore completa `Groups/cases/<caseId>/...`, nao apenas o `case.json`, para nao deixar anexos orfaos
+- **Helpers novos criados**:
+  - `createEmptyIntermediateCase`
+  - `normalizeIntermediateCase`
+  - `buildIntermediateCaseFromSeed`
+  - `mergeEmailIntoIntermediateCase`
+  - `mergeAttachmentsIntoIntermediateCase`
+  - `touchIntermediateCaseAccess`
+  - `buildIntermediateCaseSummary`
+  - `serializeIntermediateCase`
+  - `parseIntermediateCase`
+  - repositorio abstrato com `readCase`, `writeCase`, `deleteCase`, `listCases`, `findCaseByEmailKey`
+- **O que ficou stub / deliberadamente fora**:
+  - OneDrive / SharePoint reais
+  - leitura/escrita em pasta real
+  - refactor ponta-a-ponta de `Preparar`
+  - refactor ponta-a-ponta de `Classificar`
+  - endpoints / servidor
+  - migracao total do workset antigo
+- **Compatibilidade mantida**:
+  - workset/storage antigo continua a coexistir
+  - o novo modelo canonico fica definido como alvo da frente, sem partir o fluxo atual
+
+## Grupos v1: `Preparar` ligado ao `IntermediateCase` canonico (Abril 2026)
+- **O que passou a usar `IntermediateCase` de verdade**:
+  - `GroupsPrepareCockpit` passa a montar um `IntermediateCase` explicito a partir do email atual, relacionados visiveis e anexos conhecidos
+  - a lista ativa de emails de `Preparar` passa a ser derivada dos emails do `IntermediateCase`, em vez de trabalhar apenas sobre arrays soltos
+  - a lista de anexos preparada passa a nascer dos anexos dos emails do caso canonico
+  - o caso e escrito num repositorio abstrato em memoria durante a sessao, como ponte para a futura base intermedia real
+- **Como o caso e montado nesta ronda**:
+  - `caseId` usa `conversationId` quando existe; caso contrario usa o `anchorEmailKey`
+  - o email atual entra como ancora do caso e continua a usar apenas sinais diretos proprios
+  - emails relacionados entram como emails distintos do caso, com classificacao propria e anexos proprios
+  - os anexos selecionados em `Preparar` passam a refletir-se no caso como decisoes locais/pending sem abrir ainda storage real
+- **Micro-correcao estrutural seguinte**:
+  - o `IntermediateCase` deixa de nascer da lista filtrada/visivel da UI
+  - os filtros de `Preparar` passam a afetar apenas a projecao visivel (`visibleEmails` / `visibleListEmails`)
+  - o conjunto canonico do caso passa a ser montado a partir do email atual, relacionados conhecidos e emails ja preservados no caso existente
+  - emails ja integrados no caso deixam de ser removidos automaticamente so por estarem escondidos por filtros
+- **O que ainda ficou legado / ponte temporaria**:
+  - o workset antigo continua a existir para draft de selecao, filtros, grupo em trabalho e seed para `Classificar`
+  - `legacyStorageRuntime` continua a suportar o gate tecnico de anexos inline e o contrato antigo de workset, ate a ronda de storage real
+- **Fora do scope mantido**:
+  - sem OneDrive / SharePoint reais
+  - sem promocao remota real para servidor
+  - sem refactor profundo de `Classificar`
+  - sem reescrita total do fluxo `Servidor -> Intermedio -> Outlook`
+
+## Grupos v1: primeira camada de storage intermédio real do `IntermediateCase` (Abril 2026)
+- **Auditoria tecnica fechada nesta ronda**:
+  - o repo ja tinha prova de uso real de `indexedDB` no cliente (`client/src/modules/crm/excelProvider.ts`)
+  - nao existe ainda no repo uma bridge real para escrever diretamente em `groupsTabSettings.baseFolderPath`
+  - nao existe ainda integracao real com OneDrive / SharePoint ou com a pasta escolhida pelo utilizador
+  - por isso, a camada real desta ronda fecha apenas o que o host atual suporta de forma segura: storage persistente no browser via IndexedDB
+- **Adapter real implementado**:
+  - `client/src/modules/crm/groups-v1/storage/intermediateCaseIndexedDbAdapter.ts`
+  - operacoes reais: `readText`, `writeText`, `deleteTree`, `listPaths`, `readBinary`, `writeBinary`
+  - o storage fisico continua a respeitar o contrato logico aprovado:
+    - `Groups/cases/<caseId>/case.json`
+    - `Groups/cases/<caseId>/attachments/<emailKey>/...`
+  - a `baseFolderPath` configurada passa a ser usada como namespace logico do adapter, nao como pasta real validada no host
+- **O que ja ficou funcional de verdade**:
+  - `case.json` pode ser lido/escrito de verdade
+  - `listCases` e `findCaseByEmailKey` passam a funcionar sobre a base persistida no IndexedDB
+  - `GroupsPrepareCockpit` ja consegue reabrir um caso persistido dessa base quando `storageMode` esta ativo e existe `baseFolderPath` configurada
+- **Como ficaram os anexos nesta ronda**:
+  - `case.json` referencia anexos usando o path canonico de `attachments/<emailKey>/...`
+  - blobs reais sao escritos apenas quando o host ja tem conteudo do anexo em memoria (`attachment.content`)
+  - anexos sem binario disponivel continuam metadata-only; nao se finge preview real nem ficheiro persistido
+- **Limitacoes honestas mantidas**:
+  - sem escrita direta na localizacao escolhida pelo utilizador
+  - sem validacao real de `baseFolderPath`
+  - sem OneDrive / SharePoint reais
+  - sem promocao para servidor
+  - sem refactor profundo de `Classificar`
+
+## Grupos v1: UI de `Preparar` alinhada com o resolver real de storage intermédio (Abril 2026)
+- `GroupsPrepareCockpit` passa a usar `intermediateCaseStorage.availability` como verdade local para `ready`, `missing_location` e `disabled`
+- `missing_location` deixa de se comportar como storage real pronto; a vista mostra estado explicito de configuracao incompleta e assume apenas modo transitorio em memoria
+- o cartao de estado passa a distinguir `Estado real` do storage resolvido e `Configuracao` derivada dos settings
+- fora do scope mantido: adapter IndexedDB, OneDrive / SharePoint reais, refactor profundo de `Classificar`
+
+## Grupos v1: precedência real de abertura em `Preparar` (Abril 2026)
+- `GroupsPrepareCockpit` passa a abrir o caso por precedência explícita `Servidor -> Intermédio -> Outlook`
+- **Servidor nesta frente**:
+  - `getRelatedEmailContext(...)` para email atual e históricos relacionados já conhecidos no backend
+  - `searchKnownEmails(...)` continua apenas como pesquisa auxiliar da vista; não passa a ser a fonte canónica de abertura do caso
+- **Intermédio nesta frente**:
+  - `readCase(caseId)` e `findCaseByEmailKey(emailKey)` sobre o storage intermédio real desta ronda
+- **Outlook nesta frente**:
+  - contexto do email aberto, corpo atual e anexos já carregados no host
+- O caso final continua a ser um `IntermediateCase`, mas passa a ser montado por batches de fonte:
+  - Outlook como fallback do âncora e dos campos em falta
+  - Intermédio para preservar rascunhos e dados locais úteis já existentes
+  - Servidor como fonte mais forte quando já há dados persistidos para o email atual e/ou históricos relacionados
+- Casos mistos ficam suportados de forma explícita:
+  - o `primarySource` do caso pode ser `server`, `intermediate` ou `outlook`
+  - cada email mantém `sourceOrigin` próprio
+  - o email âncora continua limpo e não é redefinido pelo histórico
+- Fora do scope mantido:
+  - sem endpoints novos
+  - sem promoção real para servidor
+  - sem refactor profundo de `Classificar`
+
+## Grupos v1: handoff `Preparar -> Classificar` passa a priorizar o `IntermediateCase` (Abril 2026)
+- **Nova regra do handoff**:
+  - `Preparar` persiste primeiro o `IntermediateCase` corrente e so depois abre `Classificar`
+  - o handoff passa a transportar identidade explicita do caso: `caseId` e `anchorEmailKey`
+  - `Classificar` tenta abrir primeiro o caso canonico por `readCase(caseId)` e, se preciso, por `findCaseByEmailKey(anchorEmailKey)`
+- **O que `Classificar` ja le do `IntermediateCase`**:
+  - email ancora
+  - emails relacionados
+  - anexos
+  - classificacao por email ja existente
+  - `sourceSummary` / origem principal do caso
+- **Fallback legado que continua nesta ronda**:
+  - `seedKey` e `prepareSeedKey` continuam como ponte temporaria para nao partir cenarios onde o caso canonico ainda nao exista
+  - o seed legado deixa de ser a verdade principal quando o `IntermediateCase` esta disponivel
+- **Garantias mantidas**:
+  - o email ancora continua limpo e nao e redefinido pelo historico
+  - a abertura a partir do caso canonico nao implica promocao real para servidor
+  - limpeza real do intermédio continua fora desta ronda
+
+## Grupos v1: contrato minimo de persistencia final por email ficou fechado em codigo (Abril 2026)
+- **Persistencia final agora garantida em codigo para cada email classificado**:
+  - identidade forte: `itemId`, `internetMessageId`, `conversationId`
+  - contexto de leitura: `subject`, `fromEmail`, `fromName`, `emailWebLink`
+  - datas: `messageDateIso`, `receivedAtIso`, `sentAtIso`
+  - destinatarios: `toRecipients`, `ccRecipients`
+  - corpo/metadados de consulta: `bodyText`, `bodyHtml`
+  - classificacao auxiliar: `status`, `labels`, `removedInheritedLabels`, `labelStates`, `classificationMeta`
+  - anexos: metadata + refs de storage + `documentState` + `isHidden`
+- **Onde ficou fechado**:
+  - cliente:
+    - `client/src/api.ts`
+    - `client/src/modules/crm/group-classification/applyResolution.ts`
+    - `client/src/modules/crm/group-classification/documentUtils.ts`
+    - `client/src/modules/crm/group-classification/legacyRemoteApply.ts`
+    - `client/src/modules/crm/GroupClassificationStudioApp.tsx`
+    - `client/src/modules/crm/GroupsPrepareCockpit.tsx`
+    - bridges do intermédio em `intermediateCaseAdapters.ts` e `intermediateCaseClassification.ts`
+  - servidor:
+    - `server/src/linkStore.js`
+- **Persistencia final duravel desta fase**:
+  - `crm_custom_group_members` passa a guardar tambem `to_recipients_json` e `cc_recipients_json`
+  - `buildEmailListEntry(...)` e `mapDbGroupMemberRow(...)` passam a devolver recipients no contrato final
+  - o store JSON em memoria/disco tambem passa a reter recipients no email canonico
+- **Politica efetiva de anexos fechada nesta fase**:
+  - o payload final do email classificado passa a subir explicitamente com `replaceAttachments: false`
+  - `registerRelevantEmail(...)` continua a promover anexos com `attachmentStorageProvider` / `attachmentStorageBasePath`
+  - `createGroupTicket(...)` passa a receber o mesmo `attachmentStorageOptions` no email base, para nao cair em persistencia parcial diferente quando o ticket e criado nessa operacao
+  - binario remoto/final continua fechado apenas onde o provider atual suporta escrita real (`cloud`, `local`, `onedrive` via pasta sincronizada/local); quando nao ha binario ou path valido, fica metadata + refs sem promessas falsas
+- **O que continua limitado pelo host/contrato atual**:
+  - o contexto Outlook atual ainda nao fornece `emailWebLink` nem `sentAtIso` de forma universal para o email aberto; esses campos continuam best-effort quando ja existem no servidor/intermedio/seed
+  - o `IntermediateCase` continua a guardar apenas `to` / `cc` como emails simples, sem nomes; a persistencia final passa a guardar `email + name`
+  - URLs web reais de OneDrive / SharePoint continuam fora; a escrita final suportada continua a depender de caminho local/sincronizado quando o provider nao e `cloud`
+# HANDOFF
+
+## Grupos v1: picker/path fica fechado por fluxo manual validado; URL web fica formalmente provada como bloqueio arquitetural (Abril 2026)
+- **Picker/path real**:
+  - fica assumido como fechado nesta arquitetura por `path manual + normalizacao + validacao real no servidor`
+  - nao depende de picker nativo; essa parte continua bloqueada pelo host, mas deixa de ser requisito em aberto porque a alternativa executavel fica assumida como solucao oficial da v1
+- **OneDrive/SharePoint por URL web**:
+  - continua bloqueado, agora com prova tecnica mais especifica no proprio contrato de validacao
+  - o runtime passa a devolver:
+    - `architecturalBlocker = web_document_library_requires_graph_backend`
+    - `requiredChange` com a mudanca minima necessaria
+  - factos confirmados no repo:
+    - manifests do add-in continuam apenas com `ReadWriteMailbox`
+    - `client/src/office.ts` continua a pedir apenas `Mail.Read`, `User.Read` e `People.Read`
+    - o backend escreve binario por filesystem e nao existe uploader Graph/SharePoint por URL web
+- **Conclusao desta frente**:
+  - `picker/path real`: fechado
+  - `OneDrive/SharePoint por URL web`: nao fechado
+  - enquanto URL web se mantiver requisito obrigatorio, a fundacao ainda nao pode ser dada como totalmente encerrada

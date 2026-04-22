@@ -1,0 +1,377 @@
+import type {
+  EmailRecipientEntry,
+  GroupTicketEntry,
+  LinkGroupEntry,
+  RelatedEmailEntry,
+  RelevantEmailPayload,
+} from "@/api";
+import type { IntermediateCaseClassificationDraft } from "@/modules/crm/groups-v1/storage/intermediateCaseClassification";
+
+import type { ClassificationMetaDraft } from "./types";
+import { isCurrentContextEmail, makeEmailKey, normalizeDocumentLifecycleState } from "./documentUtils";
+
+export type ApplyCurrentContext = {
+  itemId?: string;
+  internetMessageId?: string;
+  conversationId?: string;
+  subject?: string;
+  fromEmail?: string;
+  fromName?: string;
+  emailWebLink?: string;
+  sentAtIso?: string;
+  receivedAtIso?: string;
+  toRecipients?: EmailRecipientEntry[];
+  ccRecipients?: EmailRecipientEntry[];
+};
+
+export type CurrentTargetIdentity = {
+  itemId?: string;
+  internetMessageId?: string;
+  conversationId?: string;
+};
+
+export type ResolvedStudioApplySelection = {
+  targetEmails: RelatedEmailEntry[];
+  targetEmailKeys: string[];
+  principalGroupId: string;
+  principalGroupName: string;
+  principalGroup: LinkGroupEntry | null;
+  referenceGroupIds: string[];
+  referenceGroups: LinkGroupEntry[];
+  allGroupIds: string[];
+  emailLabelStatus: string;
+  labels: string[];
+  emailOwnedSelectedLabels: string[];
+  removedInheritedLabels: string[];
+  labelStates: Record<string, string>;
+  categorizedLabelNames: string[];
+  selectedTicketId: string;
+  selectedSeriesId: string;
+  selectedTicket: GroupTicketEntry | null;
+  desiredTicketStatus: string;
+  baseClassificationMeta: ClassificationMetaDraft;
+  targetMembershipKind: "principal" | "referencia";
+  hasAnyClassificationValue: boolean;
+};
+
+export type RemoteApplyTargetPlan = {
+  targetEmail: RelatedEmailEntry;
+  targetEmailKey: string;
+  targetEmailPayload: RelevantEmailPayload;
+  classifiedEmailPayload: RelevantEmailPayload;
+  groupsToRemove: string[];
+  ticketIdsToRemove: string[];
+};
+
+export type ResolvedRemoteApplyExecutionPlan = {
+  targetEmails: RelatedEmailEntry[];
+  targetEmailKeys: string[];
+  baseTargetEmail: RelatedEmailEntry;
+  baseTargetKey: string;
+  currentTargetIdentity?: CurrentTargetIdentity;
+  includesCurrentTarget: boolean;
+  targetPlans: RemoteApplyTargetPlan[];
+  shouldCreateTicket: boolean;
+  shouldUpdateTicketStatus: boolean;
+};
+
+function normalizeString(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function normalizeStringList(values: unknown[]): string[] {
+  return Array.from(new Set(values.map((value) => normalizeString(value)).filter(Boolean)));
+}
+
+function normalizeRecipients(values: Array<EmailRecipientEntry | null | undefined> | undefined): EmailRecipientEntry[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const recipients: EmailRecipientEntry[] = [];
+  for (const value of values) {
+    const email = normalizeString(value?.email).toLowerCase();
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    recipients.push({
+      email,
+      name: normalizeString(value?.name) || undefined,
+    });
+  }
+  return recipients;
+}
+
+type RelatedEmailAttachmentEntry = NonNullable<RelatedEmailEntry["attachments"]>[number];
+type RelatedEmailGroupEntry = NonNullable<RelatedEmailEntry["relatedGroups"]>[number];
+
+export function buildResolvedStudioApplySelection(args: {
+  targetEmails: RelatedEmailEntry[];
+  principalGroupId?: string;
+  principalGroup?: LinkGroupEntry | null;
+  referenceGroupIds: string[];
+  referenceGroups: LinkGroupEntry[];
+  selectedLabels: string[];
+  inheritedLabels: string[];
+  selectedLabelStates: Record<string, string>;
+  categorizedLabelNames: string[];
+  selectedTicketId?: string;
+  selectedSeriesId?: string;
+  selectedTicket?: GroupTicketEntry | null;
+  ticketStatusDraft?: string;
+  classificationMetaDraft: ClassificationMetaDraft;
+  existingSelectedEmailGroupIds?: string[];
+  existingSelectedEmailTicketIds?: string[];
+  existingSelectedEmailLabels?: string[];
+  existingSelectedEmailStatus?: string;
+}): ResolvedStudioApplySelection {
+  const principalGroupId = normalizeString(args.principalGroupId);
+  const referenceGroupIds = normalizeStringList(args.referenceGroupIds);
+  const selectedLabels = normalizeStringList(args.selectedLabels);
+  const inheritedLabels = normalizeStringList(args.inheritedLabels);
+  const removedInheritedLabels = inheritedLabels.filter((label) => !selectedLabels.includes(label));
+  const emailOwnedSelectedLabels = selectedLabels.filter((label) => !inheritedLabels.includes(label));
+  const targetEmails = args.targetEmails.filter(Boolean);
+  const targetEmailKeys = targetEmails.map((email) => makeEmailKey(email)).filter(Boolean);
+  return {
+    targetEmails,
+    targetEmailKeys,
+    principalGroupId,
+    principalGroupName: normalizeString(args.principalGroup?.name || principalGroupId),
+    principalGroup: args.principalGroup || null,
+    referenceGroupIds,
+    referenceGroups: args.referenceGroups.filter(Boolean),
+    allGroupIds: normalizeStringList([principalGroupId, ...referenceGroupIds]),
+    emailLabelStatus: normalizeString(Object.values(args.selectedLabelStates || {}).find(Boolean)),
+    labels: selectedLabels,
+    emailOwnedSelectedLabels,
+    removedInheritedLabels,
+    labelStates: Object.fromEntries(
+      Object.entries(args.selectedLabelStates || {})
+        .map(([label, status]) => [normalizeString(label), normalizeString(status)])
+        .filter(([label, status]) => label && status)
+    ),
+    categorizedLabelNames: normalizeStringList(args.categorizedLabelNames),
+    selectedTicketId: normalizeString(args.selectedTicketId),
+    selectedSeriesId: normalizeString(args.selectedSeriesId),
+    selectedTicket: args.selectedTicket || null,
+    desiredTicketStatus: normalizeString(args.ticketStatusDraft),
+    baseClassificationMeta: {
+      ...args.classificationMetaDraft,
+      categorizedLabelNames: normalizeStringList(args.categorizedLabelNames),
+    },
+    targetMembershipKind: principalGroupId ? "principal" : "referencia",
+    hasAnyClassificationValue: Boolean(
+      principalGroupId
+      || referenceGroupIds.length
+      || normalizeString(args.selectedTicketId)
+      || normalizeString(args.selectedSeriesId)
+      || (args.existingSelectedEmailGroupIds || []).length
+      || (args.existingSelectedEmailTicketIds || []).length
+      || selectedLabels.length
+      || (args.existingSelectedEmailLabels || []).length
+      || normalizeString(args.existingSelectedEmailStatus)
+    ),
+  };
+}
+
+export function buildResolvedApplyTargetPayload(args: {
+  targetEmail: RelatedEmailEntry;
+  currentContext: ApplyCurrentContext;
+}): RelevantEmailPayload {
+  const { targetEmail, currentContext } = args;
+  const targetIsCurrent = isCurrentContextEmail(targetEmail, currentContext);
+  const targetAttachments = (targetEmail.attachments || []).map((attachment: RelatedEmailAttachmentEntry) => ({
+    key: attachment.key,
+    id: attachment.id,
+    name: attachment.name,
+    contentType: String(attachment.contentType || "application/octet-stream"),
+    content: String(attachment.content || ""),
+    size: attachment.size,
+    isInline: attachment.isInline,
+    contentId: attachment.contentId,
+    storageProvider: attachment.storageProvider,
+    storageBasePath: attachment.storageBasePath,
+    storagePathHint: attachment.storagePathHint,
+    documentState: normalizeDocumentLifecycleState(attachment.documentState, "ingested"),
+    hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+    isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
+  }));
+  return {
+    itemId: normalizeString(targetEmail?.itemId || (targetIsCurrent ? currentContext.itemId : "")) || undefined,
+    internetMessageId: normalizeString(targetEmail?.internetMessageId || (targetIsCurrent ? currentContext.internetMessageId : "")) || undefined,
+    conversationId: normalizeString(targetEmail?.conversationId || (targetIsCurrent ? currentContext.conversationId : "")) || undefined,
+    subject: normalizeString(targetEmail?.subject || (targetIsCurrent ? currentContext.subject : "")) || undefined,
+    fromEmail: normalizeString(targetEmail?.fromEmail || (targetIsCurrent ? currentContext.fromEmail : "")) || undefined,
+    fromName: normalizeString(targetEmail?.fromName || (targetIsCurrent ? currentContext.fromName : "")) || undefined,
+    emailWebLink: normalizeString(targetEmail?.emailWebLink || (targetIsCurrent ? currentContext.emailWebLink : "")) || undefined,
+    sentAtIso: normalizeString(targetEmail?.sentAtIso || (targetIsCurrent ? currentContext.sentAtIso : "")) || undefined,
+    receivedAtIso: normalizeString(targetEmail?.receivedAtIso || targetEmail?.messageDateIso || (targetIsCurrent ? currentContext.receivedAtIso : "")) || undefined,
+    messageDateIso: normalizeString(targetEmail?.messageDateIso || targetEmail?.receivedAtIso || (targetIsCurrent ? currentContext.receivedAtIso : "")) || undefined,
+    toRecipients: normalizeRecipients(
+      Array.isArray(targetEmail?.toRecipients) && targetEmail.toRecipients.length
+        ? targetEmail.toRecipients
+        : (targetIsCurrent ? currentContext.toRecipients : undefined)
+    ),
+    ccRecipients: normalizeRecipients(
+      Array.isArray(targetEmail?.ccRecipients) && targetEmail.ccRecipients.length
+        ? targetEmail.ccRecipients
+        : (targetIsCurrent ? currentContext.ccRecipients : undefined)
+    ),
+    bodyText: normalizeString(targetEmail?.bodyText) || undefined,
+    bodyHtml: normalizeString(targetEmail?.bodyHtml) || undefined,
+    replaceAttachments: false,
+    attachments: targetAttachments.map((attachment) => ({
+      key: attachment.key,
+      id: attachment.id,
+      name: attachment.name,
+      contentType: attachment.contentType,
+      size: attachment.size,
+      isInline: attachment.isInline,
+      contentId: attachment.contentId,
+      content: attachment.content,
+      storageProvider: attachment.storageProvider,
+      storageBasePath: attachment.storageBasePath,
+      storagePathHint: attachment.storagePathHint,
+      documentState: attachment.documentState,
+      hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+      isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
+    })),
+  };
+}
+
+export function buildResolvedClassifiedEmailPayload(args: {
+  targetEmail: RelatedEmailEntry;
+  currentContext: ApplyCurrentContext;
+  resolvedApplySelection: ResolvedStudioApplySelection;
+}): RelevantEmailPayload {
+  const basePayload = buildResolvedApplyTargetPayload({
+    targetEmail: args.targetEmail,
+    currentContext: args.currentContext,
+  });
+  return {
+    ...basePayload,
+    status: args.resolvedApplySelection.emailLabelStatus,
+    labels: args.resolvedApplySelection.emailOwnedSelectedLabels,
+    removedInheritedLabels: args.resolvedApplySelection.removedInheritedLabels,
+    labelStates: args.resolvedApplySelection.labelStates,
+    classificationMeta: args.resolvedApplySelection.baseClassificationMeta,
+  };
+}
+
+export function buildResolvedIntermediateCaseClassificationDraft(args: {
+  resolvedApplySelection: ResolvedStudioApplySelection;
+  resolvedCaseTicket?: GroupTicketEntry | null;
+  localClassificationState?: string;
+}): IntermediateCaseClassificationDraft {
+  const resolvedCaseTicket = args.resolvedCaseTicket || null;
+  return {
+    principalGroupId: args.resolvedApplySelection.principalGroupId || undefined,
+    principalGroupName: args.resolvedApplySelection.principalGroupName || undefined,
+    referenceGroupIds: args.resolvedApplySelection.referenceGroupIds,
+    labels: args.resolvedApplySelection.labels,
+    removedInheritedLabels: args.resolvedApplySelection.removedInheritedLabels,
+    labelStates: args.resolvedApplySelection.labelStates,
+    categorizedLabelNames: args.resolvedApplySelection.categorizedLabelNames,
+    ticketIds: [normalizeString(resolvedCaseTicket?.id || args.resolvedApplySelection.selectedTicketId)].filter(Boolean),
+    ticketCodes: [normalizeString(resolvedCaseTicket?.code)].filter(Boolean),
+    state: normalizeString(args.localClassificationState) || undefined,
+    status: args.resolvedApplySelection.emailLabelStatus || undefined,
+    classifiedAt: new Date().toISOString(),
+    classifiedSource: "user",
+  };
+}
+
+export function buildResolvedRemoteApplyExecutionPlan(args: {
+  targetEmails: RelatedEmailEntry[];
+  resolvedApplySelection: ResolvedStudioApplySelection;
+  currentContext: ApplyCurrentContext;
+  emailContextMeta: Map<string, { groupIds: string[]; labels: string[]; ticketIds: string[] }>;
+}): ResolvedRemoteApplyExecutionPlan {
+  const targetEmails = args.targetEmails.filter(Boolean);
+  const targetEmailKeys = targetEmails.map((email) => makeEmailKey(email)).filter(Boolean);
+  const hasIdentity = Boolean(normalizeString(args.currentContext.itemId) || normalizeString(args.currentContext.internetMessageId));
+  const currentTargetIdentity = hasIdentity
+    ? {
+        itemId: normalizeString(args.currentContext.itemId) || undefined,
+        internetMessageId: normalizeString(args.currentContext.internetMessageId) || undefined,
+        conversationId: normalizeString(args.currentContext.conversationId) || undefined,
+      }
+    : undefined;
+  const includesCurrentTarget = Boolean(currentTargetIdentity && targetEmails.some((email) => isCurrentContextEmail(email, args.currentContext)));
+  const targetPlans = targetEmails.map((targetEmail) => {
+    const targetEmailKey = makeEmailKey(targetEmail);
+    const targetEmailPayload = buildResolvedApplyTargetPayload({
+      targetEmail,
+      currentContext: args.currentContext,
+    });
+    const classifiedEmailPayload = buildResolvedClassifiedEmailPayload({
+      targetEmail,
+      currentContext: args.currentContext,
+      resolvedApplySelection: args.resolvedApplySelection,
+    });
+    const targetGroups = (targetEmail.relatedGroups || []) as RelatedEmailGroupEntry[];
+    const currentGroupIds = targetGroups.map((group) => normalizeString(group.id)).filter(Boolean);
+    const groupsToRemove = currentGroupIds.filter((groupId) => !args.resolvedApplySelection.allGroupIds.includes(groupId));
+    const ticketIdsToRemove = ((args.emailContextMeta.get(targetEmailKey)?.ticketIds || []) as string[])
+      .filter((ticketId) => ticketId !== args.resolvedApplySelection.selectedTicketId);
+    return {
+      targetEmail,
+      targetEmailKey,
+      targetEmailPayload,
+      classifiedEmailPayload,
+      groupsToRemove,
+      ticketIdsToRemove,
+    } satisfies RemoteApplyTargetPlan;
+  });
+  const baseTargetEmail = targetEmails[0];
+  return {
+    targetEmails,
+    targetEmailKeys,
+    baseTargetEmail,
+    baseTargetKey: makeEmailKey(baseTargetEmail),
+    currentTargetIdentity,
+    includesCurrentTarget,
+    targetPlans,
+    shouldCreateTicket: !args.resolvedApplySelection.selectedTicketId && Boolean(args.resolvedApplySelection.selectedSeriesId),
+    shouldUpdateTicketStatus: Boolean(args.resolvedApplySelection.selectedTicketId && args.resolvedApplySelection.desiredTicketStatus),
+  };
+}
+
+export function buildRemoteApplyFallbackCurrentCategoryEmail(args: {
+  currentTargetEmail: RelatedEmailEntry | null;
+  currentContext: ApplyCurrentContext;
+  resolvedApplySelection: ResolvedStudioApplySelection;
+}): RelatedEmailEntry | null {
+  const currentTargetEmail = args.currentTargetEmail;
+  if (!currentTargetEmail) return null;
+  return {
+    ...currentTargetEmail,
+    itemId: normalizeString(args.currentContext.itemId || currentTargetEmail.itemId) || undefined,
+    internetMessageId: normalizeString(args.currentContext.internetMessageId || currentTargetEmail.internetMessageId) || undefined,
+    conversationId: normalizeString(args.currentContext.conversationId || currentTargetEmail.conversationId),
+    subject: normalizeString(currentTargetEmail.subject || args.currentContext.subject) || undefined,
+    fromEmail: normalizeString(currentTargetEmail.fromEmail || args.currentContext.fromEmail) || undefined,
+    fromName: normalizeString(currentTargetEmail.fromName || args.currentContext.fromName) || undefined,
+    receivedAtIso: normalizeString(currentTargetEmail.receivedAtIso || currentTargetEmail.messageDateIso || args.currentContext.receivedAtIso) || undefined,
+    messageDateIso: normalizeString(currentTargetEmail.messageDateIso || currentTargetEmail.receivedAtIso || args.currentContext.receivedAtIso) || undefined,
+    status: args.resolvedApplySelection.emailLabelStatus,
+    labels: args.resolvedApplySelection.emailOwnedSelectedLabels,
+    removedInheritedLabels: args.resolvedApplySelection.removedInheritedLabels,
+    labelStates: args.resolvedApplySelection.labelStates,
+    classificationMeta: {
+      ...args.resolvedApplySelection.baseClassificationMeta,
+    },
+    relatedGroups: [
+      ...(args.resolvedApplySelection.principalGroup?.id ? [{
+        id: args.resolvedApplySelection.principalGroup.id,
+        name: args.resolvedApplySelection.principalGroup.name,
+        kind: args.resolvedApplySelection.principalGroup.kind,
+        relationKind: "principal" as const,
+      }] : []),
+      ...args.resolvedApplySelection.referenceGroups.map((group) => ({
+        id: group.id,
+        name: group.name,
+        kind: group.kind,
+        relationKind: "referencia" as const,
+      })),
+    ],
+  } as RelatedEmailEntry;
+}

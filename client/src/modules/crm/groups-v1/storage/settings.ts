@@ -48,7 +48,24 @@ function detectChosenFolderKind(pathValue: string, explicitKind: unknown): Group
   const normalizedKind = String(explicitKind || "").trim().toLowerCase();
   if (normalizedKind === "document_library") return "document_library";
   if (normalizedKind === "filesystem") return "filesystem";
-  return /^https?:\/\//i.test(pathValue) ? "document_library" : "filesystem";
+  return "filesystem";
+}
+
+export function isGraphAdminBlockedGroupStorageConfig(
+  input: Partial<GroupStorageSettings> | null | undefined
+): boolean {
+  const provider = normalizeGroupStorageLegacyProvider(input?.provider);
+  const mode = normalizeGroupStorageMode(input?.mode)
+    || inferModeFromLegacy(provider, String(input?.baseFolderPath || "").trim());
+  if (mode === "supabase" || mode === "local_device") {
+    return false;
+  }
+  if (mode === "hybrid" && input?.hybrid?.primaryTarget === "local_device") {
+    return false;
+  }
+  const chosenPath = String(input?.chosenFolder?.path || input?.baseFolderPath || "").trim();
+  const explicitKind = String(input?.chosenFolder?.kind || "").trim().toLowerCase();
+  return explicitKind === "document_library" || /^https?:\/\//i.test(chosenPath);
 }
 
 function inferModeFromLegacy(provider: GroupStorageLegacyProvider, baseFolderPath: string): GroupStorageMode {

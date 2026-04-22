@@ -8,11 +8,18 @@ export async function loadPrimaryGroupWorkset(input: {
   anchorEmailKey: string;
   runtime: ResolvedGroupStorageRuntime;
 }): Promise<GroupWorksetManifest | null> {
-  if (!supportsPrimaryGroupWorksetPersistence(input.runtime.mode)) {
+  if (!supportsPrimaryGroupWorksetPersistence(input.runtime)) {
     return null;
   }
   const worksetKey = buildGroupWorksetKey(input.anchorEmailKey);
   if (!worksetKey) return null;
-  const manifest = await getGroupWorksetManifestApi(worksetKey);
+  const manifest = await getGroupWorksetManifestApi(worksetKey, {
+    mode: input.runtime.mode,
+    basePath: input.runtime.primaryLocation.basePath,
+    chosenFolderKind: input.runtime.primaryLocation.kind === "document_library" ? "document_library" : "filesystem",
+    primaryTarget: input.runtime.mode === "hybrid"
+      ? input.runtime.settings.hybrid.primaryTarget
+      : undefined,
+  });
   return normalizeGroupWorksetManifest(manifest);
 }

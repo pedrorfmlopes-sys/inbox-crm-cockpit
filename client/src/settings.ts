@@ -9,6 +9,11 @@ import {
   type GroupStorageLegacyProvider as GroupStorageProvider,
   type GroupStorageSettings,
 } from "./modules/crm/groups-v1/storage/settings";
+import {
+  DEFAULT_GROUPS_TAB_SETTINGS,
+  normalizeGroupsTabSettings,
+  type GroupsTabSettings,
+} from "./modules/crm/groups-v1/settings/groupsTabSettings";
 
 export type AppLocale = "pt-PT" | "es-ES" | "en-GB" | "it-IT" | "de-DE";
 export type LangOption = AppLocale | "auto";
@@ -72,6 +77,7 @@ export type Crm2OdooLayoutMode = "description_only" | "structured_project";
 export type Crm2OdooLayoutTarget = "project" | "lead" | "task" | "ticket";
 export type GroupTicketAutoLinkMode = "confirm" | "auto";
 export type { GroupStorageMode, GroupStorageProvider, GroupStorageSettings };
+export type { GroupsTabSettings };
 
 export type ReferenceCodeSettings = {
   enabled: boolean;
@@ -241,6 +247,7 @@ export type CockpitSettingsV1 = {
 
   // Group document storage configuration
   groupStorage: GroupStorageSettings;
+  groupsTabSettings: GroupsTabSettings;
 
   // Optional extra: central label manager for group labels
   groupLabelsManagerEnabled: boolean;
@@ -298,6 +305,7 @@ const SETTINGS_STORAGE_KEYS: Array<keyof CockpitSettingsV1> = [
   "aiFontPreference",
   "referenceCodes",
   "groupStorage",
+  "groupsTabSettings",
   "groupLabelsManagerEnabled",
   "groupLabelCatalog",
   "groupFavoriteIds",
@@ -488,6 +496,9 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   },
   groupStorage: {
     ...DEFAULT_GROUP_STORAGE_SETTINGS,
+  },
+  groupsTabSettings: {
+    ...DEFAULT_GROUPS_TAB_SETTINGS,
   },
   groupLabelsManagerEnabled: true,
   groupLabelCatalog: [],
@@ -989,6 +1000,12 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
       ...normalizeGroupStorageSettings({
         ...base.groupStorage,
         ...((incoming as any).groupStorage || {}),
+      }),
+    },
+    groupsTabSettings: {
+      ...normalizeGroupsTabSettings({
+        ...base.groupsTabSettings,
+        ...((incoming as any).groupsTabSettings || {}),
       }),
     },
     groupLabelsManagerEnabled: typeof (incoming as any).groupLabelsManagerEnabled === "boolean"

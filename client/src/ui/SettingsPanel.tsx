@@ -19,8 +19,10 @@ import { applySkin } from "./skins";
 import * as Icons from "./icons";
 import { useCockpit } from "../components/shell/CockpitProvider";
 import { aiListModels, validateCrm2OdooLayout, type Crm2LayoutValidationResult } from "../api";
-import { GROUP_STORAGE_MODE_LABELS, GROUP_STORAGE_MODE_OPTIONS } from "../modules/crm/groups-v1/storage/modes";
+import { GROUP_STORAGE_MODE_LABELS } from "../modules/crm/groups-v1/storage/modes";
 import { resolveGroupStorageRuntime } from "../modules/crm/groups-v1/storage/resolveStorageMode";
+import { buildGroupStorageValidationPayload, describeGroupStorageCapabilities } from "../modules/crm/groups-v1/storage/storageCapabilities";
+import { validateGroupStorageTarget, type GroupStorageValidationResult } from "../modules/crm/groups-v1/storage/worksetApi";
 import { PanelState, type PanelStateTone } from "./PanelState";
 import { previewReferenceCode } from "../referenceCodes";
 
@@ -66,6 +68,19 @@ const SKIN_OPTIONS: Array<{ value: SkinId; label: string }> = [
   { value: "vibrant", label: "Vibrant (Cockpit 3.0)" },
 ];
 
+const EXECUTABLE_GROUP_STORAGE_MODE_OPTIONS: Array<{ value: GroupStorageMode; label: string }> = [
+  { value: "supabase", label: "Cockpit Cloud" },
+  { value: "local_device", label: "Local acessivel ao servidor" },
+  { value: "chosen_folder", label: "Pasta local / sincronizada" },
+  { value: "hybrid", label: "Hibrido" },
+];
+
+const GROUP_STORAGE_WEB_URL_BLOCKER_FACTS = [
+  "O manifest do add-in no repo so declara ReadWriteMailbox.",
+  "O runtime Graph atual em office.ts so pede Mail.Read, User.Read e People.Read.",
+  "O backend atual grava binario por filesystem; nao existe uploader Graph/SharePoint por URL web.",
+];
+
 const REFERENCE_ENTITY_LABELS: Record<ReferenceEntityKey, string> = {
   lead: "Lead",
   project: "Projeto",
@@ -93,6 +108,8 @@ export function SettingsPanel(): JSX.Element {
   const [sigImgLocal, setSigImgLocal] = useState<Partial<Record<AppLocale, string>>>({});
   const [availableModels, setAvailableModels] = useState<{ openai: string[]; gemini: string[] }>({ openai: [], gemini: [] });
   const [fetchingModels, setFetchingModels] = useState(false);
+  const [groupStorageValidation, setGroupStorageValidation] = useState<GroupStorageValidationResult | null>(null);
+  const [validatingGroupStorage, setValidatingGroupStorage] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -157,13 +174,102 @@ export function SettingsPanel(): JSX.Element {
     () => (model ? resolveGroupStorageRuntime(model) : null),
     [model]
   );
+  const groupStoragePathRequired = model ? model.groupStorage.mode !== "supabase" : false;
+  const groupStorageCapabilities = useMemo(
+    () => (model && resolvedGroupStorage
+      ? describeGroupStorageCapabilities({
+          settings: model.groupStorage,
+          runtime: resolvedGroupStorage,
+          validation: groupStorageValidation,
+        })
+      : []),
+    [groupStorageValidation, model, resolvedGroupStorage]
+  );
+  const groupStorageRequiresGraphOrAdmin = resolvedGroupStorage?.projectSupport.requiresGraphOrAdmin === true;
+
+  const validateCurrentGroupStorage = async (settingsModel: CockpitSettingsV1): Promise<GroupStorageValidationResult | null> => {
+    if (settingsModel.groupStorage.mode === "supabase") {
+      const result: GroupStorageValidationResult = {
+        mode: "supabase",
+        provider: "cloud",
+        fileBacked: false,
+        supported: true,
+        basePath: "",
+        normalizedBasePath: "",
+        isWebUrl: false,
+        requiresServerAccessiblePath: false,
+        canStoreManifest: true,
+        canStoreBinary: true,
+        pickerAvailable: false,
+        notes: ["Modo cloud validado localmente."],
+      };
+      setGroupStorageValidation(result);
+      return result;
+    }
+
+    setValidatingGroupStorage(true);
+    try {
+      const result = await validateGroupStorageTarget(buildGroupStorageValidationPayload(settingsModel.groupStorage));
+      setGroupStorageValidation(result);
+      return result;
+    } finally {
+      setValidatingGroupStorage(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!model || section !== "groups") return;
+    void validateCurrentGroupStorage(model);
+  }, [
+    model,
+    model?.groupStorage.mode,
+    model?.groupStorage.baseFolderPath,
+    model?.groupStorage.chosenFolder.kind,
+    model?.groupStorage.hybrid.primaryTarget,
+    section,
+  ]);
 
   async function onSave() {
     if (!model) return;
     setSaving(true);
     setStatus(null);
     try {
-      await saveSettings(model);
+      let nextModel = model;
+      const validation = await validateCurrentGroupStorage(model);
+      if (model.groupStorage.mode !== "supabase") {
+        if (!validation?.supported) {
+          setStatus({
+            tone: "error",
+            title: "Destino de storage bloqueado",
+            description: validation?.blockingReason || "Define um destino realmente acessivel ao servidor antes de guardar.",
+          });
+          return;
+        }
+        const normalizedBasePath = String(validation.normalizedBasePath || model.groupStorage.baseFolderPath || "").trim();
+        nextModel = {
+          ...model,
+          groupStorage: {
+            ...model.groupStorage,
+            baseFolderPath: normalizedBasePath,
+            localDevice: {
+              ...model.groupStorage.localDevice,
+              rootPath:
+                model.groupStorage.mode === "local_device" || model.groupStorage.hybrid.primaryTarget === "local_device"
+                  ? normalizedBasePath
+                  : model.groupStorage.localDevice.rootPath,
+            },
+            chosenFolder: {
+              ...model.groupStorage.chosenFolder,
+              path:
+                model.groupStorage.mode === "chosen_folder" || model.groupStorage.hybrid.primaryTarget === "chosen_folder"
+                  ? normalizedBasePath
+                  : model.groupStorage.chosenFolder.path,
+            },
+          },
+        };
+      }
+      await saveSettings(nextModel);
+      setModel(nextModel);
       setStatus({ tone: "success", title: "Definições guardadas", description: "As alterações já estão disponíveis no cockpit." });
       setTimeout(() => setStatus(null), 1800);
     } catch (e: any) {
@@ -1042,9 +1148,21 @@ export function SettingsPanel(): JSX.Element {
 
               <PanelState
                 compact
-                tone="info"
-                title="Configuração documental dos grupos"
-                description="Definimos aqui a localização base e as regras para a futura gestão de anexos por grupo, sem mexer já na operação diária do cockpit."
+                tone={
+                  validatingGroupStorage
+                    ? "loading"
+                    : groupStorageValidation?.supported === false
+                      ? "warning"
+                      : "info"
+                }
+                title="Politica executavel de storage desta fase"
+                description={
+                  validatingGroupStorage
+                    ? "A validar o destino de gravacao no host atual do servidor."
+                    : groupStorageValidation?.supported === false
+                      ? groupStorageValidation.blockingReason || "O destino configurado ainda nao fecha de forma executavel nesta arquitetura."
+                      : "A persistencia final continua na app (`/api/links/*`). Os modos file-backed passam a depender de validacao real do caminho e nao apenas de labels."
+                }
               />
 
               <div style={S.referenceCard}>
@@ -1082,47 +1200,163 @@ export function SettingsPanel(): JSX.Element {
                     })
                   }
                 >
-                  {GROUP_STORAGE_MODE_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {GROUP_STORAGE_MODE_LABELS[value]}
+                  {EXECUTABLE_GROUP_STORAGE_MODE_OPTIONS.map((entry) => (
+                    <option key={entry.value} value={entry.value}>
+                      {entry.label}
                     </option>
                   ))}
                 </select>
                 <div style={S.hint}>
-                  Cockpit Cloud = armazenamento central da app. Pasta local e OneDrive/SharePoint representam destinos externos do utilizador, não o servidor onde o cockpit corre.
+                  Todos os modos continuam visiveis no contrato, mas os file-backed so ficam validos quando o caminho e realmente acessivel ao servidor.
                 </div>
                 <div style={S.hint}>
-                  Nesta fase estamos a preparar a origem documental dos grupos. A cópia real de anexos será ligada sobre esta base.
+                  `local_device` significa path local/UNC visivel para o host do servidor; nao representa automaticamente o disco do utilizador sem bridge nativa.
                 </div>
               </Field>
 
-              <Field label="Pasta base / localização">
+              {model.groupStorage.mode === "hybrid" ? (
+                <Field label="Primario do modo hibrido">
+                  <select
+                    style={S.select}
+                    value={model.groupStorage.hybrid.primaryTarget}
+                    onChange={(e) =>
+                      setModel({
+                        ...model,
+                        groupStorage: {
+                          ...model.groupStorage,
+                          hybrid: {
+                            ...model.groupStorage.hybrid,
+                            primaryTarget: e.target.value === "local_device" ? "local_device" : "chosen_folder",
+                          },
+                        },
+                      })
+                    }
+                  >
+                    <option value="chosen_folder">Pasta escolhida</option>
+                    <option value="local_device">Local acessivel ao servidor</option>
+                  </select>
+                </Field>
+              ) : null}
+
+              {model.groupStorage.mode !== "supabase" && model.groupStorage.mode !== "local_device" ? (
+                <Field label="Tipo de destino escolhido">
+                  <input
+                    style={{ ...S.input, background: "rgba(248,250,252,0.94)" }}
+                    value="Pasta fisica / sincronizada"
+                    disabled
+                  />
+                  <div style={S.hint}>
+                    Nesta fase sem Graph/admin, `chosen_folder` e `hybrid` aceitam apenas pasta fisica, pasta sincronizada local ou caminho UNC validado no servidor.
+                  </div>
+                </Field>
+              ) : null}
+
+              <Field label={model.groupStorage.mode === "local_device" ? "Destino local acessivel ao servidor" : "Destino principal"}>
                 <input
                   style={S.input}
-                  value={model.groupStorage.baseFolderPath || ""}
+                  value={
+                    model.groupStorage.mode === "local_device"
+                      ? model.groupStorage.localDevice.rootPath || ""
+                      : model.groupStorage.mode === "supabase"
+                        ? ""
+                        : model.groupStorage.chosenFolder.path || model.groupStorage.baseFolderPath || ""
+                  }
+                  disabled={!groupStoragePathRequired}
                   onChange={(e) =>
                     setModel({
                       ...model,
-                      groupStorage: {
-                        ...model.groupStorage,
-                        baseFolderPath: e.target.value,
-                        chosenFolder: {
-                          ...model.groupStorage.chosenFolder,
-                          path: e.target.value,
-                        },
-                        localDevice: {
-                          ...model.groupStorage.localDevice,
-                          rootPath: model.groupStorage.mode === "local_device" ? e.target.value : model.groupStorage.localDevice.rootPath,
+                        groupStorage: {
+                          ...model.groupStorage,
+                          baseFolderPath: e.target.value,
+                          chosenFolder: {
+                            ...model.groupStorage.chosenFolder,
+                            path: e.target.value,
+                            kind: "filesystem",
+                          },
+                          localDevice: {
+                            ...model.groupStorage.localDevice,
+                            rootPath:
+                              model.groupStorage.mode === "local_device" || model.groupStorage.hybrid.primaryTarget === "local_device"
+                              ? e.target.value
+                              : model.groupStorage.localDevice.rootPath,
                         },
                       },
                     })
                   }
-                  placeholder={model.groupStorage.mode === "supabase" ? "Nao aplicavel neste modo" : model.groupStorage.provider === "onedrive" ? "URL ou caminho da biblioteca/document library" : "C:\\Documentos\\InboxCockpit\\Grupos"}
+                  placeholder={groupStoragePathRequired ? "C:\\Documentos\\InboxCockpit\\Grupos ou \\\\servidor\\partilha\\Grupos" : "Nao usado no modo Cockpit Cloud"}
                 />
                 <div style={S.hint}>
-                  Cada grupo poderá usar esta localização como raiz para criar ou localizar a sua própria pasta.
+                  Usa apenas <b>caminho local do host, pasta sincronizada local ou UNC</b>. URL web fica auditada e bloqueada explicitamente se o backend nao a suportar.
                 </div>
               </Field>
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  style={S.btnGhost}
+                  onClick={() => model && void validateCurrentGroupStorage(model)}
+                  disabled={validatingGroupStorage}
+                >
+                  {validatingGroupStorage ? "A validar..." : "Validar destino"}
+                </button>
+                <div style={S.hint}>
+                  Picker real de pasta continua bloqueado pelo host atual; a alternativa suportada nesta arquitetura e path manual + validacao real no servidor.
+                </div>
+              </div>
+
+              {groupStorageValidation ? (
+                <div style={S.referenceCard}>
+                  <div style={S.fieldLabel}>Validacao real do destino</div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={S.hint}>
+                      Estado: <b>{groupStorageValidation.supported ? "Suportado neste host" : "Bloqueado neste host"}</b>
+                    </div>
+                    <div style={S.hint}>
+                      Provider efetivo: <b>{groupStorageValidation.provider}</b>
+                    </div>
+                    <div style={S.hint}>
+                      Caminho normalizado: <b>{groupStorageValidation.normalizedBasePath || "n/a"}</b>
+                    </div>
+                    <div style={S.hint}>
+                      Manifesto espelhado: <b>{groupStorageValidation.canStoreManifest ? "Sim" : "Nao"}</b>
+                    </div>
+                    <div style={S.hint}>
+                      Binario real: <b>{groupStorageValidation.canStoreBinary ? "Sim" : "Nao"}</b>
+                    </div>
+                    {groupStorageValidation.blockingReason ? (
+                      <div style={S.hint}>
+                        Bloqueio: <b>{groupStorageValidation.blockingReason}</b>
+                      </div>
+                    ) : null}
+                    {groupStorageValidation.requiredChange ? (
+                      <div style={S.hint}>
+                        Mudanca minima necessaria: <b>{groupStorageValidation.requiredChange}</b>
+                      </div>
+                    ) : null}
+                    {groupStorageValidation.pickerBlockedReason ? (
+                      <div style={S.hint}>
+                        Picker/path: <b>{groupStorageValidation.pickerBlockedReason}</b>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {groupStorageValidation?.architecturalBlocker === "web_document_library_requires_graph_backend"
+                || groupStorageRequiresGraphOrAdmin ? (
+                <div style={S.referenceCard}>
+                  <div style={S.fieldLabel}>Prova tecnica do bloqueio da URL web</div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {GROUP_STORAGE_WEB_URL_BLOCKER_FACTS.map((fact) => (
+                      <div key={fact} style={S.hint}>
+                        - {fact}
+                      </div>
+                    ))}
+                    <div style={S.hint}>
+                      Resultado operacional desta fase: URL web fica explicitamente fora de scope e nao entra no runtime executavel de `local_device`, `chosen_folder` ou `hybrid`.
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
               <Field label="Limiar para decisao de anexos (MB)">
                 <input
@@ -1142,7 +1376,7 @@ export function SettingsPanel(): JSX.Element {
                   }
                 />
                 <div style={S.hint}>
-                  Acima deste limiar os anexos devem pedir decisao do utilizador antes de qualquer promocao binaria.
+                  Metadata do anexo sobe sempre com o email classificado; binario fora do Cockpit Cloud fica best-effort e continua a pedir caminho real suportado.
                 </div>
               </Field>
 
@@ -1150,6 +1384,7 @@ export function SettingsPanel(): JSX.Element {
                 <input
                   type="checkbox"
                   checked={model.groupStorage.autoCreateFolderOnGroupCreate}
+                  disabled
                   onChange={(e) =>
                     setModel({
                       ...model,
@@ -1162,7 +1397,7 @@ export function SettingsPanel(): JSX.Element {
                 />
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Criar pasta automaticamente ao criar grupo</div>
-                  <div style={S.hint}>Útil quando quisermos que os grupos nasçam já preparados para receber anexos selecionados.</div>
+                  <div style={S.hint}>Mantido apenas como legado de configuracao. Esta automatizacao ainda nao fica executavel nesta fase.</div>
                 </div>
               </label>
 
@@ -1182,7 +1417,7 @@ export function SettingsPanel(): JSX.Element {
                 />
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ignorar anexos inline e imagens de assinatura</div>
-                  <div style={S.hint}>Ajuda a reduzir ruído quando começarmos a escolher anexos úteis para guardar por grupo.</div>
+                  <div style={S.hint}>Esta guarda continua real e afeta a preparacao/persistencia de anexos para reduzir ruido.</div>
                 </div>
               </label>
 
@@ -1190,6 +1425,7 @@ export function SettingsPanel(): JSX.Element {
                 <select
                   style={S.select}
                   value={model.groupStorage.suggestedViewer}
+                  disabled
                   onChange={(e) =>
                     setModel({
                       ...model,
@@ -1203,20 +1439,45 @@ export function SettingsPanel(): JSX.Element {
                   <option value="inline">Viewer interno do cockpit</option>
                   <option value="system">Aplicação do sistema</option>
                 </select>
+                <div style={S.hint}>
+                  Preferencia mantida apenas como legado local. Ainda nao existe caminho executavel fechado que a use de ponta a ponta nesta fase.
+                </div>
               </Field>
 
               <div style={S.referenceCard}>
-                <div style={S.fieldLabel}>Resumo atual</div>
+                <div style={S.fieldLabel}>Resumo executavel desta fase</div>
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={S.hint}>
                     Modo escolhido: <b>{resolvedGroupStorage?.modeLabel || GROUP_STORAGE_MODE_LABELS[model.groupStorage.mode]}</b>
                   </div>
                   <div style={S.hint}>
-                    Localização base: <b>{model.groupStorage.baseFolderPath || "Por definir"}</b>
+                    Persistencia final: <b>sempre na app via /api/links/*</b>
                   </div>
                   <div style={S.hint}>
-                    Pastas automáticas: <b>{model.groupStorage.autoCreateFolderOnGroupCreate ? "Sim" : "Não"}</b>
+                    Binario de anexos/documentos: <b>{model.groupStorage.mode === "supabase" ? "Cockpit Cloud quando o payload traz conteudo" : groupStorageValidation?.supported ? "path validado no host atual + fallback controlado para metadata/cloud" : "bloqueado ate existir path fisico validado no servidor"}</b>
                   </div>
+                  <div style={S.hint}>
+                    Persistencia intermedia: <b>{model.groupsTabSettings.storageMode === "disabled" ? "desativada" : "IndexedDB local do add-in, com namespace logico"}</b>
+                  </div>
+                  <div style={S.hint}>
+                    Sessao/cache: <b>prepareSession, seeds temporarios e fallback em memoria</b>
+                  </div>
+                </div>
+              </div>
+
+              <div style={S.referenceCard}>
+                <div style={S.fieldLabel}>Tabela real de modos</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {groupStorageCapabilities.map((entry) => (
+                    <div key={entry.mode} style={{ display: "grid", gap: 3, padding: "8px 10px", borderRadius: 10, border: "1px solid var(--iccc-card-border)", background: "#fff" }}>
+                      <div style={S.hint}>
+                        <b>{entry.label}</b> - {entry.supported ? "Suportado / validado" : "Bloqueado ou dependente de validacao"}
+                      </div>
+                      <div style={S.hint}>Como grava: <b>{entry.howItWrites}</b></div>
+                      <div style={S.hint}>Onde grava: <b>{entry.whereItWrites}</b></div>
+                      <div style={S.hint}>Limitacao real: <b>{entry.limitations}</b></div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

@@ -137,6 +137,31 @@ function normalizeGroupLabels(value) {
   return labels.sort((a, b) => a.localeCompare(b, "pt"));
 }
 
+function normalizeEmailRecipient(value) {
+  if (!value || typeof value !== "object") return null;
+  const email = normalizeString(value.email).toLowerCase();
+  const name = normalizeString(value.name);
+  if (!email) return null;
+  return {
+    email,
+    name: name || "",
+  };
+}
+
+function normalizeEmailRecipients(value) {
+  const items = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const recipients = [];
+  for (const item of items) {
+    const normalized = normalizeEmailRecipient(item);
+    if (!normalized) continue;
+    if (seen.has(normalized.email)) continue;
+    seen.add(normalized.email);
+    recipients.push(normalized);
+  }
+  return recipients;
+}
+
 function normalizeGroupContacts(value) {
   const items = Array.isArray(value) ? value : [];
   const seen = new Set();
@@ -217,6 +242,17 @@ function parseGroupLabelsJson(value) {
     return normalizeGroupLabels(JSON.parse(raw));
   } catch {
     return normalizeGroupLabels(raw);
+  }
+}
+
+function parseEmailRecipientsJson(value) {
+  if (Array.isArray(value)) return normalizeEmailRecipients(value);
+  const raw = normalizeString(value);
+  if (!raw) return [];
+  try {
+    return normalizeEmailRecipients(JSON.parse(raw));
+  } catch {
+    return [];
   }
 }
 
@@ -558,6 +594,12 @@ function normalizeEmailInput(input) {
     sentAtIso: normalizeString(input?.sentAtIso),
     messageDateIso: normalizeString(input?.messageDateIso || input?.receivedAtIso || input?.sentAtIso || input?.linkedAt),
     linkedAt: normalizeString(input?.linkedAt),
+    toRecipients: Object.prototype.hasOwnProperty.call(input || {}, "toRecipients")
+      ? normalizeEmailRecipients(input?.toRecipients)
+      : undefined,
+    ccRecipients: Object.prototype.hasOwnProperty.call(input || {}, "ccRecipients")
+      ? normalizeEmailRecipients(input?.ccRecipients)
+      : undefined,
     bodyText: normalizeString(input?.bodyText),
     bodyHtml: normalizeString(input?.bodyHtml),
     status: Object.prototype.hasOwnProperty.call(input || {}, "status")
@@ -1530,6 +1572,8 @@ function buildEmailListEntry(email, extra = {}) {
     messageDateIso: normalizeString(email?.messageDateIso),
     receivedAtIso: normalizeString(email?.receivedAtIso || email?.messageDateIso),
     sentAtIso: normalizeString(email?.sentAtIso),
+    toRecipients: normalizeEmailRecipients(email?.toRecipients),
+    ccRecipients: normalizeEmailRecipients(email?.ccRecipients),
     bodyText: normalizeString(email?.bodyText),
     bodyHtml: normalizeString(email?.bodyHtml),
     status: normalizeString(email?.status),
@@ -1964,6 +2008,8 @@ function mapDbGroupMemberRow(row) {
     messageDateIso: normalizeString(row.message_date_iso),
     receivedAtIso: normalizeString(row.received_at_iso),
     sentAtIso: normalizeString(row.sent_at_iso),
+    toRecipients: parseEmailRecipientsJson(row.to_recipients_json),
+    ccRecipients: parseEmailRecipientsJson(row.cc_recipients_json),
     bodyText: normalizeString(row.body_text),
     bodyHtml: normalizeString(row.body_html),
     status: normalizeString(row.status),
@@ -2402,8 +2448,8 @@ async function upsertDbCustomGroupMember(groupId, email, membershipKind = DEFAUL
   if (!groupId || !emailKey) return;
   await db.query(
     `INSERT INTO crm_custom_group_members
-       (group_id, email_key, relation_kind, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, body_text, body_html, status, labels_json, removed_inherited_labels_json, label_states_json, classification_meta_json, attachments_json, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb, $21::jsonb, $22, $23)
+       (group_id, email_key, relation_kind, item_id, internet_message_id, conversation_id, subject, from_email, from_name, email_web_link, message_date_iso, received_at_iso, sent_at_iso, to_recipients_json, cc_recipients_json, body_text, body_html, status, labels_json, removed_inherited_labels_json, label_states_json, classification_meta_json, attachments_json, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, $17, $18, $19::jsonb, $20::jsonb, $21::jsonb, $22::jsonb, $23::jsonb, $24, $25)
      ON CONFLICT (group_id, email_key) DO UPDATE SET
        relation_kind = EXCLUDED.relation_kind,
        item_id = EXCLUDED.item_id,
@@ -2416,6 +2462,8 @@ async function upsertDbCustomGroupMember(groupId, email, membershipKind = DEFAUL
        message_date_iso = EXCLUDED.message_date_iso,
        received_at_iso = EXCLUDED.received_at_iso,
        sent_at_iso = EXCLUDED.sent_at_iso,
+       to_recipients_json = EXCLUDED.to_recipients_json,
+       cc_recipients_json = EXCLUDED.cc_recipients_json,
        body_text = EXCLUDED.body_text,
        body_html = EXCLUDED.body_html,
        status = EXCLUDED.status,
@@ -2439,6 +2487,8 @@ async function upsertDbCustomGroupMember(groupId, email, membershipKind = DEFAUL
       normalizeString(email?.messageDateIso),
       normalizeString(email?.receivedAtIso),
       normalizeString(email?.sentAtIso),
+      JSON.stringify(normalizeEmailRecipients(email?.toRecipients)),
+      JSON.stringify(normalizeEmailRecipients(email?.ccRecipients)),
       normalizeString(email?.bodyText),
       normalizeString(email?.bodyHtml),
       normalizeString(email?.status),
@@ -2618,6 +2668,8 @@ async function getDbCustomGroupContext(input) {
         m.message_date_iso,
         m.received_at_iso,
         m.sent_at_iso,
+        m.to_recipients_json,
+        m.cc_recipients_json,
         m.body_text,
         m.body_html,
         m.status,
@@ -2811,6 +2863,8 @@ async function ensureCustomGroupDb() {
         message_date_iso TEXT,
         received_at_iso TEXT,
         sent_at_iso TEXT,
+        to_recipients_json JSONB DEFAULT '[]'::jsonb,
+        cc_recipients_json JSONB DEFAULT '[]'::jsonb,
         body_text TEXT,
         body_html TEXT,
         status TEXT,
@@ -2823,6 +2877,16 @@ async function ensureCustomGroupDb() {
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (group_id, email_key)
       );
+    `);
+
+    await db.query(`
+      ALTER TABLE crm_custom_group_members
+      ADD COLUMN IF NOT EXISTS to_recipients_json JSONB DEFAULT '[]'::jsonb;
+    `);
+
+    await db.query(`
+      ALTER TABLE crm_custom_group_members
+      ADD COLUMN IF NOT EXISTS cc_recipients_json JSONB DEFAULT '[]'::jsonb;
     `);
 
     await db.query(`

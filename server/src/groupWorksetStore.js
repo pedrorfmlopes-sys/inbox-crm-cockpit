@@ -4,6 +4,11 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import { createOptionalPgStore } from "./optionalPg.js";
 import {
+  buildGroupWorksetMirrorFileLocation,
+  resolveGroupStorageInput,
+  validateGroupStorageTarget,
+} from "./groupStorageRuntime.js";
+import {
   buildGroupWorksetPayloadScore,
   mergeGroupWorksetManifest,
   normalizeGroupWorksetManifest,
@@ -210,21 +215,72 @@ function writeWorksetToFileStore(manifest) {
   writeFileStore(store);
 }
 
-export async function getGroupWorksetManifest(worksetKey) {
+function readMirroredWorksetManifest(worksetKey, locationInput = {}) {
+  try {
+    const location = buildGroupWorksetMirrorFileLocation({
+      ...locationInput,
+      worksetKey,
+    });
+    if (!location || !fs.existsSync(location.filePath)) return null;
+    const raw = JSON.parse(fs.readFileSync(location.filePath, "utf-8") || "{}");
+    return normalizeGroupWorksetManifest(raw);
+  } catch {
+    return null;
+  }
+}
+
+function writeMirroredWorksetManifest(manifest) {
+  const location = buildGroupWorksetMirrorFileLocation({
+    ...resolveGroupStorageInput({
+      mode: manifest.storageMode,
+      baseFolderPath: manifest.mainLocation?.basePath,
+      localDevice: { rootPath: manifest.mainLocation?.basePath },
+      chosenFolder: {
+        path: manifest.mainLocation?.basePath,
+        kind: manifest.mainLocation?.kind === "document_library" ? "document_library" : "filesystem",
+      },
+      primaryTarget: manifest.storageMode === "hybrid" && manifest.mainLocation?.kind === "local_device"
+        ? "local_device"
+        : "chosen_folder",
+    }),
+    worksetKey: manifest.worksetKey,
+  });
+  if (!location) return null;
+  fs.mkdirSync(path.dirname(location.filePath), { recursive: true });
+  fs.writeFileSync(location.filePath, JSON.stringify(manifest, null, 2), "utf-8");
+  return location;
+}
+
+function deleteMirroredWorksetManifest(worksetKey, locationInput = {}) {
+  try {
+    const location = buildGroupWorksetMirrorFileLocation({
+      ...locationInput,
+      worksetKey,
+    });
+    if (!location || !fs.existsSync(location.filePath)) return false;
+    fs.unlinkSync(location.filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function getGroupWorksetManifest(worksetKey, options = {}) {
   const normalizedKey = String(worksetKey || "").trim();
   if (!normalizedKey) return null;
 
   const fileStore = readFileStore();
   const fileManifest = normalizeGroupWorksetManifest(fileStore.worksets[normalizedKey] || null);
-  if (!db.isEnabled()) return fileManifest;
+  const mirroredManifest = readMirroredWorksetManifest(normalizedKey, options.location || {});
+  if (!db.isEnabled()) return pickPreferredManifest(fileManifest, mirroredManifest);
 
   try {
     const dbManifest = await getDbGroupWorksetManifest(normalizedKey);
-    return pickPreferredManifest(fileManifest, dbManifest);
+    return pickPreferredManifest(pickPreferredManifest(fileManifest, mirroredManifest), dbManifest);
   } catch (error) {
     if (error?.optionalDbFallback) {
       console.warn("[groupWorksetStore] DB read failed, using file fallback:", error.message);
-      return fileManifest;
+      return pickPreferredManifest(fileManifest, mirroredManifest);
     }
     throw error;
   }
@@ -252,5 +308,92 @@ export async function saveGroupWorksetManifest(input) {
   }
 
   writeWorksetToFileStore(merged);
+  try {
+    writeMirroredWorksetManifest(merged);
+  } catch (error) {
+    console.warn("[groupWorksetStore] Mirror save failed, keeping central persistence:", error?.message || error);
+  }
   return merged;
+}
+
+export function validateGroupStorageLocation(input) {
+  return validateGroupStorageTarget(input || {});
+}
+
+export async function migrateGroupWorksetManifest(input) {
+  const worksetKey = String(input?.worksetKey || "").trim();
+  if (!worksetKey) {
+    throw new Error("Indica um workset valido para migracao.");
+  }
+
+  const current = await getGroupWorksetManifest(worksetKey, {
+    location: input?.sourceLocation || null,
+  });
+  if (!current) {
+    throw new Error("Nao foi encontrado nenhum workset para migrar.");
+  }
+
+  const targetValidation = validateGroupStorageTarget(input?.targetLocation || {});
+  const resolvedTarget = resolveGroupStorageInput(input?.targetLocation || {});
+  if (!targetValidation.supported && resolvedTarget.mode !== "supabase") {
+    throw new Error(targetValidation.blockingReason || "Destino de migracao invalido.");
+  }
+
+  const nextStorageMode = normalizeString(input?.targetLocation?.mode || current.storageMode) || current.storageMode;
+  const nextMainLocation = nextStorageMode === "supabase"
+    ? {
+        kind: "supabase",
+        provider: "supabase",
+        label: "Cockpit Cloud",
+        isRemote: true,
+        isConfigured: true,
+      }
+    : {
+        kind:
+          resolvedTarget.mode === "local_device"
+            ? "local_device"
+            : resolvedTarget.chosenFolderKind === "document_library"
+              ? "document_library"
+              : "filesystem",
+        provider: targetValidation.provider || current.mainLocation?.provider,
+        label:
+          normalizeString(input?.targetLocation?.label)
+          || (resolvedTarget.mode === "local_device"
+            ? "Local acessivel ao servidor"
+            : resolvedTarget.chosenFolderKind === "document_library"
+              ? "Biblioteca web"
+              : "Pasta local / sincronizada"),
+        basePath: targetValidation.normalizedBasePath || current.mainLocation?.basePath,
+        isRemote: resolvedTarget.chosenFolderKind === "document_library",
+        isConfigured: targetValidation.supported,
+      };
+  const next = normalizeGroupWorksetManifest({
+    ...current,
+    storageMode: nextStorageMode,
+    updatedAtIso: new Date().toISOString(),
+    mainLocation: nextMainLocation,
+    remotePromotionLocation: nextStorageMode === "hybrid"
+      ? {
+          kind: "supabase",
+          provider: "supabase",
+          label: "Supabase (promocao remota)",
+          isRemote: true,
+          isConfigured: true,
+        }
+      : null,
+  });
+  if (!next) {
+    throw new Error("Nao foi possivel construir o manifesto migrado.");
+  }
+
+  const saved = await saveGroupWorksetManifest(next);
+  const removedSourceMirror = input?.removeSource === true
+    ? deleteMirroredWorksetManifest(worksetKey, input?.sourceLocation || {})
+    : false;
+
+  return {
+    manifest: saved,
+    removedSourceMirror,
+    targetValidation,
+  };
 }

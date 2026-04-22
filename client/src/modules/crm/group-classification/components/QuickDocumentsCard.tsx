@@ -68,8 +68,9 @@ const QuickDocumentsCard: React.FC<QuickDocumentsCardProps> = ({
           
           if (!attachment) return null;
           
-          const attachmentKey = makeAttachmentKey(attachment);
+          const attachmentKey = String(entry.scopedKey || makeAttachmentKey(attachment) || "").trim();
           const remoteId = getStudioAttachmentRemoteId(attachment);
+          if (!attachmentKey) return null;
           
           // Guard against missing email when checking hydration in collection
           const emailAttachments = Array.isArray(email?.attachments) ? email.attachments : [];

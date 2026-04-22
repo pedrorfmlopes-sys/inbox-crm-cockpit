@@ -1,5 +1,24 @@
 import type { GroupWorksetManifest } from "./types";
 
+export type GroupStorageValidationResult = {
+  mode: string;
+  provider: string;
+  fileBacked: boolean;
+  supported: boolean;
+  basePath: string;
+  normalizedBasePath: string;
+  isWebUrl: boolean;
+  requiresServerAccessiblePath: boolean;
+  canStoreManifest: boolean;
+  canStoreBinary: boolean;
+  pickerAvailable: boolean;
+  pickerBlockedReason?: string;
+  blockingReason?: string;
+  architecturalBlocker?: string | null;
+  requiredChange?: string | null;
+  notes: string[];
+};
+
 const WORKSET_API_TIMEOUT_MS = 30000;
 
 async function requestWorksetJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -36,11 +55,23 @@ async function requestWorksetJson<T>(path: string, init?: RequestInit): Promise<
   }
 }
 
-export async function getGroupWorksetManifest(worksetKey: string): Promise<GroupWorksetManifest | null> {
+export async function getGroupWorksetManifest(
+  worksetKey: string,
+  options?: {
+    mode?: string;
+    basePath?: string;
+    chosenFolderKind?: string;
+    primaryTarget?: string;
+  }
+): Promise<GroupWorksetManifest | null> {
   const normalizedWorksetKey = String(worksetKey || "").trim();
   if (!normalizedWorksetKey) return null;
   const params = new URLSearchParams();
   params.set("_ts", String(Date.now()));
+  if (options?.mode) params.set("mode", String(options.mode));
+  if (options?.basePath) params.set("basePath", String(options.basePath));
+  if (options?.chosenFolderKind) params.set("chosenFolderKind", String(options.chosenFolderKind));
+  if (options?.primaryTarget) params.set("primaryTarget", String(options.primaryTarget));
   try {
     const response = await requestWorksetJson<{ manifest?: GroupWorksetManifest | null }>(
       `/api/links/groups/worksets/${encodeURIComponent(normalizedWorksetKey)}?${params.toString()}`
@@ -65,4 +96,44 @@ export async function saveGroupWorksetManifest(payload: {
     }),
   });
   return response?.manifest || null;
+}
+
+export async function migrateGroupWorksetManifest(payload: {
+  worksetKey: string;
+  sourceLocation?: Record<string, unknown> | null;
+  targetLocation: Record<string, unknown>;
+  removeSource?: boolean;
+}): Promise<{
+  manifest?: GroupWorksetManifest | null;
+  removedSourceMirror?: boolean;
+  targetValidation?: GroupStorageValidationResult;
+}> {
+  return await requestWorksetJson(`/api/links/groups/worksets/migrate`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function validateGroupStorageTarget(payload: Record<string, unknown>): Promise<GroupStorageValidationResult> {
+  const response = await requestWorksetJson<{ result?: GroupStorageValidationResult }>(`/api/links/groups/storage/validate`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return response?.result || {
+    mode: String(payload.mode || "supabase"),
+    provider: "cloud",
+    fileBacked: false,
+    supported: false,
+    basePath: "",
+    normalizedBasePath: "",
+    isWebUrl: false,
+    requiresServerAccessiblePath: false,
+    canStoreManifest: false,
+    canStoreBinary: false,
+    pickerAvailable: false,
+    blockingReason: "Nao foi possivel validar o destino configurado.",
+    architecturalBlocker: null,
+    requiredChange: null,
+    notes: [],
+  };
 }
