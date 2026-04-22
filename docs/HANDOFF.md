@@ -1,5 +1,26 @@
 # HANDOFF
 
+## Grupos v1: persistencia local e reidratacao pos-apply do `Classificar` saem do handler principal e passam para helper proprio (Abril 2026)
+- **O que foi extraido nesta ronda**:
+  - `resolveClassificationIntermediateCase(...)`
+  - `writeCase(...)`
+  - sync imediato do caso no studio
+  - refresh/reidratacao pos-apply
+  - sync do caso novamente apos o refresh
+  - o studio passa a delegar esta etapa para `persistAndRefreshClassificationCase(...)`
+- **O que ainda fica no handler principal**:
+  - mensagens/status da operacao
+  - orquestracao entre ticket base, execucao por target e projecao local
+  - sincronizacao Outlook/categorias
+- **Acoplamentos reduzidos**:
+  - o handler deixa de concentrar inline a persistencia do caso e a reidratacao basica pos-apply
+  - fica mais claro o corte entre projecao local, persist/sync/reidratacao e logica de Outlook
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - a ancora continua a ser preservada por `preferredSelectedEmailKey`
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: projecao local no `IntermediateCase` sai do handler principal e passa para helper proprio no `Classificar` (Abril 2026)
 - **O que foi extraido nesta ronda**:
   - a construcao do `localClassificationDraft`

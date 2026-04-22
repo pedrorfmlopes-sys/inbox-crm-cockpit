@@ -28,7 +28,6 @@ import {
   type GroupPreparationSeed,
 } from "@/modules/crm/groups-v1/prepareSession";
 import { hydrateIntermediateCaseEmailsToRelatedEntries, mapIntermediateEmailToRelatedEmailEntry } from "@/modules/crm/groups-v1/storage/intermediateCaseAdapters";
-import { resolveClassificationIntermediateCase } from "@/modules/crm/groups-v1/storage/resolveClassificationIntermediateCase";
 import type { IntermediateCase } from "@/modules/crm/groups-v1/storage/intermediateCaseTypes";
 import "../../global.css";
 
@@ -71,6 +70,7 @@ import {
   executeLegacyBaseTicketApply,
   executeLegacyRemoteApplyForTarget,
 } from "./group-classification/legacyRemoteApply";
+import { persistAndRefreshClassificationCase } from "./group-classification/casePersistence";
 import { projectApplyIntoIntermediateCase } from "./group-classification/localCaseProjection";
 
 import EmailsCard from "./group-classification/components/EmailsCard";
@@ -3577,12 +3577,9 @@ function StudioInner() {
           });
         }
 
+        let postApplyRefreshedContext: Awaited<ReturnType<typeof refreshSelectedEmailContext>> | null = null;
         if (classificationCase) {
           setStatus("A gravar classificacao local no caso...");
-          const classificationStorage = await resolveClassificationIntermediateCase({
-            caseId: classificationCase.caseId,
-            anchorEmailKey: classificationCase.anchorEmailKey,
-          });
           const { nextClassificationCase } = projectApplyIntoIntermediateCase({
             classificationCase,
             resolvedApplySelection: applySelection,
@@ -3590,14 +3587,17 @@ function StudioInner() {
             targetEmails: effectiveTargetEmails,
             classificationMetaDraft,
           });
-          await classificationStorage.storage.repository.writeCase(nextClassificationCase);
-          appliedClassificationCase = nextClassificationCase;
-          syncClassificationCaseEmails(nextClassificationCase, {
+          const persistenceResult = await persistAndRefreshClassificationCase({
+            classificationCase,
+            nextClassificationCase,
             preferredSelectedEmailKey,
             preferredTargetEmailKeys: targetEmailKeys,
+            syncClassificationCaseEmails,
+            refreshSelectedEmailContext: async () => refreshSelectedEmailContext().catch(() => null),
           });
+          appliedClassificationCase = persistenceResult.appliedClassificationCase;
+          postApplyRefreshedContext = persistenceResult.refreshedContext;
         }
-
         coreSuccess = true;
         setStatus("A atualizar dados locais...");
 
@@ -3618,10 +3618,9 @@ function StudioInner() {
         if (activeCategoryOperationId) {
           setOutlookCategoryOperationPhase(activeCategoryOperationId, "refreshing");
         }
-        
         setStatus("A reidratar emails...");
-        const refreshedContext = await refreshSelectedEmailContext().catch(() => null);
-        if (appliedClassificationCase) {
+        const refreshedContext = postApplyRefreshedContext || await refreshSelectedEmailContext().catch(() => null);
+        if (appliedClassificationCase && !postApplyRefreshedContext) {
           syncClassificationCaseEmails(appliedClassificationCase, {
             preferredSelectedEmailKey,
             preferredTargetEmailKeys: targetEmailKeys,
