@@ -65,9 +65,10 @@ import {
 } from "./group-classification/documentUtils";
 import {
   buildResolvedStudioApplySelection,
-  buildResolvedApplyTargetPayload,
   buildResolvedClassifiedEmailPayload,
   buildResolvedIntermediateCaseClassificationDraft,
+  buildResolvedRemoteApplyExecutionPlan,
+  buildRemoteApplyFallbackCurrentCategoryEmail,
 } from "./group-classification/applyResolution";
 
 import EmailsCard from "./group-classification/components/EmailsCard";
@@ -3508,17 +3509,14 @@ function StudioInner() {
           setStatus("Nao existe nenhum email alvo para atualizar.");
           return { ok: false, coreSuccess: false, error: "Nao existe nenhum email alvo." };
         }
-
-        const hasIdentity = Boolean(String(currentContext?.itemId || "").trim() || String(currentContext?.internetMessageId || "").trim());
-        const currentTargetIdentity = hasIdentity
-          ? {
-              itemId: String(currentContext.itemId || "").trim() || undefined,
-              internetMessageId: String(currentContext.internetMessageId || "").trim() || undefined,
-              conversationId: String(currentContext.conversationId || "").trim() || undefined,
-            }
-          : undefined;
-
-        const includesCurrentTarget = Boolean(currentTargetIdentity && effectiveTargetEmails.some((email) => isCurrentContextEmail(email, currentContext)));
+        const remoteApplyPlan = buildResolvedRemoteApplyExecutionPlan({
+          targetEmails: effectiveTargetEmails,
+          resolvedApplySelection: applySelection,
+          currentContext,
+          emailContextMeta,
+        });
+        const currentTargetIdentity = remoteApplyPlan.currentTargetIdentity;
+        const includesCurrentTarget = remoteApplyPlan.includesCurrentTarget;
 
         if (currentTargetIdentity) {
           const openedOperation = beginOutlookCategoryOperation({
@@ -3541,21 +3539,18 @@ function StudioInner() {
         const desiredTicketStatus = applySelection.desiredTicketStatus;
 
         let finalTicket: GroupTicketEntry | null = null;
-
-        const baseTargetEmail = effectiveTargetEmails[0];
-        const baseTargetKey = makeEmailKey(baseTargetEmail);
-
-        if (!applySelection.selectedTicketId && applySelection.selectedSeriesId) {
+        if (remoteApplyPlan.shouldCreateTicket) {
           setStatus("A criar ticket Odoo...");
-          const baseClassifiedEmailPayload = buildResolvedClassifiedEmailPayload({
-            targetEmail: baseTargetEmail,
-            currentContext,
-            resolvedApplySelection: applySelection,
-          });
+          const baseClassifiedEmailPayload = remoteApplyPlan.targetPlans[0]?.classifiedEmailPayload
+            || buildResolvedClassifiedEmailPayload({
+              targetEmail: remoteApplyPlan.baseTargetEmail,
+              currentContext,
+              resolvedApplySelection: applySelection,
+            });
           finalTicket = await createGroupTicket({
             seriesId: applySelection.selectedSeriesId,
-            title: String(createTicketTitle || baseTargetEmail?.subject || "Ticket").trim(),
-            description: String(baseTargetEmail?.bodyText || "").trim().slice(0, 4000),
+            title: String(createTicketTitle || remoteApplyPlan.baseTargetEmail?.subject || "Ticket").trim(),
+            description: String(remoteApplyPlan.baseTargetEmail?.bodyText || "").trim().slice(0, 4000),
             labels: applySelection.labels,
             groupIds: applySelection.allGroupIds,
             email: baseClassifiedEmailPayload,
@@ -3568,34 +3563,20 @@ function StudioInner() {
           setSelectedTicketId(finalTicket.id);
         }
 
-        if (applySelection.selectedTicketId && desiredTicketStatus !== String(currentOutlookTicket?.status || "").trim()) {
+        if (remoteApplyPlan.shouldUpdateTicketStatus && desiredTicketStatus !== String(currentOutlookTicket?.status || "").trim()) {
           setStatus("A atualizar estado do ticket...");
           finalTicket = await updateGroupTicket(applySelection.selectedTicketId, { status: desiredTicketStatus });
           setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
         }
 
         let emailCounter = 0;
-        for (const targetEmail of effectiveTargetEmails) {
+        for (const targetPlan of remoteApplyPlan.targetPlans) {
           emailCounter++;
           setStatus(`A aplicar classificacao (${emailCounter}/${effectiveTargetEmails.length})...`);
-          
-          const targetEmailKey = makeEmailKey(targetEmail);
-          const targetEmailPayload = buildResolvedApplyTargetPayload({
-            targetEmail,
-            currentContext,
-          });
-          const classifiedEmailPayload = buildResolvedClassifiedEmailPayload({
-            targetEmail,
-            currentContext,
-            resolvedApplySelection: applySelection,
-          });
+          const { targetEmail, targetEmailKey, targetEmailPayload, classifiedEmailPayload } = targetPlan;
+          const ticketIdsToRemove = targetPlan.ticketIdsToRemove.filter((ticketId) => ticketId !== finalTicket?.id);
 
-          const targetGroups = getEmailGroupRelations(targetEmail);
-          const currentGroupIds = targetGroups.map((group) => String(group.id || "").trim()).filter(Boolean);
-          const groupsToRemove = currentGroupIds.filter((groupId) => !applySelection.allGroupIds.includes(groupId));
-          const ticketIdsToRemove = ((emailContextMeta.get(targetEmailKey)?.ticketIds || []) as string[]).filter((ticketId) => ticketId !== applySelection.selectedTicketId && ticketId !== finalTicket?.id);
-
-          for (const groupId of groupsToRemove) {
+          for (const groupId of targetPlan.groupsToRemove) {
             await removeEmailFromLinkGroup(groupId, {
               ...targetEmailPayload,
               emailKey: String(targetEmail?.emailKey || "").trim() || undefined,
@@ -3628,7 +3609,7 @@ function StudioInner() {
           });
 
           const targetTicketId = finalTicket?.id || applySelection.selectedTicketId;
-          if (targetTicketId && !(finalTicket && targetEmailKey === baseTargetKey)) {
+          if (targetTicketId && !(finalTicket && targetEmailKey === remoteApplyPlan.baseTargetKey)) {
             const linked = await linkEmailToGroupTicket(targetTicketId, {
               email: classifiedEmailPayload,
               applyGroups: applySelection.allGroupIds.length > 0,
@@ -3677,41 +3658,12 @@ function StudioInner() {
         if (currentTargetIdentity) {
           const currentTargetEmail = effectiveTargetEmails.find((email) => isCurrentContextEmail(email, currentContext))
             || (selectedEmailKey === selectedEmailKey && selectedEmail && isCurrentContextEmail(selectedEmail, currentContext) ? selectedEmail : null);
-          
-          fallbackCurrentCategoryEmail = currentTargetEmail
-            ? {
-                ...currentTargetEmail,
-                itemId: String(currentContext.itemId || currentTargetEmail.itemId || "").trim() || undefined,
-                internetMessageId: String(currentContext.internetMessageId || currentTargetEmail.internetMessageId || "").trim() || undefined,
-                conversationId: String(currentContext.conversationId || currentTargetEmail.conversationId || "").trim(),
-                subject: String(currentTargetEmail.subject || currentContext.subject || "").trim() || undefined,
-                fromEmail: String(currentTargetEmail.fromEmail || currentContext.fromEmail || "").trim() || undefined,
-                fromName: String(currentTargetEmail.fromName || currentContext.fromName || "").trim() || undefined,
-                receivedAtIso: String(currentTargetEmail.receivedAtIso || currentTargetEmail.messageDateIso || currentContext.receivedAtIso || "").trim() || undefined,
-                messageDateIso: String(currentTargetEmail.messageDateIso || currentTargetEmail.receivedAtIso || currentContext.receivedAtIso || "").trim() || undefined,
-                status: applySelection.emailLabelStatus,
-                labels: applySelection.emailOwnedSelectedLabels,
-                removedInheritedLabels: applySelection.removedInheritedLabels,
-                labelStates: applySelection.labelStates,
-                classificationMeta: {
-                  ...applySelection.baseClassificationMeta,
-                },
-                relatedGroups: [
-                  ...(applySelection.principalGroup?.id ? [{
-                    id: applySelection.principalGroup.id,
-                    name: applySelection.principalGroup.name,
-                    kind: applySelection.principalGroup.kind,
-                    relationKind: "principal" as const,
-                  }] : []),
-                  ...applySelection.referenceGroups.map((group) => ({
-                    id: group.id,
-                    name: group.name,
-                    kind: group.kind,
-                    relationKind: "referencia" as const,
-                  })),
-                ],
-              }
-            : null;
+
+          fallbackCurrentCategoryEmail = buildRemoteApplyFallbackCurrentCategoryEmail({
+            currentTargetEmail,
+            currentContext,
+            resolvedApplySelection: applySelection,
+          });
         }
 
         setSelectionTouched({ principal: false, references: false, ticket: false });

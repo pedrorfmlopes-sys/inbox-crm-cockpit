@@ -1,5 +1,21 @@
 # HANDOFF
 
+## Grupos v1: execucao remota legacy do apply no `Classificar` fica mais explicita e menos espalhada (Abril 2026)
+- **O que foi isolado nesta ronda**:
+  - o studio passa a gerar um `remoteApplyPlan` explicito para a execucao remota legacy, com emails alvo, payloads por email, grupos a remover, ticketIds a desligar, base target para ticket e contexto do email atual para categorias Outlook
+  - o fallback do email atual usado na projecao Outlook/categorias passa a ser construido por helper proprio, em vez de ficar montado inline dentro do handler
+- **Duplicacoes reduzidas**:
+  - a execucao remota deixa de recalcular no meio do handler a mesma informacao de targets, payload base e payload classificado
+  - a ordem remota fica mais legivel: operacao Outlook -> ticket create/update -> loop por email alvo -> projecao local no caso -> refresh/reidratacao -> categorias Outlook
+- **O que continua acoplado nesta ronda**:
+  - as chamadas remotas legacy (`createGroupTicket`, `updateGroupTicket`, grupos, tickets, `registerRelevantEmail`) continuam no `GroupClassificationStudioApp`
+  - a projecao Outlook/categorias continua no handler porque depende diretamente do host e do ciclo de operacao atual
+- **Guardas mantidas**:
+  - `resolvedApplySelection` continua a ser a base comum
+  - o apply continua por email alvo e por scope
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: pipeline local de apply do `Classificar` fica mais coerente e menos duplicado (Abril 2026)
 - **O que foi consolidado nesta ronda**:
   - o studio passa a ter uma resolucao comum de apply (`resolvedApplySelection`) para targets, grupo principal, referencias, labels, ticket, metadados e semantica de scope
