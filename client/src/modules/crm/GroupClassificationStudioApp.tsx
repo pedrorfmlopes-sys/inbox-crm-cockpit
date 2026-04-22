@@ -3572,7 +3572,7 @@ function StudioInner() {
             resolvedApplySelection: applySelection,
             finalTicket,
             attachmentStorageOptions,
-            skipTicketLink: Boolean(finalTicket && targetPlan.targetEmailKey === remoteApplyPlan.baseTargetKey),
+            skipTicketLink: Boolean(ticketExecution.createdTicket && targetPlan.targetEmailKey === remoteApplyPlan.baseTargetKey),
           });
         }
 

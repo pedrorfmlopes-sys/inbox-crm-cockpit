@@ -1,5 +1,32 @@
 # HANDOFF
 
+## Grupos v1: smoke/regression do pipeline de apply confirma a cadeia principal e corrige regressao no link do ticket base quando havia update de estado (Abril 2026)
+- **O que foi validado nesta ronda**:
+  - **Cenario A**: apply sobre um unico email com grupo principal, referencias, labels e ticket existente sem criacao de ticket novo
+    - validado por fluxo/codigo: `resolvedApplySelection -> remoteApplyPlan -> executeLegacyBaseTicketApply(...) -> executeLegacyRemoteApplyForTarget(...)`
+    - confirmado que grupos, referencias e labels continuam a ser aplicados por email alvo
+  - **Cenario B**: apply sobre um unico email com criacao de ticket novo, projecao local e persistencia/reidratacao
+    - validado por fluxo/codigo: `executeLegacyBaseTicketApply(...) -> projectApplyIntoIntermediateCase(...) -> persistAndRefreshClassificationCase(...)`
+  - **Cenario C**: apply sobre varios emails alvo no mesmo scope
+    - validado por fluxo/codigo que `remoteApplyPlan.targetPlans` e `projectApplyIntoIntermediateCase(... targetEmails)` continuam por email, sem virar apply global cego do caso
+  - **Cenario D**: apply com alteracao de anexos/documentState/isHidden
+    - validado por fluxo/codigo que `applyClassificationToIntermediateCase(...)` continua a projetar anexos por `emailKey` dono do anexo
+  - **Cenario E**: apply com current target incluido e camada Outlook/categorias ativa
+    - validado por fluxo/codigo que `beginApplyOutlookCategoryOperation(...)`, `executePostApplyOutlookCategorySync(...)` e o fecho operacional continuam encadeados sem reabrir o handler
+  - **Cenario F**: erro/degradacao a meio
+    - validado por fluxo/codigo que `finalizeFailedApplyOperation(...)` continua a distinguir erro total vs `Guardado com avisos`, com fecho seguro da operacao Outlook
+- **Regressao real encontrada e corrigida**:
+  - quando existia `ticket` ja selecionado e havia apenas `update` do estado do ticket, o `base target` podia saltar indevidamente o `linkEmailToGroupTicket(...)`
+  - a causa era `skipTicketLink` depender de `finalTicket`, o que confundia `ticket criado` com `ticket existente atualizado`
+  - a correcao passou `skipTicketLink` a depender apenas de `ticketExecution.createdTicket` no email base
+- **O que nao foi possivel validar com total seguranca**:
+  - comportamento runtime real do host Outlook/Office.js e confirmacao de categorias fora do browser local
+  - confirmacao ponta-a-ponta com Odoo real e efeitos remotos em ambiente de producao
+- **Guardas mantidas**:
+  - sem nova frente funcional
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: hardening do pipeline de apply no `Classificar` afina contratos, resultados e tipagem sem abrir nova frente funcional (Abril 2026)
 - **O que foi afinado nesta ronda**:
   - `handleApplyClassification()` passa a declarar explicitamente `ApplyOperationResult` como resultado operacional comum
