@@ -151,16 +151,17 @@
 ## Bloqueios tecnicos reais desta arquitetura
 
 ### OneDrive / SharePoint por URL web
-- bloqueado porque o backend atual faz escrita binaria por filesystem
+- bloqueado e fora desta fase porque o backend atual faz escrita binaria por filesystem
 - manifests do add-in no repo continuam apenas com `ReadWriteMailbox`
 - `client/src/office.ts` so pede `Mail.Read`, `User.Read` e `People.Read`
 - nao existe uploader Graph/SharePoint dedicado no backend atual
+- o runtime e a validacao do servidor tratam `document_library` apenas como bloqueio tecnico, nunca como modo executavel desta fundacao
 - para fechar URL web de verdade seria necessaria integracao dedicada com Graph/SharePoint, autenticacao associada e upload/download por API em vez de filesystem
 
 ## Estado de fecho desta frente
 - `picker/path real`: fechado pela via manual validada
-- `OneDrive/SharePoint por URL web`: nao fechado na arquitetura atual
-- enquanto URL web se mantiver requisito obrigatorio, a fundacao de storage/settings nao pode ser dada como totalmente encerrada
+- `OneDrive/SharePoint por URL web`: explicitamente fora desta fase sem Graph/admin
+- dentro do perimetro atual (`IndexedDB`, persistencia central da app, paths locais/UNC e pasta sincronizada local), a fundacao de storage/settings pode ser dada como fechada
 
 ### Picker real de pasta
 - bloqueado porque o host atual nao expõe ao backend um caminho local do utilizador atraves de picker browser reutilizavel

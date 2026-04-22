@@ -8,7 +8,7 @@ export async function loadPrimaryGroupWorkset(input: {
   anchorEmailKey: string;
   runtime: ResolvedGroupStorageRuntime;
 }): Promise<GroupWorksetManifest | null> {
-  if (!supportsPrimaryGroupWorksetPersistence(input.runtime.mode)) {
+  if (!supportsPrimaryGroupWorksetPersistence(input.runtime)) {
     return null;
   }
   const worksetKey = buildGroupWorksetKey(input.anchorEmailKey);

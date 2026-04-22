@@ -141,7 +141,7 @@ export function validateGroupStorageTarget(input = {}) {
     };
   }
 
-  if (looksLikeWebUrl(basePath)) {
+  if (resolved.chosenFolderKind === "document_library" || looksLikeWebUrl(basePath)) {
     return {
       mode: resolved.mode,
       provider: resolved.provider,
@@ -157,7 +157,7 @@ export function validateGroupStorageTarget(input = {}) {
       pickerBlockedReason:
         "Mesmo com picker browser, o host atual nao fornece um caminho fisico que o backend consiga usar para escrita.",
       blockingReason:
-        "OneDrive/SharePoint por URL web nao e suportado nesta arquitetura porque a escrita final atual usa filesystem no servidor, nao Graph/SharePoint API.",
+        "OneDrive/SharePoint por URL web ou document library nao e suportado nesta arquitetura porque a escrita final atual usa filesystem no servidor, nao Graph/SharePoint API.",
       architecturalBlocker: "web_document_library_requires_graph_backend",
       requiredChange:
         "Adicionar autenticacao Graph/SharePoint com scopes Files/Sites, resolucao de site/drive/item e um fluxo real de upload/download por API em vez de filesystem.",
@@ -243,7 +243,7 @@ export function validateGroupStorageTarget(input = {}) {
 export function buildGroupWorksetMirrorFileLocation(input = {}) {
   const resolved = resolveGroupStorageInput(input);
   const basePath = normalizeString(resolved.basePath);
-  if (!resolved.fileBacked || !basePath || looksLikeWebUrl(basePath)) {
+  if (!resolved.fileBacked || !basePath || resolved.chosenFolderKind === "document_library" || looksLikeWebUrl(basePath)) {
     return null;
   }
 

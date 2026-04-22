@@ -185,6 +185,7 @@ export function SettingsPanel(): JSX.Element {
       : []),
     [groupStorageValidation, model, resolvedGroupStorage]
   );
+  const groupStorageRequiresGraphOrAdmin = resolvedGroupStorage?.projectSupport.requiresGraphOrAdmin === true;
 
   const validateCurrentGroupStorage = async (settingsModel: CockpitSettingsV1): Promise<GroupStorageValidationResult | null> => {
     if (settingsModel.groupStorage.mode === "supabase") {
@@ -1239,29 +1240,13 @@ export function SettingsPanel(): JSX.Element {
 
               {model.groupStorage.mode !== "supabase" && model.groupStorage.mode !== "local_device" ? (
                 <Field label="Tipo de destino escolhido">
-                  <select
-                    style={S.select}
-                    value={model.groupStorage.chosenFolder.kind}
-                    onChange={(e) =>
-                      setModel({
-                        ...model,
-                        groupStorage: {
-                          ...model.groupStorage,
-                          chosenFolder: {
-                            ...model.groupStorage.chosenFolder,
-                            kind: e.target.value === "document_library" ? "document_library" : "filesystem",
-                          },
-                        },
-                      })
-                    }
-                  >
-                    <option value="filesystem">Pasta fisica / sincronizada</option>
-                    <option value="document_library" disabled>
-                      URL web de OneDrive / SharePoint (bloqueado nesta arquitetura)
-                    </option>
-                  </select>
+                  <input
+                    style={{ ...S.input, background: "rgba(248,250,252,0.94)" }}
+                    value="Pasta fisica / sincronizada"
+                    disabled
+                  />
                   <div style={S.hint}>
-                    URL web continua visivel para auditoria, mas nao fica executavel nesta base: falta autenticacao Graph/SharePoint com scopes Files/Sites e um uploader real no backend.
+                    Nesta fase sem Graph/admin, `chosen_folder` e `hybrid` aceitam apenas pasta fisica, pasta sincronizada local ou caminho UNC validado no servidor.
                   </div>
                 </Field>
               ) : null}
@@ -1280,17 +1265,18 @@ export function SettingsPanel(): JSX.Element {
                   onChange={(e) =>
                     setModel({
                       ...model,
-                      groupStorage: {
-                        ...model.groupStorage,
-                        baseFolderPath: e.target.value,
-                        chosenFolder: {
-                          ...model.groupStorage.chosenFolder,
-                          path: e.target.value,
-                        },
-                        localDevice: {
-                          ...model.groupStorage.localDevice,
-                          rootPath:
-                            model.groupStorage.mode === "local_device" || model.groupStorage.hybrid.primaryTarget === "local_device"
+                        groupStorage: {
+                          ...model.groupStorage,
+                          baseFolderPath: e.target.value,
+                          chosenFolder: {
+                            ...model.groupStorage.chosenFolder,
+                            path: e.target.value,
+                            kind: "filesystem",
+                          },
+                          localDevice: {
+                            ...model.groupStorage.localDevice,
+                            rootPath:
+                              model.groupStorage.mode === "local_device" || model.groupStorage.hybrid.primaryTarget === "local_device"
                               ? e.target.value
                               : model.groupStorage.localDevice.rootPath,
                         },
@@ -1356,7 +1342,7 @@ export function SettingsPanel(): JSX.Element {
               ) : null}
 
               {groupStorageValidation?.architecturalBlocker === "web_document_library_requires_graph_backend"
-                || model.groupStorage.chosenFolder.kind === "document_library" ? (
+                || groupStorageRequiresGraphOrAdmin ? (
                 <div style={S.referenceCard}>
                   <div style={S.fieldLabel}>Prova tecnica do bloqueio da URL web</div>
                   <div style={{ display: "grid", gap: 6 }}>
@@ -1365,6 +1351,9 @@ export function SettingsPanel(): JSX.Element {
                         - {fact}
                       </div>
                     ))}
+                    <div style={S.hint}>
+                      Resultado operacional desta fase: URL web fica explicitamente fora de scope e nao entra no runtime executavel de `local_device`, `chosen_folder` ou `hybrid`.
+                    </div>
                   </div>
                 </div>
               ) : null}

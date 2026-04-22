@@ -11,7 +11,7 @@ export async function savePrimaryGroupWorkset(input: {
   keepalive?: boolean;
 }): Promise<GroupWorksetManifest | null> {
   if (!input.manifest) return input.current || null;
-  if (!supportsPrimaryGroupWorksetPersistence(input.runtime.mode)) {
+  if (!supportsPrimaryGroupWorksetPersistence(input.runtime)) {
     return input.current || null;
   }
   const merged = mergeGroupWorksetPayload(input.current, input.manifest);

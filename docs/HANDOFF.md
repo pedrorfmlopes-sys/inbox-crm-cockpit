@@ -1,5 +1,33 @@
 # HANDOFF
 
+## Grupos v1: fundacao sem Graph/admin fica finalmente fechada, com URL web explicitamente fora do runtime executavel (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - o perimetro desta frente passa a ser explicitamente **sem Graph e sem permissoes admin**
+  - `local_device`, `chosen_folder`, `hybrid`, `local_indexeddb` e `cloud` ficam como base executavel final desta fase
+  - `document_library` / URL web de OneDrive/SharePoint deixa de contaminar o runtime como se fosse submodo meio suportado
+- **Correcao estrutural em codigo**:
+  - `resolveGroupStorageRuntime(...)` passa a expor `projectSupport`
+  - quando a configuracao pede `document_library` ou URL web:
+    - `projectSupport.supported = false`
+    - worksets deixam de ser persistidos como se o modo file-backed estivesse valido
+    - o `legacyBridge` deixa de propagar path/provider web para anexos/worksets desta frente
+  - `supportsPrimaryGroupWorksetPersistence(...)` deixa de decidir so por `mode`; passa a exigir runtime suportado dentro deste perimetro
+  - `validateGroupStorageTarget(...)` no servidor passa a bloquear tanto URL web como `document_library` explicito, mesmo que apareca com path fisico legado
+  - `buildGroupWorksetMirrorFileLocation(...)` deixa de aceitar `document_library` como mirror file-backed
+- **Settings alinhados com a engine**:
+  - o selector de destino deixa de apresentar `document_library` como tipo ativo
+  - `chosen_folder` e `hybrid` mostram apenas "Pasta fisica / sincronizada"
+  - continua a existir prova tecnica do bloqueio web, mas agora como bloqueio fora de fase, nao como promessa por fechar nesta base
+- **Resultado operacional desta frente**:
+  - a fundacao de storage/settings pode ser dada como fechada **no perimetro sem Graph/admin**
+  - OneDrive/SharePoint por URL web continua explicitamente bloqueado e fora desta fase
+- **Fora do scope mantido**:
+  - `Explorar`
+  - `Gestor do Grupo`
+  - Graph
+  - permissoes admin
+  - redesign geral da UI
+
 ## Grupos v1: fundacao de storage/settings passa a usar validacao real de destinos, worksets reativos e manutencao executavel do intermédio (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - `local_device`, `chosen_folder` e `hybrid` deixam de ficar apenas bloqueados por texto e passam a depender de **validacao real** do destino no servidor

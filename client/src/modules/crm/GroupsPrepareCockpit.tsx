@@ -563,7 +563,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     [settings?.groupStorage]
   );
   const ignoreInlineAttachmentsFromLegacyStorage = legacyStorageRuntime.attachmentPolicy.ignoreInlineAttachments;
-  const canPersistRemotePrepareWorkset = true;
+  const canPersistRemotePrepareWorkset = legacyStorageRuntime.projectSupport.supported;
   const canPersistWorkset = Boolean(settings)
     && canPersistRemotePrepareWorkset
     && Boolean(legacyStorageRuntime.mode);

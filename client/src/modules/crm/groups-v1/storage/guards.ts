@@ -1,3 +1,4 @@
+import type { ResolvedGroupStorageRuntime } from "./resolveStorageMode";
 import type { GroupStorageMode, GroupWorksetManifest } from "./types";
 
 function normalizeKeyPart(value: string | null | undefined): string {
@@ -9,7 +10,13 @@ export function buildGroupWorksetKey(anchorEmailKey: string | null | undefined):
   return anchor ? `groups_v1_workset:${anchor}` : "";
 }
 
-export function supportsPrimaryGroupWorksetPersistence(mode: GroupStorageMode): boolean {
+export function supportsPrimaryGroupWorksetPersistence(
+  runtime: Pick<ResolvedGroupStorageRuntime, "mode" | "projectSupport">
+): boolean {
+  if (runtime.projectSupport.supported !== true) {
+    return false;
+  }
+  const mode: GroupStorageMode = runtime.mode;
   return mode === "supabase" || mode === "hybrid" || mode === "local_device" || mode === "chosen_folder";
 }
 

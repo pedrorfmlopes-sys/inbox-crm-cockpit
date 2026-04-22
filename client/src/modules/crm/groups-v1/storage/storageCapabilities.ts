@@ -43,7 +43,7 @@ export function describeGroupStorageCapabilities(args: {
   validation?: GroupStorageValidationResult | null;
 }): GroupStorageModeCapability[] {
   const validation = args.validation || null;
-  const blockedReason = normalizeText(validation?.blockingReason);
+  const blockedReason = normalizeText(validation?.blockingReason) || normalizeText(args.runtime.projectSupport.blockingReason || undefined);
   const fileBackedWhere = validation?.supported && validation.normalizedBasePath
     ? validation.normalizedBasePath
     : normalizeText(args.runtime.primaryLocation.basePath) || "por configurar";
