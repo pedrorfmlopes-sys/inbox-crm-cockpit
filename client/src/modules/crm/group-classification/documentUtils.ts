@@ -1,5 +1,5 @@
 import {
-  RelatedEmailEntry, RelevantEmailPayload, LinkGroupEntry, GroupTicketEntry
+  EmailRecipientEntry, RelatedEmailEntry, RelevantEmailPayload, LinkGroupEntry, GroupTicketEntry
 } from "@/api";
 import {
   ClassificationMetaDraft, DocumentLifecycleState, LabelDraft, EmailLabelStatus,
@@ -40,12 +40,40 @@ export function readSeedEmail(params: StudioParams): RelatedEmailEntry | null {
     const subject = String(parsed?.subject || "").trim();
     const fromEmail = String(parsed?.fromEmail || "").trim();
     const fromName = String(parsed?.fromName || "").trim();
+    const emailWebLink = String(parsed?.emailWebLink || "").trim();
     const receivedAtIso = String(parsed?.receivedAtIso || parsed?.messageDateIso || "").trim();
+    const sentAtIso = String(parsed?.sentAtIso || "").trim();
+    const toRecipients = Array.isArray(parsed?.toRecipients)
+      ? parsed.toRecipients
+          .map((recipient: any) => ({
+            email: String(recipient?.email || "").trim().toLowerCase(),
+            name: String(recipient?.name || "").trim() || undefined,
+          }))
+          .filter((recipient: { email: string }) => recipient.email)
+      : [];
+    const ccRecipients = Array.isArray(parsed?.ccRecipients)
+      ? parsed.ccRecipients
+          .map((recipient: any) => ({
+            email: String(recipient?.email || "").trim().toLowerCase(),
+            name: String(recipient?.name || "").trim() || undefined,
+          }))
+          .filter((recipient: { email: string }) => recipient.email)
+      : [];
     if (!(itemId || internetMessageId || conversationId || subject || fromEmail)) return null;
     return ({
       emailKey: itemId || internetMessageId || `${conversationId}|${subject || fromEmail}`,
       itemId: itemId || undefined,
       internetMessageId: internetMessageId || undefined,
+      conversationId: conversationId || undefined,
+      subject: subject || undefined,
+      fromEmail: fromEmail || undefined,
+      fromName: fromName || undefined,
+      emailWebLink: emailWebLink || undefined,
+      receivedAtIso: receivedAtIso || undefined,
+      messageDateIso: receivedAtIso || undefined,
+      sentAtIso: sentAtIso || undefined,
+      toRecipients,
+      ccRecipients,
       bodyHtml: String(parsed?.bodyHtml || "").trim(),
       attachments: Array.isArray(parsed?.attachments)
         ? parsed.attachments
@@ -399,6 +427,15 @@ export function dedupeEmails(emails: RelatedEmailEntry[]): RelatedEmailEntry[] {
 
 export function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | null): RelevantEmailPayload | null {
   if (!email) return null;
+  const normalizeRecipients = (values: Array<EmailRecipientEntry | null | undefined> | undefined): EmailRecipientEntry[] =>
+    Array.isArray(values)
+      ? values
+          .map((recipient) => ({
+            email: String(recipient?.email || "").trim().toLowerCase(),
+            name: String(recipient?.name || "").trim() || undefined,
+          }))
+          .filter((recipient) => recipient.email)
+      : [];
   const itemId = String(email.itemId || "").trim();
   const internetMessageId = String(email.internetMessageId || "").trim();
   const conversationId = String(email.conversationId || "").trim();
@@ -435,9 +472,15 @@ export function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEnt
     subject: subject || undefined,
     fromEmail: fromEmail || undefined,
     fromName: email.fromName || undefined,
-    receivedAtIso: email.receivedAtIso || undefined,
+    emailWebLink: String(email.emailWebLink || "").trim() || undefined,
+    receivedAtIso: String(email.receivedAtIso || email.messageDateIso || "").trim() || undefined,
+    sentAtIso: String(email.sentAtIso || "").trim() || undefined,
+    messageDateIso: String(email.messageDateIso || email.receivedAtIso || "").trim() || undefined,
+    toRecipients: normalizeRecipients(email.toRecipients),
+    ccRecipients: normalizeRecipients(email.ccRecipients),
     bodyText: email.bodyText || "",
     bodyHtml: email.bodyHtml || "",
+    replaceAttachments: false,
     attachments,
   };
 }

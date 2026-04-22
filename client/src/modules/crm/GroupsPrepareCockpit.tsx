@@ -300,6 +300,15 @@ function resolveDirectVisibleInformationState(
 }
 
 function buildRelevantEmailPayloadFromEmail(email: RelatedEmailEntry): RelevantEmailPayload {
+  const normalizeRecipients = (values: RelatedEmailEntry["toRecipients"] | RelatedEmailEntry["ccRecipients"]) =>
+    Array.isArray(values)
+      ? values
+          .map((recipient) => ({
+            email: String(recipient?.email || "").trim().toLowerCase(),
+            name: String(recipient?.name || "").trim() || undefined,
+          }))
+          .filter((recipient) => recipient.email)
+      : [];
   return {
     itemId: String(email.itemId || "").trim() || undefined,
     internetMessageId: String(email.internetMessageId || "").trim() || undefined,
@@ -307,10 +316,15 @@ function buildRelevantEmailPayloadFromEmail(email: RelatedEmailEntry): RelevantE
     subject: String(email.subject || "").trim() || undefined,
     fromEmail: String(email.fromEmail || "").trim() || undefined,
     fromName: String(email.fromName || "").trim() || undefined,
+    emailWebLink: String(email.emailWebLink || "").trim() || undefined,
     receivedAtIso: String(email.messageDateIso || email.receivedAtIso || "").trim() || undefined,
     messageDateIso: String(email.messageDateIso || email.receivedAtIso || "").trim() || undefined,
+    sentAtIso: String(email.sentAtIso || "").trim() || undefined,
+    toRecipients: normalizeRecipients(email.toRecipients),
+    ccRecipients: normalizeRecipients(email.ccRecipients),
     bodyText: String(email.bodyText || "").trim() || undefined,
     bodyHtml: String(email.bodyHtml || "").trim() || undefined,
+    replaceAttachments: false,
     attachments: Array.isArray(email.attachments)
       ? email.attachments.map((attachment) => ({
           key: attachment.key,
@@ -578,6 +592,22 @@ export const GroupsPrepareCockpit: React.FC = () => {
     fromName: String(ctx.fromName || "").trim(),
     receivedAtIso: String(ctx.receivedDateTimeIso || "").trim(),
     messageDateIso: String(ctx.receivedDateTimeIso || "").trim(),
+    toRecipients: Array.isArray(ctx.toRecipients)
+      ? ctx.toRecipients
+          .map((recipient) => ({
+            email: String(recipient?.email || "").trim().toLowerCase(),
+            name: String(recipient?.name || "").trim() || undefined,
+          }))
+          .filter((recipient) => recipient.email)
+      : [],
+    ccRecipients: Array.isArray(ctx.ccRecipients)
+      ? ctx.ccRecipients
+          .map((recipient) => ({
+            email: String(recipient?.email || "").trim().toLowerCase(),
+            name: String(recipient?.name || "").trim() || undefined,
+          }))
+          .filter((recipient) => recipient.email)
+      : [],
     bodyText: String(bodyText || "").trim(),
     bodyHtml: String(bodyHtml || "").trim(),
     attachments: (attachments || []).map((attachment) => ({
@@ -590,7 +620,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       content: String(attachment.content || "").trim(),
       hasContent: Boolean(String(attachment.content || "").trim()),
     })),
-  }), [attachments, bodyHtml, bodyText, ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject]);
+  }), [attachments, bodyHtml, bodyText, ctx.ccRecipients, ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, ctx.toRecipients]);
 
   const currentEmailBootstrapLinkPayload = useMemo(
     () => stripEmailPayloadAttachmentContent(currentEmailBootstrapPayload),
@@ -606,8 +636,16 @@ export const GroupsPrepareCockpit: React.FC = () => {
       subject: String(persistedCurrentEmail.subject || currentEmailBootstrapPayload.subject || "").trim(),
       fromEmail: String(persistedCurrentEmail.fromEmail || currentEmailBootstrapPayload.fromEmail || "").trim(),
       fromName: String(persistedCurrentEmail.fromName || currentEmailBootstrapPayload.fromName || "").trim(),
+      emailWebLink: String(persistedCurrentEmail.emailWebLink || currentEmailBootstrapPayload.emailWebLink || "").trim(),
       receivedAtIso: String(persistedCurrentEmail.messageDateIso || persistedCurrentEmail.receivedAtIso || currentEmailBootstrapPayload.receivedAtIso || "").trim(),
       messageDateIso: String(persistedCurrentEmail.messageDateIso || persistedCurrentEmail.receivedAtIso || currentEmailBootstrapPayload.messageDateIso || "").trim(),
+      sentAtIso: String(persistedCurrentEmail.sentAtIso || currentEmailBootstrapPayload.sentAtIso || "").trim(),
+      toRecipients: Array.isArray(persistedCurrentEmail.toRecipients) && persistedCurrentEmail.toRecipients.length
+        ? persistedCurrentEmail.toRecipients
+        : (currentEmailBootstrapPayload.toRecipients || []),
+      ccRecipients: Array.isArray(persistedCurrentEmail.ccRecipients) && persistedCurrentEmail.ccRecipients.length
+        ? persistedCurrentEmail.ccRecipients
+        : (currentEmailBootstrapPayload.ccRecipients || []),
       bodyText: String(persistedCurrentEmail.bodyText || currentEmailBootstrapPayload.bodyText || "").trim(),
       bodyHtml: String(persistedCurrentEmail.bodyHtml || currentEmailBootstrapPayload.bodyHtml || "").trim(),
       attachments: Array.isArray(persistedCurrentEmail.attachments)
@@ -681,8 +719,12 @@ export const GroupsPrepareCockpit: React.FC = () => {
     subject: String(currentEmailBootstrapPayload.subject || "").trim(),
     fromEmail: String(currentEmailBootstrapPayload.fromEmail || "").trim() || undefined,
     fromName: String(currentEmailBootstrapPayload.fromName || "").trim() || undefined,
+    emailWebLink: String(currentEmailBootstrapPayload.emailWebLink || "").trim() || undefined,
     receivedAtIso: String(currentEmailBootstrapPayload.receivedAtIso || currentEmailBootstrapPayload.messageDateIso || "").trim() || undefined,
     messageDateIso: String(currentEmailBootstrapPayload.messageDateIso || currentEmailBootstrapPayload.receivedAtIso || "").trim() || undefined,
+    sentAtIso: String(currentEmailBootstrapPayload.sentAtIso || "").trim() || undefined,
+    toRecipients: currentEmailBootstrapPayload.toRecipients || [],
+    ccRecipients: currentEmailBootstrapPayload.ccRecipients || [],
     bodyText: String(currentEmailBootstrapPayload.bodyText || "").trim(),
     bodyHtml: String(currentEmailBootstrapPayload.bodyHtml || "").trim(),
     labels: [],

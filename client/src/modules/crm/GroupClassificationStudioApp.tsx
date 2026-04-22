@@ -839,6 +839,8 @@ function StudioInner() {
     subject: String(params.subject || classificationAnchorEmail?.subject || currentSeed?.subject || fallbackIdentity?.subject || "").trim(),
     fromEmail: String(params.fromEmail || classificationAnchorEmail?.fromEmail || currentSeed?.fromEmail || fallbackIdentity?.fromEmail || "").trim(),
     fromName: String(params.fromName || classificationAnchorEmail?.fromName || currentSeed?.fromName || fallbackIdentity?.fromName || "").trim(),
+    emailWebLink: String(classificationAnchorEmail?.emailWebLink || currentSeed?.emailWebLink || fallbackIdentity?.emailWebLink || "").trim(),
+    sentAtIso: String(classificationAnchorEmail?.sentAtIso || currentSeed?.sentAtIso || fallbackIdentity?.sentAtIso || "").trim(),
     receivedAtIso: String(
       params.receivedAtIso ||
       classificationAnchorEmail?.receivedAtIso ||
@@ -849,6 +851,16 @@ function StudioInner() {
       fallbackIdentity?.messageDateIso ||
       ""
     ).trim(),
+    toRecipients: (Array.isArray(classificationAnchorEmail?.toRecipients) && classificationAnchorEmail.toRecipients.length
+      ? classificationAnchorEmail.toRecipients
+      : Array.isArray(currentSeed?.toRecipients) && currentSeed.toRecipients.length
+        ? currentSeed.toRecipients
+        : fallbackIdentity?.toRecipients) || [],
+    ccRecipients: (Array.isArray(classificationAnchorEmail?.ccRecipients) && classificationAnchorEmail.ccRecipients.length
+      ? classificationAnchorEmail.ccRecipients
+      : Array.isArray(currentSeed?.ccRecipients) && currentSeed.ccRecipients.length
+        ? currentSeed.ccRecipients
+        : fallbackIdentity?.ccRecipients) || [],
   }), [classificationAnchorEmail, currentSeed, fallbackIdentity, params]);
   const bootstrapEmailPayload = useMemo<RelevantEmailPayload | null>(() => {
     const base = classificationAnchorEmail || currentSeed || fallbackIdentity;
@@ -1005,8 +1017,12 @@ function StudioInner() {
               subject: bootstrapEmailPayload.subject,
               fromEmail: bootstrapEmailPayload.fromEmail,
               fromName: bootstrapEmailPayload.fromName,
+              emailWebLink: bootstrapEmailPayload.emailWebLink,
               receivedAtIso: bootstrapEmailPayload.receivedAtIso,
               messageDateIso: bootstrapEmailPayload.messageDateIso || bootstrapEmailPayload.receivedAtIso,
+              sentAtIso: bootstrapEmailPayload.sentAtIso,
+              toRecipients: bootstrapEmailPayload.toRecipients || [],
+              ccRecipients: bootstrapEmailPayload.ccRecipients || [],
               bodyText: bootstrapEmailPayload.bodyText || "",
               bodyHtml: bootstrapEmailPayload.bodyHtml || "",
               attachments: bootstrapEmailPayload.attachments || [],
@@ -2052,8 +2068,16 @@ function StudioInner() {
     subject: String(selectedEmail?.subject || currentContext.subject || "").trim() || undefined,
     fromEmail: String(selectedEmail?.fromEmail || currentContext.fromEmail || "").trim() || undefined,
     fromName: String(selectedEmail?.fromName || currentContext.fromName || "").trim() || undefined,
+    emailWebLink: String(selectedEmail?.emailWebLink || currentContext.emailWebLink || "").trim() || undefined,
     receivedAtIso: String(selectedEmail?.receivedAtIso || selectedEmail?.messageDateIso || currentContext.receivedAtIso || "").trim() || undefined,
     messageDateIso: String(selectedEmail?.messageDateIso || selectedEmail?.receivedAtIso || currentContext.receivedAtIso || "").trim() || undefined,
+    sentAtIso: String(selectedEmail?.sentAtIso || currentContext.sentAtIso || "").trim() || undefined,
+    toRecipients: Array.isArray(selectedEmail?.toRecipients) && selectedEmail.toRecipients.length
+      ? selectedEmail.toRecipients
+      : (currentContext.toRecipients || []),
+    ccRecipients: Array.isArray(selectedEmail?.ccRecipients) && selectedEmail.ccRecipients.length
+      ? selectedEmail.ccRecipients
+      : (currentContext.ccRecipients || []),
     bodyText: String(selectedEmail?.bodyText || "").trim() || undefined,
     bodyHtml: String(selectedEmail?.bodyHtml || "").trim() || undefined,
     attachments: selectedEmailAttachments.map((attachment) => ({
@@ -2072,7 +2096,7 @@ function StudioInner() {
       hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
       isHidden: typeof (attachment as any).isHidden === "boolean" ? (attachment as any).isHidden : undefined,
     })),
-  }), [currentContext.conversationId, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.subject, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.conversationId, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.subject, selectedEmailAttachments]);
+  }), [currentContext.ccRecipients, currentContext.conversationId, currentContext.emailWebLink, currentContext.fromEmail, currentContext.fromName, currentContext.internetMessageId, currentContext.itemId, currentContext.receivedAtIso, currentContext.sentAtIso, currentContext.subject, currentContext.toRecipients, selectedEmail?.bodyHtml, selectedEmail?.bodyText, selectedEmail?.ccRecipients, selectedEmail?.conversationId, selectedEmail?.emailWebLink, selectedEmail?.fromEmail, selectedEmail?.fromName, selectedEmail?.internetMessageId, selectedEmail?.itemId, selectedEmail?.messageDateIso, selectedEmail?.receivedAtIso, selectedEmail?.sentAtIso, selectedEmail?.subject, selectedEmail?.toRecipients, selectedEmailAttachments]);
 
   useEffect(() => {
     const selectedKey = String(selectedEmailKey || "").trim();
@@ -3554,6 +3578,7 @@ function StudioInner() {
           currentContext,
           createTicketTitle,
           currentOutlookTicket,
+          attachmentStorageOptions,
         });
         let finalTicket: GroupTicketEntry | null = ticketExecution.finalTicket;
         if (finalTicket) {

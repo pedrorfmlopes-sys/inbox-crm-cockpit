@@ -75,6 +75,8 @@ export function mapIntermediateEmailToRelatedEmailEntry(
     subject: email.subject,
     fromName: email.fromName,
     fromEmail: email.fromEmail,
+    toRecipients: email.to.map((entry) => ({ email: entry })),
+    ccRecipients: email.cc.map((entry) => ({ email: entry })),
     receivedAtIso: email.receivedAtIso,
     messageDateIso: email.receivedAtIso,
     bodyText: email.bodyText,

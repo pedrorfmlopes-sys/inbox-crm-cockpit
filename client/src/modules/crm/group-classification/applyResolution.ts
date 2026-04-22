@@ -1,4 +1,10 @@
-import type { GroupTicketEntry, LinkGroupEntry, RelatedEmailEntry, RelevantEmailPayload } from "@/api";
+import type {
+  EmailRecipientEntry,
+  GroupTicketEntry,
+  LinkGroupEntry,
+  RelatedEmailEntry,
+  RelevantEmailPayload,
+} from "@/api";
 import type { IntermediateCaseClassificationDraft } from "@/modules/crm/groups-v1/storage/intermediateCaseClassification";
 
 import type { ClassificationMetaDraft } from "./types";
@@ -11,7 +17,11 @@ export type ApplyCurrentContext = {
   subject?: string;
   fromEmail?: string;
   fromName?: string;
+  emailWebLink?: string;
+  sentAtIso?: string;
   receivedAtIso?: string;
+  toRecipients?: EmailRecipientEntry[];
+  ccRecipients?: EmailRecipientEntry[];
 };
 
 export type CurrentTargetIdentity = {
@@ -71,6 +81,22 @@ function normalizeString(value: unknown): string {
 
 function normalizeStringList(values: unknown[]): string[] {
   return Array.from(new Set(values.map((value) => normalizeString(value)).filter(Boolean)));
+}
+
+function normalizeRecipients(values: Array<EmailRecipientEntry | null | undefined> | undefined): EmailRecipientEntry[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const recipients: EmailRecipientEntry[] = [];
+  for (const value of values) {
+    const email = normalizeString(value?.email).toLowerCase();
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    recipients.push({
+      email,
+      name: normalizeString(value?.name) || undefined,
+    });
+  }
+  return recipients;
 }
 
 type RelatedEmailAttachmentEntry = NonNullable<RelatedEmailEntry["attachments"]>[number];
@@ -175,10 +201,23 @@ export function buildResolvedApplyTargetPayload(args: {
     subject: normalizeString(targetEmail?.subject || (targetIsCurrent ? currentContext.subject : "")) || undefined,
     fromEmail: normalizeString(targetEmail?.fromEmail || (targetIsCurrent ? currentContext.fromEmail : "")) || undefined,
     fromName: normalizeString(targetEmail?.fromName || (targetIsCurrent ? currentContext.fromName : "")) || undefined,
+    emailWebLink: normalizeString(targetEmail?.emailWebLink || (targetIsCurrent ? currentContext.emailWebLink : "")) || undefined,
+    sentAtIso: normalizeString(targetEmail?.sentAtIso || (targetIsCurrent ? currentContext.sentAtIso : "")) || undefined,
     receivedAtIso: normalizeString(targetEmail?.receivedAtIso || targetEmail?.messageDateIso || (targetIsCurrent ? currentContext.receivedAtIso : "")) || undefined,
     messageDateIso: normalizeString(targetEmail?.messageDateIso || targetEmail?.receivedAtIso || (targetIsCurrent ? currentContext.receivedAtIso : "")) || undefined,
+    toRecipients: normalizeRecipients(
+      Array.isArray(targetEmail?.toRecipients) && targetEmail.toRecipients.length
+        ? targetEmail.toRecipients
+        : (targetIsCurrent ? currentContext.toRecipients : undefined)
+    ),
+    ccRecipients: normalizeRecipients(
+      Array.isArray(targetEmail?.ccRecipients) && targetEmail.ccRecipients.length
+        ? targetEmail.ccRecipients
+        : (targetIsCurrent ? currentContext.ccRecipients : undefined)
+    ),
     bodyText: normalizeString(targetEmail?.bodyText) || undefined,
     bodyHtml: normalizeString(targetEmail?.bodyHtml) || undefined,
+    replaceAttachments: false,
     attachments: targetAttachments.map((attachment) => ({
       key: attachment.key,
       id: attachment.id,

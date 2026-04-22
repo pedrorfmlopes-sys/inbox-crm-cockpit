@@ -1304,3 +1304,37 @@
   - o email ancora continua limpo e nao e redefinido pelo historico
   - a abertura a partir do caso canonico nao implica promocao real para servidor
   - limpeza real do intermédio continua fora desta ronda
+
+## Grupos v1: contrato minimo de persistencia final por email ficou fechado em codigo (Abril 2026)
+- **Persistencia final agora garantida em codigo para cada email classificado**:
+  - identidade forte: `itemId`, `internetMessageId`, `conversationId`
+  - contexto de leitura: `subject`, `fromEmail`, `fromName`, `emailWebLink`
+  - datas: `messageDateIso`, `receivedAtIso`, `sentAtIso`
+  - destinatarios: `toRecipients`, `ccRecipients`
+  - corpo/metadados de consulta: `bodyText`, `bodyHtml`
+  - classificacao auxiliar: `status`, `labels`, `removedInheritedLabels`, `labelStates`, `classificationMeta`
+  - anexos: metadata + refs de storage + `documentState` + `isHidden`
+- **Onde ficou fechado**:
+  - cliente:
+    - `client/src/api.ts`
+    - `client/src/modules/crm/group-classification/applyResolution.ts`
+    - `client/src/modules/crm/group-classification/documentUtils.ts`
+    - `client/src/modules/crm/group-classification/legacyRemoteApply.ts`
+    - `client/src/modules/crm/GroupClassificationStudioApp.tsx`
+    - `client/src/modules/crm/GroupsPrepareCockpit.tsx`
+    - bridges do intermédio em `intermediateCaseAdapters.ts` e `intermediateCaseClassification.ts`
+  - servidor:
+    - `server/src/linkStore.js`
+- **Persistencia final duravel desta fase**:
+  - `crm_custom_group_members` passa a guardar tambem `to_recipients_json` e `cc_recipients_json`
+  - `buildEmailListEntry(...)` e `mapDbGroupMemberRow(...)` passam a devolver recipients no contrato final
+  - o store JSON em memoria/disco tambem passa a reter recipients no email canonico
+- **Politica efetiva de anexos fechada nesta fase**:
+  - o payload final do email classificado passa a subir explicitamente com `replaceAttachments: false`
+  - `registerRelevantEmail(...)` continua a promover anexos com `attachmentStorageProvider` / `attachmentStorageBasePath`
+  - `createGroupTicket(...)` passa a receber o mesmo `attachmentStorageOptions` no email base, para nao cair em persistencia parcial diferente quando o ticket e criado nessa operacao
+  - binario remoto/final continua fechado apenas onde o provider atual suporta escrita real (`cloud`, `local`, `onedrive` via pasta sincronizada/local); quando nao ha binario ou path valido, fica metadata + refs sem promessas falsas
+- **O que continua limitado pelo host/contrato atual**:
+  - o contexto Outlook atual ainda nao fornece `emailWebLink` nem `sentAtIso` de forma universal para o email aberto; esses campos continuam best-effort quando ja existem no servidor/intermedio/seed
+  - o `IntermediateCase` continua a guardar apenas `to` / `cc` como emails simples, sem nomes; a persistencia final passa a guardar `email + name`
+  - URLs web reais de OneDrive / SharePoint continuam fora; a escrita final suportada continua a depender de caminho local/sincronizado quando o provider nao e `cloud`

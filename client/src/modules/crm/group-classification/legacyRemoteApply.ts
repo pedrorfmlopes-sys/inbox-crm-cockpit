@@ -35,6 +35,7 @@ export async function executeLegacyBaseTicketApply(args: {
   currentContext: ApplyCurrentContext;
   createTicketTitle?: string;
   currentOutlookTicket: GroupTicketEntry | null;
+  attachmentStorageOptions?: LegacyRemoteApplyAttachmentStorageOptions;
 }): Promise<ExecuteLegacyBaseTicketApplyResult> {
   const {
     remoteApplyPlan,
@@ -42,6 +43,7 @@ export async function executeLegacyBaseTicketApply(args: {
     currentContext,
     createTicketTitle,
     currentOutlookTicket,
+    attachmentStorageOptions,
   } = args;
 
   const desiredTicketStatus = resolvedApplySelection.desiredTicketStatus;
@@ -62,7 +64,10 @@ export async function executeLegacyBaseTicketApply(args: {
       description: String(remoteApplyPlan.baseTargetEmail?.bodyText || "").trim().slice(0, 4000),
       labels: resolvedApplySelection.labels,
       groupIds: resolvedApplySelection.allGroupIds,
-      email: baseClassifiedEmailPayload,
+      email: {
+        ...baseClassifiedEmailPayload,
+        ...(attachmentStorageOptions || {}),
+      },
       membershipKind: resolvedApplySelection.targetMembershipKind,
     });
     createdTicket = true;

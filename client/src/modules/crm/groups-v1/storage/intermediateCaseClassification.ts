@@ -60,6 +60,17 @@ function normalizeStringMap(values: unknown): Record<string, string> {
   );
 }
 
+function normalizeRecipientEmails(values: RelatedEmailEntry["toRecipients"] | RelatedEmailEntry["ccRecipients"]): string[] {
+  if (!Array.isArray(values)) return [];
+  return Array.from(
+    new Set(
+      values
+        .map((entry) => normalizeString(entry?.email).toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
 function buildClassificationFromDraft(
   draft: IntermediateCaseClassificationDraft
 ): IntermediateEmailClassification {
@@ -141,8 +152,8 @@ function mapRelatedEmailEntryToIntermediateEmailBase(
     subject: normalizeString(email.subject) || current?.subject,
     fromName: normalizeString(email.fromName) || current?.fromName,
     fromEmail: normalizeString(email.fromEmail) || current?.fromEmail,
-    to: current?.to || [],
-    cc: current?.cc || [],
+    to: normalizeRecipientEmails(email.toRecipients).length ? normalizeRecipientEmails(email.toRecipients) : (current?.to || []),
+    cc: normalizeRecipientEmails(email.ccRecipients).length ? normalizeRecipientEmails(email.ccRecipients) : (current?.cc || []),
     receivedAtIso: normalizeString(email.messageDateIso || email.receivedAtIso) || current?.receivedAtIso,
     bodyText: normalizeString(email.bodyText) || current?.bodyText,
     bodyHtml: normalizeString(email.bodyHtml) || current?.bodyHtml,
