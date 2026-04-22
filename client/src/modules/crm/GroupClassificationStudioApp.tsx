@@ -63,6 +63,12 @@ import {
   normalizeGroupEntityDraft, dedupeGroupContacts, dedupeGroupEntities,
   detectReferences, splitSuggestions
 } from "./group-classification/documentUtils";
+import {
+  buildResolvedStudioApplySelection,
+  buildResolvedApplyTargetPayload,
+  buildResolvedClassifiedEmailPayload,
+  buildResolvedIntermediateCaseClassificationDraft,
+} from "./group-classification/applyResolution";
 
 import EmailsCard from "./group-classification/components/EmailsCard";
 import QuickDocumentsCard from "./group-classification/components/QuickDocumentsCard";
@@ -1403,6 +1409,18 @@ function StudioInner() {
       )
     );
   }, [emailPool, getEmailGroupRelations, principalAnchorGroupId]);
+  const defaultApplyTargetEmails = useMemo(
+    () => dedupeEmails(
+      (
+        applyScopeMode === "selected"
+          ? selectedTargetEmails
+          : applyScopeMode === "principal_group"
+            ? principalScopeEmails
+            : [selectedEmail].filter(Boolean)
+      ) as RelatedEmailEntry[]
+    ),
+    [applyScopeMode, principalScopeEmails, selectedEmail, selectedTargetEmails]
+  );
   const selectedTargetCount = selectedTargetEmails.length;
   const principalScopeCount = principalScopeEmails.length;
   const currentScopeEmail = useMemo(
@@ -2230,29 +2248,54 @@ function StudioInner() {
     () => formatGroupStatusLabel(principalGroup?.status || selectedManagedGroup?.status || ""),
     [principalGroup?.status, selectedManagedGroup?.status]
   );
-  const canApplyClassification = useMemo(
-    () => Boolean(
-      effectivePrincipalGroupId
-      || effectiveReferenceGroupIds.length
-      || selectedTicketId
-      || selectedSeriesId
-      || selectedEmailGroups.length
-      || selectedEmailTicketIds.length
-      || selectedLabels.length
-      || (selectedEmail?.labels || []).length
-      || String(selectedEmail?.status || "").trim()
-    ),
-    [
-      effectivePrincipalGroupId,
-      effectiveReferenceGroupIds.length,
+  const buildResolvedApplySelectionForTargets = useCallback(
+    (targetEmails: RelatedEmailEntry[]) => buildResolvedStudioApplySelection({
+      targetEmails,
+      principalGroupId: effectivePrincipalGroupId,
+      principalGroup,
+      referenceGroupIds: effectiveReferenceGroupIds,
+      referenceGroups,
+      selectedLabels,
+      inheritedLabels,
+      selectedLabelStates,
+      categorizedLabelNames: categorizableLabels,
       selectedTicketId,
       selectedSeriesId,
-      selectedEmailGroups.length,
-      selectedEmailTicketIds.length,
-      selectedLabels.length,
-      selectedEmail?.labels,
+      selectedTicket,
+      ticketStatusDraft,
+      classificationMetaDraft,
+      existingSelectedEmailGroupIds: selectedEmailGroups.map((group) => String(group.id || "").trim()).filter(Boolean),
+      existingSelectedEmailTicketIds: selectedEmailTicketIds,
+      existingSelectedEmailLabels: selectedEmailStoredLabels,
+      existingSelectedEmailStatus: selectedEmail?.status,
+    }),
+    [
+      categorizableLabels,
+      classificationMetaDraft,
+      effectivePrincipalGroupId,
+      effectiveReferenceGroupIds,
+      inheritedLabels,
+      principalGroup,
+      referenceGroups,
       selectedEmail?.status,
+      selectedEmailGroups,
+      selectedEmailStoredLabels,
+      selectedEmailTicketIds,
+      selectedLabelStates,
+      selectedLabels,
+      selectedSeriesId,
+      selectedTicket,
+      selectedTicketId,
+      ticketStatusDraft,
     ]
+  );
+  const resolvedApplySelection = useMemo(
+    () => buildResolvedApplySelectionForTargets(defaultApplyTargetEmails),
+    [buildResolvedApplySelectionForTargets, defaultApplyTargetEmails]
+  );
+  const canApplyClassification = useMemo(
+    () => resolvedApplySelection.hasAnyClassificationValue,
+    [resolvedApplySelection.hasAnyClassificationValue]
   );
   const hasPendingClassificationChanges = useMemo(() => {
     const snapshot = classificationDraftSnapshotRef.current;
@@ -3431,17 +3474,14 @@ function StudioInner() {
     }
 
     const targetEmails = dedupeEmails(
-      (targetEmailsOverride && targetEmailsOverride.length
+      ((targetEmailsOverride && targetEmailsOverride.length)
         ? targetEmailsOverride
-        : (
-          applyScopeMode === "selected"
-            ? selectedTargetEmails
-            : applyScopeMode === "principal_group"
-              ? principalScopeEmails
-              : [selectedEmail].filter(Boolean)
-        )) as RelatedEmailEntry[]
+        : resolvedApplySelection.targetEmails) as RelatedEmailEntry[]
     );
-    const targetEmailKeys = targetEmails.map((email) => makeEmailKey(email)).filter(Boolean);
+    const applySelection = (targetEmailsOverride && targetEmailsOverride.length)
+      ? buildResolvedApplySelectionForTargets(targetEmails)
+      : resolvedApplySelection;
+    const targetEmailKeys = applySelection.targetEmailKeys;
     const currentSignature = getClassificationSignature(targetEmailKeys);
 
     if (lastAppliedSignatureRef.current === currentSignature) {
@@ -3459,8 +3499,8 @@ function StudioInner() {
       let appliedClassificationCase: IntermediateCase | null = null;
 
       try {
-        const effectiveTargetEmails = targetEmails.length
-          ? targetEmails
+        const effectiveTargetEmails = applySelection.targetEmails.length
+          ? applySelection.targetEmails
           : ((selectedEmail ? [selectedEmail] : []) as RelatedEmailEntry[]);
         const preferredSelectedEmailKey = normalizeComparableString(selectedEmailKey || classificationAnchorEmailKey);
 
@@ -3496,92 +3536,30 @@ function StudioInner() {
           setOutlookCategoryOperationPhase(activeCategoryOperationId, "saving");
         }
 
-        const principalGroup = effectivePrincipalGroupId ? groupMap.get(effectivePrincipalGroupId) || null : null;
-        const referenceGroups = effectiveReferenceGroupIds.map((groupId) => groupMap.get(groupId)).filter(Boolean) as LinkGroupEntry[];
-        const allGroupIds = [effectivePrincipalGroupId, ...effectiveReferenceGroupIds].filter(Boolean);
-        const emailLabelStatus = selectedLabelStatuses[0] || "";
-        const removedInheritedLabels = inheritedLabels.filter((label) => !selectedLabels.includes(label));
-        const emailOwnedSelectedLabels = selectedLabels.filter((label) => !inheritedLabels.includes(label));
         const latestSettings = await getSettings().catch(() => null);
-        const currentOutlookTicket = selectedTicket;
-        const desiredTicketStatus = String(ticketStatusDraft || "").trim();
+        const currentOutlookTicket = applySelection.selectedTicket;
+        const desiredTicketStatus = applySelection.desiredTicketStatus;
 
         let finalTicket: GroupTicketEntry | null = null;
-        
-        const buildTargetPayload = (targetEmail: RelatedEmailEntry): RelevantEmailPayload => {
-          const targetIsCurrent = isCurrentContextEmail(targetEmail, currentContext);
-          const targetAttachments = (targetEmail.attachments || []).map((attachment) => ({
-            key: attachment.key,
-            id: attachment.id,
-            name: attachment.name,
-            contentType: String(attachment.contentType || "application/octet-stream"),
-            content: String(attachment.content || ""),
-            size: attachment.size,
-            isInline: attachment.isInline,
-            contentId: attachment.contentId,
-            storageProvider: (attachment as any).storageProvider,
-            storageBasePath: (attachment as any).storageBasePath,
-            storagePathHint: (attachment as any).storagePathHint,
-            documentState: normalizeDocumentLifecycleState((attachment as any)?.documentState, "ingested"),
-            hasContent: (attachment as any)?.hasContent === true || Boolean(String(attachment.content || "").trim()),
-            isHidden: typeof (attachment as any)?.isHidden === "boolean" ? (attachment as any).isHidden : undefined,
-          }));
-          return {
-            itemId: String(targetEmail?.itemId || (targetIsCurrent ? currentContext.itemId : "") || "").trim() || undefined,
-            internetMessageId: String(targetEmail?.internetMessageId || (targetIsCurrent ? currentContext.internetMessageId : "") || "").trim() || undefined,
-            conversationId: String(targetEmail?.conversationId || (targetIsCurrent ? currentContext.conversationId : "") || "").trim() || undefined,
-            subject: String(targetEmail?.subject || (targetIsCurrent ? currentContext.subject : "") || "").trim() || undefined,
-            fromEmail: String(targetEmail?.fromEmail || (targetIsCurrent ? currentContext.fromEmail : "") || "").trim() || undefined,
-            fromName: String(targetEmail?.fromName || (targetIsCurrent ? currentContext.fromName : "") || "").trim() || undefined,
-            receivedAtIso: String(targetEmail?.receivedAtIso || targetEmail?.messageDateIso || (targetIsCurrent ? currentContext.receivedAtIso : "") || "").trim() || undefined,
-            messageDateIso: String(targetEmail?.messageDateIso || targetEmail?.receivedAtIso || (targetIsCurrent ? currentContext.receivedAtIso : "") || "").trim() || undefined,
-            bodyText: String(targetEmail?.bodyText || "").trim() || undefined,
-            bodyHtml: String(targetEmail?.bodyHtml || "").trim() || undefined,
-            attachments: targetAttachments.map((attachment) => ({
-              key: attachment.key,
-              id: attachment.id,
-              name: attachment.name,
-              contentType: attachment.contentType,
-              size: attachment.size,
-              isInline: attachment.isInline,
-              contentId: attachment.contentId,
-              content: attachment.content,
-              storageProvider: (attachment as any).storageProvider,
-              storageBasePath: (attachment as any).storageBasePath,
-              storagePathHint: (attachment as any).storagePathHint,
-              documentState: (attachment as any).documentState,
-              hasContent: (attachment as any).hasContent === true || Boolean(String(attachment.content || "").trim()),
-              isHidden: typeof (attachment as any)?.isHidden === "boolean" ? (attachment as any).isHidden : undefined,
-            })),
-          };
-        };
-
-        const buildClassifiedEmailPayload = (targetEmail: RelatedEmailEntry): RelevantEmailPayload => ({
-          ...buildTargetPayload(targetEmail),
-          status: emailLabelStatus,
-          labels: emailOwnedSelectedLabels,
-          removedInheritedLabels,
-          labelStates: selectedLabelStates,
-          classificationMeta: {
-            ...classificationMetaDraft,
-            categorizedLabelNames: categorizableLabels,
-          },
-        });
 
         const baseTargetEmail = effectiveTargetEmails[0];
         const baseTargetKey = makeEmailKey(baseTargetEmail);
 
-        if (!selectedTicketId && selectedSeriesId) {
+        if (!applySelection.selectedTicketId && applySelection.selectedSeriesId) {
           setStatus("A criar ticket Odoo...");
-          const baseClassifiedEmailPayload = buildClassifiedEmailPayload(baseTargetEmail);
+          const baseClassifiedEmailPayload = buildResolvedClassifiedEmailPayload({
+            targetEmail: baseTargetEmail,
+            currentContext,
+            resolvedApplySelection: applySelection,
+          });
           finalTicket = await createGroupTicket({
-            seriesId: selectedSeriesId,
+            seriesId: applySelection.selectedSeriesId,
             title: String(createTicketTitle || baseTargetEmail?.subject || "Ticket").trim(),
             description: String(baseTargetEmail?.bodyText || "").trim().slice(0, 4000),
-            labels: selectedLabels,
-            groupIds: allGroupIds,
+            labels: applySelection.labels,
+            groupIds: applySelection.allGroupIds,
             email: baseClassifiedEmailPayload,
-            membershipKind: effectivePrincipalGroupId ? "principal" : "referencia",
+            membershipKind: applySelection.targetMembershipKind,
           });
           if (desiredTicketStatus && desiredTicketStatus !== String(finalTicket?.status || "").trim()) {
             finalTicket = await updateGroupTicket(finalTicket.id, { status: desiredTicketStatus });
@@ -3590,9 +3568,9 @@ function StudioInner() {
           setSelectedTicketId(finalTicket.id);
         }
 
-        if (resolvedSelectedTicketId && desiredTicketStatus !== String(currentOutlookTicket?.status || "").trim()) {
+        if (applySelection.selectedTicketId && desiredTicketStatus !== String(currentOutlookTicket?.status || "").trim()) {
           setStatus("A atualizar estado do ticket...");
-          finalTicket = await updateGroupTicket(resolvedSelectedTicketId, { status: desiredTicketStatus });
+          finalTicket = await updateGroupTicket(applySelection.selectedTicketId, { status: desiredTicketStatus });
           setRelatedTickets((current) => [finalTicket as GroupTicketEntry, ...current.filter((entry) => entry.id !== finalTicket?.id)]);
         }
 
@@ -3602,23 +3580,20 @@ function StudioInner() {
           setStatus(`A aplicar classificacao (${emailCounter}/${effectiveTargetEmails.length})...`);
           
           const targetEmailKey = makeEmailKey(targetEmail);
-          const targetEmailPayload = buildTargetPayload(targetEmail);
-          const classifiedEmailPayload = {
-            ...targetEmailPayload,
-            status: emailLabelStatus,
-            labels: emailOwnedSelectedLabels,
-            removedInheritedLabels,
-            labelStates: selectedLabelStates,
-            classificationMeta: {
-              ...classificationMetaDraft,
-              categorizedLabelNames: categorizableLabels,
-            },
-          };
+          const targetEmailPayload = buildResolvedApplyTargetPayload({
+            targetEmail,
+            currentContext,
+          });
+          const classifiedEmailPayload = buildResolvedClassifiedEmailPayload({
+            targetEmail,
+            currentContext,
+            resolvedApplySelection: applySelection,
+          });
 
           const targetGroups = getEmailGroupRelations(targetEmail);
           const currentGroupIds = targetGroups.map((group) => String(group.id || "").trim()).filter(Boolean);
-          const groupsToRemove = currentGroupIds.filter((groupId) => !allGroupIds.includes(groupId));
-          const ticketIdsToRemove = ((emailContextMeta.get(targetEmailKey)?.ticketIds || []) as string[]).filter((ticketId) => ticketId !== resolvedSelectedTicketId && ticketId !== finalTicket?.id);
+          const groupsToRemove = currentGroupIds.filter((groupId) => !applySelection.allGroupIds.includes(groupId));
+          const ticketIdsToRemove = ((emailContextMeta.get(targetEmailKey)?.ticketIds || []) as string[]).filter((ticketId) => ticketId !== applySelection.selectedTicketId && ticketId !== finalTicket?.id);
 
           for (const groupId of groupsToRemove) {
             await removeEmailFromLinkGroup(groupId, {
@@ -3627,13 +3602,13 @@ function StudioInner() {
             });
           }
 
-          if (effectivePrincipalGroupId) {
-            await addEmailToLinkGroup(effectivePrincipalGroupId, {
+          if (applySelection.principalGroupId) {
+            await addEmailToLinkGroup(applySelection.principalGroupId, {
               ...classifiedEmailPayload,
               membershipKind: "principal",
             });
           }
-          for (const groupId of effectiveReferenceGroupIds) {
+          for (const groupId of applySelection.referenceGroupIds) {
             await addEmailToLinkGroup(groupId, {
               ...classifiedEmailPayload,
               membershipKind: "referencia",
@@ -3652,13 +3627,13 @@ function StudioInner() {
             ...buildAttachmentStorageOptions(latestSettings),
           });
 
-          const targetTicketId = finalTicket?.id || resolvedSelectedTicketId;
+          const targetTicketId = finalTicket?.id || applySelection.selectedTicketId;
           if (targetTicketId && !(finalTicket && targetEmailKey === baseTargetKey)) {
             const linked = await linkEmailToGroupTicket(targetTicketId, {
               email: classifiedEmailPayload,
-              applyGroups: allGroupIds.length > 0,
-              groupIds: allGroupIds,
-              membershipKind: effectivePrincipalGroupId ? "principal" : "referencia",
+              applyGroups: applySelection.allGroupIds.length > 0,
+              groupIds: applySelection.allGroupIds,
+              membershipKind: applySelection.targetMembershipKind,
             });
             finalTicket = linked.ticket;
           }
@@ -3667,24 +3642,14 @@ function StudioInner() {
         const resolvedCaseTicket = finalTicket || currentOutlookTicket;
         const localClassificationState = String(
           (classificationMetaDraft.ticketStatusEnabled ? desiredTicketStatus || resolvedCaseTicket?.status : "")
-          || (classificationMetaDraft.principalStatusEnabled ? principalGroup?.status : "")
+          || (classificationMetaDraft.principalStatusEnabled ? applySelection.principalGroup?.status : "")
           || ""
         ).trim();
-        const localClassificationDraft: IntermediateCaseClassificationDraft = {
-          principalGroupId: effectivePrincipalGroupId || undefined,
-          principalGroupName: principalGroup?.name || undefined,
-          referenceGroupIds: effectiveReferenceGroupIds,
-          labels: selectedLabels,
-          removedInheritedLabels,
-          labelStates: selectedLabelStates,
-          categorizedLabelNames: categorizableLabels,
-          ticketIds: [String(resolvedCaseTicket?.id || resolvedSelectedTicketId || "").trim()].filter(Boolean),
-          ticketCodes: [String(resolvedCaseTicket?.code || "").trim()].filter(Boolean),
-          state: localClassificationState || undefined,
-          status: emailLabelStatus || undefined,
-          classifiedAt: new Date().toISOString(),
-          classifiedSource: "user",
-        };
+        const localClassificationDraft: IntermediateCaseClassificationDraft = buildResolvedIntermediateCaseClassificationDraft({
+          resolvedApplySelection: applySelection,
+          resolvedCaseTicket,
+          localClassificationState,
+        });
 
         if (classificationCase) {
           setStatus("A gravar classificacao local no caso...");
@@ -3724,22 +3689,21 @@ function StudioInner() {
                 fromName: String(currentTargetEmail.fromName || currentContext.fromName || "").trim() || undefined,
                 receivedAtIso: String(currentTargetEmail.receivedAtIso || currentTargetEmail.messageDateIso || currentContext.receivedAtIso || "").trim() || undefined,
                 messageDateIso: String(currentTargetEmail.messageDateIso || currentTargetEmail.receivedAtIso || currentContext.receivedAtIso || "").trim() || undefined,
-                status: emailLabelStatus,
-                labels: emailOwnedSelectedLabels,
-                removedInheritedLabels,
-                labelStates: selectedLabelStates,
+                status: applySelection.emailLabelStatus,
+                labels: applySelection.emailOwnedSelectedLabels,
+                removedInheritedLabels: applySelection.removedInheritedLabels,
+                labelStates: applySelection.labelStates,
                 classificationMeta: {
-                  ...classificationMetaDraft,
-                  categorizedLabelNames: categorizableLabels,
+                  ...applySelection.baseClassificationMeta,
                 },
                 relatedGroups: [
-                  ...(principalGroup?.id ? [{
-                    id: principalGroup.id,
-                    name: principalGroup.name,
-                    kind: principalGroup.kind,
+                  ...(applySelection.principalGroup?.id ? [{
+                    id: applySelection.principalGroup.id,
+                    name: applySelection.principalGroup.name,
+                    kind: applySelection.principalGroup.kind,
                     relationKind: "principal" as const,
                   }] : []),
-                  ...referenceGroups.map((group) => ({
+                  ...applySelection.referenceGroups.map((group) => ({
                     id: group.id,
                     name: group.name,
                     kind: group.kind,

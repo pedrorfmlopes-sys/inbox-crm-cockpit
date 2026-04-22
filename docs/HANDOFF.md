@@ -1,5 +1,24 @@
 # HANDOFF
 
+## Grupos v1: pipeline local de apply do `Classificar` fica mais coerente e menos duplicado (Abril 2026)
+- **O que foi consolidado nesta ronda**:
+  - o studio passa a ter uma resolucao comum de apply (`resolvedApplySelection`) para targets, grupo principal, referencias, labels, ticket, metadados e semantica de scope
+  - a construcao de payload por email deixa de ser duplicada em varios pontos do `handleApplyClassification()` e passa a sair de helpers dedicados
+  - a projecao no `IntermediateCase` deixa de reconstruir a classificacao local a partir de logica paralela e passa a beber da mesma resolucao comum do apply
+- **Duplicacoes reduzidas**:
+  - selecao de emails alvo e respetivas chaves
+  - payload base por email vs payload classificado por email
+  - draft local para `IntermediateCase`
+  - criterios de `canApplyClassification`
+- **O que ainda continua separado por seguranca**:
+  - chamadas remotas legacy (`registerRelevantEmail`, grupos, tickets, Outlook categories) continuam separadas do helper puro de resolucao
+  - drafts editoriais ricos (`classificationMetaDraft`, pesquisa, previews, planos locais) continuam locais e nao foram forcados para canonicidade falsa
+- **Guardas mantidas**:
+  - o apply continua por email alvo e por scope
+  - o email ancora continua protegido; a resolucao comum nao transforma o caso num apply global cego
+  - sem promocao final nova para servidor
+  - sem limpeza real do intermedio
+
 ## Grupos v1: bloco de anexos/documentos do `Classificar` fica mais coerente entre estado canonico do caso e estado editorial/local (Abril 2026)
 - **O que passa a ficar mais claramente canonico**:
   - a lista base de anexos do email selecionado passa a nascer primeiro do `IntermediateCase` / email canonico, em vez de depender de chaves editoriais demasiado globais
