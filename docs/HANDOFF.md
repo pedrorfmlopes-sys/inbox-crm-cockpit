@@ -1426,3 +1426,22 @@
   - o contexto Outlook atual ainda nao fornece `emailWebLink` nem `sentAtIso` de forma universal para o email aberto; esses campos continuam best-effort quando ja existem no servidor/intermedio/seed
   - o `IntermediateCase` continua a guardar apenas `to` / `cc` como emails simples, sem nomes; a persistencia final passa a guardar `email + name`
   - URLs web reais de OneDrive / SharePoint continuam fora; a escrita final suportada continua a depender de caminho local/sincronizado quando o provider nao e `cloud`
+# HANDOFF
+
+## Grupos v1: picker/path fica fechado por fluxo manual validado; URL web fica formalmente provada como bloqueio arquitetural (Abril 2026)
+- **Picker/path real**:
+  - fica assumido como fechado nesta arquitetura por `path manual + normalizacao + validacao real no servidor`
+  - nao depende de picker nativo; essa parte continua bloqueada pelo host, mas deixa de ser requisito em aberto porque a alternativa executavel fica assumida como solucao oficial da v1
+- **OneDrive/SharePoint por URL web**:
+  - continua bloqueado, agora com prova tecnica mais especifica no proprio contrato de validacao
+  - o runtime passa a devolver:
+    - `architecturalBlocker = web_document_library_requires_graph_backend`
+    - `requiredChange` com a mudanca minima necessaria
+  - factos confirmados no repo:
+    - manifests do add-in continuam apenas com `ReadWriteMailbox`
+    - `client/src/office.ts` continua a pedir apenas `Mail.Read`, `User.Read` e `People.Read`
+    - o backend escreve binario por filesystem e nao existe uploader Graph/SharePoint por URL web
+- **Conclusao desta frente**:
+  - `picker/path real`: fechado
+  - `OneDrive/SharePoint por URL web`: nao fechado
+  - enquanto URL web se mantiver requisito obrigatorio, a fundacao ainda nao pode ser dada como totalmente encerrada

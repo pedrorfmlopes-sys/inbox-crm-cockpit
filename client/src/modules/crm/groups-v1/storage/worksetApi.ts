@@ -14,6 +14,8 @@ export type GroupStorageValidationResult = {
   pickerAvailable: boolean;
   pickerBlockedReason?: string;
   blockingReason?: string;
+  architecturalBlocker?: string | null;
+  requiredChange?: string | null;
   notes: string[];
 };
 
@@ -130,6 +132,8 @@ export async function validateGroupStorageTarget(payload: Record<string, unknown
     canStoreBinary: false,
     pickerAvailable: false,
     blockingReason: "Nao foi possivel validar o destino configurado.",
+    architecturalBlocker: null,
+    requiredChange: null,
     notes: [],
   };
 }

@@ -75,6 +75,10 @@
   - validacao real no servidor
   - bloqueio explicito quando o destino nao e acessivel
 - O settings deixa isto explicito; nao vende picker falso.
+- Portanto, o requisito funcional de `picker/path real` fica fechado por esta alternativa executavel:
+  - path manual
+  - normalizacao
+  - probe de escrita/leitura real no servidor
 
 ## Politica executavel para anexos
 
@@ -148,7 +152,15 @@
 
 ### OneDrive / SharePoint por URL web
 - bloqueado porque o backend atual faz escrita binaria por filesystem
-- para fechar URL web de verdade seria necessaria integracao dedicada com Graph/SharePoint e autenticacao associada
+- manifests do add-in no repo continuam apenas com `ReadWriteMailbox`
+- `client/src/office.ts` so pede `Mail.Read`, `User.Read` e `People.Read`
+- nao existe uploader Graph/SharePoint dedicado no backend atual
+- para fechar URL web de verdade seria necessaria integracao dedicada com Graph/SharePoint, autenticacao associada e upload/download por API em vez de filesystem
+
+## Estado de fecho desta frente
+- `picker/path real`: fechado pela via manual validada
+- `OneDrive/SharePoint por URL web`: nao fechado na arquitetura atual
+- enquanto URL web se mantiver requisito obrigatorio, a fundacao de storage/settings nao pode ser dada como totalmente encerrada
 
 ### Picker real de pasta
 - bloqueado porque o host atual nao expõe ao backend um caminho local do utilizador atraves de picker browser reutilizavel

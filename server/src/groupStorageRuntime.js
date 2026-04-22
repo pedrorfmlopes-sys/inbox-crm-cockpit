@@ -111,7 +111,9 @@ export function validateGroupStorageTarget(input = {}) {
       canStoreBinary: true,
       pickerAvailable: false,
       pickerBlockedReason:
-        "O host atual nao expõe um picker de pasta reutilizavel que entregue um caminho seguro ao backend.",
+        "O host atual nao expoe um picker de pasta reutilizavel que entregue um caminho seguro ao backend.",
+      architecturalBlocker: null,
+      requiredChange: null,
       notes: ["Modo cloud: a persistencia final continua centralizada na app."],
     };
   }
@@ -133,6 +135,8 @@ export function validateGroupStorageTarget(input = {}) {
       pickerBlockedReason:
         "Sem bridge nativa, o add-in nao consegue entregar ao backend um caminho local do utilizador atraves de um picker real.",
       blockingReason: "Define primeiro um caminho local, pasta sincronizada ou UNC acessivel ao processo do servidor.",
+      architecturalBlocker: null,
+      requiredChange: null,
       notes,
     };
   }
@@ -154,7 +158,12 @@ export function validateGroupStorageTarget(input = {}) {
         "Mesmo com picker browser, o host atual nao fornece um caminho fisico que o backend consiga usar para escrita.",
       blockingReason:
         "OneDrive/SharePoint por URL web nao e suportado nesta arquitetura porque a escrita final atual usa filesystem no servidor, nao Graph/SharePoint API.",
+      architecturalBlocker: "web_document_library_requires_graph_backend",
+      requiredChange:
+        "Adicionar autenticacao Graph/SharePoint com scopes Files/Sites, resolucao de site/drive/item e um fluxo real de upload/download por API em vez de filesystem.",
       notes: [
+        "Os manifests do add-in expostos no repo so declaram ReadWriteMailbox.",
+        "O runtime Graph atual do cliente so pede Mail.Read, User.Read e People.Read.",
         "Para fechar URL web de verdade seria necessaria uma integracao dedicada com Graph/SharePoint e autenticacao associada.",
       ],
     };
@@ -198,6 +207,8 @@ export function validateGroupStorageTarget(input = {}) {
       pickerAvailable: false,
       pickerBlockedReason:
         "O add-in nao tem picker nativo que entregue ao backend um caminho local do utilizador; nesta arquitetura usa-se path manual validado no servidor.",
+      architecturalBlocker: null,
+      requiredChange: null,
       notes,
     };
   } catch (error) {
@@ -222,6 +233,8 @@ export function validateGroupStorageTarget(input = {}) {
       pickerBlockedReason:
         "Sem bridge nativa, o add-in nao consegue escolher e entregar automaticamente um caminho local do utilizador ao backend.",
       blockingReason: `O servidor nao conseguiu escrever no destino configurado: ${normalizeString(error?.message) || "erro desconhecido"}`,
+      architecturalBlocker: null,
+      requiredChange: null,
       notes,
     };
   }

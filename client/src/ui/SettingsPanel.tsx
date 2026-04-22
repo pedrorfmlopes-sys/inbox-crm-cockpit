@@ -75,6 +75,12 @@ const EXECUTABLE_GROUP_STORAGE_MODE_OPTIONS: Array<{ value: GroupStorageMode; la
   { value: "hybrid", label: "Hibrido" },
 ];
 
+const GROUP_STORAGE_WEB_URL_BLOCKER_FACTS = [
+  "O manifest do add-in no repo so declara ReadWriteMailbox.",
+  "O runtime Graph atual em office.ts so pede Mail.Read, User.Read e People.Read.",
+  "O backend atual grava binario por filesystem; nao existe uploader Graph/SharePoint por URL web.",
+];
+
 const REFERENCE_ENTITY_LABELS: Record<ReferenceEntityKey, string> = {
   lead: "Lead",
   project: "Projeto",
@@ -1250,8 +1256,13 @@ export function SettingsPanel(): JSX.Element {
                     }
                   >
                     <option value="filesystem">Pasta fisica / sincronizada</option>
-                    <option value="document_library">URL web de OneDrive / SharePoint</option>
+                    <option value="document_library" disabled>
+                      URL web de OneDrive / SharePoint (bloqueado nesta arquitetura)
+                    </option>
                   </select>
+                  <div style={S.hint}>
+                    URL web continua visivel para auditoria, mas nao fica executavel nesta base: falta autenticacao Graph/SharePoint com scopes Files/Sites e um uploader real no backend.
+                  </div>
                 </Field>
               ) : null}
 
@@ -1330,11 +1341,30 @@ export function SettingsPanel(): JSX.Element {
                         Bloqueio: <b>{groupStorageValidation.blockingReason}</b>
                       </div>
                     ) : null}
+                    {groupStorageValidation.requiredChange ? (
+                      <div style={S.hint}>
+                        Mudanca minima necessaria: <b>{groupStorageValidation.requiredChange}</b>
+                      </div>
+                    ) : null}
                     {groupStorageValidation.pickerBlockedReason ? (
                       <div style={S.hint}>
                         Picker/path: <b>{groupStorageValidation.pickerBlockedReason}</b>
                       </div>
                     ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {groupStorageValidation?.architecturalBlocker === "web_document_library_requires_graph_backend"
+                || model.groupStorage.chosenFolder.kind === "document_library" ? (
+                <div style={S.referenceCard}>
+                  <div style={S.fieldLabel}>Prova tecnica do bloqueio da URL web</div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {GROUP_STORAGE_WEB_URL_BLOCKER_FACTS.map((fact) => (
+                      <div key={fact} style={S.hint}>
+                        - {fact}
+                      </div>
+                    ))}
                   </div>
                 </div>
               ) : null}
