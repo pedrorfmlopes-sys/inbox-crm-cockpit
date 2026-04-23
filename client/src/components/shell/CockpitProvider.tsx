@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
 import { executeCurrentItemOutlookCategorySync, executeOutlookCategorySourceSync, getActiveOutlookCategoryOperation, getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY, readPendingOutlookCategorySyncRequest, syncOdooLinkedNotification, waitForStableSelectedMessageContext, type OutlookAttachment, type OutlookMessageContext } from "@/office";
-import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type LinkEntry, type OdooMeta } from "@/api";
+import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type AuthCheckResponse, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
 import { type AiTone, type AiLocale } from "@/ai/aiClient";
@@ -827,13 +827,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             if (currentToken) {
                 setApiSessionToken(currentToken);
-                let authCheck: { ok: boolean; meta?: OdooMeta } = { ok: false };
+                let authCheck: AuthCheckResponse = { ok: true, authenticated: false, reason: "startup_not_checked" };
                 try {
                     authCheck = await apiCheckAuth();
                 } catch (error) {
                     clientLog("warn", "[Cockpit] apiCheckAuth failed during startup", error);
                 }
-                if (authCheck.ok) {
+                if (authCheck.ok && authCheck.authenticated) {
                     setIsAuthenticated(true);
                     if (authCheck.meta) setMeta(authCheck.meta);
                     if (reason === "init") {

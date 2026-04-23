@@ -2859,11 +2859,12 @@ type CockpitHostAction =
 
 async function executeCockpitHostAction(action: CockpitHostAction): Promise<boolean> {
   if (action.type === "close") {
+    const hadActiveDialog = Boolean(activeDialog);
     try {
       if (activeDialog) activeDialog.close();
     } catch { }
     activeDialog = null;
-    return true;
+    return hadActiveDialog;
   }
 
   if (action.type === "open-email") {
@@ -3111,6 +3112,13 @@ export async function openGroupSettings(params: Record<string, string> = {}) {
     clientLog.warn("[office] group settings fallback to same-window navigation", error);
     window.location.assign(url.toString());
   }
+}
+
+export async function openGroupsTabSettings(params: Record<string, string> = {}) {
+  return await openGroupSettings({
+    surface: "groups-tab",
+    ...params,
+  });
 }
 
 export async function openGroupClassificationStudio(params: Record<string, string> = {}) {
