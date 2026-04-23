@@ -39,18 +39,18 @@ export type ResolvedGroupStorageRuntime = {
 
 function resolveStorageInput(
   settingsLike?:
-    | { groups?: { storage?: Partial<GroupStorageSettings> | null } | null; groupStorage?: Partial<GroupStorageSettings> | null }
+    | { groups?: { storage?: Partial<GroupStorageSettings> | null } | null }
     | Partial<GroupStorageSettings>
     | null
 ): Partial<GroupStorageSettings> | null {
   if (!settingsLike || typeof settingsLike !== "object") return settingsLike || null;
-  if ("groups" in settingsLike || "groupStorage" in settingsLike) {
+  if ("groups" in settingsLike) {
     return getGroupsModuleSettings(settingsLike).storage;
   }
   return settingsLike;
 }
 
-export function resolveGroupStorageRuntime(settingsLike?: { groups?: { storage?: Partial<GroupStorageSettings> | null } | null; groupStorage?: Partial<GroupStorageSettings> | null } | Partial<GroupStorageSettings> | null): ResolvedGroupStorageRuntime {
+export function resolveGroupStorageRuntime(settingsLike?: { groups?: { storage?: Partial<GroupStorageSettings> | null } | null } | Partial<GroupStorageSettings> | null): ResolvedGroupStorageRuntime {
   const settings = normalizeGroupStorageSettings(resolveStorageInput(settingsLike) || null);
   const provider = pickProvider(settings);
   const primaryLocation = provider.describePrimary(settings);
@@ -89,7 +89,7 @@ export function resolveGroupStorageRuntime(settingsLike?: { groups?: { storage?:
   };
 }
 
-export function getGroupAttachmentStorageOptions(settingsLike?: { groups?: { storage?: Partial<GroupStorageSettings> | null } | null; groupStorage?: Partial<GroupStorageSettings> | null } | Partial<GroupStorageSettings> | null): {
+export function getGroupAttachmentStorageOptions(settingsLike?: { groups?: { storage?: Partial<GroupStorageSettings> | null } | null } | Partial<GroupStorageSettings> | null): {
   attachmentStorageProvider: GroupStorageSettings["provider"];
   attachmentStorageBasePath: string;
 } {

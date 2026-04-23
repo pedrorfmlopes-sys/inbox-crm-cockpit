@@ -1,5 +1,38 @@
 # HANDOFF
 
+## Grupos v1: fase final de centralizacao dos settings fechada em `settings.groups` (Abril 2026)
+- **Consumidores legacy migrados nesta ronda**:
+  - `client/src/outlookCategories.ts`
+  - `client/src/office.ts`
+  - `client/src/components/shell/CockpitProvider.tsx`
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `client/src/modules/crm/group-classification/outlookCategoryApply.ts`
+  - `client/src/modules/crm/group-classification/documentUtils.ts`
+  - `client/src/modules/crm/GroupManagerCockpit.tsx`
+  - `client/src/modules/crm/GroupsCockpit.tsx`
+  - `client/src/modules/crm/groups-v1/storage/resolveStorageMode.ts`
+- **Fonte canonica final**:
+  - runtime de Grupos passa a ler `settings.groups.storage`
+  - labels/favoritos passam a ler `settings.groups.labels.*`
+  - tickets de Grupos passam a ler `settings.groups.tickets.*`
+  - Outlook categories de Grupos passam a ler `settings.groups.outlookCategories`
+- **O que deixa de mandar**:
+  - `groupStorage`
+  - `groupsTabSettings`
+  - `groupLabelsManagerEnabled`
+  - `groupLabelCatalog`
+  - `groupFavoriteIds`
+  - `groupTicketsEnabled`
+  - `groupTicketUi`
+  - `groupOutlookCategories`
+- **Estado de `client/src/settings.ts`**:
+  - `settings.groups` fica como unica fonte canonica
+  - aliases top-level legacy continuam apenas como espelho derivado de compatibilidade
+  - esses aliases deixam de ser fonte ativa do runtime de Grupos
+- **Settings gerais**:
+  - continuam sem seccao propria de Grupos
+  - o global guarda apenas configuracao realmente transversal e ativacao de modulos/abas
+
 ## Grupos: centralizacao final tira a configuracao do modulo dos settings gerais e fixa `settings.groups` como fonte unica de verdade (Abril 2026)
 - **O que saiu dos settings gerais porque era de Grupos**:
   - `groupStorage`

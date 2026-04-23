@@ -496,6 +496,8 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   groups: {
     ...DEFAULT_GROUPS_SETTINGS,
   },
+  // Legacy top-level aliases remain derived only for compatibility during the
+  // migration window. Runtime consumers must read from settings.groups.
   groupStorage: {
     ...(DEFAULT_GROUPS_LEGACY_ALIASES.groupStorage || DEFAULT_GROUP_STORAGE_SETTINGS),
   },
@@ -947,6 +949,8 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
       },
     },
     groups: normalizedGroups,
+    // Legacy top-level aliases are written as compatibility mirrors only.
+    // settings.groups remains the sole canonical source of truth for Grupos.
     groupStorage: {
       ...(normalizedGroupAliases.groupStorage || normalizedGroups.storage),
     },

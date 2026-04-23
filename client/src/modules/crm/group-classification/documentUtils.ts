@@ -486,7 +486,7 @@ export function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEnt
 }
 
 export function buildAttachmentStorageOptions(settings?: any): Pick<RelevantEmailPayload, "attachmentStorageProvider" | "attachmentStorageBasePath"> {
-  return getGroupAttachmentStorageOptions(settings);
+  return getGroupAttachmentStorageOptions(settings?.groups?.storage || null);
 }
 
 export function normalizeSearchValue(value: string): string {

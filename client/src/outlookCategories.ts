@@ -302,13 +302,13 @@ export function buildOutlookCategorySourceFromRelatedContext(input: {
   email: RelatedEmailEntry | null;
   groups: LinkGroupEntry[];
   tickets: GroupTicketEntry[];
-  settings: Pick<CockpitSettingsV1, "groupOutlookCategories"> | null | undefined;
+  settings: Pick<CockpitSettingsV1, "groups"> | null | undefined;
   currentOutlookLabelNames?: string[];
   specialCategories?: string[];
   managedSpecialCategories?: string[];
 }): OutlookCategorySource {
   const email = input.email;
-  const categorySettings = input.settings?.groupOutlookCategories;
+  const categorySettings = input.settings?.groups?.outlookCategories;
   const categoriesEnabled = categorySettings?.enabled === true;
   const includeGroups = categoriesEnabled && categorySettings?.includeGroups !== false;
   const includeTickets = categoriesEnabled && categorySettings?.includeTickets !== false;

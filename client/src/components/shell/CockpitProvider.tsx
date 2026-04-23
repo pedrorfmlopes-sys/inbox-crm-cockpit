@@ -925,7 +925,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             let emailRegistryOk = !shouldRegisterEmailRemotely;
             if (shouldRegisterEmailRemotely) {
                 try {
-                    const attachmentStorage = getGroupAttachmentStorageOptions(s);
+                    const attachmentStorage = getGroupAttachmentStorageOptions(s?.groups?.storage || null);
                     await registerRelevantEmail({
                         itemId: c.itemId || "",
                         internetMessageId: c.internetMessageId || "",
@@ -1456,7 +1456,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return () => {
             cancelled = true;
         };
-    }, [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, links.length, outlookCategoryRefreshTick, settings?.groupOutlookCategories]);
+    }, [ctx.conversationId, ctx.fromEmail, ctx.fromName, ctx.internetMessageId, ctx.itemId, ctx.receivedDateTimeIso, ctx.subject, links.length, outlookCategoryRefreshTick, settings?.groups?.outlookCategories]);
 
     useEffect(() => {
         syncOdooLinkedNotification(links.length > 0, links.length).catch(() => {
@@ -1474,7 +1474,9 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
             const knownLabelNames = Array.from(new Set([
                 ...currentOutlookCategorySource.managedLabelNames,
-                ...(Array.isArray(settings?.groupLabelCatalog) ? settings.groupLabelCatalog.map((entry) => String(entry?.label || "").trim()).filter(Boolean) : []),
+                ...(Array.isArray(settings?.groups?.labels?.catalog)
+                    ? settings.groups.labels.catalog.map((entry) => String(entry?.label || "").trim()).filter(Boolean)
+                    : []),
             ]));
             const snapshot = await getManagedOutlookCategorySnapshot(knownLabelNames).catch(() => null);
             if (cancelled) return;
@@ -1532,7 +1534,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return () => {
             cancelled = true;
         };
-    }, [ctx.conversationId, ctx.internetMessageId, ctx.itemId, currentOutlookCategorySource, currentOutlookCategorySourceStatus, links.length, settings?.groupLabelCatalog]);
+    }, [ctx.conversationId, ctx.internetMessageId, ctx.itemId, currentOutlookCategorySource, currentOutlookCategorySourceStatus, links.length, settings?.groups?.labels?.catalog]);
 
     const setAiState = (update: Partial<AiState>) => {
         if (!ctx.conversationId) return;

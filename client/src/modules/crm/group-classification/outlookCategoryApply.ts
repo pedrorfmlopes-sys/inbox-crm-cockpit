@@ -76,7 +76,7 @@ export async function executePostApplyOutlookCategorySync(args: {
   currentContext: ApplyCurrentContext;
   resolvedApplySelection: ResolvedStudioApplySelection;
   refreshedContext: RefreshedClassificationContext | null;
-  latestSettings: Pick<CockpitSettingsV1, "groupOutlookCategories"> | null | undefined;
+  latestSettings: Pick<CockpitSettingsV1, "groups"> | null | undefined;
   labelCatalog: GroupLabelCatalogEntry[];
   principalGroup: LinkGroupEntry | null;
   referenceGroups: LinkGroupEntry[];

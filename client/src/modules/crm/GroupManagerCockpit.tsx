@@ -805,7 +805,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       if (needsRegistration) {
         await registerRelevantEmail({
           ...currentEmailBootstrapPayload,
-          ...getGroupAttachmentStorageOptions(settings),
+        ...getGroupAttachmentStorageOptions(settings?.groups?.storage || null),
         }).catch(() => null);
         related = await loadRelated();
         email = pickBestEmail(related);
@@ -882,7 +882,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       ) {
         await registerRelevantEmail({
           ...studioSeedPayload,
-          ...getGroupAttachmentStorageOptions(settings),
+        ...getGroupAttachmentStorageOptions(settings?.groups?.storage || null),
         });
       }
     } catch {
@@ -1814,7 +1814,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     }
     setBusy(true);
     try {
-      const storageOptions = getGroupAttachmentStorageOptions(settings);
+      const storageOptions = getGroupAttachmentStorageOptions(settings?.groups?.storage || null);
       const storageProvider = String(storageOptions.attachmentStorageProvider || "cloud").trim();
       const storageBasePath = String(storageOptions.attachmentStorageBasePath || "").trim();
       const docs = [];

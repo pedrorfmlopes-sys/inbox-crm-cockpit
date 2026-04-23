@@ -640,7 +640,7 @@ export const AiCockpit: React.FC = () => {
             if (needsRegistration) {
                 await registerRelevantEmail({
                     ...currentEmailBootstrapPayload,
-                    ...getGroupAttachmentStorageOptions(settings),
+                ...getGroupAttachmentStorageOptions(settings?.groups?.storage || null),
                 }).catch(() => null);
                 related = await loadRelated();
                 email = pickBestEmail(related);
@@ -663,9 +663,9 @@ export const AiCockpit: React.FC = () => {
         currentEmailBootstrapLinkPayload.subject,
         currentEmailBootstrapPayload,
         ctx,
-        settings?.groupStorage?.baseFolderPath,
-        settings?.groupStorage?.mode,
-        settings?.groupStorage?.provider,
+        settings?.groups?.storage?.baseFolderPath,
+        settings?.groups?.storage?.mode,
+        settings?.groups?.storage?.provider,
     ]);
 
     useEffect(() => {
@@ -1269,7 +1269,7 @@ export const AiCockpit: React.FC = () => {
     }
 
     useEffect(() => {
-        if (settings?.groupTicketUi?.includeTicketCodeInSubject === false) {
+        if (settings?.groups?.tickets?.ui?.includeTicketCodeInSubject === false) {
             setDraftTicketCode("");
             return;
         }
@@ -1300,7 +1300,7 @@ export const AiCockpit: React.FC = () => {
         replyTargetEmail?.internetMessageId,
         replyTargetEmail?.itemId,
         replyTargetEmail?.subject,
-        settings?.groupTicketUi?.includeTicketCodeInSubject,
+        settings?.groups?.tickets?.ui?.includeTicketCodeInSubject,
     ]);
 
     // Sync draft defaults from context OR persistent aiState
@@ -1308,7 +1308,7 @@ export const AiCockpit: React.FC = () => {
         const hasSuggestedRecipients = Array.isArray(aiState.suggestedTo) && aiState.suggestedTo.length > 0;
         const hasSuggestedCc = Array.isArray(aiState.suggestedCc) && aiState.suggestedCc.length > 0;
         const hasSuggestedSubject = Boolean(String(aiState.suggestedSubject || "").trim());
-        const includeTicketCodeInSubject = settings?.groupTicketUi?.includeTicketCodeInSubject !== false;
+        const includeTicketCodeInSubject = settings?.groups?.tickets?.ui?.includeTicketCodeInSubject !== false;
         const applyDraftSubjectTicketCode = (subject: string) => buildTicketEmailSubject(subject, draftTicketCode, includeTicketCodeInSubject);
 
         if (selectedAction === "forward") {
@@ -1354,7 +1354,7 @@ export const AiCockpit: React.FC = () => {
             setDraftCc((ctx.ccRecipients || []).map((r: any) => r.email));
             setDraftSubject(applyDraftSubjectTicketCode(ctx.subject || ""));
         }
-    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo, aiState.suggestedCc, selectedAction, replyTargetEmail, draftTicketCode, settings?.groupTicketUi?.includeTicketCodeInSubject]);
+    }, [ctx, aiState.suggestedSubject, aiState.suggestedTo, aiState.suggestedCc, selectedAction, replyTargetEmail, draftTicketCode, settings?.groups?.tickets?.ui?.includeTicketCodeInSubject]);
 
     const handlePromptChange = (val: string) => {
         setPrompt(val);
@@ -1680,7 +1680,7 @@ export const AiCockpit: React.FC = () => {
                     locale: generationSelectedLocale,
                     draftTo,
                     draftCc,
-                    draftSubject: buildTicketEmailSubject(draftSubject, draftTicketCode, freshSettings?.groupTicketUi?.includeTicketCodeInSubject !== false),
+                    draftSubject: buildTicketEmailSubject(draftSubject, draftTicketCode, freshSettings?.groups?.tickets?.ui?.includeTicketCodeInSubject !== false),
                     customToneId: effectiveCustomToneId || undefined,
                     replyTarget: replyTargetEmail,
                     replyDirection,
@@ -1707,7 +1707,7 @@ export const AiCockpit: React.FC = () => {
         setDebugLog("Botão clicado. A verificar modo...");
         try {
             const isCompose = await isComposeMode();
-            const includeTicketCodeInSubject = settings?.groupTicketUi?.includeTicketCodeInSubject !== false;
+            const includeTicketCodeInSubject = settings?.groups?.tickets?.ui?.includeTicketCodeInSubject !== false;
             const finalDraftSubject = buildTicketEmailSubject(draftSubject, draftTicketCode, includeTicketCodeInSubject);
             const forwardFiles = await resolveSelectedForwardFiles();
             console.log("[AiCockpit] isComposeMode:", isCompose);

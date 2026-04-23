@@ -332,7 +332,7 @@ export const GroupsCockpit: React.FC = () => {
         );
     }, [groups, showAllAlphabetically, trimmedQuery]);
     const documentsEnabled = selectedGroup?.documentsEnabled !== false;
-    const groupStorageRuntime = useMemo(() => resolveGroupStorageRuntime(settings), [settings]);
+    const groupStorageRuntime = useMemo(() => resolveGroupStorageRuntime(settings?.groups?.storage || null), [settings?.groups?.storage]);
     const groupStorageProvider = groupStorageRuntime.legacyBridge.provider;
     const groupStorageBasePath = groupStorageRuntime.legacyBridge.baseFolderPath;
 
@@ -452,7 +452,7 @@ export const GroupsCockpit: React.FC = () => {
             if (needsRegistration) {
                 await registerRelevantEmail({
                     ...currentEmailBootstrapPayload,
-                    ...getGroupAttachmentStorageOptions(settings),
+                    ...getGroupAttachmentStorageOptions(settings?.groups?.storage || null),
                 }).catch(() => null);
                 related = await loadRelated();
                 email = pickBestEmail(related);

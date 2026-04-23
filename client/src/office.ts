@@ -884,8 +884,8 @@ function collectKnownOutlookCategoryLabelNames(input: {
   tickets: any[];
 }): string[] {
   return Array.from(new Set([
-    ...(Array.isArray(input.settings?.groupLabelCatalog)
-      ? input.settings.groupLabelCatalog.map((entry) => String(entry?.label || "").trim()).filter(Boolean)
+    ...(Array.isArray(input.settings?.groups?.labels?.catalog)
+      ? input.settings.groups.labels.catalog.map((entry) => String(entry?.label || "").trim()).filter(Boolean)
       : []),
     ...(Array.isArray(input.email?.labels)
       ? input.email.labels.map((label: unknown) => String(label || "").trim()).filter(Boolean)
