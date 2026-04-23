@@ -14,6 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 const clientRoot = path.join(repoRoot, "client");
+const clientSrcRoot = path.join(repoRoot, "client", "src");
 const outputDir = path.join(repoRoot, "output", "playwright");
 const reportPath = path.join(outputDir, "groups-v1-validation-report.json");
 const screenshotPath = path.join(outputDir, "groups-v1-validation-page.png");
@@ -31,6 +32,78 @@ function getValidatedCommitSha() {
     cwd: repoRoot,
     encoding: "utf-8",
   }).trim();
+}
+
+const LEGACY_GROUPS_ALIAS_PATTERNS = [
+  "groupStorage",
+  "groupsTabSettings",
+  "groupLabelsManagerEnabled",
+  "groupLabelCatalog",
+  "groupFavoriteIds",
+  "groupTicketsEnabled",
+  "groupTicketUi",
+  "groupOutlookCategories",
+].map((name) => ({
+  name,
+  matchers: [
+    new RegExp(`\\.${name}\\b`, "g"),
+    new RegExp(`\\[\\s*["']${name}["']\\s*\\]`, "g"),
+  ],
+}));
+
+const ALLOWED_LEGACY_GROUPS_COMPATIBILITY_FILES = new Set([
+  "client/src/settings.ts",
+  "client/src/modules/crm/groups-v1/settings/groupsModuleSettings.ts",
+]);
+
+function listFilesRecursively(rootDir) {
+  const pending = [rootDir];
+  const files = [];
+  while (pending.length) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const nextPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(nextPath);
+        continue;
+      }
+      files.push(nextPath);
+    }
+  }
+  return files;
+}
+
+function auditLegacyGroupsAliasUsage() {
+  const findings = [];
+  for (const filePath of listFilesRecursively(clientSrcRoot)) {
+    const relativePath = path.relative(repoRoot, filePath).replace(/\\/g, "/");
+    const source = fs.readFileSync(filePath, "utf-8");
+    const lines = source.split(/\r?\n/);
+    lines.forEach((line, index) => {
+      for (const pattern of LEGACY_GROUPS_ALIAS_PATTERNS) {
+        const matched = pattern.matchers.some((regex) => {
+          regex.lastIndex = 0;
+          return regex.test(line);
+        });
+        if (!matched) continue;
+        findings.push({
+          file: relativePath,
+          line: index + 1,
+          alias: pattern.name,
+          allowedCompatibilityFile: ALLOWED_LEGACY_GROUPS_COMPATIBILITY_FILES.has(relativePath),
+          text: line.trim(),
+        });
+      }
+    });
+  }
+  const unexpectedReferences = findings.filter((entry) => !entry.allowedCompatibilityFile);
+  return {
+    aliases: LEGACY_GROUPS_ALIAS_PATTERNS.map((entry) => entry.name),
+    allowedCompatibilityFiles: Array.from(ALLOWED_LEGACY_GROUPS_COMPATIBILITY_FILES),
+    findings,
+    unexpectedReferences,
+    ok: unexpectedReferences.length === 0,
+  };
 }
 
 async function runServerStorageChecks() {
@@ -161,6 +234,7 @@ async function runGroupsSettingsSurfaceSmoke(browser) {
 async function main() {
   ensureDir(outputDir);
   const validatedCommitSha = getValidatedCommitSha();
+  const legacyAliasAudit = auditLegacyGroupsAliasUsage();
 
   const viteServer = await createServer({
     root: clientRoot,
@@ -199,6 +273,7 @@ async function main() {
         "client/src/modules/crm/groups-v1/testing/settingsMatrix.ts",
         "scripts/run-groups-v1-validation.mjs",
       ],
+      legacyAliasAudit,
       browserValidation,
       classificationSmoke,
       groupsSettingsSurfaceSmoke,
@@ -208,6 +283,10 @@ async function main() {
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf-8");
     console.log(`GROUPS_V1_VALIDATION_REPORT:${reportPath}`);
     console.log(JSON.stringify(report, null, 2));
+    const hasBrowserFailures = Number(browserValidation?.failed || 0) > 0;
+    if (hasBrowserFailures || !classificationSmoke?.ok || !groupsSettingsSurfaceSmoke?.ok || !legacyAliasAudit.ok) {
+      process.exitCode = 1;
+    }
   } finally {
     if (browser) await browser.close();
     await viteServer.close();

@@ -61,6 +61,8 @@ export type GroupsLegacySettingsInput = {
   groupTicketUi?: Partial<GroupTicketUiSettings> | null;
   groupOutlookCategories?: Partial<GroupOutlookCategorySettings> | null;
 };
+// Compatibilidade transitória: aceita blobs antigos durante a migração para
+// `settings.groups`, mas não deve voltar a ser lida como fonte ativa de runtime.
 
 export type GroupsSettingsLike =
   | ({
@@ -277,19 +279,6 @@ export function normalizeGroupsModuleSettings(
     labels,
     tickets,
     outlookCategories,
-  };
-}
-
-export function buildGroupsLegacyAliases(groups: GroupsModuleSettings): GroupsLegacySettingsInput {
-  return {
-    groupStorage: groups.storage,
-    groupsTabSettings: groups.tab,
-    groupLabelsManagerEnabled: groups.labels.managerEnabled,
-    groupLabelCatalog: groups.labels.catalog,
-    groupFavoriteIds: groups.labels.favoriteIds,
-    groupTicketsEnabled: groups.tickets.enabled,
-    groupTicketUi: groups.tickets.ui,
-    groupOutlookCategories: groups.outlookCategories,
   };
 }
 

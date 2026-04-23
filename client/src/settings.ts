@@ -3,22 +3,20 @@
 
 import type { AiTone } from "./ai/aiClient";
 import {
-  DEFAULT_GROUP_STORAGE_SETTINGS,
   type GroupStorageMode,
   type GroupStorageLegacyProvider as GroupStorageProvider,
   type GroupStorageSettings,
 } from "./modules/crm/groups-v1/storage/settings";
 import {
-  DEFAULT_GROUPS_TAB_SETTINGS,
   type GroupsTabSettings,
 } from "./modules/crm/groups-v1/settings/groupsTabSettings";
 import {
   DEFAULT_GROUPS_MODULE_SETTINGS,
-  buildGroupsLegacyAliases,
   normalizeGroupsModuleSettings,
   type GroupLabelCatalogEntry,
   type GroupLabelStatus,
   type GroupOutlookCategorySettings,
+  type GroupsLegacySettingsInput,
   type GroupsModuleSettings,
   type GroupTicketAutoLinkMode,
   type GroupTicketUiSettings,
@@ -246,16 +244,6 @@ export type CockpitSettingsV1 = {
   // Canonical Groups module settings / data source
   groups: GroupsModuleSettings;
 
-  // Legacy compatibility aliases for Groups
-  groupStorage: GroupStorageSettings;
-  groupsTabSettings: GroupsTabSettings;
-  groupLabelsManagerEnabled: boolean;
-  groupLabelCatalog: GroupLabelCatalogEntry[];
-  groupFavoriteIds: string[];
-  groupTicketsEnabled: boolean;
-  groupTicketUi: GroupTicketUiSettings;
-  groupOutlookCategories: GroupOutlookCategorySettings;
-
   // CRM2 Odoo layout strategy for multi-company deployments
   crm2OdooLayout: Crm2OdooLayoutSettings;
 };
@@ -324,35 +312,6 @@ function compactSettingsForStorage(settings: CockpitSettingsV1): CockpitSettings
   return compact;
 }
 
-function withDerivedGroupsLegacyAliases(settings: CockpitSettingsV1): CockpitSettingsV1 {
-  const groups = normalizeGroupsModuleSettings(settings.groups || null, null, DEFAULT_GROUPS_SETTINGS);
-  const aliases = buildGroupsLegacyAliases(groups);
-  return {
-    ...settings,
-    groups,
-    groupStorage: {
-      ...(aliases.groupStorage || groups.storage),
-    },
-    groupsTabSettings: {
-      ...(aliases.groupsTabSettings || groups.tab),
-    },
-    groupLabelsManagerEnabled: aliases.groupLabelsManagerEnabled ?? groups.labels.managerEnabled,
-    groupLabelCatalog: Array.isArray(aliases.groupLabelCatalog)
-      ? [...aliases.groupLabelCatalog]
-      : [...groups.labels.catalog],
-    groupFavoriteIds: Array.isArray(aliases.groupFavoriteIds)
-      ? [...aliases.groupFavoriteIds]
-      : [...groups.labels.favoriteIds],
-    groupTicketsEnabled: aliases.groupTicketsEnabled ?? groups.tickets.enabled,
-    groupTicketUi: {
-      ...(aliases.groupTicketUi || groups.tickets.ui),
-    },
-    groupOutlookCategories: {
-      ...(aliases.groupOutlookCategories || groups.outlookCategories),
-    },
-  };
-}
-
 function serializeSettings(settings: CockpitSettingsV1): string {
   return JSON.stringify(compactSettingsForStorage(settings));
 }
@@ -407,7 +366,6 @@ const DEFAULT_GROUPS_SETTINGS = normalizeGroupsModuleSettings(
   null,
   DEFAULT_GROUPS_MODULE_SETTINGS
 );
-const DEFAULT_GROUPS_LEGACY_ALIASES = buildGroupsLegacyAliases(DEFAULT_GROUPS_SETTINGS);
 
 const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   version: 1,
@@ -524,28 +482,6 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   },
   groups: {
     ...DEFAULT_GROUPS_SETTINGS,
-  },
-  // Legacy top-level aliases remain derived only for compatibility during the
-  // migration window. Runtime consumers must read from settings.groups.
-  groupStorage: {
-    ...(DEFAULT_GROUPS_LEGACY_ALIASES.groupStorage || DEFAULT_GROUP_STORAGE_SETTINGS),
-  },
-  groupsTabSettings: {
-    ...(DEFAULT_GROUPS_LEGACY_ALIASES.groupsTabSettings || DEFAULT_GROUPS_TAB_SETTINGS),
-  },
-  groupLabelsManagerEnabled: DEFAULT_GROUPS_LEGACY_ALIASES.groupLabelsManagerEnabled ?? true,
-  groupLabelCatalog: Array.isArray(DEFAULT_GROUPS_LEGACY_ALIASES.groupLabelCatalog)
-    ? [...DEFAULT_GROUPS_LEGACY_ALIASES.groupLabelCatalog]
-    : [],
-  groupFavoriteIds: Array.isArray(DEFAULT_GROUPS_LEGACY_ALIASES.groupFavoriteIds)
-    ? [...DEFAULT_GROUPS_LEGACY_ALIASES.groupFavoriteIds]
-    : [],
-  groupTicketsEnabled: DEFAULT_GROUPS_LEGACY_ALIASES.groupTicketsEnabled ?? true,
-  groupTicketUi: {
-    ...(DEFAULT_GROUPS_LEGACY_ALIASES.groupTicketUi || DEFAULT_GROUPS_SETTINGS.tickets.ui),
-  },
-  groupOutlookCategories: {
-    ...(DEFAULT_GROUPS_LEGACY_ALIASES.groupOutlookCategories || DEFAULT_GROUPS_SETTINGS.outlookCategories),
   },
   crm2OdooLayout: {
     mode: "description_only",
@@ -874,6 +810,22 @@ function applyLegacySettingsMigrations(settings: CockpitSettingsV1, removeLegacy
   );
 }
 
+function readLegacyGroupsCompatibilityInput(input: unknown): GroupsLegacySettingsInput {
+  const value = input && typeof input === "object"
+    ? (input as Record<string, unknown>)
+    : {};
+  return {
+    groupStorage: value.groupStorage as GroupsLegacySettingsInput["groupStorage"],
+    groupsTabSettings: value.groupsTabSettings as GroupsLegacySettingsInput["groupsTabSettings"],
+    groupLabelsManagerEnabled: value.groupLabelsManagerEnabled as GroupsLegacySettingsInput["groupLabelsManagerEnabled"],
+    groupLabelCatalog: value.groupLabelCatalog,
+    groupFavoriteIds: value.groupFavoriteIds,
+    groupTicketsEnabled: value.groupTicketsEnabled as GroupsLegacySettingsInput["groupTicketsEnabled"],
+    groupTicketUi: value.groupTicketUi as GroupsLegacySettingsInput["groupTicketUi"],
+    groupOutlookCategories: value.groupOutlookCategories as GroupsLegacySettingsInput["groupOutlookCategories"],
+  };
+}
+
 function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSettingsV1> | null): CockpitSettingsV1 {
   if (!incoming) return compactSettingsForStorage(applyLegacySettingsMigrations(base));
   const knownIncoming = pickKnownSettings(incoming);
@@ -881,19 +833,9 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
   const incomingLayoutMode = normalizeCrm2OdooLayoutMode(incomingLayout.mode ?? base.crm2OdooLayout.mode);
   const normalizedGroups = normalizeGroupsModuleSettings(
     (incoming as any).groups || null,
-    {
-      groupStorage: (incoming as any).groupStorage,
-      groupsTabSettings: (incoming as any).groupsTabSettings,
-      groupLabelsManagerEnabled: (incoming as any).groupLabelsManagerEnabled,
-      groupLabelCatalog: (incoming as any).groupLabelCatalog,
-      groupFavoriteIds: (incoming as any).groupFavoriteIds,
-      groupTicketsEnabled: (incoming as any).groupTicketsEnabled,
-      groupTicketUi: (incoming as any).groupTicketUi,
-      groupOutlookCategories: (incoming as any).groupOutlookCategories,
-    },
+    readLegacyGroupsCompatibilityInput(incoming),
     base.groups || DEFAULT_GROUPS_SETTINGS
   );
-  const normalizedGroupAliases = buildGroupsLegacyAliases(normalizedGroups);
 
   const merged: CockpitSettingsV1 = {
     ...base,
@@ -978,28 +920,6 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
       },
     },
     groups: normalizedGroups,
-    // Legacy top-level aliases are written as compatibility mirrors only.
-    // settings.groups remains the sole canonical source of truth for Grupos.
-    groupStorage: {
-      ...(normalizedGroupAliases.groupStorage || normalizedGroups.storage),
-    },
-    groupsTabSettings: {
-      ...(normalizedGroupAliases.groupsTabSettings || normalizedGroups.tab),
-    },
-    groupLabelsManagerEnabled: normalizedGroupAliases.groupLabelsManagerEnabled ?? normalizedGroups.labels.managerEnabled,
-    groupLabelCatalog: Array.isArray(normalizedGroupAliases.groupLabelCatalog)
-      ? [...normalizedGroupAliases.groupLabelCatalog]
-      : [...normalizedGroups.labels.catalog],
-    groupFavoriteIds: Array.isArray(normalizedGroupAliases.groupFavoriteIds)
-      ? [...normalizedGroupAliases.groupFavoriteIds]
-      : [...normalizedGroups.labels.favoriteIds],
-    groupTicketsEnabled: normalizedGroupAliases.groupTicketsEnabled ?? normalizedGroups.tickets.enabled,
-    groupTicketUi: {
-      ...(normalizedGroupAliases.groupTicketUi || normalizedGroups.tickets.ui),
-    },
-    groupOutlookCategories: {
-      ...(normalizedGroupAliases.groupOutlookCategories || normalizedGroups.outlookCategories),
-    },
     crm2OdooLayout: {
       ...base.crm2OdooLayout,
       ...incomingLayout,
@@ -1057,7 +977,7 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
 export function getCachedSettingsSnapshot(): CockpitSettingsV1 {
   const raw = globalThis.localStorage?.getItem(KEY_SETTINGS);
   const parsed = safeJsonParse<Partial<CockpitSettingsV1>>(raw);
-  const merged = withDerivedGroupsLegacyAliases(mergeSettings(DEFAULT_SETTINGS, parsed));
+  const merged = mergeSettings(DEFAULT_SETTINGS, parsed);
   if (raw) {
     const compactJson = serializeSettings(merged);
     if (compactJson !== raw) writeLocalSettingsCache(compactJson);
@@ -1072,8 +992,8 @@ export async function getSettings(): Promise<CockpitSettingsV1> {
   if (rs) {
     const raw = rs.get(KEY_SETTINGS);
     const parsed = safeJsonParse<Partial<CockpitSettingsV1>>(raw);
-    const merged = withDerivedGroupsLegacyAliases(mergeSettings(getCachedSettingsSnapshot(), parsed));
-    const migrated = withDerivedGroupsLegacyAliases(compactSettingsForStorage(applyLegacySettingsMigrations(merged, true)));
+    const merged = mergeSettings(getCachedSettingsSnapshot(), parsed);
+    const migrated = compactSettingsForStorage(applyLegacySettingsMigrations(merged, true));
     if (serializeSettings(migrated) !== serializeSettings(merged)) {
       const json = serializeSettings(migrated);
       try {
@@ -1088,8 +1008,8 @@ export async function getSettings(): Promise<CockpitSettingsV1> {
   }
 
   // fallback (dev / non-office)
-  const merged = withDerivedGroupsLegacyAliases(getCachedSettingsSnapshot());
-  const migrated = withDerivedGroupsLegacyAliases(compactSettingsForStorage(applyLegacySettingsMigrations(merged, true)));
+  const merged = getCachedSettingsSnapshot();
+  const migrated = compactSettingsForStorage(applyLegacySettingsMigrations(merged, true));
   if (serializeSettings(migrated) !== serializeSettings(merged)) {
     writeLocalSettingsRequired(serializeSettings(migrated));
   }
@@ -1099,7 +1019,7 @@ export async function getSettings(): Promise<CockpitSettingsV1> {
 export async function saveSettings(patch: Partial<CockpitSettingsV1>): Promise<CockpitSettingsV1> {
   await officeReady();
   const current = await getSettings();
-  const next = withDerivedGroupsLegacyAliases(mergeSettings(current, patch));
+  const next = mergeSettings(current, patch);
   const json = serializeSettings(next);
 
   const rs = getRoamingSettings();
@@ -1125,14 +1045,12 @@ export async function resetSettings(): Promise<CockpitSettingsV1> {
     rs.set(KEY_SETTINGS, json);
     await saveRoamingSettings(rs);
     writeLocalSettingsCache(json);
-    const runtimeNext = withDerivedGroupsLegacyAliases(next);
-    emitSettingsUpdated(runtimeNext);
-    return runtimeNext;
+    emitSettingsUpdated(next);
+    return next;
   }
   writeLocalSettingsRequired(json);
-  const runtimeNext = withDerivedGroupsLegacyAliases(next);
-  emitSettingsUpdated(runtimeNext);
-  return runtimeNext;
+  emitSettingsUpdated(next);
+  return next;
 }
 
 // ---------------------------

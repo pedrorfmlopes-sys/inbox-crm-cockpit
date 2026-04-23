@@ -479,7 +479,7 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
 
   const scenarios: ValidationScenarioResult[] = [];
 
-  await runScenario(scenarios, "settings-groups-roundtrip", "settings", "settings.groups roundtrip e aliases derivados", async () => {
+  await runScenario(scenarios, "settings-groups-roundtrip", "settings", "settings.groups roundtrip sem aliases runtime", async () => {
     const groups = buildGroupsSettings({
       storage: {
         ...DEFAULT_GROUP_STORAGE_SETTINGS,
@@ -524,9 +524,11 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     assert(next.groups.labels.catalog[0]?.label === "Financeiro", "O catalogo de labels canonico nao foi persistido.");
     assert(next.groups.tickets.enabled === false, "O flag canonico de tickets nao foi persistido.");
     assert(next.groups.outlookCategories.includeLabels === true, "O flag canonico de Outlook categories nao foi persistido.");
-    assert(next.groupStorage.mode === "hybrid", "O alias legacy deixou de espelhar o canonico.");
-    assert(next.groupsTabSettings.baseFolderPath === "grupos/runtime", "O alias legacy do namespace nao ficou derivado.");
-    return "Roundtrip canonico confirmado; aliases legacy ficaram apenas como espelho derivado.";
+    const runtimeSnapshot = next as Record<string, unknown>;
+    assert(!Object.prototype.hasOwnProperty.call(runtimeSnapshot, "groupStorage"), "O runtime ainda expôs groupStorage.");
+    assert(!Object.prototype.hasOwnProperty.call(runtimeSnapshot, "groupsTabSettings"), "O runtime ainda expôs groupsTabSettings.");
+    assert(!Object.prototype.hasOwnProperty.call(runtimeSnapshot, "groupLabelCatalog"), "O runtime ainda expôs groupLabelCatalog.");
+    return "Roundtrip canonico confirmado; o runtime devolveu apenas settings.groups sem aliases legacy ativos.";
   });
 
   await runScenario(scenarios, "settings-panel-host-safe-shells", "settings", "Painel de settings host-safe e shells honestamente desativadas", async () => {

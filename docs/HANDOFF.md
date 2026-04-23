@@ -1,5 +1,35 @@
 # HANDOFF
 
+## Grupos v1: limpeza final da compatibilidade legacy fecha a centralizacao sem deixar aliases ativos no runtime (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - `settings.groups` passa a ser a unica configuracao de Grupos exposta pelo runtime; `getSettings()` deixa de devolver aliases top-level como `groupStorage`, `groupsTabSettings`, `groupLabelCatalog` e restantes nomes legacy
+  - `client/src/settings.ts` fica reduzido a duas responsabilidades sobre legado:
+    - aceitar blobs antigos na leitura/migracao
+    - reescrever o snapshot persistido apenas no formato canonico com `groups`
+  - `client/src/modules/crm/groups-v1/settings/groupsModuleSettings.ts` fica como a unica ponte de normalizacao que ainda conhece os nomes antigos, estritamente para ingestao/migracao
+- **O que foi removido como fonte ativa**:
+  - os aliases top-level legacy deixam de existir em `CockpitSettingsV1`
+  - `DEFAULT_SETTINGS`, `mergeSettings(...)`, `getSettings()` e `saveSettings(...)` deixam de reconstruir ou devolver espelhos legacy
+  - o runtime testado de `Groups` deixa de conseguir ler acidentalmente esses nomes porque eles ja nao saem no snapshot devolvido
+- **Compatibilidade que fica**:
+  - `client/src/settings.ts`: `readLegacyGroupsCompatibilityInput(...)`
+  - `client/src/modules/crm/groups-v1/settings/groupsModuleSettings.ts`: `GroupsLegacySettingsInput` + `normalizeGroupsModuleSettings(...)`
+  - esta compatibilidade e apenas de ingestao de settings antigos; nao comanda runtime nem volta a ser persistida como fonte principal
+- **Prova adicionada ao harness**:
+  - `scripts/run-groups-v1-validation.mjs` passa a auditar acessos reais aos aliases legacy (`.groupStorage`, `["groupStorage"]`, etc.)
+  - o report passa a listar:
+    - `validatedCommitSha`
+    - ficheiros de harness
+    - `legacyAliasAudit`
+  - a auditoria so aceita referencias legacy em:
+    - `client/src/settings.ts`
+    - `client/src/modules/crm/groups-v1/settings/groupsModuleSettings.ts`
+- **Classificacao objetiva apos esta ronda**:
+  - a centralizacao de Grupos fica fechada
+  - `settings.groups` e a unica fonte canonica
+  - a compatibilidade residual fica isolada, transitória e inocente para o runtime
+  - outras abas nao passam a depender de aliases legacy de Grupos para funcionar
+
 ## Grupos v1: todos os settings visiveis da aba Groups deixam de ser shell e passam a mandar no runtime real (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - deixou de existir qualquer `disabled_shell` ativo na matriz canonica de settings de Groups
