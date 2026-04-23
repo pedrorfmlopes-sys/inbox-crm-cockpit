@@ -59,10 +59,12 @@ const GRAPH_NAA_TENANT_ID = "7eff32de-43f1-447b-af3e-af8d2939e93d";
 const GRAPH_NAA_AUTHORITY = `https://login.microsoftonline.com/${GRAPH_NAA_TENANT_ID}`;
 const GRAPH_ATTACHMENT_SCOPES = ["Mail.Read", "User.Read"];
 const GRAPH_PEOPLE_SCOPES = ["People.Read", "User.Read"];
+export const GRAPH_DRIVE_SELF_TEST_SCOPES = ["openid", "profile", "offline_access", "User.Read", "Files.ReadWrite"] as const;
 const GRAPH_NAA_REDIRECT_URI = `${window.location.origin}/`;
 const GRAPH_RUNTIME_ENABLED = false;
 
 let nestableMsalPromise: Promise<any> | null = null;
+let browserMsalPromise: Promise<any> | null = null;
 export const OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT = "iccc-outlook-category-context-invalidated";
 export const OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT = "iccc-outlook-category-sync-request";
 export const OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY = "iccc-outlook-category-sync-request-v1";
@@ -80,6 +82,38 @@ export type OutlookCategorySyncTarget = {
   itemId?: string;
   internetMessageId?: string;
   conversationId?: string;
+};
+
+export type GraphDriveSelfTestConclusion =
+  | "tenant_allows_user_write"
+  | "tenant_blocks_user_write"
+  | "implementation_cannot_complete_test";
+
+export type GraphDriveSelfTestStep = {
+  attempted: boolean;
+  ok: boolean;
+  status?: number;
+  errorCode?: string;
+  errorMessage?: string;
+  detail?: string;
+  response?: unknown;
+};
+
+export type GraphDriveSelfTestResult = {
+  scopes: string[];
+  authMode: "nested_app_auth" | "browser_msal" | "unavailable";
+  consent: GraphDriveSelfTestStep & {
+    result: "accepted" | "need_admin_approval" | "auth_error" | "timeout" | "not_available";
+    account?: string;
+  };
+  meDrive: GraphDriveSelfTestStep;
+  createFolder: GraphDriveSelfTestStep & {
+    folderId?: string;
+    folderName?: string;
+  };
+  cleanup: GraphDriveSelfTestStep;
+  conclusion: GraphDriveSelfTestConclusion;
+  conclusionMessage: string;
 };
 
 export type OutlookCategorySyncRequest = {
@@ -1003,6 +1037,394 @@ async function acquireGraphTokenWithNaa(scopes: string[], options?: { allowPromp
 async function getGraphAccessToken(scopes: string[], options?: { allowPrompts?: boolean }): Promise<string> {
   if (!GRAPH_RUNTIME_ENABLED) return "";
   return await acquireGraphTokenWithNaa(scopes, options);
+}
+
+function summarizeGraphError(error: any): { errorCode?: string; errorMessage: string } {
+  const errorCode = String(error?.errorCode || error?.code || error?.name || "").trim() || undefined;
+  const errorMessage = String(
+    error?.message
+    || error?.errorMessage
+    || error?.error_description
+    || error?.toString?.()
+    || "Erro desconhecido"
+  ).trim();
+  return { errorCode, errorMessage };
+}
+
+function isAdminApprovalGraphError(error: any): boolean {
+  const raw = [
+    error?.errorCode,
+    error?.subError,
+    error?.message,
+    error?.errorMessage,
+    error?.error_description,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  return /admin approval|administrator approval|aadsts65001|aadsts65004|consent_required|permission(s)? requested require admin/i.test(raw);
+}
+
+async function getBrowserMsalInstance(): Promise<any> {
+  if (!browserMsalPromise) {
+    browserMsalPromise = (async () => {
+      const { PublicClientApplication } = await import("@azure/msal-browser");
+      const app = new PublicClientApplication({
+        auth: {
+          clientId: GRAPH_NAA_CLIENT_ID,
+          authority: GRAPH_NAA_AUTHORITY,
+          redirectUri: GRAPH_NAA_REDIRECT_URI,
+        },
+        cache: {
+          cacheLocation: "localStorage",
+        },
+      });
+      await app.initialize();
+      return app;
+    })().catch((error) => {
+      browserMsalPromise = null;
+      throw error;
+    });
+  }
+  return await browserMsalPromise;
+}
+
+type GraphSelfTestAuthOutcome = {
+  accessToken: string;
+  authMode: GraphDriveSelfTestResult["authMode"];
+  consent: GraphDriveSelfTestResult["consent"];
+};
+
+async function acquireGraphTokenForSelfTest(scopes: string[]): Promise<GraphSelfTestAuthOutcome> {
+  try {
+    const msal = await getNestableMsalInstance();
+    if (msal) {
+      const { InteractionRequiredAuthError } = await import("@azure/msal-browser");
+      const tokenRequest = { scopes: [...scopes] };
+      try {
+        const silentResult = await msal.acquireTokenSilent(tokenRequest);
+        const accessToken = String(silentResult?.accessToken || "").trim();
+        return {
+          accessToken,
+          authMode: "nested_app_auth",
+          consent: {
+            attempted: true,
+            ok: Boolean(accessToken),
+            result: accessToken ? "accepted" : "auth_error",
+            detail: "Token obtido por Nested App Auth (silent).",
+            account: String(silentResult?.account?.username || "").trim() || undefined,
+          },
+        };
+      } catch (error: any) {
+        const interactionRequired =
+          error instanceof InteractionRequiredAuthError
+          || String(error?.name || "").trim() === "InteractionRequiredAuthError"
+          || /interaction_required|consent_required|login_required/i.test(String(error?.errorCode || error?.message || ""));
+
+        if (!interactionRequired) {
+          const summary = summarizeGraphError(error);
+          return {
+            accessToken: "",
+            authMode: "nested_app_auth",
+            consent: {
+              attempted: true,
+              ok: false,
+              result: isAdminApprovalGraphError(error) ? "need_admin_approval" : "auth_error",
+              errorCode: summary.errorCode,
+              errorMessage: summary.errorMessage,
+            },
+          };
+        }
+
+        const popupResult = await withTimeout(
+          msal.acquireTokenPopup(tokenRequest),
+          45_000,
+          null as any,
+        );
+        if (!popupResult) {
+          return {
+            accessToken: "",
+            authMode: "nested_app_auth",
+            consent: {
+              attempted: true,
+              ok: false,
+              result: "timeout",
+              errorMessage: "Timeout a aguardar conclusao do popup de consentimento/login (Nested App Auth).",
+            },
+          };
+        }
+        const accessToken = String(popupResult?.accessToken || "").trim();
+        return {
+          accessToken,
+          authMode: "nested_app_auth",
+          consent: {
+            attempted: true,
+            ok: Boolean(accessToken),
+            result: accessToken ? "accepted" : "auth_error",
+            detail: "Token obtido por Nested App Auth (popup).",
+            account: String(popupResult?.account?.username || "").trim() || undefined,
+          },
+        };
+      }
+    }
+  } catch (error) {
+    const summary = summarizeGraphError(error);
+    if (String(summary.errorMessage || "").trim()) {
+      return {
+        accessToken: "",
+        authMode: "nested_app_auth",
+        consent: {
+          attempted: true,
+          ok: false,
+          result: isAdminApprovalGraphError(error) ? "need_admin_approval" : "auth_error",
+          errorCode: summary.errorCode,
+          errorMessage: summary.errorMessage,
+        },
+      };
+    }
+  }
+
+  try {
+    const msal = await getBrowserMsalInstance();
+    const existingAccounts = Array.isArray(msal.getAllAccounts?.()) ? msal.getAllAccounts() : [];
+    const knownAccount = existingAccounts[0] || null;
+    const tokenRequest = {
+      scopes: [...scopes],
+      account: knownAccount || undefined,
+    };
+
+    if (knownAccount) {
+      try {
+        const silentResult = await msal.acquireTokenSilent(tokenRequest);
+        const accessToken = String(silentResult?.accessToken || "").trim();
+        if (silentResult?.account) {
+          try {
+            msal.setActiveAccount?.(silentResult.account);
+          } catch {
+            // best effort
+          }
+        }
+        return {
+          accessToken,
+          authMode: "browser_msal",
+          consent: {
+            attempted: true,
+            ok: Boolean(accessToken),
+            result: accessToken ? "accepted" : "auth_error",
+            detail: "Token obtido por MSAL browser (silent).",
+            account: String(silentResult?.account?.username || "").trim() || undefined,
+          },
+        };
+      } catch {
+        // continue to popup flow
+      }
+    }
+
+    const popupResult = await withTimeout(
+      knownAccount
+        ? msal.acquireTokenPopup({ scopes: [...scopes], account: knownAccount })
+        : msal.loginPopup({ scopes: [...scopes] }),
+      45_000,
+      null as any,
+    );
+
+    if (!popupResult) {
+      return {
+        accessToken: "",
+        authMode: "browser_msal",
+        consent: {
+          attempted: true,
+          ok: false,
+          result: "timeout",
+          errorMessage: "Timeout a aguardar conclusao do popup de consentimento/login (MSAL browser).",
+        },
+      };
+    }
+
+    try {
+      if (popupResult?.account) {
+        msal.setActiveAccount?.(popupResult.account);
+      }
+    } catch {
+      // best effort
+    }
+
+    let accessToken = String(popupResult?.accessToken || "").trim();
+    if (!accessToken) {
+      const popupAccount = popupResult?.account || msal.getActiveAccount?.() || msal.getAllAccounts?.()[0];
+      if (popupAccount) {
+        const silentResult = await msal.acquireTokenSilent({
+          scopes: [...scopes],
+          account: popupAccount,
+        });
+        accessToken = String(silentResult?.accessToken || "").trim();
+      }
+    }
+
+    return {
+      accessToken,
+      authMode: "browser_msal",
+      consent: {
+        attempted: true,
+        ok: Boolean(accessToken),
+        result: accessToken ? "accepted" : "auth_error",
+        detail: "Token obtido por MSAL browser (popup).",
+        account: String(popupResult?.account?.username || "").trim() || undefined,
+      },
+    };
+  } catch (error) {
+    const summary = summarizeGraphError(error);
+    return {
+      accessToken: "",
+      authMode: "browser_msal",
+      consent: {
+        attempted: true,
+        ok: false,
+        result: isAdminApprovalGraphError(error) ? "need_admin_approval" : "auth_error",
+        errorCode: summary.errorCode,
+        errorMessage: summary.errorMessage,
+      },
+    };
+  }
+}
+
+async function readGraphJsonResponse(response: Response): Promise<GraphDriveSelfTestStep> {
+  const rawText = await response.text();
+  let parsed: unknown = rawText;
+  try {
+    parsed = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    parsed = rawText;
+  }
+  const graphError = (parsed as any)?.error;
+  return {
+    attempted: true,
+    ok: response.ok,
+    status: response.status,
+    response: parsed,
+    errorCode: response.ok ? undefined : String(graphError?.code || "").trim() || undefined,
+    errorMessage: response.ok
+      ? undefined
+      : String(graphError?.message || response.statusText || "Falha Graph").trim() || undefined,
+  };
+}
+
+export async function runGraphDriveWriteSelfTest(folderName = "InboxCockpit-Graph-Write-Test"): Promise<GraphDriveSelfTestResult> {
+  const scopes = [...GRAPH_DRIVE_SELF_TEST_SCOPES];
+  const auth = await acquireGraphTokenForSelfTest(scopes);
+
+  if (!auth.accessToken) {
+    return {
+      scopes,
+      authMode: auth.authMode,
+      consent: auth.consent,
+      meDrive: { attempted: false, ok: false, detail: "Saltado por falta de token." },
+      createFolder: { attempted: false, ok: false, detail: "Saltado por falta de token." },
+      cleanup: { attempted: false, ok: false, detail: "Saltado por falta de pasta criada." },
+      conclusion: auth.consent.result === "need_admin_approval"
+        ? "tenant_blocks_user_write"
+        : "implementation_cannot_complete_test",
+      conclusionMessage: auth.consent.result === "need_admin_approval"
+        ? "O tenant bloqueou o consentimento delegado necessario para o write test."
+        : String(auth.consent.errorMessage || "A implementacao atual nao conseguiu fechar o fluxo de token Graph."),
+    };
+  }
+
+  const headers = {
+    Authorization: `Bearer ${auth.accessToken}`,
+    "Content-Type": "application/json",
+  };
+
+  const meDriveResponse = await fetch("https://graph.microsoft.com/v1.0/me/drive", {
+    headers: { Authorization: `Bearer ${auth.accessToken}` },
+  });
+  const meDrive = await readGraphJsonResponse(meDriveResponse);
+  if (!meDrive.ok) {
+    const blocked = Number(meDrive.status || 0) === 403;
+    return {
+      scopes,
+      authMode: auth.authMode,
+      consent: auth.consent,
+      meDrive,
+      createFolder: { attempted: false, ok: false, detail: "Saltado porque /me/drive falhou." },
+      cleanup: { attempted: false, ok: false, detail: "Saltado por falta de pasta criada." },
+      conclusion: blocked ? "tenant_blocks_user_write" : "implementation_cannot_complete_test",
+      conclusionMessage: blocked
+        ? String(meDrive.errorMessage || "O tenant recusou o acesso ao drive do utilizador.")
+        : String(meDrive.errorMessage || "A chamada /me/drive falhou por motivo tecnico."),
+    };
+  }
+
+  const createFolderResponse = await fetch("https://graph.microsoft.com/v1.0/me/drive/root/children", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      name: folderName,
+      folder: {},
+      "@microsoft.graph.conflictBehavior": "rename",
+    }),
+  });
+  const createFolderStepBase = await readGraphJsonResponse(createFolderResponse);
+  const createFolder: GraphDriveSelfTestResult["createFolder"] = {
+    ...createFolderStepBase,
+    folderId: String((createFolderStepBase.response as any)?.id || "").trim() || undefined,
+    folderName: String((createFolderStepBase.response as any)?.name || "").trim() || undefined,
+  };
+
+  let cleanup: GraphDriveSelfTestResult["cleanup"] = {
+    attempted: false,
+    ok: false,
+    detail: "Saltado por falta de pasta criada.",
+  };
+
+  if (createFolder.ok && createFolder.folderId) {
+    const cleanupResponse = await fetch(
+      `https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(createFolder.folderId)}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${auth.accessToken}` },
+      }
+    );
+    cleanup = {
+      attempted: true,
+      ok: cleanupResponse.ok || cleanupResponse.status === 204,
+      status: cleanupResponse.status,
+      detail: cleanupResponse.ok || cleanupResponse.status === 204
+        ? "Pasta de teste removida com sucesso."
+        : "A limpeza da pasta de teste falhou.",
+    };
+    if (!cleanup.ok) {
+      const cleanupBody = await cleanupResponse.text();
+      cleanup.errorMessage = String(cleanupBody || cleanupResponse.statusText || "Falha a limpar pasta de teste.").trim();
+    }
+  }
+
+  if (!createFolder.ok) {
+    const blocked = Number(createFolder.status || 0) === 403;
+    return {
+      scopes,
+      authMode: auth.authMode,
+      consent: auth.consent,
+      meDrive,
+      createFolder,
+      cleanup,
+      conclusion: blocked ? "tenant_blocks_user_write" : "implementation_cannot_complete_test",
+      conclusionMessage: blocked
+        ? String(createFolder.errorMessage || "O tenant nao permitiu criar a pasta de teste no OneDrive do utilizador.")
+        : String(createFolder.errorMessage || "A criacao da pasta de teste falhou por motivo tecnico."),
+    };
+  }
+
+  return {
+    scopes,
+    authMode: auth.authMode,
+    consent: auth.consent,
+    meDrive,
+    createFolder,
+    cleanup,
+    conclusion: "tenant_allows_user_write",
+    conclusionMessage: "Consentimento, /me/drive e criacao da pasta de teste funcionaram com o utilizador autenticado.",
+  };
 }
 
 async function getCurrentMessageRestId(): Promise<string> {

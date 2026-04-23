@@ -1,5 +1,45 @@
 # HANDOFF
 
+## Graph delegated self-test: prova minima de OneDrive write como user fica isolada e rastreavel, mas nao fecha automaticamente fora do host com sessao Microsoft resolvida (Abril 2026)
+- **O que ficou implementado nesta ronda**:
+  - `client/src/office.ts` passa a expor um self-test isolado `runGraphDriveWriteSelfTest(...)`
+  - o self-test reutiliza a mesma app registration e o mesmo stack MSAL do projeto
+  - tenta primeiro `NestedAppAuth` quando o host Office o suporta; fora desse contexto cai para `msal-browser` standard com o mesmo `clientId`, `authority` e `redirectUri`
+  - a view isolada `?view=graph-drive-self-test` mostra:
+    - scopes pedidos
+    - resultado do consentimento/token
+    - resultado de `GET /me/drive`
+    - resultado da criacao/limpeza da pasta `InboxCockpit-Graph-Write-Test`
+- **Scopes pedidos nesta prova**:
+  - `openid`
+  - `profile`
+  - `offline_access`
+  - `User.Read`
+  - `Files.ReadWrite`
+- **Runner de prova criado**:
+  - `scripts/run-graph-drive-self-test.mjs`
+  - artefactos:
+    - `output/playwright/graph-drive-self-test-report.json`
+    - `output/playwright/graph-drive-self-test-page.png`
+- **Resultado objetivo obtido nesta maquina/ambiente**:
+  - o self-test abriu popup real de autorizacao Microsoft
+  - o popup chegou a `login.microsoftonline.com/.../authorize` para os scopes pedidos
+  - o fluxo nao concluiu dentro do timeout e o resultado ficou:
+    - `conclusion = implementation_cannot_complete_test`
+    - `consent.result = timeout`
+  - por isso:
+    - nao ha prova de `need admin approval`
+    - nao ha prova de `GET /me/drive` permitido
+    - nao ha prova de criacao de pasta
+- **Leitura tecnica honesta do resultado**:
+  - a app registration/scopes permitem arrancar o fluxo de consentimento
+  - mas, no ambiente automatizado atual, a implementacao nao consegue fechar o teste automaticamente sem uma sessao Microsoft/consentimento resolvidos
+  - isto **nao** e integracao final de OneDrive; e apenas uma sonda isolada e rastreavel
+- **Fora do scope mantido**:
+  - sem mexer em `Groups`
+  - sem abrir integracao final de OneDrive
+  - sem Graph productization espalhada pela app
+
 ## Grupos v1: picker real de pasta fecha a escolha da pasta intermédia via seletor nativo do Windows (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - a aba `Groups` passa a expor um botao real `Procurar pasta` em `GroupsSettingsPanel.tsx`

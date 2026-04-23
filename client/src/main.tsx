@@ -6,6 +6,7 @@ import GroupExplorerApp from "@/modules/crm/GroupExplorerApp";
 import GroupManagerApp from "@/modules/crm/GroupManagerApp";
 import AiSettingsApp from "@/modules/ai/AiSettingsApp";
 import AiReplyTargetPickerApp from "@/modules/ai/AiReplyTargetPickerApp";
+import GraphDriveSelfTestApp from "@/modules/auth/GraphDriveSelfTestApp";
 import GroupSettingsApp from "@/modules/crm/GroupSettingsApp";
 import GroupClassificationStudioApp from "@/modules/crm/GroupClassificationStudioApp";
 import SettingsApp from "@/ui/SettingsApp";
@@ -87,6 +88,7 @@ function Boot() {
   if (view === "group-manager") return <GroupManagerApp />;
   if (view === "ai-settings") return <AiSettingsApp />;
   if (view === "ai-reply-target-picker") return <AiReplyTargetPickerApp />;
+  if (view === "graph-drive-self-test") return <GraphDriveSelfTestApp />;
   if (view === "group-settings") return <GroupSettingsApp />;
   if (view === "group-classification-studio") return <GroupClassificationStudioApp />;
   if (view === "app-settings") return <SettingsApp />;
