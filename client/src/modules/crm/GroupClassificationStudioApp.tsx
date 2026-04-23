@@ -74,6 +74,7 @@ import {
 } from "./group-classification/outlookCategoryApply";
 import { persistAndRefreshClassificationCase } from "./group-classification/casePersistence";
 import { projectApplyIntoIntermediateCase } from "./group-classification/localCaseProjection";
+import { resolveClassificationIntermediateCase } from "./groups-v1/storage/resolveClassificationIntermediateCase";
 import {
   type ApplyOperationResult,
   finalizeFailedApplyOperation,

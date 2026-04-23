@@ -1,5 +1,20 @@
 # HANDOFF
 
+## Hotfix: `Classificar` deixa de cair no bootstrap por import em falta de `resolveClassificationIntermediateCase` (Abril 2026)
+- **Causa raiz confirmada**:
+  - `client/src/modules/crm/GroupClassificationStudioApp.tsx` chamava `resolveClassificationIntermediateCase(...)` no bootstrap do studio sem importar o helper
+  - isso abria um `ReferenceError: resolveClassificationIntermediateCase is not defined` no caminho ativo de `Classificar`
+- **Correcao feita**:
+  - import explicito de `resolveClassificationIntermediateCase` a partir de `groups-v1/storage/resolveClassificationIntermediateCase`
+- **Validacao desta ronda**:
+  - `build` passou
+  - `eslint` do ficheiro tocado passou sem erros
+  - `git diff --check` passou
+  - smoke browser de `?view=group-classification-studio` passou a carregar o studio sem `ReferenceError` nem `pageerror` desse bootstrap
+- **Nota honesta**:
+  - no smoke local sem backend dedicado apareceram `500` de recursos/API, mas nao surgiu novo blocker imediato de bootstrap do `Classificar` no cliente
+  - esta ronda ficou deliberadamente limitada ao blocker confirmado do import em falta
+
 ## Hotfix de estabilizacao da publicacao: aba Groups + quota da cache IA (Abril 2026)
 - **Causa raiz do branco na aba Groups**:
   - `GroupsPrepareCockpit` usava `intermediateCaseBinarySources` num `useEffect` antes da propria declaracao do `useMemo`
