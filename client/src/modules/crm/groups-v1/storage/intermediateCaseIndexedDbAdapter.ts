@@ -1,9 +1,9 @@
 import type { IntermediateCaseBinaryStorageAdapter } from "./intermediateCaseRepository";
 
-const DB_NAME = "InboxCockpit_GroupsIntermediateCase";
+export const INTERMEDIATE_CASE_DB_NAME = "InboxCockpit_GroupsIntermediateCase";
 const DB_VERSION = 1;
-const TEXT_STORE = "intermediate_case_text";
-const BINARY_STORE = "intermediate_case_binary";
+export const INTERMEDIATE_CASE_TEXT_STORE = "intermediate_case_text";
+export const INTERMEDIATE_CASE_BINARY_STORE = "intermediate_case_binary";
 
 type StoredTextRecord = {
   key: string;
@@ -27,16 +27,16 @@ function makeStorageKey(namespace: string, path: string): string {
 
 function openIntermediateCaseDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const request = indexedDB.open(INTERMEDIATE_CASE_DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(TEXT_STORE)) {
-        const store = db.createObjectStore(TEXT_STORE, { keyPath: "key" });
+      if (!db.objectStoreNames.contains(INTERMEDIATE_CASE_TEXT_STORE)) {
+        const store = db.createObjectStore(INTERMEDIATE_CASE_TEXT_STORE, { keyPath: "key" });
         store.createIndex("namespace", "namespace", { unique: false });
         store.createIndex("path", "path", { unique: false });
       }
-      if (!db.objectStoreNames.contains(BINARY_STORE)) {
-        const store = db.createObjectStore(BINARY_STORE, { keyPath: "key" });
+      if (!db.objectStoreNames.contains(INTERMEDIATE_CASE_BINARY_STORE)) {
+        const store = db.createObjectStore(INTERMEDIATE_CASE_BINARY_STORE, { keyPath: "key" });
         store.createIndex("namespace", "namespace", { unique: false });
         store.createIndex("path", "path", { unique: false });
       }
@@ -113,7 +113,7 @@ export function createIndexedDbIntermediateCaseStorageAdapter(input: {
     async readText(path) {
       const db = await openIntermediateCaseDb();
       const key = makeStorageKey(namespace, path);
-      const row = await runStoreRequest<StoredTextRecord | undefined>(db, TEXT_STORE, "readonly", (store) =>
+      const row = await runStoreRequest<StoredTextRecord | undefined>(db, INTERMEDIATE_CASE_TEXT_STORE, "readonly", (store) =>
         store.get(key) as IDBRequest<StoredTextRecord | undefined>
       );
       return row?.content || null;
@@ -121,7 +121,7 @@ export function createIndexedDbIntermediateCaseStorageAdapter(input: {
     async writeText(path, content) {
       const db = await openIntermediateCaseDb();
       const key = makeStorageKey(namespace, path);
-      await runStoreRequest(db, TEXT_STORE, "readwrite", (store) =>
+      await runStoreRequest(db, INTERMEDIATE_CASE_TEXT_STORE, "readwrite", (store) =>
         store.put({
           key,
           namespace,
@@ -134,7 +134,7 @@ export function createIndexedDbIntermediateCaseStorageAdapter(input: {
     async readBinary(path) {
       const db = await openIntermediateCaseDb();
       const key = makeStorageKey(namespace, path);
-      const row = await runStoreRequest<StoredBinaryRecord | undefined>(db, BINARY_STORE, "readonly", (store) =>
+      const row = await runStoreRequest<StoredBinaryRecord | undefined>(db, INTERMEDIATE_CASE_BINARY_STORE, "readonly", (store) =>
         store.get(key) as IDBRequest<StoredBinaryRecord | undefined>
       );
       return row?.blob || null;
@@ -147,7 +147,7 @@ export function createIndexedDbIntermediateCaseStorageAdapter(input: {
         : content instanceof ArrayBuffer
           ? new Blob([content])
           : new Blob([content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength)]);
-      await runStoreRequest(db, BINARY_STORE, "readwrite", (store) =>
+      await runStoreRequest(db, INTERMEDIATE_CASE_BINARY_STORE, "readwrite", (store) =>
         store.put({
           key,
           namespace,
@@ -160,13 +160,13 @@ export function createIndexedDbIntermediateCaseStorageAdapter(input: {
     async deleteTree(path) {
       const db = await openIntermediateCaseDb();
       await Promise.all([
-        deleteNamespacePrefix(db, TEXT_STORE, namespace, path),
-        deleteNamespacePrefix(db, BINARY_STORE, namespace, path),
+        deleteNamespacePrefix(db, INTERMEDIATE_CASE_TEXT_STORE, namespace, path),
+        deleteNamespacePrefix(db, INTERMEDIATE_CASE_BINARY_STORE, namespace, path),
       ]);
     },
     async listPaths(prefix) {
       const db = await openIntermediateCaseDb();
-      const rows = await loadNamespaceRecords<StoredTextRecord>(db, TEXT_STORE, namespace);
+      const rows = await loadNamespaceRecords<StoredTextRecord>(db, INTERMEDIATE_CASE_TEXT_STORE, namespace);
       return rows.map((row) => row.path).filter((path) => path.startsWith(prefix));
     },
   };

@@ -42,6 +42,9 @@ export async function migrateIntermediateCaseNamespace(input: {
   sourceNamespace: string;
   targetNamespace: string;
   mode: "move" | "copy";
+  allowMoveExistingData?: boolean;
+  mergeExistingData?: boolean;
+  strictMigrationSafety?: boolean;
 }): Promise<{
   migratedCases: number;
   copiedAttachments: number;
@@ -61,6 +64,28 @@ export async function migrateIntermediateCaseNamespace(input: {
   const sourceRepository = createIntermediateCaseRepository(sourceAdapter);
   const targetRepository = createIntermediateCaseRepository(targetAdapter);
   const summaries = await sourceRepository.listCases();
+  const targetSummaries = await targetRepository.listCases();
+  const strictMigrationSafety = input.strictMigrationSafety !== false;
+  const mergeExistingData = input.mergeExistingData === true;
+  const allowMoveExistingData = input.allowMoveExistingData === true;
+
+  if (input.mode === "move" && !allowMoveExistingData) {
+    throw new Error("O modo de movimento esta bloqueado pelos settings atuais. Ativa 'Permitir mover dados existentes' para continuar.");
+  }
+
+  if (targetSummaries.length && !mergeExistingData) {
+    throw new Error("O namespace de destino ja contem casos intermedios. Ativa a fusao de dados existentes ou escolhe um namespace vazio.");
+  }
+
+  const targetCaseIds = new Set(targetSummaries.map((summary) => summary.caseId));
+  const conflictingCaseIds = summaries
+    .map((summary) => summary.caseId)
+    .filter((caseId) => targetCaseIds.has(caseId));
+  if (strictMigrationSafety && conflictingCaseIds.length) {
+    throw new Error(
+      `A migracao foi bloqueada pela seguranca estrita porque o destino ja contem ${conflictingCaseIds.length} caso(s) com o mesmo identificador.`
+    );
+  }
 
   let migratedCases = 0;
   let copiedAttachments = 0;
@@ -111,7 +136,10 @@ function shouldDeleteIntermediateCase(
 }
 
 export async function cleanupIntermediateCases(
-  settingsLike: GroupsTabSettings | null | undefined
+  settingsLike: GroupsTabSettings | null | undefined,
+  options?: {
+    nowMs?: number;
+  }
 ): Promise<{
   namespace: string;
   deletedCases: number;
@@ -132,7 +160,7 @@ export async function cleanupIntermediateCases(
   const adapter = createIndexedDbIntermediateCaseStorageAdapter({ namespace });
   const repository = createIntermediateCaseRepository(adapter);
   const summaries = await repository.listCases();
-  const nowMs = Date.now();
+  const nowMs = Number.isFinite(Number(options?.nowMs)) ? Number(options?.nowMs) : Date.now();
   let deletedCases = 0;
   let skippedMixedCases = 0;
 

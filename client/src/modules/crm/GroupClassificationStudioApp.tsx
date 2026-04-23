@@ -628,6 +628,7 @@ function StudioInner() {
   const hydratedEmailKeysRef = useRef<Set<string>>(new Set());
   const ticketSearchRequestSeqRef = useRef(0);
   const selectedEmailRef = useRef<RelatedEmailEntry | null>(null);
+  const rehydrateClassificationEditorFromCaseEmailRef = useRef<(email: RelatedEmailEntry | null) => void>(() => undefined);
   const classificationDraftSnapshotRef = useRef<null | {
     principalGroupId: string;
     principalSearch: string;
@@ -714,124 +715,6 @@ function StudioInner() {
     mergeEmailsIntoClassificationCase([incomingEmail]);
   }, [mergeEmailsIntoClassificationCase]);
 
-  useEffect(() => {
-    selectedEmailRef.current = selectedEmail;
-  }, [selectedEmail]);
-
-  const rehydrateClassificationEditorFromCaseEmail = useCallback((email: RelatedEmailEntry | null) => {
-    if (!email) return;
-    const principalGroupId = normalizeComparableString(email.groupId || email.classificationMeta?.principalGroupId);
-    const relationGroups = getEmailGroupRelations(email);
-    const referenceGroupIds = relationGroups
-      .filter((group) => group.id && group.id !== principalGroupId)
-      .map((group) => String(group.id || "").trim());
-    const normalizedSelection = createEmailGroupSelectionState({
-      principalGroupId,
-      referenceGroupIds,
-    });
-    const nextLabels = normalizeComparableStringList(email.labels);
-    const nextLabelDrafts = buildCanonicalLabelDraftsFromEmail({
-      email,
-      labels: nextLabels,
-      labelCatalogEntries,
-    });
-    const nextTicketId = normalizeComparableString((email.classificationMeta as any)?.ticketId);
-    const nextPrincipalSearch = "";
-    const nextReferenceSearch = "";
-    const nextTicketSearch = "";
-    const nextTicketSearchResults: GroupTicketEntry[] = [];
-    const nextClassificationMetaDraft = normalizeClassificationMetaDraft({
-      ...classificationMetaDraft,
-      principalGroupId: normalizedSelection.principalGroupId,
-      referenceGroupIds: normalizedSelection.referenceGroupIds,
-      ticketId: nextTicketId,
-      categorizedLabelNames: normalizeComparableStringList(email.classificationMeta?.categorizedLabelNames),
-    });
-    const nextSelectionTouched = { principal: false, references: false, ticket: false };
-
-    setSelectionTouched(nextSelectionTouched);
-    setPrincipalGroupId(normalizedSelection.principalGroupId);
-    setPrincipalSearch(nextPrincipalSearch);
-    setReferenceGroupIds(normalizedSelection.referenceGroupIds);
-    setReferenceSearch(nextReferenceSearch);
-    setSelectedLabels(nextLabels);
-    setLabelDrafts(nextLabelDrafts);
-    setClassificationMetaDraft(nextClassificationMetaDraft);
-    setSelectedTicketId(nextTicketId);
-    setSelectedSeriesId("");
-    setTicketSearch(nextTicketSearch);
-    setTicketSearchResults(nextTicketSearchResults);
-
-    classificationDraftSnapshotRef.current = {
-      principalGroupId: normalizedSelection.principalGroupId,
-      principalSearch: nextPrincipalSearch,
-      referenceGroupIds: [...normalizedSelection.referenceGroupIds],
-      referenceSearch: nextReferenceSearch,
-      selectedLabels: [...nextLabels],
-      labelDrafts: structuredClone(nextLabelDrafts),
-      classificationMetaDraft: structuredClone(nextClassificationMetaDraft),
-      selectedTicketId: nextTicketId,
-      selectedSeriesId: "",
-      ticketStatusDraft,
-      ticketSearch: nextTicketSearch,
-      ticketSearchResults: nextTicketSearchResults,
-      createTicketTitle,
-      selectionTouched: nextSelectionTouched,
-    };
-  }, [
-    classificationMetaDraft,
-    createTicketTitle,
-    getEmailGroupRelations,
-    labelCatalogEntries,
-    ticketStatusDraft,
-  ]);
-  const syncClassificationCaseEmails = useCallback((nextCaseValue: IntermediateCase, options?: {
-    preferredSelectedEmailKey?: string;
-    preferredTargetEmailKeys?: string[];
-    rehydrateSelectedEmail?: boolean;
-  }) => {
-    const mappedEmails = nextCaseValue.emails.map((email) => mapIntermediateEmailToRelatedEmailEntry(email));
-    const mappedEmailKeys = new Set(mappedEmails.map((email) => makeEmailKey(email)).filter(Boolean));
-    const preferredSelectedEmailKey = normalizeComparableString(
-      options?.preferredSelectedEmailKey || selectedEmailKey || classificationAnchorEmailKey || nextCaseValue.anchorEmailKey
-    );
-    const nextSelectedEmail = (preferredSelectedEmailKey
-      ? mappedEmails.find((email) => makeEmailKey(email) === preferredSelectedEmailKey)
-      : null)
-      || mappedEmails.find((email) => makeEmailKey(email) === nextCaseValue.anchorEmailKey)
-      || mappedEmails[0]
-      || null;
-    const nextSelectedEmailKey = normalizeComparableString(makeEmailKey(nextSelectedEmail || {}) || nextCaseValue.anchorEmailKey);
-    const candidateTargetKeys = Array.isArray(options?.preferredTargetEmailKeys) && options?.preferredTargetEmailKeys.length
-      ? options.preferredTargetEmailKeys
-      : selectedTargetEmailKeys;
-    const nextTargetEmailKeys = Array.from(
-      new Set(
-        (candidateTargetKeys || [])
-          .map((key) => normalizeComparableString(key))
-          .filter((key) => key && mappedEmailKeys.has(key))
-      )
-    );
-    setIntermediateCaseBootstrap((current) => {
-      if (current.status !== "ready") return current;
-      return {
-        ...current,
-        caseValue: nextCaseValue,
-        emails: dedupeEmails(mappedEmails),
-      };
-    });
-    setRelatedEmails((current) => replaceEmailsByKey(current, mappedEmails));
-    setKnownEmails((current) => replaceEmailsByKey(current, mappedEmails));
-    setSelectedEmailKey(nextSelectedEmailKey);
-    setSelectedTargetEmailKeys(
-      nextTargetEmailKeys.length
-        ? nextTargetEmailKeys
-        : (nextSelectedEmailKey ? [nextSelectedEmailKey] : [])
-    );
-    if (options?.rehydrateSelectedEmail !== false) {
-      rehydrateClassificationEditorFromCaseEmail(nextSelectedEmail);
-    }
-  }, [classificationAnchorEmailKey, rehydrateClassificationEditorFromCaseEmail, selectedEmailKey, selectedTargetEmailKeys]);
   const currentContext = useMemo(() => ({
     conversationId: String(params.conversationId || classificationAnchorEmail?.conversationId || currentSeed?.conversationId || fallbackIdentity?.conversationId || "").trim(),
     internetMessageId: String(params.internetMessageId || classificationAnchorEmail?.internetMessageId || currentSeed?.internetMessageId || fallbackIdentity?.internetMessageId || "").trim(),
@@ -1278,6 +1161,128 @@ function StudioInner() {
   const selectedEmailGroups = useMemo(() => {
     return getEmailGroupRelations(selectedEmail);
   }, [getEmailGroupRelations, selectedEmail]);
+  useEffect(() => {
+    selectedEmailRef.current = selectedEmail;
+  }, [selectedEmail]);
+
+  const rehydrateClassificationEditorFromCaseEmail = useCallback((email: RelatedEmailEntry | null) => {
+    if (!email) return;
+    const principalGroupId = normalizeComparableString(email.groupId || email.classificationMeta?.principalGroupId);
+    const relationGroups = getEmailGroupRelations(email);
+    const referenceGroupIds = relationGroups
+      .filter((group) => group.id && group.id !== principalGroupId)
+      .map((group) => String(group.id || "").trim());
+    const normalizedSelection = createEmailGroupSelectionState({
+      principalGroupId,
+      referenceGroupIds,
+    });
+    const nextLabels = normalizeComparableStringList(email.labels);
+    const nextLabelDrafts = buildCanonicalLabelDraftsFromEmail({
+      email,
+      labels: nextLabels,
+      labelCatalogEntries,
+    });
+    const nextTicketId = normalizeComparableString((email.classificationMeta as any)?.ticketId);
+    const nextPrincipalSearch = "";
+    const nextReferenceSearch = "";
+    const nextTicketSearch = "";
+    const nextTicketSearchResults: GroupTicketEntry[] = [];
+    const nextClassificationMetaDraft = normalizeClassificationMetaDraft({
+      ...classificationMetaDraft,
+      principalGroupId: normalizedSelection.principalGroupId,
+      referenceGroupIds: normalizedSelection.referenceGroupIds,
+      ticketId: nextTicketId,
+      categorizedLabelNames: normalizeComparableStringList(email.classificationMeta?.categorizedLabelNames),
+    });
+    const nextSelectionTouched = { principal: false, references: false, ticket: false };
+
+    setSelectionTouched(nextSelectionTouched);
+    setPrincipalGroupId(normalizedSelection.principalGroupId);
+    setPrincipalSearch(nextPrincipalSearch);
+    setReferenceGroupIds(normalizedSelection.referenceGroupIds);
+    setReferenceSearch(nextReferenceSearch);
+    setSelectedLabels(nextLabels);
+    setLabelDrafts(nextLabelDrafts);
+    setClassificationMetaDraft(nextClassificationMetaDraft);
+    setSelectedTicketId(nextTicketId);
+    setSelectedSeriesId("");
+    setTicketSearch(nextTicketSearch);
+    setTicketSearchResults(nextTicketSearchResults);
+
+    classificationDraftSnapshotRef.current = {
+      principalGroupId: normalizedSelection.principalGroupId,
+      principalSearch: nextPrincipalSearch,
+      referenceGroupIds: [...normalizedSelection.referenceGroupIds],
+      referenceSearch: nextReferenceSearch,
+      selectedLabels: [...nextLabels],
+      labelDrafts: structuredClone(nextLabelDrafts),
+      classificationMetaDraft: structuredClone(nextClassificationMetaDraft),
+      selectedTicketId: nextTicketId,
+      selectedSeriesId: "",
+      ticketStatusDraft,
+      ticketSearch: nextTicketSearch,
+      ticketSearchResults: nextTicketSearchResults,
+      createTicketTitle,
+      selectionTouched: nextSelectionTouched,
+    };
+  }, [
+    classificationMetaDraft,
+    createTicketTitle,
+    getEmailGroupRelations,
+    labelCatalogEntries,
+    ticketStatusDraft,
+  ]);
+
+  const syncClassificationCaseEmails = useCallback((nextCaseValue: IntermediateCase, options?: {
+    preferredSelectedEmailKey?: string;
+    preferredTargetEmailKeys?: string[];
+    rehydrateSelectedEmail?: boolean;
+  }) => {
+    const mappedEmails = nextCaseValue.emails.map((email) => mapIntermediateEmailToRelatedEmailEntry(email));
+    const mappedEmailKeys = new Set(mappedEmails.map((email) => makeEmailKey(email)).filter(Boolean));
+    const preferredSelectedEmailKey = normalizeComparableString(
+      options?.preferredSelectedEmailKey || selectedEmailKey || classificationAnchorEmailKey || nextCaseValue.anchorEmailKey
+    );
+    const nextSelectedEmail = (preferredSelectedEmailKey
+      ? mappedEmails.find((email) => makeEmailKey(email) === preferredSelectedEmailKey)
+      : null)
+      || mappedEmails.find((email) => makeEmailKey(email) === nextCaseValue.anchorEmailKey)
+      || mappedEmails[0]
+      || null;
+    const nextSelectedEmailKey = normalizeComparableString(makeEmailKey(nextSelectedEmail || {}) || nextCaseValue.anchorEmailKey);
+    const candidateTargetKeys = Array.isArray(options?.preferredTargetEmailKeys) && options?.preferredTargetEmailKeys.length
+      ? options.preferredTargetEmailKeys
+      : selectedTargetEmailKeys;
+    const nextTargetEmailKeys = Array.from(
+      new Set(
+        (candidateTargetKeys || [])
+          .map((key) => normalizeComparableString(key))
+          .filter((key) => key && mappedEmailKeys.has(key))
+      )
+    );
+    setIntermediateCaseBootstrap((current) => {
+      if (current.status !== "ready") return current;
+      return {
+        ...current,
+        caseValue: nextCaseValue,
+        emails: dedupeEmails(mappedEmails),
+      };
+    });
+    setRelatedEmails((current) => replaceEmailsByKey(current, mappedEmails));
+    setKnownEmails((current) => replaceEmailsByKey(current, mappedEmails));
+    setSelectedEmailKey(nextSelectedEmailKey);
+    setSelectedTargetEmailKeys(
+      nextTargetEmailKeys.length
+        ? nextTargetEmailKeys
+        : (nextSelectedEmailKey ? [nextSelectedEmailKey] : [])
+    );
+    if (options?.rehydrateSelectedEmail !== false) {
+      rehydrateClassificationEditorFromCaseEmail(nextSelectedEmail);
+    }
+  }, [classificationAnchorEmailKey, rehydrateClassificationEditorFromCaseEmail, selectedEmailKey, selectedTargetEmailKeys]);
+  useEffect(() => {
+    rehydrateClassificationEditorFromCaseEmailRef.current = rehydrateClassificationEditorFromCaseEmail;
+  }, [rehydrateClassificationEditorFromCaseEmail]);
 
   const canonicalGroupSelection = useMemo(() => {
     const principalGroupId = normalizeComparableString(selectedEmail?.groupId || selectedEmail?.classificationMeta?.principalGroupId);
@@ -2282,79 +2287,6 @@ function StudioInner() {
     () => formatGroupStatusLabel(principalGroup?.status || selectedManagedGroup?.status || ""),
     [principalGroup?.status, selectedManagedGroup?.status]
   );
-  const buildResolvedApplySelectionForTargets = useCallback(
-    (targetEmails: RelatedEmailEntry[]) => buildResolvedStudioApplySelection({
-      targetEmails,
-      principalGroupId: effectivePrincipalGroupId,
-      principalGroup,
-      referenceGroupIds: effectiveReferenceGroupIds,
-      referenceGroups,
-      selectedLabels,
-      inheritedLabels,
-      selectedLabelStates,
-      categorizedLabelNames: categorizableLabels,
-      selectedTicketId,
-      selectedSeriesId,
-      selectedTicket,
-      ticketStatusDraft,
-      classificationMetaDraft,
-      existingSelectedEmailGroupIds: selectedEmailGroups.map((group) => String(group.id || "").trim()).filter(Boolean),
-      existingSelectedEmailTicketIds: selectedEmailTicketIds,
-      existingSelectedEmailLabels: selectedEmailStoredLabels,
-      existingSelectedEmailStatus: selectedEmail?.status,
-    }),
-    [
-      categorizableLabels,
-      classificationMetaDraft,
-      effectivePrincipalGroupId,
-      effectiveReferenceGroupIds,
-      inheritedLabels,
-      principalGroup,
-      referenceGroups,
-      selectedEmail?.status,
-      selectedEmailGroups,
-      selectedEmailStoredLabels,
-      selectedEmailTicketIds,
-      selectedLabelStates,
-      selectedLabels,
-      selectedSeriesId,
-      selectedTicket,
-      selectedTicketId,
-      ticketStatusDraft,
-    ]
-  );
-  const resolvedApplySelection = useMemo(
-    () => buildResolvedApplySelectionForTargets(defaultApplyTargetEmails),
-    [buildResolvedApplySelectionForTargets, defaultApplyTargetEmails]
-  );
-  const canApplyClassification = useMemo(
-    () => resolvedApplySelection.hasAnyClassificationValue,
-    [resolvedApplySelection.hasAnyClassificationValue]
-  );
-  const hasPendingClassificationChanges = useMemo(() => {
-    const snapshot = classificationDraftSnapshotRef.current;
-    if (!snapshot) return false;
-    return snapshot.principalGroupId !== principalGroupId
-      || getComparableStringListSignature(snapshot.referenceGroupIds) !== getComparableStringListSignature(referenceGroupIds)
-      || getComparableStringListSignature(snapshot.selectedLabels) !== getComparableStringListSignature(selectedLabels)
-      || getComparableLabelDraftsSignature(snapshot.labelDrafts) !== getComparableLabelDraftsSignature(labelDrafts)
-      || getComparableClassificationMetaSignature(snapshot.classificationMetaDraft) !== getComparableClassificationMetaSignature(classificationMetaDraft)
-      || snapshot.selectedTicketId !== selectedTicketId
-      || snapshot.selectedSeriesId !== selectedSeriesId
-      || snapshot.ticketStatusDraft !== ticketStatusDraft
-      || snapshot.createTicketTitle !== createTicketTitle;
-  }, [
-    classificationMetaDraft,
-    createTicketTitle,
-    labelDrafts,
-    principalGroupId,
-    referenceGroupIds,
-    selectedLabels,
-    selectedSeriesId,
-    selectedTicketId,
-    ticketStatusDraft,
-  ]);
-  const canApplyFromClassificationEditor = hasPendingClassificationChanges || canApplyClassification;
   const classificationEditorActive = section === "classification" && classificationFocus !== "summary";
   const auxiliaryEditorActive = section === "labels" || section === "filters" || section === "groups";
   const classificationCardTitle = useMemo(() => {
@@ -2607,6 +2539,79 @@ function StudioInner() {
     }
     return "--";
   }, [relatedTickets, selectedSeriesId, selectedTicket?.code, ticketSeries]);
+  const buildResolvedApplySelectionForTargets = useCallback(
+    (targetEmails: RelatedEmailEntry[]) => buildResolvedStudioApplySelection({
+      targetEmails,
+      principalGroupId: effectivePrincipalGroupId,
+      principalGroup,
+      referenceGroupIds: effectiveReferenceGroupIds,
+      referenceGroups,
+      selectedLabels,
+      inheritedLabels,
+      selectedLabelStates,
+      categorizedLabelNames: categorizableLabels,
+      selectedTicketId,
+      selectedSeriesId,
+      selectedTicket,
+      ticketStatusDraft,
+      classificationMetaDraft,
+      existingSelectedEmailGroupIds: selectedEmailGroups.map((group) => String(group.id || "").trim()).filter(Boolean),
+      existingSelectedEmailTicketIds: selectedEmailTicketIds,
+      existingSelectedEmailLabels: selectedEmailStoredLabels,
+      existingSelectedEmailStatus: selectedEmail?.status,
+    }),
+    [
+      categorizableLabels,
+      classificationMetaDraft,
+      effectivePrincipalGroupId,
+      effectiveReferenceGroupIds,
+      inheritedLabels,
+      principalGroup,
+      referenceGroups,
+      selectedEmail?.status,
+      selectedEmailGroups,
+      selectedEmailStoredLabels,
+      selectedEmailTicketIds,
+      selectedLabelStates,
+      selectedLabels,
+      selectedSeriesId,
+      selectedTicket,
+      selectedTicketId,
+      ticketStatusDraft,
+    ]
+  );
+  const resolvedApplySelection = useMemo(
+    () => buildResolvedApplySelectionForTargets(defaultApplyTargetEmails),
+    [buildResolvedApplySelectionForTargets, defaultApplyTargetEmails]
+  );
+  const canApplyClassification = useMemo(
+    () => resolvedApplySelection.hasAnyClassificationValue,
+    [resolvedApplySelection.hasAnyClassificationValue]
+  );
+  const hasPendingClassificationChanges = useMemo(() => {
+    const snapshot = classificationDraftSnapshotRef.current;
+    if (!snapshot) return false;
+    return snapshot.principalGroupId !== principalGroupId
+      || getComparableStringListSignature(snapshot.referenceGroupIds) !== getComparableStringListSignature(referenceGroupIds)
+      || getComparableStringListSignature(snapshot.selectedLabels) !== getComparableStringListSignature(selectedLabels)
+      || getComparableLabelDraftsSignature(snapshot.labelDrafts) !== getComparableLabelDraftsSignature(labelDrafts)
+      || getComparableClassificationMetaSignature(snapshot.classificationMetaDraft) !== getComparableClassificationMetaSignature(classificationMetaDraft)
+      || snapshot.selectedTicketId !== selectedTicketId
+      || snapshot.selectedSeriesId !== selectedSeriesId
+      || snapshot.ticketStatusDraft !== ticketStatusDraft
+      || snapshot.createTicketTitle !== createTicketTitle;
+  }, [
+    classificationMetaDraft,
+    createTicketTitle,
+    labelDrafts,
+    principalGroupId,
+    referenceGroupIds,
+    selectedLabels,
+    selectedSeriesId,
+    selectedTicketId,
+    ticketStatusDraft,
+  ]);
+  const canApplyFromClassificationEditor = hasPendingClassificationChanges || canApplyClassification;
 
   useEffect(() => {
     setManagedGroupDescription(String(selectedManagedGroup?.description || "").trim());
@@ -2685,7 +2690,7 @@ function StudioInner() {
   useEffect(() => {
     const currentSelectedEmail = selectedEmailRef.current;
     if (currentSelectedEmail) {
-      rehydrateClassificationEditorFromCaseEmail(currentSelectedEmail);
+      rehydrateClassificationEditorFromCaseEmailRef.current(currentSelectedEmail);
       return;
     }
     setSelectionTouched({ principal: false, references: false, ticket: false });
@@ -2700,7 +2705,7 @@ function StudioInner() {
     setSelectedSeriesId("");
     setTicketSearch("");
     setTicketSearchResults([]);
-  }, [rehydrateClassificationEditorFromCaseEmail, selectedEmailKey]);
+  }, [selectedEmailKey]);
 
   useEffect(() => {
     if (!labelCatalogReady) return;

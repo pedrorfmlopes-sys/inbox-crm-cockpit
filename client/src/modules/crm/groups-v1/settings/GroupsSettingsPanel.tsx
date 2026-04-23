@@ -68,20 +68,13 @@ const FREQUENCY_LABELS: Record<GroupsSettingsFrequency, string> = {
 };
 
 const MIGRATION_MODE_LABELS: Record<GroupsSettingsMigrationMode, string> = {
-  always_ask: "Perguntar sempre",
+  always_ask: "Perguntar sempre (indisponivel nesta fase)",
   move: "Mover quando confirmado",
   copy: "Copiar quando confirmado",
 };
 
 function buildDraft(value: GroupsTabSettings | null | undefined): GroupsTabSettings {
   return normalizeGroupsTabSettings(value || null);
-}
-
-function promptForPath(label: string, currentValue: string): string | null {
-  if (typeof window === "undefined" || typeof window.prompt !== "function") return null;
-  const nextValue = window.prompt(`Defina ${label.toLowerCase()}`, currentValue || "");
-  if (nextValue == null) return null;
-  return nextValue.trim();
 }
 
 function SectionButton({
@@ -219,6 +212,34 @@ function ActionButton({
   );
 }
 
+function ActionRow({
+  label,
+  actionLabel,
+  tone = "neutral",
+  disabled = false,
+  hint,
+  onClick,
+}: {
+  label: string;
+  actionLabel: string;
+  tone?: "neutral" | "danger";
+  disabled?: boolean;
+  hint?: string;
+  onClick?: () => void;
+}) {
+  return (
+    <div style={disabled ? S.rowDisabled : S.row}>
+      <div style={S.rowLabelWrap}>
+        <span style={S.rowLabel}>{label}</span>
+        {hint ? <SettingHint text={hint} /> : null}
+      </div>
+      <div style={S.pathActions}>
+        <ActionButton label={actionLabel} tone={tone} disabled={disabled} onClick={onClick} />
+      </div>
+    </div>
+  );
+}
+
 function PathFieldRow({
   label,
   hint,
@@ -228,6 +249,8 @@ function PathFieldRow({
   showOpen = false,
   disabled = false,
   onChoose,
+  onChangeText,
+  placeholder,
 }: {
   label: string;
   hint?: string;
@@ -237,8 +260,11 @@ function PathFieldRow({
   showOpen?: boolean;
   disabled?: boolean;
   onChoose?: () => void;
+  onChangeText?: (next: string) => void;
+  placeholder?: string;
 }) {
   const displayValue = value || "Nao definido nesta fase";
+  const isEditable = typeof onChangeText === "function";
   return (
     <div style={disabled ? S.rowDisabled : S.row}>
       <div style={S.rowLabelWrap}>
@@ -246,9 +272,19 @@ function PathFieldRow({
         {hint ? <SettingHint text={hint} /> : null}
       </div>
       <div style={S.pathControl}>
-        <div style={S.pathValue} title={displayValue}>
-          {displayValue}
-        </div>
+        {isEditable ? (
+          <input
+            style={S.input}
+            value={value}
+            placeholder={placeholder}
+            onChange={(event) => onChangeText?.(event.target.value)}
+            disabled={disabled}
+          />
+        ) : (
+          <div style={S.pathValue} title={displayValue}>
+            {displayValue}
+          </div>
+        )}
         <div style={S.pathActions}>
           <ActionButton label={chooseLabel} onClick={onChoose} disabled={disabled} />
           {showValidate ? <ActionButton label="Validar" disabled /> : null}
@@ -329,11 +365,17 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
       if (!sourceNamespace || !targetNamespace) {
         throw new Error("Define namespaces de origem e destino antes de correr a migracao real do intermédio.");
       }
+      if (draft.migrationMode === "always_ask") {
+        throw new Error("Escolhe primeiro um modo executavel de migracao: copiar ou mover.");
+      }
       const mode = draft.migrationMode === "move" ? "move" : "copy";
       const result = await migrateIntermediateCaseNamespace({
         sourceNamespace,
         targetNamespace,
         mode,
+        allowMoveExistingData: draft.allowMoveExistingData,
+        mergeExistingData: draft.mergeExistingData,
+        strictMigrationSafety: draft.strictMigrationSafety,
       });
       const nextDraft = normalizeGroupsTabSettings({
         ...draft,
@@ -401,14 +443,12 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
             label="Namespace persistente"
             hint="Chave logica usada para namespacing do IndexedDB local. Nao e uma pasta real nem um path web."
             value={draft.baseFolderPath}
-            chooseLabel="Definir namespace"
+            chooseLabel="Limpar"
+            placeholder="ex.: grupos/cliente-acme"
             showValidate={false}
             showOpen={false}
-            onChoose={() => {
-              const nextPath = promptForPath("o namespace do storage intermedio", draft.baseFolderPath);
-              if (nextPath == null) return;
-              applyDraftPatch({ baseFolderPath: nextPath });
-            }}
+            onChangeText={(nextValue) => applyDraftPatch({ baseFolderPath: nextValue })}
+            onChoose={() => applyDraftPatch({ baseFolderPath: "" })}
           />
           <FieldRow label="Estado" hint="Resumo do modo intermedio realmente executavel.">
             <div style={S.inlineValue}>{draft.locationStatus}</div>
@@ -615,14 +655,12 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
           </InfoBlock>
           <PathFieldRow
             label="Destino guardado"
-            hint="Namespace alvo para copiar/mover os casos intermédios persistidos."
+            hint="Namespace alvo para copiar/mover os casos intermedios persistidos."
             value={draft.migrationTarget}
-            chooseLabel="Definir destino"
-            onChoose={() => {
-              const nextPath = promptForPath("o namespace de destino da migracao", draft.migrationTarget);
-              if (nextPath == null) return;
-              applyDraftPatch({ migrationTarget: nextPath });
-            }}
+            chooseLabel="Limpar"
+            placeholder="ex.: grupos/cliente-acme-migrado"
+            onChangeText={(nextValue) => applyDraftPatch({ migrationTarget: nextValue })}
+            onChoose={() => applyDraftPatch({ migrationTarget: "" })}
           />
           <FieldRow label="Modo guardado">
             <select
@@ -631,7 +669,7 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
               onChange={(event) => applyDraftPatch({ migrationMode: event.target.value as GroupsSettingsMigrationMode })}
             >
               {Object.entries(MIGRATION_MODE_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
+                <option key={value} value={value} disabled={value === "always_ask"}>
                   {label}
                 </option>
               ))}
@@ -642,9 +680,12 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
             checked={draft.allowMoveExistingData}
             onChange={(next) => applyDraftPatch({ allowMoveExistingData: next })}
           />
-          <FieldRow label="Seguranca estrita">
-            <div style={S.inlineValue}>{readOnlyBoolean(draft.strictMigrationSafety)}</div>
-          </FieldRow>
+          <ToggleRow
+            label="Seguranca estrita"
+            hint="Bloqueia a migracao quando o destino ja contem cases com o mesmo identificador."
+            checked={draft.strictMigrationSafety}
+            onChange={(next) => applyDraftPatch({ strictMigrationSafety: next })}
+          />
           <ToggleRow
             label="Fundir dados existentes"
             checked={draft.mergeExistingData}
@@ -653,7 +694,7 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
           <div style={S.pathActions}>
             <ActionButton
               label={isSaving ? "A migrar" : "Migrar agora"}
-              disabled={isSaving || !draft.baseFolderPath || !draft.migrationTarget}
+              disabled={isSaving || !draft.baseFolderPath || !draft.migrationTarget || draft.migrationMode === "always_ask"}
               onClick={() => void handleMigrationNow()}
             />
           </div>

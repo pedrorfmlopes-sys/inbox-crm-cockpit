@@ -1,5 +1,69 @@
 # HANDOFF
 
+## Grupos v1: ligacao final de `settings.groups` ao runtime e validacao deterministica profunda fechadas (Abril 2026)
+- **Ligacoes finais fechadas nesta ronda**:
+  - `client/src/settings.ts` passa a devolver aliases legacy de Grupos apenas como **espelho derivado em memoria**, sem os voltar a persistir como fonte canonica
+  - `settings.groups.storage.*`, `settings.groups.tab.*`, `settings.groups.labels.*`, `settings.groups.tickets.*` e `settings.groups.outlookCategories.*` ficam com matriz explicita de consumo em `client/src/modules/crm/groups-v1/testing/settingsMatrix.ts`
+  - `GroupsSettingsPanel.tsx` deixa de ter shells enganadoras para migracao: `strictMigrationSafety` passa a mandar de verdade, `always_ask` fica explicitamente indisponivel e a edicao de namespace/destino fica inline e host-safe
+  - `GroupClassificationStudioApp.tsx` fecha o bootstrap do studio com ordem de inicializacao estavel para `selectedEmail`, `getEmailGroupRelations`, `rehydrateClassificationEditorFromCaseEmail(...)` e `buildResolvedApplySelectionForTargets(...)`
+- **Infraestrutura de prova criada nesta ronda**:
+  - `client/src/modules/crm/groups-v1/testing/runtimeValidation.tsx`
+  - `client/src/modules/crm/groups-v1/testing/validationPage.tsx`
+  - `client/src/modules/crm/groups-v1/testing/settingsMatrix.ts`
+  - `client/groups-v1-validation.html`
+  - `scripts/run-groups-v1-validation.mjs`
+- **O que a validacao deterministica cobre internamente (100% do miolo testavel)**:
+  - `Preparar`
+    - email novo sem grupo
+    - historico relacionado do servidor
+    - mesmo assunto sem relacao forte
+    - grupo existente preservado
+    - multiplos emails relacionados
+    - manifesto/workset com filtros, selecao e anexos
+  - `Classificar`
+    - grupo principal
+    - grupo principal + referencias
+    - etiquetas + estados
+    - ticket de Grupos
+    - scope multiplo por email alvo
+    - anexos por email dono (`documentState`, `isHidden`)
+    - reabertura e reidratacao do caso
+    - reaplicacao sem duplicar
+    - degradacao controlada sem caso
+  - storage
+    - intermÃ©dio `local_indexeddb`
+    - intermÃ©dio `disabled`
+    - final `cloud`
+    - final `local_device`
+    - final `chosen_folder`
+    - final `hybrid`
+    - bloqueio tecnico honesto para URL web / `document_library`
+  - manutencao
+    - migracao copy + gates de seguranca
+    - limpeza por retention + protecao de mixed cases
+  - influencia real dos settings
+    - runtime de storage
+    - politica de anexos
+    - plano logico de Outlook categories
+- **Evidencia gerada**:
+  - relatorio JSON: `output/playwright/groups-v1-validation-report.json`
+  - screenshot da matriz: `output/playwright/groups-v1-validation-page.png`
+  - screenshot de smoke do studio: `output/playwright/groups-v1-classification-smoke.png`
+- **Resultado final desta ronda**:
+  - browser validation: `28/28` cenarios a passar
+  - smoke real de `?view=group-classification-studio`: sem `ReferenceError`, sem `Maximum update depth exceeded`, sem erro de consola
+- **Fronteira que continua dependente do Outlook real**:
+  - leitura real do item aberto no Outlook
+  - escrita real no corpo / reply / forward do Outlook
+  - `categories.addAsync` / flush real de categorias Outlook no host Office.js
+  - qualquer comportamento estritamente dependente do mailbox/host Office.js em runtime real
+- **Fora do scope mantido**:
+  - sem `Explorar`
+  - sem `Gestor do Grupo`
+  - sem feature nova
+  - sem redesign
+  - sem usar Outlook como desculpa para nao testar o miolo
+
 ## Grupos v1: fase final de centralizacao dos settings fechada em `settings.groups` (Abril 2026)
 - **Consumidores legacy migrados nesta ronda**:
   - `client/src/outlookCategories.ts`

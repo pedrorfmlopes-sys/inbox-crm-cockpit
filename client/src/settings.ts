@@ -324,6 +324,35 @@ function compactSettingsForStorage(settings: CockpitSettingsV1): CockpitSettings
   return compact;
 }
 
+function withDerivedGroupsLegacyAliases(settings: CockpitSettingsV1): CockpitSettingsV1 {
+  const groups = normalizeGroupsModuleSettings(settings.groups || null, null, DEFAULT_GROUPS_SETTINGS);
+  const aliases = buildGroupsLegacyAliases(groups);
+  return {
+    ...settings,
+    groups,
+    groupStorage: {
+      ...(aliases.groupStorage || groups.storage),
+    },
+    groupsTabSettings: {
+      ...(aliases.groupsTabSettings || groups.tab),
+    },
+    groupLabelsManagerEnabled: aliases.groupLabelsManagerEnabled ?? groups.labels.managerEnabled,
+    groupLabelCatalog: Array.isArray(aliases.groupLabelCatalog)
+      ? [...aliases.groupLabelCatalog]
+      : [...groups.labels.catalog],
+    groupFavoriteIds: Array.isArray(aliases.groupFavoriteIds)
+      ? [...aliases.groupFavoriteIds]
+      : [...groups.labels.favoriteIds],
+    groupTicketsEnabled: aliases.groupTicketsEnabled ?? groups.tickets.enabled,
+    groupTicketUi: {
+      ...(aliases.groupTicketUi || groups.tickets.ui),
+    },
+    groupOutlookCategories: {
+      ...(aliases.groupOutlookCategories || groups.outlookCategories),
+    },
+  };
+}
+
 function serializeSettings(settings: CockpitSettingsV1): string {
   return JSON.stringify(compactSettingsForStorage(settings));
 }
@@ -1028,7 +1057,7 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
 export function getCachedSettingsSnapshot(): CockpitSettingsV1 {
   const raw = globalThis.localStorage?.getItem(KEY_SETTINGS);
   const parsed = safeJsonParse<Partial<CockpitSettingsV1>>(raw);
-  const merged = mergeSettings(DEFAULT_SETTINGS, parsed);
+  const merged = withDerivedGroupsLegacyAliases(mergeSettings(DEFAULT_SETTINGS, parsed));
   if (raw) {
     const compactJson = serializeSettings(merged);
     if (compactJson !== raw) writeLocalSettingsCache(compactJson);
@@ -1043,8 +1072,8 @@ export async function getSettings(): Promise<CockpitSettingsV1> {
   if (rs) {
     const raw = rs.get(KEY_SETTINGS);
     const parsed = safeJsonParse<Partial<CockpitSettingsV1>>(raw);
-    const merged = mergeSettings(getCachedSettingsSnapshot(), parsed);
-    const migrated = compactSettingsForStorage(applyLegacySettingsMigrations(merged, true));
+    const merged = withDerivedGroupsLegacyAliases(mergeSettings(getCachedSettingsSnapshot(), parsed));
+    const migrated = withDerivedGroupsLegacyAliases(compactSettingsForStorage(applyLegacySettingsMigrations(merged, true)));
     if (serializeSettings(migrated) !== serializeSettings(merged)) {
       const json = serializeSettings(migrated);
       try {
@@ -1059,8 +1088,8 @@ export async function getSettings(): Promise<CockpitSettingsV1> {
   }
 
   // fallback (dev / non-office)
-  const merged = getCachedSettingsSnapshot();
-  const migrated = compactSettingsForStorage(applyLegacySettingsMigrations(merged, true));
+  const merged = withDerivedGroupsLegacyAliases(getCachedSettingsSnapshot());
+  const migrated = withDerivedGroupsLegacyAliases(compactSettingsForStorage(applyLegacySettingsMigrations(merged, true)));
   if (serializeSettings(migrated) !== serializeSettings(merged)) {
     writeLocalSettingsRequired(serializeSettings(migrated));
   }
@@ -1070,7 +1099,7 @@ export async function getSettings(): Promise<CockpitSettingsV1> {
 export async function saveSettings(patch: Partial<CockpitSettingsV1>): Promise<CockpitSettingsV1> {
   await officeReady();
   const current = await getSettings();
-  const next = mergeSettings(current, patch);
+  const next = withDerivedGroupsLegacyAliases(mergeSettings(current, patch));
   const json = serializeSettings(next);
 
   const rs = getRoamingSettings();
@@ -1096,12 +1125,14 @@ export async function resetSettings(): Promise<CockpitSettingsV1> {
     rs.set(KEY_SETTINGS, json);
     await saveRoamingSettings(rs);
     writeLocalSettingsCache(json);
-    emitSettingsUpdated(next);
-    return next;
+    const runtimeNext = withDerivedGroupsLegacyAliases(next);
+    emitSettingsUpdated(runtimeNext);
+    return runtimeNext;
   }
   writeLocalSettingsRequired(json);
-  emitSettingsUpdated(next);
-  return next;
+  const runtimeNext = withDerivedGroupsLegacyAliases(next);
+  emitSettingsUpdated(runtimeNext);
+  return runtimeNext;
 }
 
 // ---------------------------
