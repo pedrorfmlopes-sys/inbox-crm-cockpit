@@ -546,21 +546,37 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const resolvedStorageAvailability = intermediateCaseStorage.availability;
   const groupsStorageEnabled = resolvedStorageAvailability !== "disabled";
   const groupsStorageReady = resolvedStorageAvailability === "ready";
-  const groupsStorageMissingLocation = resolvedStorageAvailability === "missing_location";
+  const groupsStorageTechnicalFallback = resolvedStorageAvailability === "fallback_memory";
   const groupsStorageValidationBlocked = storageValidation ? storageValidation.blocked && !storageValidation.available : false;
   const groupsAccessLimited = !groupsTabEnabled || resolvedStorageAvailability === "disabled" || groupsStorageValidationBlocked;
-  const storageModeLabel = groupsStorageEnabled ? "Storage local do add-in (IndexedDB)" : "Armazenamento desativado";
-  const locationPathLabel = String(groupsSettings.baseFolderPath || "").trim() || "Sem namespace definido";
+  const storageModeLabel = !groupsStorageEnabled
+    ? "Armazenamento desativado"
+    : intermediateCaseStorage.mode === "filesystem"
+      ? "Pasta local definida"
+      : intermediateCaseStorage.mode === "indexeddb"
+        ? "Storage local do add-in (IndexedDB)"
+        : "Fallback técnico em memória";
+  const locationPathLabel = intermediateCaseStorage.mode === "filesystem"
+    ? String(groupsSettings.baseFolderPath || "").trim() || "Sem pasta definida"
+    : intermediateCaseStorage.mode === "indexeddb"
+      ? "Storage local do add-in"
+      : "Memória transitória";
   const resolvedStorageLabel = groupsStorageReady
-    ? "Pronto"
-    : groupsStorageMissingLocation
-      ? "Sem namespace persistente"
+    ? intermediateCaseStorage.mode === "filesystem"
+      ? "Pasta local pronta"
+      : "Add-in local pronto"
+    : groupsStorageTechnicalFallback
+      ? "Fallback técnico"
       : "Desativado";
-  const resolvedStorageBadgeStyle = groupsStorageReady ? S.localBadge : S.warningBadge;
+  const resolvedStorageBadgeStyle = groupsStorageReady
+    ? S.localBadge
+    : groupsStorageTechnicalFallback
+      ? S.warningBadge
+      : S.warningBadge;
   const resolvedStorageHint = groupsStorageReady
     ? (storageValidation?.reason || intermediateCaseStorage.reason)
-    : groupsStorageMissingLocation
-      ? "Sem namespace configurado para persistencia local. A aba continua em modo transitorio em memoria nesta fase."
+    : groupsStorageTechnicalFallback
+      ? "Sem pasta intermédia e sem IndexedDB disponível. A aba está em memória apenas como fallback técnico."
       : intermediateCaseStorage.reason;
   const settingsDiagnosticHint = groupsStorageReady
     ? intermediateCaseStorage.reason
@@ -1910,8 +1926,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
       setMsg("Ativa o armazenamento intermedio nos Settings para abrir o fluxo de Classificar.");
       return;
     }
-    if (groupsStorageMissingLocation) {
-      setMsg("Sem namespace configurado para persistencia local em IndexedDB. O trabalho atual segue apenas em memoria nesta fase.");
+    if (groupsStorageTechnicalFallback) {
+      setMsg("Nem pasta intermédia nem storage local do add-in estão disponíveis; o trabalho atual segue apenas em memória como fallback técnico.");
     }
     flushSession("before_classify", {
       emailKey: currentEmailKey,
@@ -2025,8 +2041,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
     });
     setMsg(
       saved
-        ? groupsStorageMissingLocation
-          ? "Sessao de Preparar guardada apenas em memoria nesta configuracao."
+        ? groupsStorageTechnicalFallback
+          ? "Sessao de Preparar guardada apenas em memória como fallback técnico."
           : "Sessao de Preparar guardada localmente."
         : "Nao foi possivel guardar a sessao local."
     );
@@ -2122,14 +2138,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
           <span style={S.currentGroupLine}>{groupsSettings.locationStatus}</span>
         </div>
         <div style={S.settingsStatusRow}>
-          <span style={S.settingsStatusLabel}>Namespace</span>
+          <span style={S.settingsStatusLabel}>Local intermédio</span>
           <span style={S.currentGroupLine}>{locationPathLabel}</span>
         </div>
       </div>
       <div style={S.settingsStatusHint}>{settingsDiagnosticHint}</div>
     </div>
   );
-  const transientStoragePanel = groupsStorageMissingLocation ? (
+  const transientStoragePanel = groupsStorageTechnicalFallback ? (
     <div style={S.limitedStateWrap}>
       <PanelState
         tone="info"

@@ -80,15 +80,15 @@ export const GROUPS_SETTINGS_MATRIX: GroupsSettingsMatrixEntry[] = [
   {
     setting: "settings.groups.tab.storageMode",
     module: "groups-v1/storage/resolveIntermediateCaseStorage.ts",
-    expectedEffect: "Liga IndexedDB local ou desliga o intermédio.",
-    testId: "prepare-storage-disabled",
+    expectedEffect: "Liga o intermédio e, sem pasta definida, ativa o fallback principal no storage local do add-in; ou desliga o intermédio.",
+    testId: "prepare-storage-addin-local-fallback",
     linkage: "runtime",
   },
   {
     setting: "settings.groups.tab.baseFolderPath",
     module: "groups-v1/storage/resolveIntermediateCaseStorage.ts + resolveClassificationIntermediateCase.ts",
-    expectedEffect: "Define o namespace do IndexedDB usado por Preparar/Classificar/reabertura.",
-    testId: "classification-reopen-and-rehydrate",
+    expectedEffect: "Define a pasta local intermédia principal usada por Preparar/Classificar/reabertura desde o arranque do caso.",
+    testId: "prepare-storage-folder-primary",
     linkage: "runtime",
   },
   {
@@ -101,7 +101,7 @@ export const GROUPS_SETTINGS_MATRIX: GroupsSettingsMatrixEntry[] = [
   {
     setting: "settings.groups.tab.migrationTarget / migrationMode / allowMoveExistingData / strictMigrationSafety / mergeExistingData",
     module: "groups-v1/storage/intermediateCaseMaintenance.ts",
-    expectedEffect: "Controla a migracao real entre namespaces, incluindo gates de seguranca.",
+    expectedEffect: "Controla a migracao real entre localizacoes intermédias, incluindo gates de seguranca.",
     testId: "migration-copy-and-safety",
     linkage: "runtime",
   },
@@ -115,7 +115,7 @@ export const GROUPS_SETTINGS_MATRIX: GroupsSettingsMatrixEntry[] = [
   {
     setting: "settings.groups.tab.validateLocationOnOpen / blockTabIfUnavailable / warnIfUnavailable / autoRetryValidation",
     module: "modules/crm/GroupsPrepareCockpit.tsx + groups-v1/storage/resolveClassificationIntermediateCase.ts + groups-v1/settings/groupsTabRuntime.ts",
-    expectedEffect: "Controla validacao real do namespace, bloqueio da aba, aviso funcional e tentativa adicional de revalidacao.",
+    expectedEffect: "Controla validacao real da pasta intermédia ou do storage local do add-in, bloqueio da aba, aviso funcional e tentativa adicional de revalidacao.",
     testId: "settings-tab-storage-validation",
     linkage: "runtime",
   },

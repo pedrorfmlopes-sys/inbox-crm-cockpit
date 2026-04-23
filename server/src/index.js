@@ -49,6 +49,14 @@ import {
   saveGroupWorksetManifest,
   validateGroupStorageLocation,
 } from "./groupWorksetStore.js";
+import {
+  deleteIntermediateCaseTree,
+  listIntermediateCasePaths,
+  readIntermediateCaseBinaryFile,
+  readIntermediateCaseTextFile,
+  writeIntermediateCaseBinaryFile,
+  writeIntermediateCaseTextFile,
+} from "./groupIntermediateCaseStore.js";
 import { extractTextFromPdfBuffer } from "./ai/pdfHelper.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
 import { createLearningRouter } from "./routes/learningRoutes.js";
@@ -2025,6 +2033,70 @@ app.post("/api/links/groups/storage/validate", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_storage_validate_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/intermediate-storage/read-text", async (req, res) => {
+  try {
+    const content = readIntermediateCaseTextFile(req.body || {});
+    return res.json({ ok: true, content });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_intermediate_read_text_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/intermediate-storage/write-text", async (req, res) => {
+  try {
+    writeIntermediateCaseTextFile(req.body || {});
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_intermediate_write_text_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/intermediate-storage/read-binary", async (req, res) => {
+  try {
+    const payload = readIntermediateCaseBinaryFile(req.body || {});
+    return res.json({
+      ok: true,
+      contentBase64: payload?.contentBase64 || null,
+      contentType: payload?.contentType || null,
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_intermediate_read_binary_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/intermediate-storage/write-binary", async (req, res) => {
+  try {
+    writeIntermediateCaseBinaryFile(req.body || {});
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_intermediate_write_binary_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/intermediate-storage/delete-tree", async (req, res) => {
+  try {
+    const deleted = deleteIntermediateCaseTree(req.body || {});
+    return res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_intermediate_delete_tree_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/intermediate-storage/list-paths", async (req, res) => {
+  try {
+    const paths = listIntermediateCasePaths(req.body || {});
+    return res.json({ ok: true, paths });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_intermediate_list_paths_failed", details: String(e?.message || e) });
   }
 });
 

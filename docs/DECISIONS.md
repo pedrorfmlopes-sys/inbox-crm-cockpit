@@ -97,3 +97,17 @@
 
 | Grupos v1: o handoff `Preparar -> Classificar` passa a usar o `IntermediateCase` como fonte principal | Ativa | O seed legacy em `localStorage` era fragil como verdade principal e deixava `Classificar` dependente de reconstrucao parcial da vista | `Preparar` persiste o `IntermediateCase` antes de abrir `Classificar` e envia `caseId` + `anchorEmailKey`; `Classificar` tenta `readCase(caseId)` / `findCaseByEmailKey(anchorEmailKey)` antes de cair para `seedKey` / `prepareSeedKey`, que ficam apenas como ponte temporaria | Rever quando o fallback legacy puder ser removido sem partir cenarios antigos |
 | Grupos v1: `settings.groups` e a unica fonte de verdade do modulo | Ativa | A centralizacao final precisava de impedir que storage, labels, tickets e Outlook categories continuassem a ler aliases legacy espalhados | O runtime de Grupos e os consumidores partilhados estritamente necessarios passam a ler apenas `settings.groups.*`; aliases top-level legacy em `client/src/settings.ts` ficam apenas como compatibilidade derivada, sem mandar no runtime | Rever quando os aliases de compatibilidade puderem ser removidos por completo sem quebrar migracao de settings antigos |
+# DECISIONS
+
+## Grupos v1: armazenamento intermédio passa a obedecer a precedencia fixa `pasta local -> add-in local -> memoria tecnica` (2026-04-23)
+- `settings.groups.tab.baseFolderPath` deixa de significar namespace lógico de IndexedDB e passa a significar **pasta local intermédia real**
+- quando `baseFolderPath` está definido:
+  - o `IntermediateCase` grava logo nessa pasta
+  - essa pasta é a fonte principal de reabertura do caso
+  - IndexedDB e memória deixam de ser o storage intermédio principal
+- quando `baseFolderPath` não está definido:
+  - o fallback principal passa a ser o storage local do add-in em IndexedDB
+- memória só é aceitável como:
+  - estado transitório de interface
+  - fallback técnico temporário quando nem pasta nem IndexedDB estão disponíveis
+- a gravação final continua a obedecer a `settings.groups.storage`; o intermédio é apenas a ponte local do caso

@@ -1,5 +1,30 @@
 # HANDOFF
 
+## Grupos v1: armazenamento intermédio fica fechado com precedencia `pasta local -> add-in local -> memoria tecnica` (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - `client/src/modules/crm/groups-v1/storage/resolveIntermediateCaseStorage.ts` deixa de tratar `baseFolderPath` como namespace de IndexedDB
+  - com `settings.groups.tab.baseFolderPath` definido, o `IntermediateCase` passa a gravar logo numa pasta local real via bridge servidor/filesystem
+  - sem pasta definida, o fallback principal passa a ser o storage local do add-in em IndexedDB
+  - memoria fica apenas como fallback tecnico quando o runtime nao tem nem pasta nem IndexedDB disponiveis
+- **Runtime alinhado**:
+  - `GroupsPrepareCockpit.tsx` passa a mostrar o modo intermédio real (`Pasta local definida`, `Storage local do add-in`, `Fallback tecnico em memoria`)
+  - `resolveClassificationIntermediateCase.ts` reabre pelo mesmo storage resolvido, respeitando a mesma precedencia
+  - `groupsTabRuntime.ts` passa a tratar `fallback_memory` como indisponibilidade real para avisos/bloqueio/retry
+- **Infraestrutura nova desta ronda**:
+  - `client/src/modules/crm/groups-v1/storage/intermediateCaseServerAdapter.ts`
+  - `server/src/groupIntermediateCaseStore.js`
+  - novas rotas `/api/links/groups/intermediate-storage/*` em `server/src/index.js`
+- **Manutencao e settings alinhados**:
+  - `GroupsSettingsPanel.tsx` passa a descrever `baseFolderPath` como pasta local intermédia real
+  - migracao/limpeza/reconstrucao deixam de exigir artificialmente pasta definida quando o fallback atual e o add-in local
+- **Prova adicionada ao harness**:
+  - cenarios `prepare-storage-folder-primary`, `prepare-storage-addin-local-fallback`, `prepare-storage-technical-memory-fallback` e `classification-folder-backed-handoff`
+  - `scripts/run-groups-v1-validation.mjs` passa a verificar leitura/escrita/listagem/apagamento do storage intermédio file-backed no servidor
+- **Classificacao objetiva apos esta ronda**:
+  - com pasta definida: o intermédio grava logo na pasta local e reabre daí
+  - sem pasta definida: o intermédio usa o add-in local
+  - memoria deixa de ser apresentada como destino intermédio preferencial
+
 ## Grupos v1: limpeza final da compatibilidade legacy fecha a centralizacao sem deixar aliases ativos no runtime (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - `settings.groups` passa a ser a unica configuracao de Grupos exposta pelo runtime; `getSettings()` deixa de devolver aliases top-level como `groupStorage`, `groupsTabSettings`, `groupLabelCatalog` e restantes nomes legacy

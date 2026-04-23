@@ -37,8 +37,7 @@ import {
   migrateIntermediateCaseNamespace,
 } from "../storage/intermediateCaseMaintenance";
 import { hydrateIntermediateCaseEmailsToRelatedEntries } from "../storage/intermediateCaseAdapters";
-import { createIndexedDbIntermediateCaseStorageAdapter, INTERMEDIATE_CASE_DB_NAME } from "../storage/intermediateCaseIndexedDbAdapter";
-import { createIntermediateCaseRepository } from "../storage/intermediateCaseRepository";
+import { INTERMEDIATE_CASE_DB_NAME } from "../storage/intermediateCaseIndexedDbAdapter";
 import { buildPrepareIntermediateCaseFromSources } from "../storage/prepareIntermediateCaseResolution";
 import {
   resolveClassificationIntermediateCase,
@@ -262,6 +261,28 @@ async function resetBrowserPersistence(): Promise<void> {
   });
 }
 
+async function withIndexedDbAvailabilityOverride<T>(
+  nextValue: IDBFactory | undefined,
+  run: () => Promise<T>
+): Promise<T> {
+  const ownDescriptor = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  Object.defineProperty(globalThis, "indexedDB", {
+    configurable: true,
+    enumerable: ownDescriptor?.enumerable ?? true,
+    writable: true,
+    value: nextValue,
+  });
+  try {
+    return await run();
+  } finally {
+    if (ownDescriptor) {
+      Object.defineProperty(globalThis, "indexedDB", ownDescriptor);
+    } else {
+      delete (globalThis as Record<string, unknown>).indexedDB;
+    }
+  }
+}
+
 async function renderSettingsPanelScenario(): Promise<void> {
   const originalPrompt = window.prompt;
   const originalAlert = window.alert;
@@ -298,14 +319,14 @@ async function renderSettingsPanelScenario(): Promise<void> {
     storageButton?.click();
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const namespaceInput = host.querySelector<HTMLInputElement>('input[placeholder="ex.: grupos/cliente-acme"]');
-    assert(namespaceInput, "O editor inline do namespace nao foi renderizado.");
-    namespaceInput.value = "grupos/runtime";
-    namespaceInput.dispatchEvent(new Event("input", { bubbles: true }));
-    namespaceInput.dispatchEvent(new Event("change", { bubbles: true }));
+    const locationInput = host.querySelector<HTMLInputElement>('input[placeholder="ex.: C:/dados/grupos/intermedio"]');
+    assert(locationInput, "O editor inline da pasta intermédia nao foi renderizado.");
+    locationInput.value = "C:/dados/grupos/runtime";
+    locationInput.dispatchEvent(new Event("input", { bubbles: true }));
+    locationInput.dispatchEvent(new Event("change", { bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const updatedNamespaceInput = host.querySelector<HTMLInputElement>('input[placeholder="ex.: grupos/cliente-acme"]');
-    assert(updatedNamespaceInput?.value === "grupos/runtime", "O namespace inline nao refletiu a edicao local.");
+    const updatedLocationInput = host.querySelector<HTMLInputElement>('input[placeholder="ex.: C:/dados/grupos/intermedio"]');
+    assert(updatedLocationInput?.value === "C:/dados/grupos/runtime", "A pasta intermédia inline nao refletiu a edicao local.");
 
     const enabledToggles = Array.from(host.querySelectorAll('button[aria-pressed]')).filter((button) => !button.hasAttribute("disabled"));
     assert(enabledToggles.length >= 7, "Os toggles executaveis da secao intermedia nao ficaram interativos.");
@@ -390,6 +411,18 @@ async function withMockedFetch<T>(run: (calls: Array<{ url: string; method: stri
   const originalFetch = window.fetch.bind(window);
   const calls: Array<{ url: string; method: string; body?: string }> = [];
   const manifestByKey = new Map<string, GroupWorksetManifest>();
+  const intermediateTextByKey = new Map<string, string>();
+  const intermediateBinaryByKey = new Map<string, { contentBase64: string; contentType?: string }>();
+
+  const makeIntermediateKey = (basePath: string, relativePath: string) => `${basePath}::${relativePath}`;
+  const listIntermediatePaths = (basePath: string, prefix: string) =>
+    Array.from(new Set([
+      ...Array.from(intermediateTextByKey.keys()),
+      ...Array.from(intermediateBinaryByKey.keys()),
+    ]))
+      .filter((entry) => entry.startsWith(`${basePath}::`))
+      .map((entry) => entry.slice(`${basePath}::`.length))
+      .filter((relativePath) => !prefix || relativePath === prefix || relativePath.startsWith(`${prefix}/`));
 
   window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -442,6 +475,73 @@ async function withMockedFetch<T>(run: (calls: Array<{ url: string; method: stri
       );
     }
 
+    if (url.includes("/api/links/groups/intermediate-storage/")) {
+      const parsed = JSON.parse(body || "{}") as {
+        basePath?: string;
+        path?: string;
+        prefix?: string;
+        content?: string;
+        contentBase64?: string;
+        contentType?: string;
+      };
+      const basePath = String(parsed.basePath || "").trim();
+      const relativePath = String(parsed.path || "").trim();
+      const prefix = String(parsed.prefix || "").trim();
+      if (url.includes("/read-text")) {
+        return new Response(
+          JSON.stringify({ ok: true, content: intermediateTextByKey.get(makeIntermediateKey(basePath, relativePath)) || null }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/write-text")) {
+        intermediateTextByKey.set(makeIntermediateKey(basePath, relativePath), String(parsed.content || ""));
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/read-binary")) {
+        const payload = intermediateBinaryByKey.get(makeIntermediateKey(basePath, relativePath)) || null;
+        return new Response(JSON.stringify({ ok: true, ...payload }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/write-binary")) {
+        intermediateBinaryByKey.set(makeIntermediateKey(basePath, relativePath), {
+          contentBase64: String(parsed.contentBase64 || ""),
+          contentType: String(parsed.contentType || "").trim() || undefined,
+        });
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/delete-tree")) {
+        const normalizedPrefix = `${basePath}::${relativePath.replace(/\/+$/, "")}`;
+        for (const key of Array.from(intermediateTextByKey.keys())) {
+          if (key === normalizedPrefix || key.startsWith(`${normalizedPrefix}/`)) {
+            intermediateTextByKey.delete(key);
+          }
+        }
+        for (const key of Array.from(intermediateBinaryByKey.keys())) {
+          if (key === normalizedPrefix || key.startsWith(`${normalizedPrefix}/`)) {
+            intermediateBinaryByKey.delete(key);
+          }
+        }
+        return new Response(JSON.stringify({ ok: true, deleted: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/list-paths")) {
+        return new Response(JSON.stringify({ ok: true, paths: listIntermediatePaths(basePath, prefix) }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
     return originalFetch(input, init);
   }) as typeof window.fetch;
 
@@ -487,11 +587,11 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
         chosenFolder: { path: "C:/tmp/groups/chosen", kind: "filesystem" },
         hybrid: { primaryTarget: "chosen_folder", promoteManifestOnSave: true, promoteAttachmentMetadataOnSave: true },
       },
-      tab: {
-        ...DEFAULT_GROUPS_MODULE_SETTINGS.tab,
-        groupsTabEnabled: false,
-        storageMode: "local_indexeddb",
-        baseFolderPath: "grupos/runtime",
+        tab: {
+          ...DEFAULT_GROUPS_MODULE_SETTINGS.tab,
+          groupsTabEnabled: false,
+          storageMode: "local_indexeddb",
+          baseFolderPath: "C:/dados/grupos/runtime",
         cleanupClosedCaseDays: 12,
         cleanupAbandonedCaseDays: 34,
         neverDeleteMixedSilently: true,
@@ -520,7 +620,7 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     await saveSettings({ groups });
     const next = await getSettings();
     assert(next.groups.storage.mode === "hybrid", "O modo de storage canonico nao foi persistido.");
-    assert(next.groups.tab.baseFolderPath === "grupos/runtime", "O namespace canonico nao foi persistido.");
+    assert(next.groups.tab.baseFolderPath === "C:/dados/grupos/runtime", "A pasta intermédia canónica nao foi persistida.");
     assert(next.groups.labels.catalog[0]?.label === "Financeiro", "O catalogo de labels canonico nao foi persistido.");
     assert(next.groups.tickets.enabled === false, "O flag canonico de tickets nao foi persistido.");
     assert(next.groups.outlookCategories.includeLabels === true, "O flag canonico de Outlook categories nao foi persistido.");
@@ -537,44 +637,46 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
   });
 
   await runScenario(scenarios, "settings-tab-case-behavior", "settings", "Settings de caso mudam bootstrap e reabertura", async () => {
-    const namespace = "grupos/settings-case";
-    const storage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: namespace }));
-    const caseValue = buildPrepareIntermediateCaseFromSources({
-      caseId: "case-settings-runtime",
-      anchorEmailKey: "msg-settings-runtime",
-      outlookEmails: [buildPrepareEmailInput({ emailKey: "msg-settings-runtime" })],
-      serverEmails: [],
-      nowIso: FIXED_NOW_ISO,
-    });
-    await storage.repository.writeCase(caseValue);
+    await withMockedFetch(async () => {
+      const folderPath = "C:/dados/grupos/settings-case";
+      const storage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: folderPath }));
+      const caseValue = buildPrepareIntermediateCaseFromSources({
+        caseId: "case-settings-runtime",
+        anchorEmailKey: "msg-settings-runtime",
+        outlookEmails: [buildPrepareEmailInput({ emailKey: "msg-settings-runtime" })],
+        serverEmails: [],
+        nowIso: FIXED_NOW_ISO,
+      });
+      await storage.repository.writeCase(caseValue);
 
-    await saveSettings({
-      groups: buildGroupsSettings({
-        tab: {
-          ...DEFAULT_GROUPS_MODULE_SETTINGS.tab,
-          storageMode: "local_indexeddb",
-          baseFolderPath: namespace,
-          reopenExistingCase: true,
-        },
-      }),
-    });
-    const reopened = await resolveClassificationIntermediateCase({ anchorEmailKey: "msg-settings-runtime" });
-    assert(reopened.caseValue?.caseId === caseValue.caseId, "Com reopenExistingCase=true o caso devia reabrir por anchor.");
+      await saveSettings({
+        groups: buildGroupsSettings({
+          tab: {
+            ...DEFAULT_GROUPS_MODULE_SETTINGS.tab,
+            storageMode: "local_indexeddb",
+            baseFolderPath: folderPath,
+            reopenExistingCase: true,
+          },
+        }),
+      });
+      const reopened = await resolveClassificationIntermediateCase({ anchorEmailKey: "msg-settings-runtime" });
+      assert(reopened.caseValue?.caseId === caseValue.caseId, "Com reopenExistingCase=true o caso devia reabrir por anchor.");
 
-    await saveSettings({
-      groups: buildGroupsSettings({
-        tab: {
-          ...DEFAULT_GROUPS_MODULE_SETTINGS.tab,
-          storageMode: "local_indexeddb",
-          baseFolderPath: namespace,
-          reopenExistingCase: false,
-          autoCreateCaseOnNewEmail: false,
-          recreateIntermediateCopy: false,
-        },
-      }),
+      await saveSettings({
+        groups: buildGroupsSettings({
+          tab: {
+            ...DEFAULT_GROUPS_MODULE_SETTINGS.tab,
+            storageMode: "local_indexeddb",
+            baseFolderPath: folderPath,
+            reopenExistingCase: false,
+            autoCreateCaseOnNewEmail: false,
+            recreateIntermediateCopy: false,
+          },
+        }),
+      });
+      const blockedReopen = await resolveClassificationIntermediateCase({ anchorEmailKey: "msg-settings-runtime" });
+      assert(blockedReopen.caseValue === null, "Com reopenExistingCase=false o runtime nao devia reabrir por anchor.");
     });
-    const blockedReopen = await resolveClassificationIntermediateCase({ anchorEmailKey: "msg-settings-runtime" });
-    assert(blockedReopen.caseValue === null, "Com reopenExistingCase=false o runtime nao devia reabrir por anchor.");
     assert(
       shouldPersistGroupsPrepareCase({
         settingsLike: { groups: { tab: { autoCreateCaseOnNewEmail: false } } },
@@ -590,11 +692,11 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
       }) === false,
       "recreateIntermediateCopy=false devia impedir a projecao remota quando nao existe caso local."
     );
-    return "autoCreate/reopen/recreate passaram a governar o bootstrap e a reabertura.";
+    return "autoCreate/reopen/recreate passaram a governar o bootstrap e a reabertura, incluindo o caso file-backed.";
   });
 
   await runScenario(scenarios, "settings-tab-storage-validation", "settings", "Settings de validacao mandam no acesso ao intermédio", async () => {
-    const missingNamespaceSettings = normalizeGroupsTabSettings({
+    const addinLocalSettings = normalizeGroupsTabSettings({
       storageMode: "local_indexeddb",
       baseFolderPath: "",
       validateLocationOnOpen: true,
@@ -603,24 +705,40 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
       autoRetryValidation: true,
     });
     const validation = await validateGroupsTabStorageAvailability({
-      settings: missingNamespaceSettings,
-      storage: resolveIntermediateCaseStorage(missingNamespaceSettings),
+      settings: addinLocalSettings,
+      storage: resolveIntermediateCaseStorage(addinLocalSettings),
     });
-    assert(validation.available === false, "Sem namespace a validacao devia falhar.");
-    assert(validation.blocked === true, "blockTabIfUnavailable=true devia bloquear a aba.");
-    assert(validation.warning === true, "warnIfUnavailable=true devia marcar warning.");
+    assert(validation.available === true, "Sem pasta definida o fallback principal devia ser o storage local do add-in.");
+
+    await withIndexedDbAvailabilityOverride(undefined, async () => {
+      const fallbackSettings = normalizeGroupsTabSettings({
+        storageMode: "local_indexeddb",
+        baseFolderPath: "",
+        validateLocationOnOpen: true,
+        blockTabIfUnavailable: true,
+        warnIfUnavailable: true,
+        autoRetryValidation: true,
+      });
+      const fallbackValidation = await validateGroupsTabStorageAvailability({
+        settings: fallbackSettings,
+        storage: resolveIntermediateCaseStorage(fallbackSettings),
+      });
+      assert(fallbackValidation.available === false, "Sem pasta e sem IndexedDB a validação devia acusar fallback técnico.");
+      assert(fallbackValidation.blocked === true, "blockTabIfUnavailable=true devia bloquear a aba.");
+      assert(fallbackValidation.warning === true, "warnIfUnavailable=true devia marcar warning.");
+    });
 
     const relaxedValidation = await validateGroupsTabStorageAvailability({
       settings: normalizeGroupsTabSettings({
-        ...missingNamespaceSettings,
+        ...addinLocalSettings,
         validateLocationOnOpen: false,
         blockTabIfUnavailable: false,
         warnIfUnavailable: false,
       }),
-      storage: resolveIntermediateCaseStorage(missingNamespaceSettings),
+      storage: resolveIntermediateCaseStorage(addinLocalSettings),
     });
     assert(relaxedValidation.available === true, "Com validateLocationOnOpen=false a validacao devia ser neutralizada.");
-    return "validateLocationOnOpen, blockTabIfUnavailable, warnIfUnavailable e autoRetryValidation passaram a ter contrato real.";
+    return "validateLocationOnOpen, blockTabIfUnavailable, warnIfUnavailable e autoRetryValidation passaram a distinguir add-in local pronto e fallback técnico em memória.";
   });
 
   await runScenario(scenarios, "settings-tab-attachment-runtime", "attachments", "Settings de anexos mudam selecao, destino e payload", async () => {
@@ -851,12 +969,38 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     return "Preparar combinou ancora, existingCase e historico remoto sem duplicar emails.";
   });
 
-  await runScenario(scenarios, "prepare-storage-indexeddb", "storage", "Storage intermédio com namespace usa IndexedDB", async () => {
-    const settings = normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: "grupos/indexeddb" });
-    const storage = resolveIntermediateCaseStorage(settings);
-    assert(storage.mode === "indexeddb", "Com namespace o storage intermédio devia usar IndexedDB.");
+  await runScenario(scenarios, "prepare-storage-folder-primary", "storage", "Com pasta definida o intermédio grava logo na pasta local", async () => {
+    await withMockedFetch(async () => {
+      const settings = normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: "C:/dados/grupos/intermedio" });
+      const storage = resolveIntermediateCaseStorage(settings);
+      assert(storage.mode === "filesystem", "Com pasta definida o storage intermédio devia ser file-backed.");
+      const caseValue = buildPrepareIntermediateCaseFromSources({
+        caseId: "case-storage-folder",
+        anchorEmailKey: "msg-anchor",
+        outlookEmails: [buildPrepareEmailInput({ emailKey: "msg-anchor", attachments: [{ key: "doc-1", name: "doc.pdf", hasContent: true }] })],
+        serverEmails: [],
+        nowIso: FIXED_NOW_ISO,
+      });
+      await storage.repository.writeCase(caseValue);
+      const attachmentPath = caseValue.emails[0]?.attachments[0]?.localRef?.value;
+      if (attachmentPath && "writeBinary" in storage.adapter) {
+        await storage.adapter.writeBinary(attachmentPath, new Blob(["folder-binary"]));
+      }
+      const readBack = await storage.repository.readCase(caseValue.caseId);
+      assert(readBack?.caseId === caseValue.caseId, "O caso intermédio nao voltou da pasta local.");
+      if (attachmentPath && "readBinary" in storage.adapter) {
+        assert(await storage.adapter.readBinary(attachmentPath), "O binário intermédio nao voltou da pasta local.");
+      }
+    });
+    return "Pasta local definida confirmada como storage intermédio principal desde o arranque.";
+  });
+
+  await runScenario(scenarios, "prepare-storage-addin-local-fallback", "storage", "Sem pasta definida o intermédio usa o add-in local", async () => {
+    const storage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: "" }));
+    assert(storage.mode === "indexeddb", "Sem pasta definida o fallback principal devia ser IndexedDB do add-in.");
+    assert(storage.availability === "ready", "O add-in local devia ficar pronto para reabertura.");
     const caseValue = buildPrepareIntermediateCaseFromSources({
-      caseId: "case-storage-1",
+      caseId: "case-storage-indexeddb",
       anchorEmailKey: "msg-anchor",
       outlookEmails: [buildPrepareEmailInput({ emailKey: "msg-anchor" })],
       serverEmails: [],
@@ -864,15 +1008,17 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     });
     await storage.repository.writeCase(caseValue);
     const readBack = await storage.repository.readCase(caseValue.caseId);
-    assert(readBack?.caseId === caseValue.caseId, "O caso intermédio nao voltou do IndexedDB.");
-    return "IndexedDB real confirmado para o namespace configurado.";
+    assert(readBack?.caseId === caseValue.caseId, "O caso intermédio nao voltou do storage local do add-in.");
+    return "Sem pasta definida, o add-in local ficou como fallback intermédio principal.";
   });
 
-  await runScenario(scenarios, "prepare-storage-missing-namespace", "storage", "Sem namespace o intermédio cai para memoria", async () => {
-    const storage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: "" }));
-    assert(storage.mode === "memory", "Sem namespace devia haver fallback para memoria.");
-    assert(storage.availability === "missing_location", "A disponibilidade devia refletir missing_location.");
-    return "Fallback em memoria confirmado quando nao existe namespace.";
+  await runScenario(scenarios, "prepare-storage-technical-memory-fallback", "storage", "Sem pasta e sem add-in local o runtime cai para memória técnica", async () => {
+    await withIndexedDbAvailabilityOverride(undefined, async () => {
+      const storage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: "" }));
+      assert(storage.mode === "memory", "Sem pasta e sem IndexedDB o runtime devia cair para memória.");
+      assert(storage.availability === "fallback_memory", "A disponibilidade devia marcar fallback técnico.");
+    });
+    return "Memória ficou confirmada apenas como fallback técnico temporário.";
   });
 
   await runScenario(scenarios, "prepare-storage-disabled", "storage", "Storage intermédio desativado", async () => {
@@ -1108,14 +1254,13 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     return "documentState/isHidden seguiram o email dono sem contaminar outros emails.";
   });
 
-  await runScenario(scenarios, "classification-reopen-and-rehydrate", "classify", "Reabrir caso e reidratar a partir do IndexedDB", async () => {
-    const namespace = "grupos/classify-reopen";
+  await runScenario(scenarios, "classification-reopen-and-rehydrate", "classify", "Reabrir caso e reidratar a partir do add-in local", async () => {
     await saveSettings({
       groups: buildGroupsSettings({
-        tab: { ...DEFAULT_GROUPS_MODULE_SETTINGS.tab, storageMode: "local_indexeddb", baseFolderPath: namespace },
+        tab: { ...DEFAULT_GROUPS_MODULE_SETTINGS.tab, storageMode: "local_indexeddb", baseFolderPath: "" },
       }),
     });
-    const storage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: namespace }));
+    const storage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: "" }));
     const caseValue = buildPrepareIntermediateCaseFromSources({
       caseId: "case-reopen",
       anchorEmailKey: "msg-reopen",
@@ -1145,7 +1290,55 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     const hydrated = hydratedEmails[0];
     assert(hydrated.classificationMeta?.principalGroupId === "grp-main", "A reidratação nao preservou o grupo principal.");
     assert(Boolean(hydrated.attachments?.[0]?.content), "A reidratacao nao recuperou o binario local do anexo.");
-    return "Classificar reabriu o caso pelo namespace configurado e reidratou classificacao e anexo local.";
+    return "Classificar reabriu o caso pelo storage local do add-in e reidratou classificacao e anexo local.";
+  });
+
+  await runScenario(scenarios, "classification-folder-backed-handoff", "classify", "Classificar mantém o estado quando o intermédio arranca numa pasta local", async () => {
+    await withMockedFetch(async () => {
+      const folderPath = "C:/dados/grupos/intermedio-classify";
+      await saveSettings({
+        groups: buildGroupsSettings({
+          storage: {
+            ...DEFAULT_GROUP_STORAGE_SETTINGS,
+            mode: "supabase",
+          },
+          tab: {
+            ...DEFAULT_GROUPS_MODULE_SETTINGS.tab,
+            storageMode: "local_indexeddb",
+            baseFolderPath: folderPath,
+          },
+        }),
+      });
+      const storage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: folderPath }));
+      const classificationCase = buildPrepareIntermediateCaseFromSources({
+        caseId: "case-folder-classify",
+        anchorEmailKey: "msg-folder-classify",
+        outlookEmails: [buildPrepareEmailInput({ emailKey: "msg-folder-classify" })],
+        serverEmails: [],
+        nowIso: FIXED_NOW_ISO,
+      });
+      await storage.repository.writeCase(classificationCase);
+      const resolvedBefore = await resolveClassificationIntermediateCase({
+        caseId: classificationCase.caseId,
+        anchorEmailKey: classificationCase.anchorEmailKey,
+      });
+      assert(resolvedBefore.storage.mode === "filesystem", "O Classificar devia reabrir a partir da pasta intermédia.");
+      const nextClassificationCase = {
+        ...classificationCase,
+        emails: classificationCase.emails.map((email) => ({
+          ...email,
+          classification: {
+            ...email.classification,
+            principalGroupId: "grp-main",
+            principalGroupName: "Grupo Main",
+          },
+        })),
+      };
+      await resolvedBefore.storage.repository.writeCase(nextClassificationCase);
+      const readBack = await storage.repository.readCase(classificationCase.caseId);
+      assert(readBack?.emails[0]?.classification.principalGroupId === "grp-main", "O estado classificado nao ficou preservado na pasta intermédia antes da promoção final.");
+    });
+    return "O Classificar reusou a mesma pasta intermédia e preservou o estado antes da gravação final.";
   });
 
   await runScenario(scenarios, "classification-repeat-apply-no-duplicates", "classify", "Reaplicar nao duplica classificacao", async () => {
@@ -1276,59 +1469,59 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
   });
 
   await runScenario(scenarios, "migration-copy-and-safety", "migration", "Migracao por copia e gates de seguranca", async () => {
-    const sourceNamespace = "grupos/migrate-source";
-    const targetNamespace = "grupos/migrate-target";
-    const sourceAdapter = createIndexedDbIntermediateCaseStorageAdapter({ namespace: sourceNamespace });
-    const targetAdapter = createIndexedDbIntermediateCaseStorageAdapter({ namespace: targetNamespace });
-    const sourceRepository = createIntermediateCaseRepository(sourceAdapter);
-    const targetRepository = createIntermediateCaseRepository(targetAdapter);
-    const caseValue = buildPrepareIntermediateCaseFromSources({
-      caseId: "case-migrate",
-      anchorEmailKey: "msg-migrate",
-      outlookEmails: [buildPrepareEmailInput({ emailKey: "msg-migrate", attachments: [{ key: "doc-1", name: "doc.pdf", hasContent: true }] })],
-      serverEmails: [],
-      nowIso: FIXED_NOW_ISO,
-    });
-    await sourceRepository.writeCase(caseValue);
-    const attachmentPath = caseValue.emails[0]?.attachments[0]?.localRef?.value;
-    if (attachmentPath) {
-      await sourceAdapter.writeBinary(attachmentPath, new Blob(["binary-fixture"]));
-    }
+    await withMockedFetch(async () => {
+      const sourceNamespace = "C:/dados/grupos/migrate-source";
+      const targetNamespace = "C:/dados/grupos/migrate-target";
+      const sourceStorage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: sourceNamespace }));
+      const targetStorage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: targetNamespace }));
+      const caseValue = buildPrepareIntermediateCaseFromSources({
+        caseId: "case-migrate",
+        anchorEmailKey: "msg-migrate",
+        outlookEmails: [buildPrepareEmailInput({ emailKey: "msg-migrate", attachments: [{ key: "doc-1", name: "doc.pdf", hasContent: true }] })],
+        serverEmails: [],
+        nowIso: FIXED_NOW_ISO,
+      });
+      await sourceStorage.repository.writeCase(caseValue);
+      const attachmentPath = caseValue.emails[0]?.attachments[0]?.localRef?.value;
+      if (attachmentPath && "writeBinary" in sourceStorage.adapter) {
+        await sourceStorage.adapter.writeBinary(attachmentPath, new Blob(["binary-fixture"]));
+      }
 
-    const copyResult = await migrateIntermediateCaseNamespace({
-      sourceNamespace,
-      targetNamespace,
-      mode: "copy",
-      mergeExistingData: false,
-      strictMigrationSafety: true,
-    });
-    assert(copyResult.migratedCases === 1, "A migracao por copia devia migrar um caso.");
-    assert(await targetRepository.readCase(caseValue.caseId), "O caso nao apareceu no namespace de destino.");
-    assert(await sourceRepository.readCase(caseValue.caseId), "O caso de origem devia continuar no modo copy.");
-    if (attachmentPath) {
-      assert(await targetAdapter.readBinary(attachmentPath), "Os binarios do caso nao foram copiados.");
-    }
-
-    let blockedMove = false;
-    try {
-      await migrateIntermediateCaseNamespace({
+      const copyResult = await migrateIntermediateCaseNamespace({
         sourceNamespace,
         targetNamespace,
-        mode: "move",
-        allowMoveExistingData: false,
-        mergeExistingData: true,
-        strictMigrationSafety: false,
+        mode: "copy",
+        mergeExistingData: false,
+        strictMigrationSafety: true,
       });
-    } catch {
-      blockedMove = true;
-    }
-    assert(blockedMove, "O move devia ser bloqueado quando allowMoveExistingData=false.");
-    return "Migracao copy funcionou e os gates de seguranca bloquearam movimento indevido.";
+      assert(copyResult.migratedCases === 1, "A migracao por copia devia migrar um caso.");
+      assert(await targetStorage.repository.readCase(caseValue.caseId), "O caso nao apareceu na localizacao de destino.");
+      assert(await sourceStorage.repository.readCase(caseValue.caseId), "O caso de origem devia continuar no modo copy.");
+      if (attachmentPath && "readBinary" in targetStorage.adapter) {
+        assert(await targetStorage.adapter.readBinary(attachmentPath), "Os binarios do caso nao foram copiados.");
+      }
+
+      let blockedMove = false;
+      try {
+        await migrateIntermediateCaseNamespace({
+          sourceNamespace,
+          targetNamespace,
+          mode: "move",
+          allowMoveExistingData: false,
+          mergeExistingData: true,
+          strictMigrationSafety: false,
+        });
+      } catch {
+        blockedMove = true;
+      }
+      assert(blockedMove, "O move devia ser bloqueado quando allowMoveExistingData=false.");
+    });
+    return "Migracao copy funcionou entre localizacoes intermédias e os gates de seguranca bloquearam movimento indevido.";
   });
 
   await runScenario(scenarios, "cleanup-retention-and-mixed-protection", "cleanup", "Limpeza real respeita retention e mixed cases", async () => {
-    const namespace = "grupos/cleanup";
-    const repository = createIntermediateCaseRepository(createIndexedDbIntermediateCaseStorageAdapter({ namespace }));
+    const storage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: "" }));
+    const repository = storage.repository;
 
     const promotedCase = buildPrepareIntermediateCaseFromSources({
       caseId: "case-promoted",
@@ -1371,7 +1564,7 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     const resultProtected = await cleanupIntermediateCases(
       normalizeGroupsTabSettings({
         storageMode: "local_indexeddb",
-        baseFolderPath: namespace,
+        baseFolderPath: "",
         cleanupClosedCaseDays: 10,
         cleanupAbandonedCaseDays: 10,
         neverDeleteMixedSilently: true,
@@ -1384,7 +1577,7 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     const resultDeleteMixed = await cleanupIntermediateCases(
       normalizeGroupsTabSettings({
         storageMode: "local_indexeddb",
-        baseFolderPath: namespace,
+        baseFolderPath: "",
         cleanupClosedCaseDays: 10,
         cleanupAbandonedCaseDays: 10,
         neverDeleteMixedSilently: false,

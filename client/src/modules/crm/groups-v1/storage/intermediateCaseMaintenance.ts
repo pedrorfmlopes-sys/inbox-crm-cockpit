@@ -1,6 +1,9 @@
 import { normalizeGroupsTabSettings, type GroupsTabSettings } from "../settings/groupsTabSettings";
-import { createIndexedDbIntermediateCaseStorageAdapter } from "./intermediateCaseIndexedDbAdapter";
-import { createIntermediateCaseRepository, supportsIntermediateCaseBinaryStorage } from "./intermediateCaseRepository";
+import {
+  supportsIntermediateCaseBinaryStorage,
+  type IntermediateCaseStorageAdapter,
+} from "./intermediateCaseRepository";
+import { resolveIntermediateCaseStorage } from "./resolveIntermediateCaseStorage";
 import type { IntermediateCase, IntermediateCaseSummary } from "./intermediateCaseTypes";
 
 function normalizeText(value: string | undefined): string {
@@ -17,8 +20,8 @@ function ageInDays(isoValue: string | undefined, nowMs: number): number {
 
 async function copyCaseBinaryPayloads(args: {
   caseValue: IntermediateCase;
-  sourceAdapter: ReturnType<typeof createIndexedDbIntermediateCaseStorageAdapter>;
-  targetAdapter: ReturnType<typeof createIndexedDbIntermediateCaseStorageAdapter>;
+  sourceAdapter: IntermediateCaseStorageAdapter;
+  targetAdapter: IntermediateCaseStorageAdapter;
 }) {
   if (!supportsIntermediateCaseBinaryStorage(args.sourceAdapter) || !supportsIntermediateCaseBinaryStorage(args.targetAdapter)) {
     return 0;
@@ -38,6 +41,22 @@ async function copyCaseBinaryPayloads(args: {
   return copied;
 }
 
+function resolveMaintenanceStorage(locationPath: string) {
+  const storage = resolveIntermediateCaseStorage(
+    normalizeGroupsTabSettings({
+      storageMode: "local_indexeddb",
+      baseFolderPath: locationPath,
+    })
+  );
+  if (storage.availability === "disabled") {
+    throw new Error("O storage intermédio está desligado para esta operação.");
+  }
+  if (storage.availability === "fallback_memory") {
+    throw new Error("A operação de manutenção foi bloqueada porque o runtime caiu para memória como fallback técnico.");
+  }
+  return storage;
+}
+
 export async function migrateIntermediateCaseNamespace(input: {
   sourceNamespace: string;
   targetNamespace: string;
@@ -50,19 +69,18 @@ export async function migrateIntermediateCaseNamespace(input: {
   copiedAttachments: number;
   skippedCases: number;
 }> {
-  const sourceNamespace = normalizeText(input.sourceNamespace);
-  const targetNamespace = normalizeText(input.targetNamespace);
-  if (!sourceNamespace || !targetNamespace) {
-    throw new Error("Indica namespaces de origem e destino para a migracao do intermédio.");
-  }
-  if (sourceNamespace === targetNamespace) {
+  const sourceLocation = normalizeText(input.sourceNamespace);
+  const targetLocation = normalizeText(input.targetNamespace);
+  if (sourceLocation === targetLocation) {
     return { migratedCases: 0, copiedAttachments: 0, skippedCases: 0 };
   }
 
-  const sourceAdapter = createIndexedDbIntermediateCaseStorageAdapter({ namespace: sourceNamespace });
-  const targetAdapter = createIndexedDbIntermediateCaseStorageAdapter({ namespace: targetNamespace });
-  const sourceRepository = createIntermediateCaseRepository(sourceAdapter);
-  const targetRepository = createIntermediateCaseRepository(targetAdapter);
+  const sourceStorage = resolveMaintenanceStorage(sourceLocation);
+  const targetStorage = resolveMaintenanceStorage(targetLocation);
+  const sourceAdapter = sourceStorage.adapter;
+  const targetAdapter = targetStorage.adapter;
+  const sourceRepository = sourceStorage.repository;
+  const targetRepository = targetStorage.repository;
   const summaries = await sourceRepository.listCases();
   const targetSummaries = await targetRepository.listCases();
   const strictMigrationSafety = input.strictMigrationSafety !== false;
@@ -70,11 +88,11 @@ export async function migrateIntermediateCaseNamespace(input: {
   const allowMoveExistingData = input.allowMoveExistingData === true;
 
   if (input.mode === "move" && !allowMoveExistingData) {
-    throw new Error("O modo de movimento esta bloqueado pelos settings atuais. Ativa 'Permitir mover dados existentes' para continuar.");
+    throw new Error("O modo de movimento está bloqueado pelos settings atuais. Ativa 'Permitir mover dados existentes' para continuar.");
   }
 
   if (targetSummaries.length && !mergeExistingData) {
-    throw new Error("O namespace de destino ja contem casos intermedios. Ativa a fusao de dados existentes ou escolhe um namespace vazio.");
+    throw new Error("A localização intermédia de destino já contém casos. Ativa a fusão de dados existentes ou escolhe um destino vazio.");
   }
 
   const targetCaseIds = new Set(targetSummaries.map((summary) => summary.caseId));
@@ -83,7 +101,7 @@ export async function migrateIntermediateCaseNamespace(input: {
     .filter((caseId) => targetCaseIds.has(caseId));
   if (strictMigrationSafety && conflictingCaseIds.length) {
     throw new Error(
-      `A migracao foi bloqueada pela seguranca estrita porque o destino ja contem ${conflictingCaseIds.length} caso(s) com o mesmo identificador.`
+      `A migração foi bloqueada pela segurança estrita porque o destino já contém ${conflictingCaseIds.length} caso(s) com o mesmo identificador.`
     );
   }
 
@@ -148,7 +166,7 @@ export async function cleanupIntermediateCases(
 }> {
   const settings = normalizeGroupsTabSettings(settingsLike || null);
   const namespace = normalizeText(settings.baseFolderPath);
-  if (settings.storageMode === "disabled" || !namespace) {
+  if (settings.storageMode === "disabled") {
     return {
       namespace,
       deletedCases: 0,
@@ -157,8 +175,17 @@ export async function cleanupIntermediateCases(
     };
   }
 
-  const adapter = createIndexedDbIntermediateCaseStorageAdapter({ namespace });
-  const repository = createIntermediateCaseRepository(adapter);
+  const storage = resolveIntermediateCaseStorage(settings);
+  if (storage.availability === "fallback_memory") {
+    return {
+      namespace,
+      deletedCases: 0,
+      skippedMixedCases: 0,
+      inspectedCases: 0,
+    };
+  }
+
+  const repository = storage.repository;
   const summaries = await repository.listCases();
   const nowMs = Number.isFinite(Number(options?.nowMs)) ? Number(options?.nowMs) : Date.now();
   let deletedCases = 0;

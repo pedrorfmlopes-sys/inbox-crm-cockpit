@@ -9,6 +9,14 @@ import {
   buildGroupWorksetMirrorFileLocation,
   validateGroupStorageTarget,
 } from "../server/src/groupStorageRuntime.js";
+import {
+  deleteIntermediateCaseTree,
+  listIntermediateCasePaths,
+  readIntermediateCaseBinaryFile,
+  readIntermediateCaseTextFile,
+  writeIntermediateCaseBinaryFile,
+  writeIntermediateCaseTextFile,
+} from "../server/src/groupIntermediateCaseStore.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -111,6 +119,7 @@ async function runServerStorageChecks() {
   const localDeviceRoot = path.join(tempRoot, "local-device");
   const chosenFolderRoot = path.join(tempRoot, "chosen-folder");
   const hybridRoot = path.join(tempRoot, "hybrid-folder");
+  const intermediateRoot = path.join(tempRoot, "intermediate-folder");
 
   const cloud = validateGroupStorageTarget({ mode: "supabase" });
   const localDevice = validateGroupStorageTarget({
@@ -136,6 +145,37 @@ async function runServerStorageChecks() {
     worksetKey: "groups_v1_workset:anchor@email|base",
   });
 
+  writeIntermediateCaseTextFile({
+    basePath: intermediateRoot,
+    path: "Groups/cases/case-a/case.json",
+    content: JSON.stringify({ caseId: "case-a", anchorEmailKey: "anchor-a" }),
+  });
+  writeIntermediateCaseBinaryFile({
+    basePath: intermediateRoot,
+    path: "Groups/cases/case-a/attachments/anchor-a/doc-1",
+    contentBase64: Buffer.from("fixture-binary").toString("base64"),
+  });
+  const intermediateReadText = readIntermediateCaseTextFile({
+    basePath: intermediateRoot,
+    path: "Groups/cases/case-a/case.json",
+  });
+  const intermediateReadBinary = readIntermediateCaseBinaryFile({
+    basePath: intermediateRoot,
+    path: "Groups/cases/case-a/attachments/anchor-a/doc-1",
+  });
+  const intermediatePathsBeforeDelete = listIntermediateCasePaths({
+    basePath: intermediateRoot,
+    prefix: "Groups/cases",
+  });
+  deleteIntermediateCaseTree({
+    basePath: intermediateRoot,
+    path: "Groups/cases/case-a",
+  });
+  const intermediatePathsAfterDelete = listIntermediateCasePaths({
+    basePath: intermediateRoot,
+    prefix: "Groups/cases",
+  });
+
   return {
     tempRoot,
     results: {
@@ -146,6 +186,13 @@ async function runServerStorageChecks() {
       blockedWeb,
     },
     mirrorLocation,
+    intermediateStorage: {
+      root: intermediateRoot,
+      readTextOk: String(intermediateReadText || "").includes("\"case-a\""),
+      readBinaryOk: String(intermediateReadBinary?.contentBase64 || "") === Buffer.from("fixture-binary").toString("base64"),
+      listedBeforeDelete: intermediatePathsBeforeDelete,
+      listedAfterDelete: intermediatePathsAfterDelete,
+    },
   };
 }
 

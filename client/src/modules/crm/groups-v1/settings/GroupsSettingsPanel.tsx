@@ -359,7 +359,7 @@ export function GroupsSettingsPanel({
       setMaintenanceMessage(
         result.inspectedCases
           ? `Limpeza concluida: ${result.deletedCases} caso(s) apagado(s), ${result.skippedMixedCases} misto(s) preservado(s).`
-          : "Nao havia casos intermédios persistidos para limpar neste namespace."
+          : "Nao havia casos intermédios persistidos para limpar nesta localização."
       );
     } catch (error) {
       setMaintenanceError(error instanceof Error ? error.message : "Nao foi possivel executar a limpeza real do intermédio.");
@@ -375,8 +375,8 @@ export function GroupsSettingsPanel({
     try {
       const sourceNamespace = String(draft.baseFolderPath || "").trim();
       const targetNamespace = String(draft.migrationTarget || "").trim();
-      if (!sourceNamespace || !targetNamespace) {
-        throw new Error("Define namespaces de origem e destino antes de correr a migracao real do intermédio.");
+      if (!targetNamespace) {
+        throw new Error("Define um destino intermédio antes de correr a migracao real.");
       }
       if (draft.migrationMode === "always_ask") {
         throw new Error("Escolhe primeiro um modo executavel de migracao: copiar ou mover.");
@@ -420,7 +420,7 @@ export function GroupsSettingsPanel({
         throw new Error(validation.reason);
       }
       const summaries = await storage.repository.listCases();
-      setMaintenanceMessage(`Storage intermédio validado com sucesso. ${summaries.length} caso(s) visível(eis) neste namespace.`);
+      setMaintenanceMessage(`Storage intermédio validado com sucesso. ${summaries.length} caso(s) visível(eis) nesta localização.`);
     } catch (error) {
       setMaintenanceError(error instanceof Error ? error.message : "Nao foi possivel revalidar o storage intermédio.");
     } finally {
@@ -444,7 +444,7 @@ export function GroupsSettingsPanel({
       setMaintenanceMessage(
         summaries.length
           ? `Indices locais reconstruidos para ${summaries.length} caso(s).`
-          : "Nao existiam casos persistidos para reconstruir neste namespace."
+          : "Nao existiam casos persistidos para reconstruir nesta localização."
       );
     } catch (error) {
       setMaintenanceError(error instanceof Error ? error.message : "Nao foi possivel reconstruir os indices locais.");
@@ -496,7 +496,7 @@ export function GroupsSettingsPanel({
           </FieldRow>
           <InfoBlock title="Fronteira executavel desta fase">
             <ul style={S.infoList}>
-              <li>Intermedio: IndexedDB local do add-in quando existe namespace; memoria quando nao existe.</li>
+              <li>Intermedio: pasta local definida quando existe; add-in local como fallback; memória apenas como último recurso.</li>
               <li>Final: persistencia classificada via pipeline atual da app (`/api/links/*`).</li>
               <li>Sessao/cache: seeds locais e rascunhos temporarios nao contam como gravacao final.</li>
             </ul>
@@ -509,9 +509,9 @@ export function GroupsSettingsPanel({
       return (
         <SectionShell
           title="Storage intermedio"
-          subtitle="Nesta fase, o intermedio e apenas a ponte local entre Preparar e Classificar."
+          subtitle="O intermédio arranca logo na pasta local definida; sem pasta, cai para o storage local do add-in."
         >
-          <FieldRow label="Modo de storage" hint="So existe storage local do add-in ou modo desligado nesta fase.">
+          <FieldRow label="Modo de storage" hint="Controla se o intermédio fica ativo; com pasta definida ela passa a ser o destino principal.">
             <select
               style={S.select}
               value={draft.storageMode}
@@ -525,11 +525,11 @@ export function GroupsSettingsPanel({
             </select>
           </FieldRow>
           <PathFieldRow
-            label="Namespace persistente"
-            hint="Chave logica usada para namespacing do IndexedDB local. Nao e uma pasta real nem um path web."
+            label="Pasta local intermédia"
+            hint="Quando definida, o `IntermediateCase` grava logo aqui. Se ficar vazia, o fallback principal passa a ser o storage local do add-in."
             value={draft.baseFolderPath}
             chooseLabel="Limpar"
-            placeholder="ex.: grupos/cliente-acme"
+            placeholder="ex.: C:/dados/grupos/intermedio"
             showValidate={false}
             showOpen={false}
             onChangeText={(nextValue) => applyDraftPatch({ baseFolderPath: nextValue })}
@@ -540,8 +540,9 @@ export function GroupsSettingsPanel({
           </FieldRow>
           <InfoBlock title="O que grava de verdade">
             <ul style={S.infoList}>
-              <li>Com namespace: `IntermediateCase` em IndexedDB local do host.</li>
-              <li>Sem namespace: fallback em memoria, sem persistencia local duravel.</li>
+              <li>Com pasta definida: `IntermediateCase` grava logo nessa pasta local e a reabertura lê daí.</li>
+              <li>Sem pasta definida: o fallback principal é o storage local do add-in em IndexedDB.</li>
+              <li>Sem pasta e sem IndexedDB disponível: memória apenas como fallback técnico temporário.</li>
               <li>Desativado: sem storage intermedio e sem promessa de retoma local.</li>
             </ul>
           </InfoBlock>
@@ -565,7 +566,7 @@ export function GroupsSettingsPanel({
           />
           <ToggleRow
             label="Validar localizacao ao abrir"
-            hint="Executa validação real do namespace IndexedDB ao abrir a aba."
+            hint="Executa validação real da pasta intermédia ou do storage local do add-in ao abrir a aba."
             checked={draft.validateLocationOnOpen}
             onChange={(next) => applyDraftPatch({ validateLocationOnOpen: next })}
           />
@@ -577,7 +578,7 @@ export function GroupsSettingsPanel({
           />
           <ToggleRow
             label="Avisar indisponibilidade"
-            hint="Emite aviso funcional quando o namespace/intermédio fica indisponível."
+            hint="Emite aviso funcional quando a localização intermédia ativa fica indisponível."
             checked={draft.warnIfUnavailable}
             onChange={(next) => applyDraftPatch({ warnIfUnavailable: next })}
           />
@@ -712,7 +713,7 @@ export function GroupsSettingsPanel({
           <div style={S.pathActions}>
             <ActionButton
               label={isSaving ? "A executar" : "Limpar agora"}
-              disabled={isSaving || !draft.baseFolderPath || draft.storageMode === "disabled"}
+              disabled={isSaving || draft.storageMode === "disabled"}
               tone="danger"
               onClick={() => void handleCleanupNow()}
             />
@@ -744,19 +745,18 @@ export function GroupsSettingsPanel({
 
     if (activeSection === "migration") {
       return (
-        <SectionShell title="Migracao" subtitle="Migracao executavel do intermédio por namespace, sem fingir migracao total do storage final.">
+        <SectionShell title="Migracao" subtitle="Migracao executavel do intermédio entre localizações reais, sem fingir migracao total do storage final.">
           <InfoBlock tone="warning" title="Migracao real do intermédio">
             <div style={S.inlineValue}>
-              Nesta ronda a migracao real passa a cobrir o `IntermediateCase` entre namespaces de
-              IndexedDB. Migracao historica do storage final continua fora desta shell.
+              Nesta ronda a migracao real cobre o `IntermediateCase` entre a pasta intermédia definida e o fallback local do add-in. Migracao historica do storage final continua fora desta shell.
             </div>
           </InfoBlock>
           <PathFieldRow
             label="Destino guardado"
-            hint="Namespace alvo para copiar/mover os casos intermedios persistidos."
+            hint="Pasta alvo para copiar/mover os casos intermédios persistidos."
             value={draft.migrationTarget}
             chooseLabel="Limpar"
-            placeholder="ex.: grupos/cliente-acme-migrado"
+            placeholder="ex.: C:/dados/grupos/intermedio-migrado"
             onChangeText={(nextValue) => applyDraftPatch({ migrationTarget: nextValue })}
             onChoose={() => applyDraftPatch({ migrationTarget: "" })}
           />
@@ -792,7 +792,7 @@ export function GroupsSettingsPanel({
           <div style={S.pathActions}>
             <ActionButton
               label={isSaving ? "A migrar" : "Migrar agora"}
-              disabled={isSaving || !draft.baseFolderPath || !draft.migrationTarget || draft.migrationMode === "always_ask"}
+              disabled={isSaving || !draft.migrationTarget || draft.migrationMode === "always_ask"}
               onClick={() => void handleMigrationNow()}
             />
           </div>
@@ -802,10 +802,10 @@ export function GroupsSettingsPanel({
 
     if (activeSection === "maintenance") {
       return (
-        <SectionShell title="Manutencao" subtitle="Ferramentas locais do namespace atual, sem sair do perimetro de Groups.">
+        <SectionShell title="Manutencao" subtitle="Ferramentas locais da localização intermédia atual, sem sair do perimetro de Groups.">
           <ActionRow label="Revalidar storage intermedio" actionLabel={isSaving ? "A validar" : "Executar"} disabled={isSaving} onClick={() => void handleRevalidateStorage()} />
-          <ActionRow label="Reconstruir indices locais" actionLabel={isSaving ? "A reconstruir" : "Executar"} disabled={isSaving || !draft.baseFolderPath} onClick={() => void handleRebuildIndexes()} />
-          <ActionRow label="Limpar dados orfaos" actionLabel={isSaving ? "A limpar" : "Executar"} tone="danger" disabled={isSaving || !draft.baseFolderPath} onClick={() => void handleCleanupOrphans()} />
+          <ActionRow label="Reconstruir indices locais" actionLabel={isSaving ? "A reconstruir" : "Executar"} disabled={isSaving || draft.storageMode === "disabled"} onClick={() => void handleRebuildIndexes()} />
+          <ActionRow label="Limpar dados orfaos" actionLabel={isSaving ? "A limpar" : "Executar"} tone="danger" disabled={isSaving || draft.storageMode === "disabled"} onClick={() => void handleCleanupOrphans()} />
         </SectionShell>
       );
     }
@@ -824,8 +824,9 @@ export function GroupsSettingsPanel({
       <SectionShell title="Sobre" subtitle="Resumo da politica executavel de gravacao da aba Groups nesta fase.">
         <InfoBlock title="Intermedio">
           <ul style={S.infoList}>
-            <li>`IntermediateCase` em IndexedDB local quando existe namespace configurado.</li>
-            <li>Fallback em memoria quando nao existe namespace ou quando o modo esta desligado.</li>
+            <li>`IntermediateCase` grava logo na pasta local definida quando ela existe.</li>
+            <li>Sem pasta definida, o fallback principal é o storage local do add-in em IndexedDB.</li>
+            <li>Memória só entra como fallback técnico quando o restante falha.</li>
             <li>Serve para draft, continuidade de sessao e ponte Preparar - Classificar.</li>
           </ul>
         </InfoBlock>

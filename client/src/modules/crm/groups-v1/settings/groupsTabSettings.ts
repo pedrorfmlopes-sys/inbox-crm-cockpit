@@ -49,7 +49,7 @@ export const DEFAULT_GROUPS_TAB_SETTINGS: GroupsTabSettings = {
   groupsTabEnabled: true,
   storageMode: "local_indexeddb",
   baseFolderPath: "",
-  locationStatus: "Sem namespace definido",
+  locationStatus: "Storage local do add-in",
   autoCreateCaseOnNewEmail: true,
   reopenExistingCase: true,
   recreateIntermediateCopy: true,
@@ -84,7 +84,7 @@ export const DEFAULT_GROUPS_TAB_SETTINGS: GroupsTabSettings = {
   explorerOpenStoredAttachments: true,
   explorerGenerateReply: true,
   groupsVersion: "Grupos v1",
-  quickDiagnostic: "Sem namespace definido",
+  quickDiagnostic: "Sem pasta intermédia definida; o fallback principal é o storage local do add-in.",
 };
 
 function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
@@ -123,8 +123,8 @@ export function deriveGroupsLocationStatus(
 ): string {
   if (settings.storageMode === "disabled") return "Intermedio desativado";
   return String(settings.baseFolderPath || "").trim()
-    ? "Namespace IndexedDB configurado"
-    : "Namespace IndexedDB por definir";
+    ? "Pasta local intermédia configurada"
+    : "Storage local do add-in";
 }
 
 export function deriveGroupsQuickDiagnostic(
@@ -137,15 +137,15 @@ export function deriveGroupsQuickDiagnostic(
     return "Storage intermedio desligado; a aba trabalha sem persistencia local do caso";
   }
   if (!String(settings.baseFolderPath || "").trim()) {
-    return "Storage intermedio local ativo, mas sem namespace persistente; o fallback continua em memoria";
+    return "Sem pasta intermédia definida; o caso abre no storage local do add-in e só cai para memória como último fallback técnico";
   }
   if (!settings.validateLocationOnOpen) {
-    return "Namespace configurado sem verificacao leve ao abrir";
+    return "Pasta intermédia configurada sem validação leve ao abrir";
   }
   if (!settings.warnUnclassifiedEmails && !settings.warnMixedCases) {
-    return "Namespace configurado com avisos leves desativados";
+    return "Pasta intermédia configurada com avisos leves desativados";
   }
-  return "Storage intermedio local pronto em IndexedDB; a persistencia final continua a ser feita no apply";
+  return "Pasta intermédia configurada; o caso grava logo aí e a persistência final continua a ser feita no apply";
 }
 
 export function normalizeGroupsTabSettings(input: Partial<GroupsTabSettings> | null | undefined): GroupsTabSettings {

@@ -317,13 +317,13 @@ export async function validateGroupsTabStorageAvailability(args: {
       reason: args.storage.reason,
     };
   }
-  if (args.storage.availability === "missing_location") {
+  if (args.storage.availability === "fallback_memory") {
     return {
       available: false,
       blocked: settings.blockTabIfUnavailable,
       warning: settings.warnIfUnavailable,
-      retrySuggested: false,
-      reason: "Sem namespace persistente configurado para o storage intermédio.",
+      retrySuggested: settings.autoRetryValidation,
+      reason: args.storage.reason,
     };
   }
   try {
@@ -336,7 +336,10 @@ export async function validateGroupsTabStorageAvailability(args: {
       reason: args.storage.reason,
     };
   } catch (error) {
-    const reason = normalizeText((error as Error)?.message) || "Falha a validar o IndexedDB do modulo Groups.";
+    const targetLabel = args.storage.mode === "filesystem"
+      ? "a pasta local intermédia configurada"
+      : "o storage local do add-in";
+    const reason = normalizeText((error as Error)?.message) || `Falha a validar ${targetLabel} do modulo Groups.`;
     return {
       available: false,
       blocked: settings.blockTabIfUnavailable,
@@ -403,7 +406,7 @@ export function buildGroupsTabWarningMessages(args: {
     if (ageDays >= settings.localAbandonedWarningDays) {
       messages.push({
         kind: "local_abandoned",
-        message: `Existe trabalho local abandonado ha ${ageDays} dia(s) neste namespace.`,
+        message: `Existe trabalho local abandonado ha ${ageDays} dia(s) nesta localização intermédia.`,
       });
     }
   }
