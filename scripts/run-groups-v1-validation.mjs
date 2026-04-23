@@ -17,6 +17,7 @@ import {
   writeIntermediateCaseBinaryFile,
   writeIntermediateCaseTextFile,
 } from "../server/src/groupIntermediateCaseStore.js";
+import { pickNativeFilesystemFolder } from "../server/src/nativeFolderPicker.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -120,6 +121,7 @@ async function runServerStorageChecks() {
   const chosenFolderRoot = path.join(tempRoot, "chosen-folder");
   const hybridRoot = path.join(tempRoot, "hybrid-folder");
   const intermediateRoot = path.join(tempRoot, "intermediate-folder");
+  const oneDriveLocalRoot = path.join(tempRoot, "OneDrive - Demo", "Groups");
 
   const cloud = validateGroupStorageTarget({ mode: "supabase" });
   const localDevice = validateGroupStorageTarget({
@@ -138,6 +140,10 @@ async function runServerStorageChecks() {
   const blockedWeb = validateGroupStorageTarget({
     mode: "chosen_folder",
     chosenFolder: { path: "https://tenant.sharepoint.com/sites/demo/Shared Documents", kind: "document_library" },
+  });
+  const oneDriveLocal = validateGroupStorageTarget({
+    mode: "chosen_folder",
+    chosenFolder: { path: oneDriveLocalRoot, kind: "filesystem" },
   });
   const mirrorLocation = buildGroupWorksetMirrorFileLocation({
     mode: "chosen_folder",
@@ -176,6 +182,23 @@ async function runServerStorageChecks() {
     prefix: "Groups/cases",
   });
 
+  const pickerSelection = await pickNativeFilesystemFolder({
+    initialPath: oneDriveLocalRoot,
+    description: "Selecione a pasta de trabalho de Grupos",
+    runPicker: async () => JSON.stringify({
+      selected: true,
+      path: oneDriveLocalRoot,
+    }),
+  });
+  const pickerCancellation = await pickNativeFilesystemFolder({
+    initialPath: oneDriveLocalRoot,
+    description: "Selecione a pasta de trabalho de Grupos",
+    runPicker: async () => JSON.stringify({
+      selected: false,
+      path: "",
+    }),
+  });
+
   return {
     tempRoot,
     results: {
@@ -184,6 +207,9 @@ async function runServerStorageChecks() {
       chosenFolder,
       hybrid,
       blockedWeb,
+      oneDriveLocal,
+      pickerSelection,
+      pickerCancellation,
     },
     mirrorLocation,
     intermediateStorage: {
@@ -331,7 +357,14 @@ async function main() {
     console.log(`GROUPS_V1_VALIDATION_REPORT:${reportPath}`);
     console.log(JSON.stringify(report, null, 2));
     const hasBrowserFailures = Number(browserValidation?.failed || 0) > 0;
-    if (hasBrowserFailures || !classificationSmoke?.ok || !groupsSettingsSurfaceSmoke?.ok || !legacyAliasAudit.ok) {
+    const serverStorageOk = Boolean(
+      serverStorage?.results?.oneDriveLocal?.supported
+      && serverStorage?.results?.pickerSelection?.selected
+      && serverStorage?.results?.pickerSelection?.validation?.supported
+      && serverStorage?.intermediateStorage?.readTextOk
+      && serverStorage?.intermediateStorage?.readBinaryOk
+    );
+    if (hasBrowserFailures || !classificationSmoke?.ok || !groupsSettingsSurfaceSmoke?.ok || !legacyAliasAudit.ok || !serverStorageOk) {
       process.exitCode = 1;
     }
   } finally {

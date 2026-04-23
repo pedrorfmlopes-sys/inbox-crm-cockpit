@@ -87,8 +87,8 @@ export const GROUPS_SETTINGS_MATRIX: GroupsSettingsMatrixEntry[] = [
   {
     setting: "settings.groups.tab.baseFolderPath",
     module: "groups-v1/storage/resolveIntermediateCaseStorage.ts + resolveClassificationIntermediateCase.ts",
-    expectedEffect: "Define a pasta local intermédia principal usada por Preparar/Classificar/reabertura desde o arranque do caso.",
-    testId: "prepare-storage-folder-primary",
+    expectedEffect: "Guarda a pasta local escolhida via picker real e define o storage intermédio principal usado por Preparar/Classificar/reabertura desde o arranque do caso.",
+    testId: "settings-tab-folder-picker",
     linkage: "runtime",
   },
   {

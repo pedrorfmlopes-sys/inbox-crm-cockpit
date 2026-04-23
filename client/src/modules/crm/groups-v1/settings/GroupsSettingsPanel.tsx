@@ -5,6 +5,7 @@ import {
   cleanupIntermediateCases,
   migrateIntermediateCaseNamespace,
 } from "../storage/intermediateCaseMaintenance";
+import { pickIntermediateCaseStorageFolder } from "../storage/intermediateCaseServerAdapter";
 import { resolveIntermediateCaseStorage } from "../storage/resolveIntermediateCaseStorage";
 import {
   normalizeGroupsTabSettings,
@@ -316,6 +317,7 @@ export function GroupsSettingsPanel({
   const [activeSection, setActiveSection] = useState<GroupsSettingsSection>(initialSection);
   const [draft, setDraft] = useState<GroupsTabSettings>(() => buildDraft(value));
   const [isSaving, setIsSaving] = useState(false);
+  const [isBrowsingFolder, setIsBrowsingFolder] = useState(false);
   const [maintenanceMessage, setMaintenanceMessage] = useState("");
   const [maintenanceError, setMaintenanceError] = useState("");
 
@@ -328,6 +330,7 @@ export function GroupsSettingsPanel({
     setDraft(buildDraft(value));
     setActiveSection(initialSection);
     setIsSaving(false);
+    setIsBrowsingFolder(false);
     setMaintenanceMessage(statusTone === "success" ? statusMessage : "");
     setMaintenanceError(statusTone === "error" ? statusMessage : "");
   }, [initialSection, open, statusMessage, statusTone, value]);
@@ -335,11 +338,11 @@ export function GroupsSettingsPanel({
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !isSaving) onClose();
+      if (event.key === "Escape" && !isSaving && !isBrowsingFolder) onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isSaving, onClose, open]);
+  }, [isBrowsingFolder, isSaving, onClose, open]);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -349,6 +352,53 @@ export function GroupsSettingsPanel({
       setIsSaving(false);
     }
   };
+
+  const validateStorageDraft = useCallback(async (nextDraft: GroupsTabSettings) => {
+    const storage = resolveIntermediateCaseStorage(nextDraft);
+    const validation = await validateGroupsTabStorageAvailability({
+      settings: nextDraft,
+      storage,
+    });
+    if (!validation.available) {
+      throw new Error(validation.reason);
+    }
+    const summaries = await storage.repository.listCases();
+    return summaries;
+  }, []);
+
+  const handleBrowseBaseFolder = useCallback(async () => {
+    setIsBrowsingFolder(true);
+    setMaintenanceMessage("");
+    setMaintenanceError("");
+    try {
+      const picked = await pickIntermediateCaseStorageFolder({
+        initialPath: draft.baseFolderPath,
+        description: "Selecione a pasta de trabalho de Grupos",
+      });
+      if (!picked.supported) {
+        throw new Error(picked.reason || "O picker real de pasta nao esta disponivel neste host.");
+      }
+      if (!picked.selected) {
+        setMaintenanceMessage("Selecao de pasta cancelada; a configuracao atual foi mantida.");
+        return;
+      }
+      const nextDraft = normalizeGroupsTabSettings({
+        ...draft,
+        baseFolderPath: picked.normalizedPath || picked.path,
+      });
+      setDraft(nextDraft);
+      const summaries = await validateStorageDraft(nextDraft);
+      setMaintenanceMessage(
+        summaries.length
+          ? `Pasta intermédia validada via seletor real. ${summaries.length} caso(s) já existe(m) nesta localização.`
+          : "Pasta intermédia escolhida e validada com sucesso via seletor real."
+      );
+    } catch (error) {
+      setMaintenanceError(error instanceof Error ? error.message : "Nao foi possivel selecionar uma pasta real.");
+    } finally {
+      setIsBrowsingFolder(false);
+    }
+  }, [draft, validateStorageDraft]);
 
   const handleCleanupNow = useCallback(async () => {
     setIsSaving(true);
@@ -526,21 +576,29 @@ export function GroupsSettingsPanel({
           </FieldRow>
           <PathFieldRow
             label="Pasta local intermédia"
-            hint="Quando definida, o `IntermediateCase` grava logo aqui. Se ficar vazia, o fallback principal passa a ser o storage local do add-in."
+            hint="Use 'Procurar pasta' para escolher uma pasta real do sistema. Pastas do OneDrive sincronizado localmente entram aqui como pasta local normal."
             value={draft.baseFolderPath}
-            chooseLabel="Limpar"
+            chooseLabel={isBrowsingFolder ? "A abrir..." : "Procurar pasta"}
             placeholder="ex.: C:/dados/grupos/intermedio"
             showValidate={false}
             showOpen={false}
             onChangeText={(nextValue) => applyDraftPatch({ baseFolderPath: nextValue })}
-            onChoose={() => applyDraftPatch({ baseFolderPath: "" })}
+            onChoose={handleBrowseBaseFolder}
+            disabled={isSaving || isBrowsingFolder}
+          />
+          <ActionRow
+            label="Limpar pasta intermédia"
+            actionLabel="Limpar"
+            disabled={isSaving || isBrowsingFolder || !draft.baseFolderPath}
+            hint="Remove apenas a configuração da pasta escolhida; o fallback volta a ser o storage local do add-in."
+            onClick={() => applyDraftPatch({ baseFolderPath: "" })}
           />
           <FieldRow label="Estado" hint="Resumo do modo intermedio realmente executavel.">
             <div style={S.inlineValue}>{draft.locationStatus}</div>
           </FieldRow>
           <InfoBlock title="O que grava de verdade">
             <ul style={S.infoList}>
-              <li>Com pasta definida: `IntermediateCase` grava logo nessa pasta local e a reabertura lê daí.</li>
+              <li>Com pasta definida: `IntermediateCase` grava logo nessa pasta local, incluindo pastas do OneDrive sincronizado localmente.</li>
               <li>Sem pasta definida: o fallback principal é o storage local do add-in em IndexedDB.</li>
               <li>Sem pasta e sem IndexedDB disponível: memória apenas como fallback técnico temporário.</li>
               <li>Desativado: sem storage intermedio e sem promessa de retoma local.</li>
@@ -846,12 +904,12 @@ export function GroupsSettingsPanel({
         </InfoBlock>
       </SectionShell>
     );
-  }, [activeSection, draft, handleCleanupNow, handleCleanupOrphans, handleMigrationNow, handleRebuildIndexes, handleRevalidateStorage, isSaving]);
+  }, [activeSection, draft, handleBrowseBaseFolder, handleCleanupNow, handleCleanupOrphans, handleMigrationNow, handleRebuildIndexes, handleRevalidateStorage, isBrowsingFolder, isSaving]);
 
   if (!open) return null;
 
   return (
-    <div style={S.backdrop} role="presentation" onClick={() => !isSaving && onClose()}>
+    <div style={S.backdrop} role="presentation" onClick={() => !isSaving && !isBrowsingFolder && onClose()}>
       <div style={S.modal} role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <div style={S.modalHeader}>
           <div style={S.modalHeaderText}>
@@ -859,14 +917,14 @@ export function GroupsSettingsPanel({
             <div style={S.modalTitle}>Settings da aba Groups</div>
           </div>
           <div style={S.modalActions}>
-            <button type="button" style={S.headerButtonSecondary} onClick={onClose} disabled={isSaving}>
+            <button type="button" style={S.headerButtonSecondary} onClick={onClose} disabled={isSaving || isBrowsingFolder}>
               Fechar
             </button>
             <button
               type="button"
-              style={isSaving ? S.headerButtonPrimaryDisabled : S.headerButtonPrimary}
+              style={isSaving || isBrowsingFolder ? S.headerButtonPrimaryDisabled : S.headerButtonPrimary}
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isSaving || isBrowsingFolder}
             >
               <Icons.Save size={12} />
               {isSaving ? "A guardar" : "Guardar"}

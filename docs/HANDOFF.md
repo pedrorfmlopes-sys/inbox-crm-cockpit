@@ -1,5 +1,32 @@
 # HANDOFF
 
+## Grupos v1: picker real de pasta fecha a escolha da pasta intermédia via seletor nativo do Windows (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - a aba `Groups` passa a expor um botao real `Procurar pasta` em `GroupsSettingsPanel.tsx`
+  - o picker real corre no backend local via `server/src/nativeFolderPicker.js`, usando o seletor nativo de pasta do Windows e devolvendo um caminho local reutilizavel pelo runtime
+  - `settings.groups.tab.baseFolderPath` passa a ser preenchido principalmente por esse picker; o input manual fica apenas como fallback tecnico
+- **Semantica final desta fase**:
+  - pasta normal do disco: suportada
+  - pasta do OneDrive sincronizado localmente: suportada como pasta local normal
+  - URL web de OneDrive/SharePoint: continua fora do perimetro
+  - sem Graph, sem URL web, sem permissoes admin
+- **Runtime alinhado**:
+  - com pasta definida e validada, `resolveIntermediateCaseStorage.ts` continua a arrancar logo em modo `filesystem`
+  - sem pasta definida, o fallback principal continua a ser IndexedDB do add-in
+  - memoria continua reservada a fallback tecnico
+- **Infraestrutura nova desta ronda**:
+  - `server/src/nativeFolderPicker.js`
+  - rota `POST /api/links/groups/intermediate-storage/pick-folder`
+  - `client/src/modules/crm/groups-v1/storage/intermediateCaseServerAdapter.ts` ganha helper para chamar o picker real
+- **Prova adicionada ao harness**:
+  - `settings-tab-folder-picker`
+  - `serverStorage.results.oneDriveLocal`
+  - `serverStorage.results.pickerSelection`
+  - `serverStorage.results.pickerCancellation`
+- **Limites reais**:
+  - o picker real desta fase depende do backend local correr numa sessao Windows interativa
+  - continua a ser configuracao local por maquina; uma pasta sincronizada em maquinas diferentes pode ter paths locais diferentes sem isso ser bug
+
 ## Grupos v1: armazenamento intermédio fica fechado com precedencia `pasta local -> add-in local -> memoria tecnica` (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - `client/src/modules/crm/groups-v1/storage/resolveIntermediateCaseStorage.ts` deixa de tratar `baseFolderPath` como namespace de IndexedDB

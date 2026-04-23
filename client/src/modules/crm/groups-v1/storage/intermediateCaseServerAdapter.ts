@@ -9,6 +9,24 @@ type IntermediateStorageRequestPayload = {
   content?: string;
   contentBase64?: string;
   contentType?: string;
+  initialPath?: string;
+  description?: string;
+};
+
+export type IntermediateStorageFolderPickerResult = {
+  supported: boolean;
+  selected: boolean;
+  cancelled?: boolean;
+  path: string;
+  normalizedPath: string;
+  picker?: string | null;
+  reason?: string;
+  validation?: {
+    supported?: boolean;
+    blockingReason?: string;
+    normalizedBasePath?: string;
+    notes?: string[];
+  } | null;
 };
 
 function normalizeText(value: unknown): string {
@@ -126,5 +144,28 @@ export function createServerBackedIntermediateCaseStorageAdapter(input: {
       const response = await post<{ paths?: string[] }>("/api/links/groups/intermediate-storage/list-paths", { prefix });
       return Array.isArray(response?.paths) ? response.paths : [];
     },
+  };
+}
+
+export async function pickIntermediateCaseStorageFolder(input?: {
+  initialPath?: string;
+  description?: string;
+}): Promise<IntermediateStorageFolderPickerResult> {
+  const response = await requestIntermediateStorageJson<{ result?: IntermediateStorageFolderPickerResult }>(
+    "/api/links/groups/intermediate-storage/pick-folder",
+    {
+      basePath: "",
+      initialPath: normalizeText(input?.initialPath),
+      description: normalizeText(input?.description),
+    }
+  );
+  return response?.result || {
+    supported: false,
+    selected: false,
+    path: "",
+    normalizedPath: "",
+    picker: null,
+    reason: "O picker de pasta nao devolveu resultado.",
+    validation: null,
   };
 }

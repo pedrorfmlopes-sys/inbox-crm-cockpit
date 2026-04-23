@@ -407,12 +407,18 @@ function buildManifestForRuntime(runtimeMode: ReturnType<typeof resolveGroupStor
   return manifest!;
 }
 
-async function withMockedFetch<T>(run: (calls: Array<{ url: string; method: string; body?: string }>) => Promise<T>): Promise<T> {
+async function withMockedFetch<T>(
+  run: (calls: Array<{ url: string; method: string; body?: string }>) => Promise<T>,
+  options?: {
+    pickedFolderPath?: string;
+  }
+): Promise<T> {
   const originalFetch = window.fetch.bind(window);
   const calls: Array<{ url: string; method: string; body?: string }> = [];
   const manifestByKey = new Map<string, GroupWorksetManifest>();
   const intermediateTextByKey = new Map<string, string>();
   const intermediateBinaryByKey = new Map<string, { contentBase64: string; contentType?: string }>();
+  const pickedFolderPath = String(options?.pickedFolderPath || "C:/Users/test/OneDrive - Demo/Groups").trim();
 
   const makeIntermediateKey = (basePath: string, relativePath: string) => `${basePath}::${relativePath}`;
   const listIntermediatePaths = (basePath: string, prefix: string) =>
@@ -451,24 +457,32 @@ async function withMockedFetch<T>(run: (calls: Array<{ url: string; method: stri
     }
 
     if (url.includes("/api/links/groups/storage/validate")) {
+      const parsed = JSON.parse(body || "{}") as {
+        mode?: string;
+        baseFolderPath?: string;
+        chosenFolder?: { path?: string; kind?: string };
+      };
+      const basePath = String(parsed?.chosenFolder?.path || parsed?.baseFolderPath || "").trim();
+      const blocked = basePath.includes("INVALID");
       return new Response(
         JSON.stringify({
           ok: true,
           result: {
-            mode: "supabase",
-            provider: "cloud",
-            fileBacked: false,
-            supported: true,
-            basePath: "",
-            normalizedBasePath: "",
+            mode: parsed?.mode || (basePath ? "chosen_folder" : "supabase"),
+            provider: basePath ? "local" : "cloud",
+            fileBacked: Boolean(basePath),
+            supported: !blocked,
+            basePath,
+            normalizedBasePath: basePath,
             isWebUrl: false,
-            requiresServerAccessiblePath: false,
-            canStoreManifest: true,
-            canStoreBinary: true,
-            pickerAvailable: false,
+            requiresServerAccessiblePath: Boolean(basePath),
+            canStoreManifest: !blocked,
+            canStoreBinary: !blocked,
+            pickerAvailable: true,
             notes: ["mocked"],
             architecturalBlocker: null,
             requiredChange: null,
+            blockingReason: blocked ? "Mocked invalid folder path." : null,
           },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
@@ -476,6 +490,28 @@ async function withMockedFetch<T>(run: (calls: Array<{ url: string; method: stri
     }
 
     if (url.includes("/api/links/groups/intermediate-storage/")) {
+      if (url.includes("/pick-folder")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              supported: true,
+              selected: true,
+              cancelled: false,
+              path: pickedFolderPath,
+              normalizedPath: pickedFolderPath,
+              picker: "windows_folder_browser",
+              reason: "mocked picker",
+              validation: {
+                supported: true,
+                normalizedBasePath: pickedFolderPath,
+                notes: ["mocked"],
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
       const parsed = JSON.parse(body || "{}") as {
         basePath?: string;
         path?: string;
@@ -487,6 +523,16 @@ async function withMockedFetch<T>(run: (calls: Array<{ url: string; method: stri
       const basePath = String(parsed.basePath || "").trim();
       const relativePath = String(parsed.path || "").trim();
       const prefix = String(parsed.prefix || "").trim();
+      if (basePath.includes("INVALID")) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: "group_intermediate_mock_invalid_path",
+          details: "Mocked invalid folder path.",
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       if (url.includes("/read-text")) {
         return new Response(
           JSON.stringify({ ok: true, content: intermediateTextByKey.get(makeIntermediateKey(basePath, relativePath)) || null }),
@@ -636,6 +682,44 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     return "GroupsSettingsPanel renderizou editores inline e os toggles canonicos ficaram interativos sem prompt/alert/confirm.";
   });
 
+  await runScenario(scenarios, "settings-tab-folder-picker", "settings", "Picker real de pasta preenche e valida a pasta intermédia", async () => {
+    await withMockedFetch(async () => {
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const root = ReactDOM.createRoot(host);
+
+      try {
+        root.render(
+          <GroupsSettingsPanel
+            open
+            value={normalizeGroupsTabSettings(DEFAULT_GROUPS_TAB_SETTINGS)}
+            onClose={() => undefined}
+            onSave={() => undefined}
+            initialSection="intermediate_storage"
+          />
+        );
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        const browseButton = Array.from(host.querySelectorAll("button")).find((button) =>
+          button.textContent?.includes("Procurar pasta")
+        );
+        assert(browseButton, "O botão de picker real nao foi renderizado.");
+        browseButton?.click();
+        await new Promise((resolve) => setTimeout(resolve, 40));
+
+        const pathInput = host.querySelector<HTMLInputElement>('input[placeholder="ex.: C:/dados/grupos/intermedio"]');
+        assert(pathInput?.value === "C:/Users/test/OneDrive - Demo/Groups", "O picker nao preencheu a pasta intermédia escolhida.");
+        const calls = Array.from(host.querySelectorAll("*"));
+        assert(calls.length > 0, "O painel deixou de renderizar depois do picker.");
+      } finally {
+        root.unmount();
+        host.remove();
+      }
+    });
+
+    return "O botão 'Procurar pasta' preencheu um caminho local real vindo do picker, incluindo um exemplo de pasta OneDrive sincronizada localmente.";
+  });
+
   await runScenario(scenarios, "settings-tab-case-behavior", "settings", "Settings de caso mudam bootstrap e reabertura", async () => {
     await withMockedFetch(async () => {
       const folderPath = "C:/dados/grupos/settings-case";
@@ -738,7 +822,27 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
       storage: resolveIntermediateCaseStorage(addinLocalSettings),
     });
     assert(relaxedValidation.available === true, "Com validateLocationOnOpen=false a validacao devia ser neutralizada.");
-    return "validateLocationOnOpen, blockTabIfUnavailable, warnIfUnavailable e autoRetryValidation passaram a distinguir add-in local pronto e fallback técnico em memória.";
+
+    await withMockedFetch(async () => {
+      const invalidFolderSettings = normalizeGroupsTabSettings({
+        storageMode: "local_indexeddb",
+        baseFolderPath: "C:/INVALID/groups",
+        validateLocationOnOpen: true,
+        blockTabIfUnavailable: true,
+        warnIfUnavailable: true,
+        autoRetryValidation: true,
+      });
+      const invalidFolderValidation = await validateGroupsTabStorageAvailability({
+        settings: invalidFolderSettings,
+        storage: resolveIntermediateCaseStorage(invalidFolderSettings),
+      });
+      assert(invalidFolderValidation.available === false, "Pasta inválida devia falhar na validacao real.");
+      assert(invalidFolderValidation.blocked === true, "Pasta inválida devia obedecer a blockTabIfUnavailable.");
+      assert(invalidFolderValidation.warning === true, "Pasta inválida devia obedecer a warnIfUnavailable.");
+      assert(invalidFolderValidation.retrySuggested === true, "Pasta inválida devia obedecer a autoRetryValidation.");
+    });
+
+    return "validateLocationOnOpen, blockTabIfUnavailable, warnIfUnavailable e autoRetryValidation passaram a distinguir add-in local pronto, pasta inválida e fallback técnico em memória.";
   });
 
   await runScenario(scenarios, "settings-tab-attachment-runtime", "attachments", "Settings de anexos mudam selecao, destino e payload", async () => {

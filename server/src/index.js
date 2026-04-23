@@ -57,6 +57,7 @@ import {
   writeIntermediateCaseBinaryFile,
   writeIntermediateCaseTextFile,
 } from "./groupIntermediateCaseStore.js";
+import { pickNativeFilesystemFolder } from "./nativeFolderPicker.js";
 import { extractTextFromPdfBuffer } from "./ai/pdfHelper.js";
 import { createAiRouter } from "./routes/aiRoutes.js";
 import { createLearningRouter } from "./routes/learningRoutes.js";
@@ -2043,6 +2044,16 @@ app.post("/api/links/groups/intermediate-storage/read-text", async (req, res) =>
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "group_intermediate_read_text_failed", details: String(e?.message || e) });
+  }
+});
+
+app.post("/api/links/groups/intermediate-storage/pick-folder", async (req, res) => {
+  try {
+    const result = await pickNativeFilesystemFolder(req.body || {});
+    return res.json({ ok: true, result });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "group_intermediate_pick_folder_failed", details: String(e?.message || e) });
   }
 });
 

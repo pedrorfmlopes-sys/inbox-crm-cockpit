@@ -6,6 +6,10 @@ function normalizeString(value) {
   return String(value || "").trim();
 }
 
+function isNativeFolderPickerSupported() {
+  return process.platform === "win32";
+}
+
 function normalizeStorageMode(value) {
   const normalized = normalizeString(value).toLowerCase();
   if (normalized === "local_device" || normalized === "chosen_folder" || normalized === "hybrid") {
@@ -109,9 +113,10 @@ export function validateGroupStorageTarget(input = {}) {
       requiresServerAccessiblePath: false,
       canStoreManifest: true,
       canStoreBinary: true,
-      pickerAvailable: false,
-      pickerBlockedReason:
-        "O host atual nao expoe um picker de pasta reutilizavel que entregue um caminho seguro ao backend.",
+      pickerAvailable: isNativeFolderPickerSupported(),
+      pickerBlockedReason: isNativeFolderPickerSupported()
+        ? null
+        : "O picker nativo desta fase usa o seletor de pasta do Windows via backend local.",
       architecturalBlocker: null,
       requiredChange: null,
       notes: ["Modo cloud: a persistencia final continua centralizada na app."],
@@ -131,9 +136,10 @@ export function validateGroupStorageTarget(input = {}) {
       requiresServerAccessiblePath: true,
       canStoreManifest: false,
       canStoreBinary: false,
-      pickerAvailable: false,
-      pickerBlockedReason:
-        "Sem bridge nativa, o add-in nao consegue entregar ao backend um caminho local do utilizador atraves de um picker real.",
+      pickerAvailable: isNativeFolderPickerSupported(),
+      pickerBlockedReason: isNativeFolderPickerSupported()
+        ? null
+        : "O picker nativo desta fase usa o seletor de pasta do Windows via backend local.",
       blockingReason: "Define primeiro um caminho local, pasta sincronizada ou UNC acessivel ao processo do servidor.",
       architecturalBlocker: null,
       requiredChange: null,
@@ -155,7 +161,7 @@ export function validateGroupStorageTarget(input = {}) {
       canStoreBinary: false,
       pickerAvailable: false,
       pickerBlockedReason:
-        "Mesmo com picker browser, o host atual nao fornece um caminho fisico que o backend consiga usar para escrita.",
+        "O picker desta fase devolve apenas caminhos locais reais do Windows; URLs web continuam fora do perimetro.",
       blockingReason:
         "OneDrive/SharePoint por URL web ou document library nao e suportado nesta arquitetura porque a escrita final atual usa filesystem no servidor, nao Graph/SharePoint API.",
       architecturalBlocker: "web_document_library_requires_graph_backend",
@@ -204,9 +210,10 @@ export function validateGroupStorageTarget(input = {}) {
       requiresServerAccessiblePath: true,
       canStoreManifest: true,
       canStoreBinary: true,
-      pickerAvailable: false,
-      pickerBlockedReason:
-        "O add-in nao tem picker nativo que entregue ao backend um caminho local do utilizador; nesta arquitetura usa-se path manual validado no servidor.",
+      pickerAvailable: isNativeFolderPickerSupported(),
+      pickerBlockedReason: isNativeFolderPickerSupported()
+        ? null
+        : "O picker nativo desta fase usa o seletor de pasta do Windows via backend local.",
       architecturalBlocker: null,
       requiredChange: null,
       notes,
@@ -229,9 +236,10 @@ export function validateGroupStorageTarget(input = {}) {
       requiresServerAccessiblePath: true,
       canStoreManifest: false,
       canStoreBinary: false,
-      pickerAvailable: false,
-      pickerBlockedReason:
-        "Sem bridge nativa, o add-in nao consegue escolher e entregar automaticamente um caminho local do utilizador ao backend.",
+      pickerAvailable: isNativeFolderPickerSupported(),
+      pickerBlockedReason: isNativeFolderPickerSupported()
+        ? null
+        : "O picker nativo desta fase usa o seletor de pasta do Windows via backend local.",
       blockingReason: `O servidor nao conseguiu escrever no destino configurado: ${normalizeString(error?.message) || "erro desconhecido"}`,
       architecturalBlocker: null,
       requiredChange: null,
