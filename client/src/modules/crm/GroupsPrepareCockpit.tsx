@@ -45,6 +45,7 @@ import { loadPrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/loadWor
 import { resolveGroupStorageRuntime } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWorkset";
 import { GroupsSettingsPanel } from "@/modules/crm/groups-v1/settings/GroupsSettingsPanel";
+import { buildGroupsSettingsPatch } from "@/modules/crm/groups-v1/settings/groupsModuleSettings";
 import {
   normalizeGroupsTabSettings,
   type GroupsTabSettings,
@@ -482,8 +483,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionScopeKey, setSessionScopeKey] = useState("");
   const groupsSettings = useMemo(
-    () => normalizeGroupsTabSettings(settings?.groupsTabSettings || null),
-    [settings?.groupsTabSettings]
+    () => normalizeGroupsTabSettings(settings?.groups?.tab || null),
+    [settings?.groups?.tab]
   );
   const intermediateCaseStorage = useMemo(
     () => resolveIntermediateCaseStorage(groupsSettings),
@@ -559,8 +560,8 @@ export const GroupsPrepareCockpit: React.FC = () => {
     signature: getGroupsPrepareSessionSignature(DEFAULT_GROUPS_PREPARE_SESSION_STATE),
   });
   const legacyStorageRuntime = useMemo(
-    () => resolveGroupStorageRuntime(settings?.groupStorage || null),
-    [settings?.groupStorage]
+    () => resolveGroupStorageRuntime(settings?.groups?.storage || null),
+    [settings?.groups?.storage]
   );
   const ignoreInlineAttachmentsFromLegacyStorage = legacyStorageRuntime.attachmentPolicy.ignoreInlineAttachments;
   const canPersistRemotePrepareWorkset = legacyStorageRuntime.projectSupport.supported;
@@ -1851,9 +1852,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
   async function handleSettingsSave(nextSettings: GroupsTabSettings) {
     try {
-      await saveSettings({
-        groupsTabSettings: nextSettings,
-      });
+      await saveSettings(buildGroupsSettingsPatch(settings, { tab: nextSettings }));
       setMsg("Settings da aba Groups guardados.");
       setShowSettingsPanel(false);
     } catch (error) {
@@ -2006,7 +2005,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
         {groupsSettingsStatusCard}
         <GroupsSettingsPanel
           open={showSettingsPanel}
-          value={settings?.groupsTabSettings || null}
+          value={settings?.groups?.tab || null}
           onClose={() => setShowSettingsPanel(false)}
           onSave={handleSettingsSave}
         />
@@ -2349,7 +2348,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
       <GroupsSettingsPanel
         open={showSettingsPanel}
-        value={settings?.groupsTabSettings || null}
+        value={settings?.groups?.tab || null}
         onClose={() => setShowSettingsPanel(false)}
         onSave={handleSettingsSave}
       />

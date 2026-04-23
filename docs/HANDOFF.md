@@ -1,5 +1,42 @@
 # HANDOFF
 
+## Grupos: centralizacao final tira a configuracao do modulo dos settings gerais e fixa `settings.groups` como fonte unica de verdade (Abril 2026)
+- **O que saiu dos settings gerais porque era de Grupos**:
+  - `groupStorage`
+  - `groupsTabSettings`
+  - `groupLabelsManagerEnabled`
+  - `groupLabelCatalog`
+  - `groupFavoriteIds`
+  - `groupTicketsEnabled`
+  - `groupTicketUi`
+  - `groupOutlookCategories`
+- **Estrutura canonica final do modulo Grupos**:
+  - `settings.groups.storage`
+  - `settings.groups.tab`
+  - `settings.groups.labels.managerEnabled`
+  - `settings.groups.labels.catalog`
+  - `settings.groups.labels.favoriteIds`
+  - `settings.groups.tickets.enabled`
+  - `settings.groups.tickets.ui`
+  - `settings.groups.outlookCategories`
+- **Como ficou a compatibilidade**:
+  - `client/src/settings.ts` passa a persistir apenas `groups` como bloco canonico
+  - os campos top-level legacy continuam apenas como aliases derivados de `settings.groups`, para nao partir consumidores partilhados fora desta ronda
+  - o runtime de Grupos (`Preparar`, `Classificar`, `GroupsCockpit`, `GroupManager`, storage resolver e settings do proprio modulo) passa a ler do bloco `settings.groups`
+- **Settings gerais depois desta ronda**:
+  - a secao `Grupos` sai de `SettingsPanel` e de `SettingsApp`
+  - `CockpitProvider` deixa de aceitar `groups` como secao de settings geral
+  - a abertura de settings a partir de superficies de Grupos passa a usar a superficie propria `group-settings`, nao o painel geral
+- **Distincao final**:
+  - **setting de Grupos**: tudo o que afeta configuracao persistida do modulo dentro de `settings.groups`
+  - **data de Grupos**: catalogos, favoritos e estado proprio do modulo continuam dentro do modulo Grupos, mas deixam de viver como fonte paralela nos settings gerais
+- **Fora do scope mantido**:
+  - sem mexer em CRM fora de Grupos
+  - sem mexer em AI
+  - sem mexer noutras abas
+  - sem feature nova
+  - sem redesign
+
 ## Grupos v1: fundacao sem Graph/admin fica finalmente fechada, com URL web explicitamente fora do runtime executavel (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - o perimetro desta frente passa a ser explicitamente **sem Graph e sem permissoes admin**

@@ -6,6 +6,7 @@ import type { GroupStorageProviderAdapter } from "./providers/providerTypes";
 import { supabaseProvider } from "./providers/supabaseProvider";
 import { resolveGroupPromotionPolicy } from "./promotionPolicy";
 import { GROUP_STORAGE_MODE_LABELS } from "./modes";
+import { getGroupsModuleSettings } from "../settings/groupsModuleSettings";
 import { isGraphAdminBlockedGroupStorageConfig, normalizeGroupStorageSettings } from "./settings";
 import type { GroupStorageLocationPointer, GroupStorageSettings } from "./types";
 
@@ -36,11 +37,21 @@ export type ResolvedGroupStorageRuntime = {
   };
 };
 
-export function resolveGroupStorageRuntime(settingsLike?: { groupStorage?: Partial<GroupStorageSettings> | null } | Partial<GroupStorageSettings> | null): ResolvedGroupStorageRuntime {
-  const raw = settingsLike && typeof settingsLike === "object" && "groupStorage" in settingsLike
-    ? settingsLike.groupStorage || null
-    : settingsLike;
-  const settings = normalizeGroupStorageSettings(raw || null);
+function resolveStorageInput(
+  settingsLike?:
+    | { groups?: { storage?: Partial<GroupStorageSettings> | null } | null; groupStorage?: Partial<GroupStorageSettings> | null }
+    | Partial<GroupStorageSettings>
+    | null
+): Partial<GroupStorageSettings> | null {
+  if (!settingsLike || typeof settingsLike !== "object") return settingsLike || null;
+  if ("groups" in settingsLike || "groupStorage" in settingsLike) {
+    return getGroupsModuleSettings(settingsLike).storage;
+  }
+  return settingsLike;
+}
+
+export function resolveGroupStorageRuntime(settingsLike?: { groups?: { storage?: Partial<GroupStorageSettings> | null } | null; groupStorage?: Partial<GroupStorageSettings> | null } | Partial<GroupStorageSettings> | null): ResolvedGroupStorageRuntime {
+  const settings = normalizeGroupStorageSettings(resolveStorageInput(settingsLike) || null);
   const provider = pickProvider(settings);
   const primaryLocation = provider.describePrimary(settings);
   const remotePromotionLocation = provider.describeRemote(settings);
@@ -78,7 +89,7 @@ export function resolveGroupStorageRuntime(settingsLike?: { groupStorage?: Parti
   };
 }
 
-export function getGroupAttachmentStorageOptions(settingsLike?: { groupStorage?: Partial<GroupStorageSettings> | null } | Partial<GroupStorageSettings> | null): {
+export function getGroupAttachmentStorageOptions(settingsLike?: { groups?: { storage?: Partial<GroupStorageSettings> | null } | null; groupStorage?: Partial<GroupStorageSettings> | null } | Partial<GroupStorageSettings> | null): {
   attachmentStorageProvider: GroupStorageSettings["provider"];
   attachmentStorageBasePath: string;
 } {

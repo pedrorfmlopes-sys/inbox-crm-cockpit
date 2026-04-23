@@ -477,9 +477,9 @@ export const GroupsCockpit: React.FC = () => {
         currentEmailBootstrapLinkPayload.itemId,
         currentEmailBootstrapLinkPayload.subject,
         currentEmailBootstrapPayload,
-        settings?.groupStorage?.baseFolderPath,
-        settings?.groupStorage?.mode,
-        settings?.groupStorage?.provider,
+        settings?.groups?.storage?.baseFolderPath,
+        settings?.groups?.storage?.mode,
+        settings?.groups?.storage?.provider,
     ]);
 
     useEffect(() => {

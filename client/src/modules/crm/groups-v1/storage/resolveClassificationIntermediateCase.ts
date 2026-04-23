@@ -14,7 +14,7 @@ export async function resolveClassificationIntermediateCase(input: {
   anchorEmailKey?: string | null;
 }): Promise<ResolvedClassificationIntermediateCase> {
   const settings = await getSettings().catch(() => null);
-  const groupsSettings = normalizeGroupsTabSettings(settings?.groupsTabSettings || null);
+  const groupsSettings = normalizeGroupsTabSettings(settings?.groups?.tab || null);
   const storage = resolveIntermediateCaseStorage(groupsSettings);
   const caseId = String(input.caseId || "").trim();
   const anchorEmailKey = String(input.anchorEmailKey || "").trim();

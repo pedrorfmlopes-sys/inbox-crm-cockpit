@@ -39,6 +39,7 @@ import {
   type GroupLabelCatalogEntry,
   type GroupLabelStatus,
 } from "@/settings";
+import { buildGroupsSettingsPatch } from "@/modules/crm/groups-v1/settings/groupsModuleSettings";
 import {
   createEmailGroupSelectionState,
   setPrincipalGroupSelection,
@@ -615,7 +616,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   initialView,
   standaloneSettings = false,
 }) => {
-  const { ctx, bodyText, bodyHtml, attachments, setMsg, setActiveGroupForCurrentEmail, settings, openSettingsSection } = useCockpit();
+  const { ctx, bodyText, bodyHtml, attachments, setMsg, setActiveGroupForCurrentEmail, settings } = useCockpit();
   const [view, setView] = useState<GroupManagerView>(() => normalizeGroupSettingsView(initialView, standaloneSettings));
   const [groups, setGroups] = useState<LinkGroupEntry[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
@@ -657,7 +658,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   const [ticketMatches, setTicketMatches] = useState<GroupTicketDetectionMatch[]>([]);
   const [ticketDetectionLoading, setTicketDetectionLoading] = useState(false);
   const [ticketMatchGroupSelection, setTicketMatchGroupSelection] = useState<Record<string, string[]>>({});
-  const [ticketUiDraft, setTicketUiDraft] = useState<TicketUiDraft>(createTicketUiDraft(settings?.groupTicketUi));
+  const [ticketUiDraft, setTicketUiDraft] = useState<TicketUiDraft>(createTicketUiDraft(settings?.groups?.tickets?.ui));
   const [quickLinkDraft, setQuickLinkDraft] = useState<QuickLinkDraft>(createQuickLinkDraft());
   const [quickLinkTicketQuery, setQuickLinkTicketQuery] = useState("");
   const [quickLinkTicketResults, setQuickLinkTicketResults] = useState<GroupTicketEntry[]>([]);
@@ -738,18 +739,19 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
 
   const currentEmailLinkPayload = useMemo(() => stripEmailPayloadAttachmentContent(currentEmailPayload), [currentEmailPayload]);
   const currentEmailKey = useMemo(() => makeEmailKey(currentEmailLinkPayload), [currentEmailLinkPayload]);
-  const favoriteGroupIds = settings?.groupFavoriteIds || [];
+  const groupsSettings = settings?.groups;
+  const favoriteGroupIds = groupsSettings?.labels?.favoriteIds || [];
   const favoriteGroupSet = useMemo(() => new Set(favoriteGroupIds), [favoriteGroupIds]);
-  const groupTicketsEnabled = settings?.groupTicketsEnabled !== false;
-  const ticketUi = settings?.groupTicketUi;
+  const groupTicketsEnabled = groupsSettings?.tickets?.enabled !== false;
+  const ticketUi = groupsSettings?.tickets?.ui;
   const currentSavableAttachments = useMemo(
     () =>
       (currentEmailPayload.attachments || [])
         .filter((attachment) => String(attachment.name || "").trim())
         .filter((attachment) => !isRejectedAttachmentState(attachment.documentState))
         .filter((attachment) => attachment.hasContent === true || Boolean(String(attachment.content || "").trim()))
-        .filter((attachment) => !(settings?.groupStorage.ignoreInlineAttachments && attachment.isInline)),
-    [currentEmailPayload.attachments, settings?.groupStorage.ignoreInlineAttachments]
+        .filter((attachment) => !(groupsSettings?.storage?.ignoreInlineAttachments && attachment.isInline)),
+    [currentEmailPayload.attachments, groupsSettings?.storage?.ignoreInlineAttachments]
   );
   const selectedCurrentAttachments = useMemo(() => {
     const selectedSet = new Set(selectedCurrentAttachmentKeys);
@@ -829,9 +831,9 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     currentEmailBootstrapLinkPayload.subject,
     currentEmailBootstrapPayload,
     currentEmailKey,
-    settings?.groupStorage?.baseFolderPath,
-    settings?.groupStorage?.mode,
-    settings?.groupStorage?.provider,
+    groupsSettings?.storage?.baseFolderPath,
+    groupsSettings?.storage?.mode,
+    groupsSettings?.storage?.provider,
   ]);
 
   useEffect(() => {
@@ -1004,12 +1006,12 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   }, [selectedTicketSeries]);
 
   useEffect(() => {
-    setTicketUiDraft(createTicketUiDraft(settings?.groupTicketUi));
+    setTicketUiDraft(createTicketUiDraft(groupsSettings?.tickets?.ui));
   }, [
-    settings?.groupTicketUi?.aiInstructions,
-    settings?.groupTicketUi?.autoLinkMode,
-    settings?.groupTicketUi?.suggestDraftOnCreate,
-    settings?.groupTicketUi?.useAiDrafts,
+    groupsSettings?.tickets?.ui?.aiInstructions,
+    groupsSettings?.tickets?.ui?.autoLinkMode,
+    groupsSettings?.tickets?.ui?.suggestDraftOnCreate,
+    groupsSettings?.tickets?.ui?.useAiDrafts,
   ]);
 
   useEffect(() => {
@@ -1146,8 +1148,8 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   }, [groupTicketsEnabled, quickLinkTicketQuery, setMsg, view]);
 
   const labelCatalogEntries = useMemo(
-    () => normalizeGroupLabelCatalog(settings?.groupLabelCatalog || []),
-    [settings?.groupLabelCatalog]
+    () => normalizeGroupLabelCatalog(groupsSettings?.labels?.catalog || []),
+    [groupsSettings?.labels?.catalog]
   );
 
   const allLabels = useMemo(() => {
@@ -1157,7 +1159,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     );
   }, [groups, labelCatalogEntries]);
 
-  const labelsManagerEnabled = settings?.groupLabelsManagerEnabled !== false;
+  const labelsManagerEnabled = groupsSettings?.labels?.managerEnabled !== false;
 
   const labelUsage = useMemo(
     () =>
@@ -1383,20 +1385,22 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   async function persistLabelCatalog(nextCatalog: GroupLabelCatalogEntry[]) {
     const normalizedCatalog = normalizeGroupLabelCatalog(nextCatalog);
     const hasCategorizedLabels = normalizedCatalog.some((entry) => entry.categorize === true);
-    await saveSettings({
-      groupLabelCatalog: normalizedCatalog,
-      ...(hasCategorizedLabels
-        ? {
-            groupOutlookCategories: {
-              enabled: settings?.groupOutlookCategories?.enabled === true,
-              includeGroups: settings?.groupOutlookCategories?.includeGroups !== false,
-              includeTickets: settings?.groupOutlookCategories?.includeTickets !== false,
-              includeStatuses: settings?.groupOutlookCategories?.includeStatuses !== false,
-              includeLabels: true,
-            },
-          }
-        : {}),
-    });
+    const nextOutlookCategories = hasCategorizedLabels
+      ? {
+          enabled: groupsSettings?.outlookCategories?.enabled === true,
+          includeGroups: groupsSettings?.outlookCategories?.includeGroups !== false,
+          includeTickets: groupsSettings?.outlookCategories?.includeTickets !== false,
+          includeStatuses: groupsSettings?.outlookCategories?.includeStatuses !== false,
+          includeLabels: true,
+        }
+      : undefined;
+    await saveSettings(buildGroupsSettingsPatch(settings, {
+      labels: {
+        ...(groupsSettings?.labels || {}),
+        catalog: normalizedCatalog,
+      },
+      ...(nextOutlookCategories ? { outlookCategories: nextOutlookCategories } : {}),
+    }));
   }
 
   async function ensureCatalogLabels(labels: string[]): Promise<string[]> {
@@ -1411,7 +1415,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
 
   async function createCatalogLabel(rawValue: string, draft?: Partial<ManagedLabelDraft> | null): Promise<string | null> {
     if (!labelsManagerEnabled) {
-      setMsg("Ativa primeiro o gestor de etiquetas em Settings > Grupos.");
+      setMsg("Ativa primeiro o gestor de etiquetas nos Settings de Grupos.");
       return null;
     }
     const label = String(rawValue || "").trim();
@@ -1979,7 +1983,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
 
   async function handleCreateTicketFromCurrentEmail() {
     if (!groupTicketsEnabled) {
-      setMsg("Ativa primeiro os tickets em Settings > Grupos.");
+      setMsg("Ativa primeiro os tickets nos Settings de Grupos.");
       return;
     }
     if (!selectedTicketSeriesId) {
@@ -2200,15 +2204,18 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   async function handleSaveTicketUi() {
     setBusy(true);
     try {
-      await saveSettings({
-        groupTicketUi: {
-          autoLinkMode: ticketUiDraft.autoLinkMode,
-          suggestDraftOnCreate: ticketUiDraft.suggestDraftOnCreate,
-          useAiDrafts: ticketUiDraft.useAiDrafts,
-          includeTicketCodeInSubject: ticketUiDraft.includeTicketCodeInSubject,
-          aiInstructions: String(ticketUiDraft.aiInstructions || "").trim(),
+      await saveSettings(buildGroupsSettingsPatch(settings, {
+        tickets: {
+          enabled: groupsSettings?.tickets?.enabled !== false,
+          ui: {
+            autoLinkMode: ticketUiDraft.autoLinkMode,
+            suggestDraftOnCreate: ticketUiDraft.suggestDraftOnCreate,
+            useAiDrafts: ticketUiDraft.useAiDrafts,
+            includeTicketCodeInSubject: ticketUiDraft.includeTicketCodeInSubject,
+            aiInstructions: String(ticketUiDraft.aiInstructions || "").trim(),
+          },
         },
-      });
+      }));
       setMsg("Settings locais dos tickets guardados.");
     } catch (error: any) {
       setMsg(error?.message || "Nao foi possivel guardar os settings dos tickets.");
@@ -2270,7 +2277,12 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       ? favoriteGroupIds.filter((id) => id !== groupId)
       : [groupId, ...favoriteGroupIds.filter((id) => id !== groupId)];
     try {
-      await saveSettings({ groupFavoriteIds: next });
+      await saveSettings(buildGroupsSettingsPatch(settings, {
+        labels: {
+          ...(groupsSettings?.labels || {}),
+          favoriteIds: next,
+        },
+      }));
     } catch (error: any) {
       setMsg(error?.message || "Nao foi possivel atualizar os favoritos.");
     }
@@ -2295,7 +2307,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
 
   async function handleRenameManagedLabel() {
     if (!labelsManagerEnabled) {
-      setMsg("Ativa primeiro o gestor de etiquetas em Settings > Grupos.");
+      setMsg("Ativa primeiro o gestor de etiquetas nos Settings de Grupos.");
       return;
     }
     const source = String(selectedManagedLabel || "").trim();
@@ -2339,7 +2351,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
 
   async function handleDeleteManagedLabel() {
     if (!labelsManagerEnabled) {
-      setMsg("Ativa primeiro o gestor de etiquetas em Settings > Grupos.");
+      setMsg("Ativa primeiro o gestor de etiquetas nos Settings de Grupos.");
       return;
     }
     const label = String(selectedManagedLabel || "").trim();
@@ -2536,11 +2548,11 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
 
               <div style={S.card}>
                 <div style={S.fieldLabel}>Ativacao global</div>
-                <div style={S.smallMeta}>A ativacao continua em Settings {" > "} Grupos.</div>
+                <div style={S.smallMeta}>A ativacao global do modulo vive agora na superficie propria de Settings de Grupos.</div>
                 <div style={S.inlineRow}>
-                  <button type="button" style={S.primaryBtn} onClick={() => openSettingsSection("groups")}>
+                  <button type="button" style={S.primaryBtn} onClick={() => void openGroupSettings({ section: "settings" })}>
                     <Icons.Settings size={12} />
-                    Abrir Settings gerais
+                    Abrir Settings de Grupos
                   </button>
                 </div>
               </div>
@@ -2566,12 +2578,12 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                   compact
                   tone="info"
                   title="Gestor de etiquetas desativado"
-                  description="Ativa a funcionalidade em Settings > Grupos para usar o catalogo central."
+                  description="Ativa a funcionalidade nos Settings de Grupos para usar o catalogo central."
                 />
                 <div style={S.inlineRow}>
-                  <button type="button" style={S.primaryBtn} onClick={() => openSettingsSection("groups")}>
+                  <button type="button" style={S.primaryBtn} onClick={() => void openGroupSettings({ section: "labels" })}>
                     <Icons.Settings size={12} />
-                    Abrir Settings gerais
+                    Abrir Gestor de etiquetas
                   </button>
                 </div>
               </div>
@@ -2753,12 +2765,12 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                   compact
                   tone="info"
                   title="Tickets desativados"
-                  description="Ativa a funcionalidade em Settings > Grupos para usar series e automatismos de tickets."
+                  description="Ativa a funcionalidade nos Settings de Grupos para usar series e automatismos de tickets."
                 />
                 <div style={S.inlineRow}>
-                  <button type="button" style={S.primaryBtn} onClick={() => openSettingsSection("groups")}>
+                  <button type="button" style={S.primaryBtn} onClick={() => void openGroupSettings({ section: "tickets" })}>
                     <Icons.Settings size={12} />
-                    Abrir Settings gerais
+                    Abrir Settings de tickets
                   </button>
                 </div>
               </div>
@@ -2825,7 +2837,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                       type="button"
                       style={S.primaryBtn}
                       onClick={() => void handleSaveTicketUi()}
-                      disabled={busy || !ticketUiDraftChanged(createTicketUiDraft(settings?.groupTicketUi), ticketUiDraft)}
+                  disabled={busy || !ticketUiDraftChanged(createTicketUiDraft(groupsSettings?.tickets?.ui), ticketUiDraft)}
                     >
                       <Icons.Save size={12} />
                       Guardar settings

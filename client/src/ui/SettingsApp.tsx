@@ -12,7 +12,6 @@ function isSettingsPanelSection(value: string | null): value is SettingsPanelSec
     || value === "persona"
     || value === "signature"
     || value === "references"
-    || value === "groups"
     || value === "crm2layout"
     || value === "protection";
 }

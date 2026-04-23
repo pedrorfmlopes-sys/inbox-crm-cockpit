@@ -4,16 +4,32 @@
 import type { AiTone } from "./ai/aiClient";
 import {
   DEFAULT_GROUP_STORAGE_SETTINGS,
-  normalizeGroupStorageSettings,
   type GroupStorageMode,
   type GroupStorageLegacyProvider as GroupStorageProvider,
   type GroupStorageSettings,
 } from "./modules/crm/groups-v1/storage/settings";
 import {
   DEFAULT_GROUPS_TAB_SETTINGS,
-  normalizeGroupsTabSettings,
   type GroupsTabSettings,
 } from "./modules/crm/groups-v1/settings/groupsTabSettings";
+import {
+  DEFAULT_GROUPS_MODULE_SETTINGS,
+  buildGroupsLegacyAliases,
+  normalizeGroupsModuleSettings,
+  type GroupLabelCatalogEntry,
+  type GroupLabelStatus,
+  type GroupOutlookCategorySettings,
+  type GroupsModuleSettings,
+  type GroupTicketAutoLinkMode,
+  type GroupTicketUiSettings,
+} from "./modules/crm/groups-v1/settings/groupsModuleSettings";
+export { normalizeGroupStorageSettings } from "./modules/crm/groups-v1/storage/settings";
+export { normalizeGroupsTabSettings } from "./modules/crm/groups-v1/settings/groupsTabSettings";
+export {
+  findGroupLabelCatalogEntry,
+  getGroupLabelCatalogLabels,
+  normalizeGroupLabelCatalog,
+} from "./modules/crm/groups-v1/settings/groupsModuleSettings";
 
 export type AppLocale = "pt-PT" | "es-ES" | "en-GB" | "it-IT" | "de-DE";
 export type LangOption = AppLocale | "auto";
@@ -75,9 +91,16 @@ export type ReferenceCounterMode = "per_type" | "global";
 export type ReferenceCodePosition = "prefix" | "suffix";
 export type Crm2OdooLayoutMode = "description_only" | "structured_project";
 export type Crm2OdooLayoutTarget = "project" | "lead" | "task" | "ticket";
-export type GroupTicketAutoLinkMode = "confirm" | "auto";
 export type { GroupStorageMode, GroupStorageProvider, GroupStorageSettings };
 export type { GroupsTabSettings };
+export type {
+  GroupLabelCatalogEntry,
+  GroupLabelStatus,
+  GroupOutlookCategorySettings,
+  GroupsModuleSettings,
+  GroupTicketAutoLinkMode,
+  GroupTicketUiSettings,
+};
 
 export type ReferenceCodeSettings = {
   enabled: boolean;
@@ -91,37 +114,12 @@ export type ReferenceCodeSettings = {
   };
 };
 
-export type GroupTicketUiSettings = {
-  autoLinkMode: GroupTicketAutoLinkMode;
-  suggestDraftOnCreate: boolean;
-  useAiDrafts: boolean;
-  includeTicketCodeInSubject: boolean;
-  aiInstructions: string;
-};
-
-export type GroupLabelStatus = "em_analise" | "em_progresso" | "concluido" | string;
-
-export type GroupLabelCatalogEntry = {
-  label: string;
-  categorize: boolean;
-  hasStatus: boolean;
-  status?: GroupLabelStatus;
-};
-
 export type InvoiceStudioSettings = {
   enabled: boolean;
   baseUrl: string;
   email: string;
   password: string;
   project: string;
-};
-
-export type GroupOutlookCategorySettings = {
-  enabled: boolean;
-  includeGroups: boolean;
-  includeTickets: boolean;
-  includeStatuses: boolean;
-  includeLabels: boolean;
 };
 
 export type Crm2StructuredLayoutSettings<TModel extends string> = {
@@ -245,11 +243,12 @@ export type CockpitSettingsV1 = {
   // Configurable reference codes for Odoo-created records
   referenceCodes: ReferenceCodeSettings;
 
-  // Group document storage configuration
+  // Canonical Groups module settings / data source
+  groups: GroupsModuleSettings;
+
+  // Legacy compatibility aliases for Groups
   groupStorage: GroupStorageSettings;
   groupsTabSettings: GroupsTabSettings;
-
-  // Optional extra: central label manager for group labels
   groupLabelsManagerEnabled: boolean;
   groupLabelCatalog: GroupLabelCatalogEntry[];
   groupFavoriteIds: string[];
@@ -304,14 +303,7 @@ const SETTINGS_STORAGE_KEYS: Array<keyof CockpitSettingsV1> = [
   "aiAutoLabel",
   "aiFontPreference",
   "referenceCodes",
-  "groupStorage",
-  "groupsTabSettings",
-  "groupLabelsManagerEnabled",
-  "groupLabelCatalog",
-  "groupFavoriteIds",
-  "groupTicketsEnabled",
-  "groupTicketUi",
-  "groupOutlookCategories",
+  "groups",
   "crm2OdooLayout",
 ];
 
@@ -380,6 +372,13 @@ const DEFAULT_RESPONSE_PRESETS: ResponsePreset[] = [
   { id: "p2", name: "Agendamento Carga", prompt: "Informa que a mercadoria está pronta e solicita confirmação de data/hora para a recolha no nosso armazém." },
   { id: "p3", name: "Follow-up Proposta", prompt: "Faz um follow-up cortês sobre a última proposta enviada, perguntando se restam dúvidas técnicas." }
 ];
+
+const DEFAULT_GROUPS_SETTINGS = normalizeGroupsModuleSettings(
+  DEFAULT_GROUPS_MODULE_SETTINGS,
+  null,
+  DEFAULT_GROUPS_MODULE_SETTINGS
+);
+const DEFAULT_GROUPS_LEGACY_ALIASES = buildGroupsLegacyAliases(DEFAULT_GROUPS_SETTINGS);
 
 const DEFAULT_SETTINGS: CockpitSettingsV1 = {
   version: 1,
@@ -494,29 +493,28 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
       },
     },
   },
+  groups: {
+    ...DEFAULT_GROUPS_SETTINGS,
+  },
   groupStorage: {
-    ...DEFAULT_GROUP_STORAGE_SETTINGS,
+    ...(DEFAULT_GROUPS_LEGACY_ALIASES.groupStorage || DEFAULT_GROUP_STORAGE_SETTINGS),
   },
   groupsTabSettings: {
-    ...DEFAULT_GROUPS_TAB_SETTINGS,
+    ...(DEFAULT_GROUPS_LEGACY_ALIASES.groupsTabSettings || DEFAULT_GROUPS_TAB_SETTINGS),
   },
-  groupLabelsManagerEnabled: true,
-  groupLabelCatalog: [],
-  groupFavoriteIds: [],
-  groupTicketsEnabled: true,
+  groupLabelsManagerEnabled: DEFAULT_GROUPS_LEGACY_ALIASES.groupLabelsManagerEnabled ?? true,
+  groupLabelCatalog: Array.isArray(DEFAULT_GROUPS_LEGACY_ALIASES.groupLabelCatalog)
+    ? [...DEFAULT_GROUPS_LEGACY_ALIASES.groupLabelCatalog]
+    : [],
+  groupFavoriteIds: Array.isArray(DEFAULT_GROUPS_LEGACY_ALIASES.groupFavoriteIds)
+    ? [...DEFAULT_GROUPS_LEGACY_ALIASES.groupFavoriteIds]
+    : [],
+  groupTicketsEnabled: DEFAULT_GROUPS_LEGACY_ALIASES.groupTicketsEnabled ?? true,
   groupTicketUi: {
-    autoLinkMode: "confirm",
-    suggestDraftOnCreate: true,
-    useAiDrafts: true,
-    includeTicketCodeInSubject: true,
-    aiInstructions: "Escreve em tom profissional e claro. Indica o numero do ticket e pede que todas as respostas futuras mantenham esse numero no assunto.",
+    ...(DEFAULT_GROUPS_LEGACY_ALIASES.groupTicketUi || DEFAULT_GROUPS_SETTINGS.tickets.ui),
   },
   groupOutlookCategories: {
-    enabled: true,
-    includeGroups: true,
-    includeTickets: true,
-    includeStatuses: true,
-    includeLabels: false,
+    ...(DEFAULT_GROUPS_LEGACY_ALIASES.groupOutlookCategories || DEFAULT_GROUPS_SETTINGS.outlookCategories),
   },
   crm2OdooLayout: {
     mode: "description_only",
@@ -576,11 +574,6 @@ const DEFAULT_SETTINGS: CockpitSettingsV1 = {
 function normalizeCrm2OdooLayoutMode(value: unknown): Crm2OdooLayoutMode {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "structured_project" ? "structured_project" : "description_only";
-}
-
-function normalizeGroupTicketAutoLinkMode(value: unknown): GroupTicketAutoLinkMode {
-  const normalized = String(value || "").trim().toLowerCase();
-  return normalized === "auto" ? "auto" : "confirm";
 }
 
 function hasOffice(): boolean {
@@ -671,64 +664,6 @@ function emitSettingsUpdated(settings: CockpitSettingsV1): void {
   } catch {
     // ignore
   }
-}
-
-function normalizeGroupLabelStatus(value: any): GroupLabelStatus | undefined {
-  const raw = String(value || "").trim().toLowerCase();
-  if (raw === "em_progresso") return "em_progresso";
-  if (raw === "concluido") return "concluido";
-  if (raw === "em_analise") return "em_analise";
-  return undefined;
-}
-
-export function normalizeGroupLabelCatalog(
-  entries: any,
-  fallback: GroupLabelCatalogEntry[] = []
-): GroupLabelCatalogEntry[] {
-  const byKey = new Map<string, GroupLabelCatalogEntry>();
-
-  const commit = (raw: any) => {
-    const rawLabel = typeof raw === "string" ? raw : raw?.label ?? raw?.name ?? raw?.value ?? raw?.id;
-    const label = String(rawLabel || "").trim();
-    if (!label) return;
-    const key = label.toLowerCase();
-    const previous = byKey.get(key);
-    const categorize = typeof raw?.categorize === "boolean"
-      ? Boolean(raw.categorize)
-      : previous?.categorize ?? false;
-    const hasStatus = typeof raw?.hasStatus === "boolean"
-      ? Boolean(raw.hasStatus)
-      : previous?.hasStatus ?? false;
-    const status = normalizeGroupLabelStatus(raw?.status ?? raw?.defaultStatus ?? previous?.status);
-    byKey.set(key, {
-      label: previous?.label || label,
-      categorize,
-      hasStatus,
-      status: hasStatus ? (status || "em_analise") : undefined,
-    });
-  };
-
-  for (const entry of Array.isArray(fallback) ? fallback : []) {
-    commit(entry);
-  }
-  for (const entry of Array.isArray(entries) ? entries : []) {
-    commit(entry);
-  }
-
-  return Array.from(byKey.values()).sort((a, b) => a.label.localeCompare(b.label, "pt-PT"));
-}
-
-export function getGroupLabelCatalogLabels(catalog: GroupLabelCatalogEntry[] | null | undefined): string[] {
-  return normalizeGroupLabelCatalog(catalog || []).map((entry) => entry.label);
-}
-
-export function findGroupLabelCatalogEntry(
-  catalog: GroupLabelCatalogEntry[] | null | undefined,
-  label: string
-): GroupLabelCatalogEntry | null {
-  const normalized = String(label || "").trim().toLowerCase();
-  if (!normalized) return null;
-  return normalizeGroupLabelCatalog(catalog || []).find((entry) => entry.label.toLowerCase() === normalized) || null;
 }
 
 function readLocalString(key: string): string {
@@ -913,6 +848,21 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
   const knownIncoming = pickKnownSettings(incoming);
   const incomingLayout = ((incoming as any).crm2OdooLayout || {});
   const incomingLayoutMode = normalizeCrm2OdooLayoutMode(incomingLayout.mode ?? base.crm2OdooLayout.mode);
+  const normalizedGroups = normalizeGroupsModuleSettings(
+    (incoming as any).groups || null,
+    {
+      groupStorage: (incoming as any).groupStorage,
+      groupsTabSettings: (incoming as any).groupsTabSettings,
+      groupLabelsManagerEnabled: (incoming as any).groupLabelsManagerEnabled,
+      groupLabelCatalog: (incoming as any).groupLabelCatalog,
+      groupFavoriteIds: (incoming as any).groupFavoriteIds,
+      groupTicketsEnabled: (incoming as any).groupTicketsEnabled,
+      groupTicketUi: (incoming as any).groupTicketUi,
+      groupOutlookCategories: (incoming as any).groupOutlookCategories,
+    },
+    base.groups || DEFAULT_GROUPS_SETTINGS
+  );
+  const normalizedGroupAliases = buildGroupsLegacyAliases(normalizedGroups);
 
   const merged: CockpitSettingsV1 = {
     ...base,
@@ -996,63 +946,26 @@ function mergeSettings(base: CockpitSettingsV1, incoming: Partial<CockpitSetting
         },
       },
     },
+    groups: normalizedGroups,
     groupStorage: {
-      ...normalizeGroupStorageSettings({
-        ...base.groupStorage,
-        ...((incoming as any).groupStorage || {}),
-      }),
+      ...(normalizedGroupAliases.groupStorage || normalizedGroups.storage),
     },
     groupsTabSettings: {
-      ...normalizeGroupsTabSettings({
-        ...base.groupsTabSettings,
-        ...((incoming as any).groupsTabSettings || {}),
-      }),
+      ...(normalizedGroupAliases.groupsTabSettings || normalizedGroups.tab),
     },
-    groupLabelsManagerEnabled: typeof (incoming as any).groupLabelsManagerEnabled === "boolean"
-      ? Boolean((incoming as any).groupLabelsManagerEnabled)
-      : base.groupLabelsManagerEnabled,
-    groupLabelCatalog: Array.isArray((incoming as any).groupLabelCatalog)
-      ? normalizeGroupLabelCatalog((incoming as any).groupLabelCatalog, base.groupLabelCatalog)
-      : base.groupLabelCatalog,
-    groupFavoriteIds: Array.isArray((incoming as any).groupFavoriteIds)
-      ? Array.from(new Set((incoming as any).groupFavoriteIds.map((entry: any) => String(entry || "").trim()).filter(Boolean)))
-      : base.groupFavoriteIds,
-    groupTicketsEnabled: typeof (incoming as any).groupTicketsEnabled === "boolean"
-      ? Boolean((incoming as any).groupTicketsEnabled)
-      : base.groupTicketsEnabled,
+    groupLabelsManagerEnabled: normalizedGroupAliases.groupLabelsManagerEnabled ?? normalizedGroups.labels.managerEnabled,
+    groupLabelCatalog: Array.isArray(normalizedGroupAliases.groupLabelCatalog)
+      ? [...normalizedGroupAliases.groupLabelCatalog]
+      : [...normalizedGroups.labels.catalog],
+    groupFavoriteIds: Array.isArray(normalizedGroupAliases.groupFavoriteIds)
+      ? [...normalizedGroupAliases.groupFavoriteIds]
+      : [...normalizedGroups.labels.favoriteIds],
+    groupTicketsEnabled: normalizedGroupAliases.groupTicketsEnabled ?? normalizedGroups.tickets.enabled,
     groupTicketUi: {
-      ...base.groupTicketUi,
-      ...((incoming as any).groupTicketUi || {}),
-      autoLinkMode: normalizeGroupTicketAutoLinkMode(((incoming as any).groupTicketUi || {}).autoLinkMode ?? base.groupTicketUi.autoLinkMode),
-      suggestDraftOnCreate: typeof ((incoming as any).groupTicketUi || {}).suggestDraftOnCreate === "boolean"
-        ? Boolean(((incoming as any).groupTicketUi || {}).suggestDraftOnCreate)
-        : base.groupTicketUi.suggestDraftOnCreate,
-      useAiDrafts: typeof ((incoming as any).groupTicketUi || {}).useAiDrafts === "boolean"
-        ? Boolean(((incoming as any).groupTicketUi || {}).useAiDrafts)
-        : base.groupTicketUi.useAiDrafts,
-      includeTicketCodeInSubject: typeof ((incoming as any).groupTicketUi || {}).includeTicketCodeInSubject === "boolean"
-        ? Boolean(((incoming as any).groupTicketUi || {}).includeTicketCodeInSubject)
-        : base.groupTicketUi.includeTicketCodeInSubject,
-      aiInstructions: String((((incoming as any).groupTicketUi || {}).aiInstructions ?? base.groupTicketUi.aiInstructions) || "").trim(),
+      ...(normalizedGroupAliases.groupTicketUi || normalizedGroups.tickets.ui),
     },
     groupOutlookCategories: {
-      ...base.groupOutlookCategories,
-      ...((incoming as any).groupOutlookCategories || {}),
-      enabled: typeof ((incoming as any).groupOutlookCategories || {}).enabled === "boolean"
-        ? Boolean(((incoming as any).groupOutlookCategories || {}).enabled)
-        : base.groupOutlookCategories.enabled,
-      includeGroups: typeof ((incoming as any).groupOutlookCategories || {}).includeGroups === "boolean"
-        ? Boolean(((incoming as any).groupOutlookCategories || {}).includeGroups)
-        : base.groupOutlookCategories.includeGroups,
-      includeTickets: typeof ((incoming as any).groupOutlookCategories || {}).includeTickets === "boolean"
-        ? Boolean(((incoming as any).groupOutlookCategories || {}).includeTickets)
-        : base.groupOutlookCategories.includeTickets,
-      includeStatuses: typeof ((incoming as any).groupOutlookCategories || {}).includeStatuses === "boolean"
-        ? Boolean(((incoming as any).groupOutlookCategories || {}).includeStatuses)
-        : base.groupOutlookCategories.includeStatuses,
-      includeLabels: typeof ((incoming as any).groupOutlookCategories || {}).includeLabels === "boolean"
-        ? Boolean(((incoming as any).groupOutlookCategories || {}).includeLabels)
-        : base.groupOutlookCategories.includeLabels,
+      ...(normalizedGroupAliases.groupOutlookCategories || normalizedGroups.outlookCategories),
     },
     crm2OdooLayout: {
       ...base.crm2OdooLayout,

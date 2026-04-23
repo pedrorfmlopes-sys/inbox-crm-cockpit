@@ -9,7 +9,6 @@ import {
   type AppLocale,
   type CockpitSettingsV1,
   type Crm2OdooLayoutTarget,
-  type GroupStorageMode,
   type LangOption,
   type ReferenceEntityKey,
   type ReplyLength,
@@ -19,10 +18,6 @@ import { applySkin } from "./skins";
 import * as Icons from "./icons";
 import { useCockpit } from "../components/shell/CockpitProvider";
 import { aiListModels, validateCrm2OdooLayout, type Crm2LayoutValidationResult } from "../api";
-import { GROUP_STORAGE_MODE_LABELS } from "../modules/crm/groups-v1/storage/modes";
-import { resolveGroupStorageRuntime } from "../modules/crm/groups-v1/storage/resolveStorageMode";
-import { buildGroupStorageValidationPayload, describeGroupStorageCapabilities } from "../modules/crm/groups-v1/storage/storageCapabilities";
-import { validateGroupStorageTarget, type GroupStorageValidationResult } from "../modules/crm/groups-v1/storage/worksetApi";
 import { PanelState, type PanelStateTone } from "./PanelState";
 import { previewReferenceCode } from "../referenceCodes";
 
@@ -30,20 +25,20 @@ type StatusNotice = { tone: PanelStateTone; title: string; description?: string 
 type StatusValue = StatusNotice | string | null;
 
 const LOCALE_LABEL: Record<AppLocale, string> = {
-  "pt-PT": "Português (Portugal)",
+  "pt-PT": "PortuguÃªs (Portugal)",
   "es-ES": "Espanhol (Espanha)",
-  "en-GB": "Inglês (UK)",
+  "en-GB": "InglÃªs (UK)",
   "it-IT": "Italiano (IT)",
-  "de-DE": "Alemão (DE)",
+  "de-DE": "AlemÃ£o (DE)",
 };
 
 const LANG_OPTIONS: Array<{ value: LangOption; label: string }> = [
   { value: "auto", label: "Auto" },
-  { value: "pt-PT", label: "Português (PT)" },
+  { value: "pt-PT", label: "PortuguÃªs (PT)" },
   { value: "es-ES", label: "Espanhol (ES)" },
-  { value: "en-GB", label: "Inglês (UK)" },
+  { value: "en-GB", label: "InglÃªs (UK)" },
   { value: "it-IT", label: "Italiano (IT)" },
-  { value: "de-DE", label: "Alemão (DE)" },
+  { value: "de-DE", label: "AlemÃ£o (DE)" },
 ];
 
 const PICKER_LANGS: AppLocale[] = ["pt-PT", "es-ES", "en-GB", "it-IT", "de-DE"];
@@ -51,7 +46,7 @@ const PICKER_LANGS: AppLocale[] = ["pt-PT", "es-ES", "en-GB", "it-IT", "de-DE"];
 const LENGTH_OPTIONS: Array<{ value: ReplyLength; label: string }> = [
   { value: "xs", label: "Extra curta" },
   { value: "s", label: "Curta" },
-  { value: "m", label: "Média" },
+  { value: "m", label: "MÃ©dia" },
   { value: "l", label: "Longa" },
 ];
 
@@ -59,26 +54,13 @@ const TONE_OPTIONS = [
   { value: "neutro", label: "Neutro" },
   { value: "curto", label: "Curto" },
   { value: "direto", label: "Direto" },
-  { value: "simpático", label: "Simpático" },
+  { value: "simpÃ¡tico", label: "SimpÃ¡tico" },
 ] as const;
 
 const SKIN_OPTIONS: Array<{ value: SkinId; label: string }> = [
   { value: "classic", label: "Classic" },
   { value: "mailmaestro", label: "MailMaestro" },
   { value: "vibrant", label: "Vibrant (Cockpit 3.0)" },
-];
-
-const EXECUTABLE_GROUP_STORAGE_MODE_OPTIONS: Array<{ value: GroupStorageMode; label: string }> = [
-  { value: "supabase", label: "Cockpit Cloud" },
-  { value: "local_device", label: "Local acessivel ao servidor" },
-  { value: "chosen_folder", label: "Pasta local / sincronizada" },
-  { value: "hybrid", label: "Hibrido" },
-];
-
-const GROUP_STORAGE_WEB_URL_BLOCKER_FACTS = [
-  "O manifest do add-in no repo so declara ReadWriteMailbox.",
-  "O runtime Graph atual em office.ts so pede Mail.Read, User.Read e People.Read.",
-  "O backend atual grava binario por filesystem; nao existe uploader Graph/SharePoint por URL web.",
 ];
 
 const REFERENCE_ENTITY_LABELS: Record<ReferenceEntityKey, string> = {
@@ -108,8 +90,6 @@ export function SettingsPanel(): JSX.Element {
   const [sigImgLocal, setSigImgLocal] = useState<Partial<Record<AppLocale, string>>>({});
   const [availableModels, setAvailableModels] = useState<{ openai: string[]; gemini: string[] }>({ openai: [], gemini: [] });
   const [fetchingModels, setFetchingModels] = useState(false);
-  const [groupStorageValidation, setGroupStorageValidation] = useState<GroupStorageValidationResult | null>(null);
-  const [validatingGroupStorage, setValidatingGroupStorage] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -160,120 +140,26 @@ export function SettingsPanel(): JSX.Element {
 
   const title = useMemo(() => {
     if (section === "general") return "Geral";
-    if (section === "conns") return "Ligações";
+    if (section === "conns") return "LigaÃ§Ãµes";
     if (section === "ai") return "IA Knowledge";
     if (section === "persona") return "Minha Persona";
     if (section === "signature") return "Assinatura";
     if (section === "references") return "Codigos de Referencia";
-    if (section === "groups") return "Grupos";
     if (section === "crm2layout") return "CRM2 / Odoo Layout";
-    return "Proteção (O Moat)";
+    return "ProteÃ§Ã£o (O Moat)";
   }, [section]);
-
-  const resolvedGroupStorage = useMemo(
-    () => (model ? resolveGroupStorageRuntime(model) : null),
-    [model]
-  );
-  const groupStoragePathRequired = model ? model.groupStorage.mode !== "supabase" : false;
-  const groupStorageCapabilities = useMemo(
-    () => (model && resolvedGroupStorage
-      ? describeGroupStorageCapabilities({
-          settings: model.groupStorage,
-          runtime: resolvedGroupStorage,
-          validation: groupStorageValidation,
-        })
-      : []),
-    [groupStorageValidation, model, resolvedGroupStorage]
-  );
-  const groupStorageRequiresGraphOrAdmin = resolvedGroupStorage?.projectSupport.requiresGraphOrAdmin === true;
-
-  const validateCurrentGroupStorage = async (settingsModel: CockpitSettingsV1): Promise<GroupStorageValidationResult | null> => {
-    if (settingsModel.groupStorage.mode === "supabase") {
-      const result: GroupStorageValidationResult = {
-        mode: "supabase",
-        provider: "cloud",
-        fileBacked: false,
-        supported: true,
-        basePath: "",
-        normalizedBasePath: "",
-        isWebUrl: false,
-        requiresServerAccessiblePath: false,
-        canStoreManifest: true,
-        canStoreBinary: true,
-        pickerAvailable: false,
-        notes: ["Modo cloud validado localmente."],
-      };
-      setGroupStorageValidation(result);
-      return result;
-    }
-
-    setValidatingGroupStorage(true);
-    try {
-      const result = await validateGroupStorageTarget(buildGroupStorageValidationPayload(settingsModel.groupStorage));
-      setGroupStorageValidation(result);
-      return result;
-    } finally {
-      setValidatingGroupStorage(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!model || section !== "groups") return;
-    void validateCurrentGroupStorage(model);
-  }, [
-    model,
-    model?.groupStorage.mode,
-    model?.groupStorage.baseFolderPath,
-    model?.groupStorage.chosenFolder.kind,
-    model?.groupStorage.hybrid.primaryTarget,
-    section,
-  ]);
 
   async function onSave() {
     if (!model) return;
     setSaving(true);
     setStatus(null);
     try {
-      let nextModel = model;
-      const validation = await validateCurrentGroupStorage(model);
-      if (model.groupStorage.mode !== "supabase") {
-        if (!validation?.supported) {
-          setStatus({
-            tone: "error",
-            title: "Destino de storage bloqueado",
-            description: validation?.blockingReason || "Define um destino realmente acessivel ao servidor antes de guardar.",
-          });
-          return;
-        }
-        const normalizedBasePath = String(validation.normalizedBasePath || model.groupStorage.baseFolderPath || "").trim();
-        nextModel = {
-          ...model,
-          groupStorage: {
-            ...model.groupStorage,
-            baseFolderPath: normalizedBasePath,
-            localDevice: {
-              ...model.groupStorage.localDevice,
-              rootPath:
-                model.groupStorage.mode === "local_device" || model.groupStorage.hybrid.primaryTarget === "local_device"
-                  ? normalizedBasePath
-                  : model.groupStorage.localDevice.rootPath,
-            },
-            chosenFolder: {
-              ...model.groupStorage.chosenFolder,
-              path:
-                model.groupStorage.mode === "chosen_folder" || model.groupStorage.hybrid.primaryTarget === "chosen_folder"
-                  ? normalizedBasePath
-                  : model.groupStorage.chosenFolder.path,
-            },
-          },
-        };
-      }
-      await saveSettings(nextModel);
-      setModel(nextModel);
-      setStatus({ tone: "success", title: "Definições guardadas", description: "As alterações já estão disponíveis no cockpit." });
+      await saveSettings(model);
+      setModel(model);
+      setStatus({ tone: "success", title: "DefiniÃ§Ãµes guardadas", description: "As alteraÃ§Ãµes jÃ¡ estÃ£o disponÃ­veis no cockpit." });
       setTimeout(() => setStatus(null), 1800);
     } catch (e: any) {
-      setStatus({ tone: "error", title: "Falha ao guardar", description: e?.message || "Não foi possível guardar as definições." });
+      setStatus({ tone: "error", title: "Falha ao guardar", description: e?.message || "NÃ£o foi possÃ­vel guardar as definiÃ§Ãµes." });
     } finally {
       setSaving(false);
     }
@@ -292,10 +178,10 @@ export function SettingsPanel(): JSX.Element {
       for (const loc of PICKER_LANGS) map[loc] = getSignatureImageDataUrl(loc) || "";
       setSigImgLocal(map);
 
-      setStatus({ tone: "success", title: "Definições repostas", description: "Os valores guardados voltaram ao estado por defeito." });
+      setStatus({ tone: "success", title: "DefiniÃ§Ãµes repostas", description: "Os valores guardados voltaram ao estado por defeito." });
       setTimeout(() => setStatus(null), 2200);
     } catch (e: any) {
-      setStatus({ tone: "error", title: "Falha ao repor", description: e?.message || "Não foi possível repor as definições." });
+      setStatus({ tone: "error", title: "Falha ao repor", description: e?.message || "NÃ£o foi possÃ­vel repor as definiÃ§Ãµes." });
     } finally {
       setSaving(false);
     }
@@ -354,18 +240,18 @@ export function SettingsPanel(): JSX.Element {
   }
 
   if (loading) {
-    return <PanelState tone="loading" title="A carregar definições" description="Estamos a preparar as preferências guardadas deste utilizador." />;
+    return <PanelState tone="loading" title="A carregar definiÃ§Ãµes" description="Estamos a preparar as preferÃªncias guardadas deste utilizador." />;
   }
 
   if (!model) {
-    return <PanelState tone="error" title="Não foi possível carregar as definições" description="Volta a abrir o painel ou tenta novamente dentro de instantes." />;
+    return <PanelState tone="error" title="NÃ£o foi possÃ­vel carregar as definiÃ§Ãµes" description="Volta a abrir o painel ou tenta novamente dentro de instantes." />;
   }
 
   if (loading) {
-    return <div style={S.note}>A carregar definições…</div>;
+    return <div style={S.note}>A carregar definiÃ§Ãµesâ€¦</div>;
   }
   if (!model) {
-    return <div style={S.error}>Não foi possível carregar as definições.</div>;
+    return <div style={S.error}>NÃ£o foi possÃ­vel carregar as definiÃ§Ãµes.</div>;
   }
 
   return (
@@ -379,7 +265,7 @@ export function SettingsPanel(): JSX.Element {
           </button>
           <button style={S.btn} onClick={onSave} disabled={saving}>
             <Icons.Save size={12} style={{ marginRight: "4px" }} />
-            {saving ? "A guardar…" : "Guardar"}
+            {saving ? "A guardarâ€¦" : "Guardar"}
           </button>
         </div>
       </div>
@@ -390,19 +276,16 @@ export function SettingsPanel(): JSX.Element {
             Geral
           </button>
           <button style={section === "conns" ? S.sideItemOn : S.sideItem} onClick={() => setSection("conns")}>
-            Ligações
+            LigaÃ§Ãµes
           </button>
           <button style={section === "references" ? S.sideItemOn : S.sideItem} onClick={() => setSection("references")}>
             Referencias
-          </button>
-          <button style={section === "groups" ? S.sideItemOn : S.sideItem} onClick={() => setSection("groups")}>
-            Grupos
           </button>
           <button style={section === "crm2layout" ? S.sideItemOn : S.sideItem} onClick={() => setSection("crm2layout")}>
             CRM2
           </button>
           <button style={section === "protection" ? S.sideItemOn : S.sideItem} onClick={() => setSection("protection")}>
-            Proteção
+            ProteÃ§Ã£o
           </button>
         </div>
 
@@ -455,7 +338,7 @@ export function SettingsPanel(): JSX.Element {
                   ))}
                 </select>
                 <div style={S.hint}>
-                  Classic mantém o visual atual. MailMaestro é compacto. Vibrant é o novo design Cockpit 3.0 com Glassmorphism.
+                  Classic mantÃ©m o visual atual. MailMaestro Ã© compacto. Vibrant Ã© o novo design Cockpit 3.0 com Glassmorphism.
                 </div>
               </Field>
 
@@ -487,7 +370,7 @@ export function SettingsPanel(): JSX.Element {
                 </select>
               </Field>
 
-              <Field label="Idiomas no seletor rápido (barra inferior)">
+              <Field label="Idiomas no seletor rÃ¡pido (barra inferior)">
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                   {PICKER_LANGS.map((loc) => {
                     const enabled = (model.enabledLanguages && model.enabledLanguages.length > 0 ? model.enabledLanguages : PICKER_LANGS).includes(loc);
@@ -520,7 +403,7 @@ export function SettingsPanel(): JSX.Element {
                     );
                   })}
                 </div>
-                <div style={{ ...S.hint, marginTop: 6 }}>Estas opções controlam o menu rápido de idiomas (ícone ao lado de “Resumo”).</div>
+                <div style={{ ...S.hint, marginTop: 6 }}>Estas opÃ§Ãµes controlam o menu rÃ¡pido de idiomas (Ã­cone ao lado de â€œResumoâ€).</div>
               </Field>
 
               <Field label="Tom">
@@ -548,7 +431,7 @@ export function SettingsPanel(): JSX.Element {
               </Field>
 
               <div style={S.hint}>
-                Nota: nesta fase, estas definições são a base. A IA vai começar a usá-las progressivamente (idioma/tom/tamanho).
+                Nota: nesta fase, estas definiÃ§Ãµes sÃ£o a base. A IA vai comeÃ§ar a usÃ¡-las progressivamente (idioma/tom/tamanho).
               </div>
             </div>
           )}
@@ -585,7 +468,7 @@ export function SettingsPanel(): JSX.Element {
                   <div style={S.fieldLabel}>MODS / Response Presets</div>
                 </div>
                 <div style={{ ...S.hint, padding: 12, border: "1px dashed var(--iccc-card-border)", borderRadius: 12 }}>
-                  Os MODS são geridos nas AI Settings. Esta secção usa a mesma fonte oficial, mas não edita `responsePresets`.
+                  Os MODS sÃ£o geridos nas AI Settings. Esta secÃ§Ã£o usa a mesma fonte oficial, mas nÃ£o edita `responsePresets`.
                 </div>
               </div>
 
@@ -597,7 +480,7 @@ export function SettingsPanel(): JSX.Element {
                     Adicionar
                   </button>
                 </div>
-                <div style={{ ...S.hint, marginBottom: 12 }}>Mapeia nomes de fábricas ou entidades (ex: Ragno) para os seus emails.</div>
+                <div style={{ ...S.hint, marginBottom: 12 }}>Mapeia nomes de fÃ¡bricas ou entidades (ex: Ragno) para os seus emails.</div>
 
                 <div style={{ display: "grid", gap: 10 }}>
                   {(model.contactAliases || []).map((c) => (
@@ -638,10 +521,10 @@ export function SettingsPanel(): JSX.Element {
           {section === "persona" && (
             <div style={{ display: "grid", gap: 12 }}>
               <div style={S.hint}>
-                Define quem és e como escreves para que a IA possa imitar o teu estilo ("Ghost Writer").
+                Define quem Ã©s e como escreves para que a IA possa imitar o teu estilo ("Ghost Writer").
               </div>
 
-              <Field label="A minha função / Empresa">
+              <Field label="A minha funÃ§Ã£o / Empresa">
                 <input
                   style={S.input}
                   placeholder="Ex: Gestor de clientes na empresa"
@@ -653,7 +536,7 @@ export function SettingsPanel(): JSX.Element {
               <Field label="Estilo e Contexto">
                 <textarea
                   style={{ ...S.textarea, minHeight: 60 }}
-                  placeholder="Ex: Escrevo de forma direta, saúdo sempre com 'Olá', não uso formalismos excessivos."
+                  placeholder="Ex: Escrevo de forma direta, saÃºdo sempre com 'OlÃ¡', nÃ£o uso formalismos excessivos."
                   value={model.styleContext || ""}
                   onChange={(e) => setModel({ ...model, styleContext: e.target.value })}
                 />
@@ -668,7 +551,7 @@ export function SettingsPanel(): JSX.Element {
                 />
               </Field>
 
-              <div style={{ ...S.fieldLabel, marginTop: 10 }}>Links de Reunião (Calendário)</div>
+              <div style={{ ...S.fieldLabel, marginTop: 10 }}>Links de ReuniÃ£o (CalendÃ¡rio)</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <Field label="Microsoft Teams">
                   <input
@@ -697,15 +580,15 @@ export function SettingsPanel(): JSX.Element {
                   </Field>
                 </div>
               </div>
-              <div style={S.hint}>Estes links serão usados automaticamente quando criares um agendamento via Cockpit.</div>
+              <div style={S.hint}>Estes links serÃ£o usados automaticamente quando criares um agendamento via Cockpit.</div>
             </div>
           )}
 
           {section === "signature" && (
             <div style={{ display: "grid", gap: 12 }}>
               <div style={S.hint}>
-                Assinatura por idioma. Podes usar <strong>Imagem</strong> (upload/URL), <strong>HTML</strong> (formatação) e/ou{" "}
-                texto simples (fallback). A imagem enviada por upload é guardada <strong>localmente</strong>.
+                Assinatura por idioma. Podes usar <strong>Imagem</strong> (upload/URL), <strong>HTML</strong> (formataÃ§Ã£o) e/ou{" "}
+                texto simples (fallback). A imagem enviada por upload Ã© guardada <strong>localmente</strong>.
               </div>
 
               {(PICKER_LANGS as AppLocale[]).map((loc) => {
@@ -751,7 +634,7 @@ export function SettingsPanel(): JSX.Element {
                       </div>
 
                       <div style={{ display: "grid", gap: 6 }}>
-                        <div style={{ fontSize: 12, color: "#566" }}>URL alternativa (se não quiseres upload)</div>
+                        <div style={{ fontSize: 12, color: "#566" }}>URL alternativa (se nÃ£o quiseres upload)</div>
                         <input
                           style={S.input}
                           value={urlImg}
@@ -761,7 +644,7 @@ export function SettingsPanel(): JSX.Element {
                       </div>
 
                       <div style={{ display: "grid", gap: 6, maxWidth: 220 }}>
-                        <div style={{ fontSize: 12, color: "#566" }}>Largura máx. (px)</div>
+                        <div style={{ fontSize: 12, color: "#566" }}>Largura mÃ¡x. (px)</div>
                         <input
                           style={S.input}
                           type="number"
@@ -774,12 +657,12 @@ export function SettingsPanel(): JSX.Element {
 
                       {previewSrc ? (
                         <div style={{ marginTop: 6 }}>
-                          <div style={{ fontSize: 11, color: "#66719a", marginBottom: 6 }}>Pré-visualização</div>
+                          <div style={{ fontSize: 11, color: "#66719a", marginBottom: 6 }}>PrÃ©-visualizaÃ§Ã£o</div>
                           <div style={{ border: "1px dashed #d7dbeb", borderRadius: 12, padding: 10, background: "#fafbff" }}>
                             <img src={previewSrc} alt="" style={{ maxWidth: Math.max(120, Math.min(900, maxW)), height: "auto", display: "block" }} />
                           </div>
                           <div style={{ ...S.hint, marginTop: 6 }}>
-                            Dica: mantém o ficheiro pequeno. Upload em dataURL pode ficar pesado (melhor PNG otimizado ou usar URL).
+                            Dica: mantÃ©m o ficheiro pequeno. Upload em dataURL pode ficar pesado (melhor PNG otimizado ou usar URL).
                           </div>
                         </div>
                       ) : (
@@ -998,491 +881,6 @@ export function SettingsPanel(): JSX.Element {
             </div>
           )}
 
-          {section === "groups" && (
-            <div style={{ display: "grid", gap: 14 }}>
-              <label style={S.toggleRow}>
-                <input
-                  type="checkbox"
-                  checked={model.groupLabelsManagerEnabled !== false}
-                  onChange={(e) =>
-                    setModel({
-                      ...model,
-                      groupLabelsManagerEnabled: e.target.checked,
-                    })
-                  }
-                />
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ativar gestor de etiquetas</div>
-                  <div style={S.hint}>Liga a gestão central de etiquetas dentro da aba Grupos. Quando desligado, a app esconde o gestor dedicado de etiquetas.</div>
-                </div>
-              </label>
-
-              <label style={S.toggleRow}>
-                <input
-                  type="checkbox"
-                  checked={model.groupTicketsEnabled !== false}
-                  onChange={(e) =>
-                    setModel({
-                      ...model,
-                      groupTicketsEnabled: e.target.checked,
-                    })
-                  }
-                />
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ativar tickets nos grupos</div>
-                  <div style={S.hint}>Liga o extra de tickets dentro da aba Grupos. As séries, contadores e regras de ligação ficam na roda dentada da própria aba.</div>
-                </div>
-              </label>
-
-              <label style={S.toggleRow}>
-                <input
-                  type="checkbox"
-                  checked={model.groupOutlookCategories?.enabled === true}
-                  onChange={(e) =>
-                    setModel({
-                      ...model,
-                      groupOutlookCategories: {
-                        enabled: e.target.checked,
-                        includeGroups: model.groupOutlookCategories?.includeGroups !== false,
-                        includeTickets: model.groupOutlookCategories?.includeTickets !== false,
-                        includeStatuses: model.groupOutlookCategories?.includeStatuses !== false,
-                        includeLabels: model.groupOutlookCategories?.includeLabels === true,
-                      },
-                    })
-                  }
-                />
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Escrever categorias no Outlook</div>
-                  <div style={S.hint}>Aplica categorias automáticas no email atual com base em grupos, tickets e estado.</div>
-                </div>
-              </label>
-
-              {model.groupOutlookCategories?.enabled === true && (
-                <div style={{ ...S.referenceCard, display: "grid", gap: 10 }}>
-                  <div style={S.fieldLabel}>Categorias automáticas</div>
-                  <label style={S.toggleRow}>
-                    <input
-                      type="checkbox"
-                      checked={model.groupOutlookCategories?.includeGroups !== false}
-                      onChange={(e) =>
-                        setModel({
-                          ...model,
-                          groupOutlookCategories: {
-                            ...model.groupOutlookCategories,
-                            enabled: true,
-                            includeGroups: e.target.checked,
-                          },
-                        })
-                      }
-                    />
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Grupo</div>
-                      <div style={S.hint}>Exemplo: <b>Grupo: Encomendas</b></div>
-                    </div>
-                  </label>
-
-                  <label style={S.toggleRow}>
-                    <input
-                      type="checkbox"
-                      checked={model.groupOutlookCategories?.includeTickets !== false}
-                      onChange={(e) =>
-                        setModel({
-                          ...model,
-                          groupOutlookCategories: {
-                            ...model.groupOutlookCategories,
-                            enabled: true,
-                            includeTickets: e.target.checked,
-                          },
-                        })
-                      }
-                    />
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ticket</div>
-                      <div style={S.hint}>Exemplo: <b>TK: RTK-26-0001</b></div>
-                    </div>
-                  </label>
-
-                  <label style={S.toggleRow}>
-                    <input
-                      type="checkbox"
-                      checked={model.groupOutlookCategories?.includeStatuses !== false}
-                      onChange={(e) =>
-                        setModel({
-                          ...model,
-                          groupOutlookCategories: {
-                            ...model.groupOutlookCategories,
-                            enabled: true,
-                            includeStatuses: e.target.checked,
-                          },
-                        })
-                      }
-                    />
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Estado</div>
-                      <div style={S.hint}>Exemplo: <b>Gr: Em analise</b> · <b>E-Tk: Aberto</b> · <b>E-Et: Em progresso</b></div>
-                    </div>
-                  </label>
-
-                  <label style={S.toggleRow}>
-                    <input
-                      type="checkbox"
-                      checked={model.groupOutlookCategories?.includeLabels === true}
-                      onChange={(e) =>
-                        setModel({
-                          ...model,
-                          groupOutlookCategories: {
-                            ...model.groupOutlookCategories,
-                            enabled: true,
-                            includeLabels: e.target.checked,
-                          },
-                        })
-                      }
-                    />
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Etiquetas</div>
-                      <div style={S.hint}>Exemplo: <b>PED-1128</b></div>
-                    </div>
-                  </label>
-                </div>
-              )}
-
-              <PanelState
-                compact
-                tone={
-                  validatingGroupStorage
-                    ? "loading"
-                    : groupStorageValidation?.supported === false
-                      ? "warning"
-                      : "info"
-                }
-                title="Politica executavel de storage desta fase"
-                description={
-                  validatingGroupStorage
-                    ? "A validar o destino de gravacao no host atual do servidor."
-                    : groupStorageValidation?.supported === false
-                      ? groupStorageValidation.blockingReason || "O destino configurado ainda nao fecha de forma executavel nesta arquitetura."
-                      : "A persistencia final continua na app (`/api/links/*`). Os modos file-backed passam a depender de validacao real do caminho e nao apenas de labels."
-                }
-              />
-
-              <div style={S.referenceCard}>
-                <div style={S.fieldLabel}>Etiquetas conhecidas</div>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={S.hint}>
-                    Estado: <b>{model.groupLabelsManagerEnabled !== false ? "Ativo" : "Desativado"}</b>
-                  </div>
-                  <div style={S.hint}>
-                    Catálogo atual: <b>{(model.groupLabelCatalog || []).length}</b> etiqueta(s)
-                  </div>
-                  <div style={S.hint}>
-                    A gestão diária, renomeação e limpeza das etiquetas passa a ser feita diretamente na aba Grupos pela roda dentada.
-                  </div>
-                  <div style={S.hint}>
-                    Tickets: <b>{model.groupTicketsEnabled !== false ? "Ativos" : "Desativados"}</b>
-                  </div>
-                  <div style={S.hint}>
-                    Categorias Outlook: <b>{model.groupOutlookCategories?.enabled === true ? "Ativas" : "Desativadas"}</b>
-                  </div>
-                </div>
-              </div>
-
-              <Field label="Modo de armazenamento">
-                <select
-                  style={S.select}
-                  value={model.groupStorage.mode}
-                  onChange={(e) =>
-                    setModel({
-                      ...model,
-                      groupStorage: {
-                        ...model.groupStorage,
-                        mode: e.target.value as GroupStorageMode,
-                      },
-                    })
-                  }
-                >
-                  {EXECUTABLE_GROUP_STORAGE_MODE_OPTIONS.map((entry) => (
-                    <option key={entry.value} value={entry.value}>
-                      {entry.label}
-                    </option>
-                  ))}
-                </select>
-                <div style={S.hint}>
-                  Todos os modos continuam visiveis no contrato, mas os file-backed so ficam validos quando o caminho e realmente acessivel ao servidor.
-                </div>
-                <div style={S.hint}>
-                  `local_device` significa path local/UNC visivel para o host do servidor; nao representa automaticamente o disco do utilizador sem bridge nativa.
-                </div>
-              </Field>
-
-              {model.groupStorage.mode === "hybrid" ? (
-                <Field label="Primario do modo hibrido">
-                  <select
-                    style={S.select}
-                    value={model.groupStorage.hybrid.primaryTarget}
-                    onChange={(e) =>
-                      setModel({
-                        ...model,
-                        groupStorage: {
-                          ...model.groupStorage,
-                          hybrid: {
-                            ...model.groupStorage.hybrid,
-                            primaryTarget: e.target.value === "local_device" ? "local_device" : "chosen_folder",
-                          },
-                        },
-                      })
-                    }
-                  >
-                    <option value="chosen_folder">Pasta escolhida</option>
-                    <option value="local_device">Local acessivel ao servidor</option>
-                  </select>
-                </Field>
-              ) : null}
-
-              {model.groupStorage.mode !== "supabase" && model.groupStorage.mode !== "local_device" ? (
-                <Field label="Tipo de destino escolhido">
-                  <input
-                    style={{ ...S.input, background: "rgba(248,250,252,0.94)" }}
-                    value="Pasta fisica / sincronizada"
-                    disabled
-                  />
-                  <div style={S.hint}>
-                    Nesta fase sem Graph/admin, `chosen_folder` e `hybrid` aceitam apenas pasta fisica, pasta sincronizada local ou caminho UNC validado no servidor.
-                  </div>
-                </Field>
-              ) : null}
-
-              <Field label={model.groupStorage.mode === "local_device" ? "Destino local acessivel ao servidor" : "Destino principal"}>
-                <input
-                  style={S.input}
-                  value={
-                    model.groupStorage.mode === "local_device"
-                      ? model.groupStorage.localDevice.rootPath || ""
-                      : model.groupStorage.mode === "supabase"
-                        ? ""
-                        : model.groupStorage.chosenFolder.path || model.groupStorage.baseFolderPath || ""
-                  }
-                  disabled={!groupStoragePathRequired}
-                  onChange={(e) =>
-                    setModel({
-                      ...model,
-                        groupStorage: {
-                          ...model.groupStorage,
-                          baseFolderPath: e.target.value,
-                          chosenFolder: {
-                            ...model.groupStorage.chosenFolder,
-                            path: e.target.value,
-                            kind: "filesystem",
-                          },
-                          localDevice: {
-                            ...model.groupStorage.localDevice,
-                            rootPath:
-                              model.groupStorage.mode === "local_device" || model.groupStorage.hybrid.primaryTarget === "local_device"
-                              ? e.target.value
-                              : model.groupStorage.localDevice.rootPath,
-                        },
-                      },
-                    })
-                  }
-                  placeholder={groupStoragePathRequired ? "C:\\Documentos\\InboxCockpit\\Grupos ou \\\\servidor\\partilha\\Grupos" : "Nao usado no modo Cockpit Cloud"}
-                />
-                <div style={S.hint}>
-                  Usa apenas <b>caminho local do host, pasta sincronizada local ou UNC</b>. URL web fica auditada e bloqueada explicitamente se o backend nao a suportar.
-                </div>
-              </Field>
-
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <button
-                  style={S.btnGhost}
-                  onClick={() => model && void validateCurrentGroupStorage(model)}
-                  disabled={validatingGroupStorage}
-                >
-                  {validatingGroupStorage ? "A validar..." : "Validar destino"}
-                </button>
-                <div style={S.hint}>
-                  Picker real de pasta continua bloqueado pelo host atual; a alternativa suportada nesta arquitetura e path manual + validacao real no servidor.
-                </div>
-              </div>
-
-              {groupStorageValidation ? (
-                <div style={S.referenceCard}>
-                  <div style={S.fieldLabel}>Validacao real do destino</div>
-                  <div style={{ display: "grid", gap: 6 }}>
-                    <div style={S.hint}>
-                      Estado: <b>{groupStorageValidation.supported ? "Suportado neste host" : "Bloqueado neste host"}</b>
-                    </div>
-                    <div style={S.hint}>
-                      Provider efetivo: <b>{groupStorageValidation.provider}</b>
-                    </div>
-                    <div style={S.hint}>
-                      Caminho normalizado: <b>{groupStorageValidation.normalizedBasePath || "n/a"}</b>
-                    </div>
-                    <div style={S.hint}>
-                      Manifesto espelhado: <b>{groupStorageValidation.canStoreManifest ? "Sim" : "Nao"}</b>
-                    </div>
-                    <div style={S.hint}>
-                      Binario real: <b>{groupStorageValidation.canStoreBinary ? "Sim" : "Nao"}</b>
-                    </div>
-                    {groupStorageValidation.blockingReason ? (
-                      <div style={S.hint}>
-                        Bloqueio: <b>{groupStorageValidation.blockingReason}</b>
-                      </div>
-                    ) : null}
-                    {groupStorageValidation.requiredChange ? (
-                      <div style={S.hint}>
-                        Mudanca minima necessaria: <b>{groupStorageValidation.requiredChange}</b>
-                      </div>
-                    ) : null}
-                    {groupStorageValidation.pickerBlockedReason ? (
-                      <div style={S.hint}>
-                        Picker/path: <b>{groupStorageValidation.pickerBlockedReason}</b>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-
-              {groupStorageValidation?.architecturalBlocker === "web_document_library_requires_graph_backend"
-                || groupStorageRequiresGraphOrAdmin ? (
-                <div style={S.referenceCard}>
-                  <div style={S.fieldLabel}>Prova tecnica do bloqueio da URL web</div>
-                  <div style={{ display: "grid", gap: 6 }}>
-                    {GROUP_STORAGE_WEB_URL_BLOCKER_FACTS.map((fact) => (
-                      <div key={fact} style={S.hint}>
-                        - {fact}
-                      </div>
-                    ))}
-                    <div style={S.hint}>
-                      Resultado operacional desta fase: URL web fica explicitamente fora de scope e nao entra no runtime executavel de `local_device`, `chosen_folder` ou `hybrid`.
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              <Field label="Limiar para decisao de anexos (MB)">
-                <input
-                  style={S.input}
-                  type="number"
-                  min={1}
-                  max={250}
-                  value={model.groupStorage.attachmentPromptThresholdMb || 10}
-                  onChange={(e) =>
-                    setModel({
-                      ...model,
-                      groupStorage: {
-                        ...model.groupStorage,
-                        attachmentPromptThresholdMb: Number(e.target.value || 10) || 10,
-                      },
-                    })
-                  }
-                />
-                <div style={S.hint}>
-                  Metadata do anexo sobe sempre com o email classificado; binario fora do Cockpit Cloud fica best-effort e continua a pedir caminho real suportado.
-                </div>
-              </Field>
-
-              <label style={S.toggleRow}>
-                <input
-                  type="checkbox"
-                  checked={model.groupStorage.autoCreateFolderOnGroupCreate}
-                  disabled
-                  onChange={(e) =>
-                    setModel({
-                      ...model,
-                      groupStorage: {
-                        ...model.groupStorage,
-                        autoCreateFolderOnGroupCreate: e.target.checked,
-                      },
-                    })
-                  }
-                />
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Criar pasta automaticamente ao criar grupo</div>
-                  <div style={S.hint}>Mantido apenas como legado de configuracao. Esta automatizacao ainda nao fica executavel nesta fase.</div>
-                </div>
-              </label>
-
-              <label style={S.toggleRow}>
-                <input
-                  type="checkbox"
-                  checked={model.groupStorage.ignoreInlineAttachments}
-                  onChange={(e) =>
-                    setModel({
-                      ...model,
-                      groupStorage: {
-                        ...model.groupStorage,
-                        ignoreInlineAttachments: e.target.checked,
-                      },
-                    })
-                  }
-                />
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--iccc-text)" }}>Ignorar anexos inline e imagens de assinatura</div>
-                  <div style={S.hint}>Esta guarda continua real e afeta a preparacao/persistencia de anexos para reduzir ruido.</div>
-                </div>
-              </label>
-
-              <Field label="Viewer preferido">
-                <select
-                  style={S.select}
-                  value={model.groupStorage.suggestedViewer}
-                  disabled
-                  onChange={(e) =>
-                    setModel({
-                      ...model,
-                      groupStorage: {
-                        ...model.groupStorage,
-                        suggestedViewer: e.target.value as "system" | "inline",
-                      },
-                    })
-                  }
-                >
-                  <option value="inline">Viewer interno do cockpit</option>
-                  <option value="system">Aplicação do sistema</option>
-                </select>
-                <div style={S.hint}>
-                  Preferencia mantida apenas como legado local. Ainda nao existe caminho executavel fechado que a use de ponta a ponta nesta fase.
-                </div>
-              </Field>
-
-              <div style={S.referenceCard}>
-                <div style={S.fieldLabel}>Resumo executavel desta fase</div>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <div style={S.hint}>
-                    Modo escolhido: <b>{resolvedGroupStorage?.modeLabel || GROUP_STORAGE_MODE_LABELS[model.groupStorage.mode]}</b>
-                  </div>
-                  <div style={S.hint}>
-                    Persistencia final: <b>sempre na app via /api/links/*</b>
-                  </div>
-                  <div style={S.hint}>
-                    Binario de anexos/documentos: <b>{model.groupStorage.mode === "supabase" ? "Cockpit Cloud quando o payload traz conteudo" : groupStorageValidation?.supported ? "path validado no host atual + fallback controlado para metadata/cloud" : "bloqueado ate existir path fisico validado no servidor"}</b>
-                  </div>
-                  <div style={S.hint}>
-                    Persistencia intermedia: <b>{model.groupsTabSettings.storageMode === "disabled" ? "desativada" : "IndexedDB local do add-in, com namespace logico"}</b>
-                  </div>
-                  <div style={S.hint}>
-                    Sessao/cache: <b>prepareSession, seeds temporarios e fallback em memoria</b>
-                  </div>
-                </div>
-              </div>
-
-              <div style={S.referenceCard}>
-                <div style={S.fieldLabel}>Tabela real de modos</div>
-                <div style={{ display: "grid", gap: 8 }}>
-                  {groupStorageCapabilities.map((entry) => (
-                    <div key={entry.mode} style={{ display: "grid", gap: 3, padding: "8px 10px", borderRadius: 10, border: "1px solid var(--iccc-card-border)", background: "#fff" }}>
-                      <div style={S.hint}>
-                        <b>{entry.label}</b> - {entry.supported ? "Suportado / validado" : "Bloqueado ou dependente de validacao"}
-                      </div>
-                      <div style={S.hint}>Como grava: <b>{entry.howItWrites}</b></div>
-                      <div style={S.hint}>Onde grava: <b>{entry.whereItWrites}</b></div>
-                      <div style={S.hint}>Limitacao real: <b>{entry.limitations}</b></div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
           {section === "crm2layout" && (
             <Crm2LayoutSettings
               model={model}
@@ -1521,7 +919,7 @@ function normalizeStatus(status: StatusValue): StatusNotice | null {
   if (!status) return null;
   if (typeof status !== "string") return status;
   if (/falha|erro/i.test(status)) {
-    return { tone: "error", title: "Falha nas definições", description: status };
+    return { tone: "error", title: "Falha nas definiÃ§Ãµes", description: status };
   }
   return { tone: "success", title: status, description: undefined };
 }
@@ -2052,18 +1450,18 @@ function Crm2LayoutSettings({
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <div style={{ fontSize: 12, fontWeight: 800, color: "var(--iccc-text)" }}>{check.label}</div>
                       <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: toneColor }}>
-                        {check.kind === "field" ? "Campo" : "Aba"} · {check.status}
+                        {check.kind === "field" ? "Campo" : "Aba"} Â· {check.status}
                       </div>
                     </div>
                     <div style={S.hint}>
                       Configurado: <b>{check.configuredName || "Por definir"}</b>
-                      {check.actualType ? <> · Tipo real: <b>{check.actualType}</b></> : null}
+                      {check.actualType ? <> Â· Tipo real: <b>{check.actualType}</b></> : null}
                     </div>
                     <div style={S.hint}>{check.message}</div>
                     {check.expectedTypes?.length ? (
                       <div style={S.hint}>
                         Tipos aceites: <b>{check.expectedTypes.join(", ")}</b>
-                        {check.recommendedType ? <> · Recomendado: <b>{check.recommendedType}</b></> : null}
+                        {check.recommendedType ? <> Â· Recomendado: <b>{check.recommendedType}</b></> : null}
                       </div>
                     ) : null}
                     {typeof check.presentInFormView === "boolean" ? (
@@ -2148,14 +1546,14 @@ function ProtectionSettings() {
     }).filter(p => p.projectName);
 
     await saveProjects(projects);
-    setStatus("✓ Tabela de proteção atualizada localmente.");
+    setStatus("âœ“ Tabela de proteÃ§Ã£o atualizada localmente.");
     setTimeout(() => setStatus(""), 3000);
   }
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={S.hint}>
-        Carrega o teu ficheiro de proteção (CSV). A IA mapeia as colunas automaticamente.
+        Carrega o teu ficheiro de proteÃ§Ã£o (CSV). A IA mapeia as colunas automaticamente.
         Os dados ficam guardados apenas no teu browser (**IndexedDB**).
       </div>
 
@@ -2216,7 +1614,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
     setIsTesting(true);
     setStatus({
       tone: "loading",
-      title: "A testar ligações",
+      title: "A testar ligaÃ§Ãµes",
       description: "Estamos a validar o acesso ao Odoo e aos fornecedores de IA.",
     });
     try {
@@ -2237,7 +1635,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
         geminiApiKey: model.geminiApiKey,
       };
       await checkConnectivity(customModels);
-      setStatus("Ligações testadas com sucesso.");
+      setStatus("LigaÃ§Ãµes testadas com sucesso.");
     } catch (e: any) {
       console.error("[Settings] Test failed:", e);
       if (typeof setStatus === "function") {
@@ -2250,7 +1648,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
 
   const StatusDot = ({ ok }: { ok: boolean | null }) => {
     const color = ok === null ? "#ccc" : ok ? "#36b37e" : "#ff5630";
-    const label = ok === null ? "Por testar" : ok ? "Ligação Ativa" : "Falha na Ligação";
+    const label = ok === null ? "Por testar" : ok ? "LigaÃ§Ã£o Ativa" : "Falha na LigaÃ§Ã£o";
     return (
       <div style={{
         display: "flex",
@@ -2279,7 +1677,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label="URL da Instância">
+        <Field label="URL da InstÃ¢ncia">
           <input
             style={S.input}
             placeholder="https://suaempresa.odoo.com"
@@ -2310,7 +1708,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
           <input
             type="password"
             style={S.input}
-            placeholder="••••••••"
+            placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
             value={model.odooPassword || ""}
             onChange={e => setModel({ ...model, odooPassword: e.target.value })}
           />
@@ -2337,7 +1735,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
         </label>
       </div>
       <div style={{ fontSize: 11, color: "var(--iccc-text-muted)", marginTop: -6 }}>
-        Integração isolada para envio de anexos da aba FILES para processamento no InvoiceStudio.
+        IntegraÃ§Ã£o isolada para envio de anexos da aba FILES para processamento no InvoiceStudio.
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -2372,7 +1770,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label="Email técnico">
+        <Field label="Email tÃ©cnico">
           <input
             style={S.input}
             placeholder="integration@example.com"
@@ -2390,7 +1788,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
           <input
             type="password"
             style={S.input}
-            placeholder="••••••••"
+            placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
             value={model.invoiceStudio.password || ""}
             onChange={e => setModel({
               ...model,
@@ -2424,7 +1822,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
       </Field>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label="Modelo Rápido (OpenAI)">
+        <Field label="Modelo RÃ¡pido (OpenAI)">
           <select
             style={S.select}
             value={model.openaiModelFast || ""}
@@ -2433,7 +1831,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
             {availableModels.openai.length > 0 ? (
               availableModels.openai.map(m => <option key={m} value={m}>{m}</option>)
             ) : null}
-            <option value="">Usar padrão do servidor</option>
+            <option value="">Usar padrÃ£o do servidor</option>
           </select>
         </Field>
         <Field label="Modelo Qualidade (OpenAI)">
@@ -2445,7 +1843,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
             {availableModels.openai.length > 0 ? (
               availableModels.openai.map(m => <option key={m} value={m}>{m}</option>)
             ) : null}
-            <option value="">Usar padrão do servidor</option>
+            <option value="">Usar padrÃ£o do servidor</option>
           </select>
         </Field>
       </div>
@@ -2480,7 +1878,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
           {granularStatusDetails.geminiDetails.requested !== granularStatusDetails.geminiDetails.effective && (
             <div style={{ color: "#f59e0b", marginTop: 4 }}>
               <Icons.AlertTriangle size={10} style={{ marginRight: 4 }} />
-              Fallback ativado (modelo indisponível ou inválido).
+              Fallback ativado (modelo indisponÃ­vel ou invÃ¡lido).
             </div>
           )}
         </div>
@@ -2501,7 +1899,7 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
           value={model.geminiModel || ""}
           onChange={e => setModel({ ...model, geminiModel: e.target.value })}
         >
-          <option value="">Usar padrão do servidor</option>
+          <option value="">Usar padrÃ£o do servidor</option>
           {availableModels.gemini.length > 0 ? (
             availableModels.gemini.map(m => (
               <option key={m} value={m}>{m}</option>
@@ -2515,11 +1913,11 @@ function ConnectionSettings({ model, setModel, setStatus, availableModels, fetch
         onClick={handleTest}
         disabled={isTesting}
       >
-        {isTesting ? "A Testar..." : "Testar Ligações"}
+        {isTesting ? "A Testar..." : "Testar LigaÃ§Ãµes"}
       </button>
 
       <div style={S.hint}>
-        Nota: Mantém o Odoo aberto no browser para acesso direto sem login. Clique em "Testar Ligações" para validar o acesso ao RPC e health checks do Gemini.
+        Nota: MantÃ©m o Odoo aberto no browser para acesso direto sem login. Clique em "Testar LigaÃ§Ãµes" para validar o acesso ao RPC e health checks do Gemini.
       </div>
     </div>
   );

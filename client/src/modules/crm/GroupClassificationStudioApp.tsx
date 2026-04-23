@@ -961,9 +961,9 @@ function StudioInner() {
       try {
         const settings = await getSettings();
         applySkin((settings.skinId || "soft") as any);
-        setLabelCatalogEntries(normalizeGroupLabelCatalog(settings.groupLabelCatalog || []));
-        setFavoriteGroupIds(Array.isArray((settings as any)?.groupFavoriteIds)
-          ? Array.from(new Set((settings as any).groupFavoriteIds.map((entry: any) => String(entry || "").trim()).filter(Boolean)))
+        setLabelCatalogEntries(normalizeGroupLabelCatalog(settings.groups?.labels?.catalog || []));
+        setFavoriteGroupIds(Array.isArray(settings.groups?.labels?.favoriteIds)
+          ? Array.from(new Set(settings.groups.labels.favoriteIds.map((entry) => String(entry || "").trim()).filter(Boolean)))
           : []);
       } catch {
         applySkin("soft" as any);

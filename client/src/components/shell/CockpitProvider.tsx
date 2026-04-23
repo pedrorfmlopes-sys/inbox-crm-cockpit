@@ -15,7 +15,7 @@ import {
 } from "@/outlookCategories";
 
 export type CockpitTab = "ai" | "crm" | "crm2" | "related" | "groups" | "files" | "settings";
-export type SettingsPanelSection = "general" | "conns" | "ai" | "persona" | "signature" | "references" | "groups" | "crm2layout" | "protection";
+export type SettingsPanelSection = "general" | "conns" | "ai" | "persona" | "signature" | "references" | "crm2layout" | "protection";
 export type StartupCheckStatus = "pending" | "running" | "success" | "warning" | "error";
 
 type StartupCheckId = "settings" | "session" | "email" | "links" | "services";
@@ -167,7 +167,6 @@ function isSettingsPanelSection(value: string | null): value is SettingsPanelSec
         value === "signature" ||
         value === "references" ||
         value === "crm2layout" ||
-        value === "groups" ||
         value === "protection";
 }
 
