@@ -1483,6 +1483,32 @@
   - URLs web reais de OneDrive / SharePoint continuam fora; a escrita final suportada continua a depender de caminho local/sincronizado quando o provider nao e `cloud`
 # HANDOFF
 
+## Hotfix Groups host/auth: `Classificar` sem TDZ e Settings da aba Groups apenas por janela/dialog externa (Abril 2026)
+- **`Classificar`**:
+  - o bloco de `resolvedApplySelection` deixou de ler `inheritedLabels`, `selectedEmailStoredLabels`, `summaryLabels` e `selectedLabelStates` antes da inicializacao
+  - a cadeia imediata de TDZ no studio foi fechada tambem para:
+    - `canApplyClassification`
+    - `rehydrateClassificationEditorFromCaseEmail`
+  - `getEmailGroupRelations(...)` e `rehydrateClassificationEditorFromCaseEmail(...)` passaram a ficar definidos depois de `groupMap` e com `useCallback` estavel, para nao reabrir TDZ nem entrar em loop de `Maximum update depth exceeded`
+- **Settings da aba Groups**:
+  - `GroupsPrepareCockpit` deixa de renderizar `GroupsSettingsPanel` embebido no taskpane
+  - a engrenagem passa a abrir apenas o caminho externo `openGroupsTabSettings(...) -> openGroupSettings(...) -> view=group-settings&surface=groups-tab`
+  - `GroupSettingsApp` passa a servir duas superficies:
+    - `surface=groups-tab` para os settings reais da aba Groups
+    - `surface=manager` para o fluxo legado do gestor
+  - o caminho ativo de settings de Groups deixa de importar estaticamente `GroupManagerCockpit`, evitando arrastar `window.confirm` para esta funcionalidade
+- **Save / close da janela/dialog**:
+  - `Guardar` persiste `groupsTabSettings` via `saveSettings(...)` e mostra estado inline de sucesso/erro
+  - `Fechar` fecha via host action quando existe dialog real; no fallback browser/same-window volta para a rota base sem depender de modal embebido
+- **Validacao desta ronda**:
+  - build passou
+  - lint dos ficheiros tocados passou sem erros
+  - `git diff --check` passou
+  - smoke em browser:
+    - `?view=group-classification-studio` abre sem `ReferenceError` nem loop infinito
+    - `Groups -> engrenagem` navega para `?view=group-settings&surface=groups-tab`
+    - `Guardar` funciona e `Fechar` sai da vista de settings
+
 ## Hotfix: estabilizacao de host/settings e semantica de auth no `main` publicado (Abril 2026)
 - **Causa raiz corrigida do erro `window.prompt is not supported`**:
   - a aba `Groups` publicada ainda usava `window.prompt` em `client/src/modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx` para editar `baseFolderPath` e `migrationTarget`

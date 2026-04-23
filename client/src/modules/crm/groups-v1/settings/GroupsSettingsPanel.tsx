@@ -14,7 +14,7 @@ import {
   type GroupsTabSettings,
 } from "./groupsTabSettings";
 
-type GroupsSettingsSection =
+export type GroupsSettingsSection =
   | "general"
   | "intermediate_storage"
   | "attachments"
@@ -30,6 +30,9 @@ type Props = {
   value: GroupsTabSettings | null;
   onClose: () => void;
   onSave: (draft: GroupsTabSettings) => Promise<void> | void;
+  initialSection?: GroupsSettingsSection;
+  statusMessage?: string;
+  statusTone?: "success" | "error";
 };
 
 type SectionEntry = {
@@ -301,7 +304,15 @@ function readOnlyBoolean(value: boolean): string {
   return value ? "Ativo" : "Desativado";
 }
 
-export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JSX.Element | null {
+export function GroupsSettingsPanel({
+  open,
+  value,
+  onClose,
+  onSave,
+  initialSection = "general",
+  statusMessage = "",
+  statusTone = "success",
+}: Props): JSX.Element | null {
   const [activeSection, setActiveSection] = useState<GroupsSettingsSection>("general");
   const [draft, setDraft] = useState<GroupsTabSettings>(() => buildDraft(value));
   const [isSaving, setIsSaving] = useState(false);
@@ -340,12 +351,12 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
   useEffect(() => {
     if (!open) return;
     setDraft(buildDraft(value));
-    setActiveSection("general");
+    setActiveSection(initialSection);
     setIsSaving(false);
     setMaintenanceMessage("");
     setMaintenanceError("");
     setPathEditor(null);
-  }, [open, value]);
+  }, [initialSection, open, value]);
 
   useEffect(() => {
     if (!open) return;
@@ -825,7 +836,15 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
               />
             ))}
           </div>
-          <div style={isCompactLayout ? { ...S.content, ...S.contentCompact } : S.content}>{content}</div>
+          <div style={isCompactLayout ? { ...S.content, ...S.contentCompact } : S.content}>
+            {statusMessage ? (
+              <div style={statusTone === "error" ? { ...S.infoBlockWarning, marginBottom: 10 } : { ...S.infoBlock, marginBottom: 10 }}>
+                <div style={S.infoBlockTitle}>{statusTone === "error" ? "Operacao bloqueada" : "Operacao concluida"}</div>
+                <div style={S.infoBlockBody}>{statusMessage}</div>
+              </div>
+            ) : null}
+            {content}
+          </div>
         </div>
         {pathEditor ? (
           <div style={S.pathEditorShell}>
