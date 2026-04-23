@@ -1,5 +1,25 @@
 # HANDOFF
 
+## Grupos v1: contradicoes da auditoria ao ZIP esclarecidas e corrigidas na branch atual (Abril 2026)
+- **Contradicao 1 confirmada e corrigida**:
+  - o snapshot auditado da branch ainda tinha `GroupsPrepareCockpit.tsx` a abrir `GroupsSettingsPanel` embebido no taskpane (`showSettingsPanel`, `setShowSettingsPanel(true)` e render inline)
+  - isso nao era codigo morto nem fallback escondido; o relatorio anterior estava errado para esse snapshot
+  - a branch atual volta a usar o caminho externo: `GroupsPrepareCockpit.tsx` chama `openGroupsTabSettings(...)`, `office.ts` expõe esse helper e `GroupSettingsApp.tsx` serve `?view=group-settings&surface=groups-tab`
+- **Contradicao 2 confirmada e corrigida**:
+  - o snapshot auditado de `GroupClassificationStudioApp.tsx` chamava `resolveClassificationIntermediateCase(...)` sem o respetivo import
+  - isso era um blocker real do bootstrap do `Classificar`; nao era diferenca de bundle ou codigo morto
+  - a branch atual repoe o import direto e o smoke do studio passa a usar esse snapshot corrigido
+- **Contradicao 3 esclarecida**:
+  - o `28/28` anterior foi gerado pelo harness deterministico, mas esse harness nao cobria o clique da engrenagem em `GroupsPrepare` nem provava que o ZIP auditado era o mesmo snapshot descrito no relatorio
+  - `scripts/run-groups-v1-validation.mjs` passa agora a registar `validatedCommitSha`, entrypoints e ficheiros do harness, e acrescenta smoke da superficie externa `?view=group-settings&surface=groups-tab`
+- **Contradicao 4 esclarecida**:
+  - `settingsMatrix.ts` com `linkage: "disabled_shell"` esta correto e intencional
+  - estes campos continuam visiveis como shell herdada honesta, mas nao contam como settings operacionais ligados ao runtime
+- **Classificacao objetiva do estado atual**:
+  - a **centralizacao da fonte de verdade** esta fechada: Grupos le de `settings.groups`
+  - a **operacionalidade total de todos os controls visiveis** ainda nao esta fechada: continuam shells desativadas no painel da aba `Groups`
+  - por isso, a centralizacao de Grupos **nao deve ser descrita como totalmente fechada** se a frase incluir “todos os settings ligados ao runtime”
+
 ## Grupos v1: ligacao final de `settings.groups` ao runtime e validacao deterministica profunda fechadas (Abril 2026)
 - **Ligacoes finais fechadas nesta ronda**:
   - `client/src/settings.ts` passa a devolver aliases legacy de Grupos apenas como **espelho derivado em memoria**, sem os voltar a persistir como fonte canonica

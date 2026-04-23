@@ -44,15 +44,11 @@ import { resolveIntermediateCaseStorage } from "@/modules/crm/groups-v1/storage/
 import { loadPrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/loadWorkset";
 import { resolveGroupStorageRuntime } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
 import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWorkset";
-import { GroupsSettingsPanel } from "@/modules/crm/groups-v1/settings/GroupsSettingsPanel";
-import { buildGroupsSettingsPatch } from "@/modules/crm/groups-v1/settings/groupsModuleSettings";
 import {
   normalizeGroupsTabSettings,
-  type GroupsTabSettings,
 } from "@/modules/crm/groups-v1/settings/groupsTabSettings";
 import { getGroupWorksetManifestSignature } from "@/modules/crm/groups-v1/storage/worksetManifest";
-import { openGroupClassificationStudio } from "@/office";
-import { saveSettings } from "@/settings";
+import { openGroupClassificationStudio, openGroupsTabSettings } from "@/office";
 import { getStatusDisplayConfig } from "@/statusUtils";
 import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
@@ -457,7 +453,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const { ctx, bodyText, bodyHtml, attachments, settings, setMsg, activeGroupSelection, setActiveGroupForCurrentEmail } = useCockpit();
   const [mode] = useState<"prepare" | "explore">("prepare");
   const [subview, setSubview] = useState<GroupsPrepareSubview>("list");
-  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showGroupPanel, setShowGroupPanel] = useState(false);
   const [showFiltersPanel, setShowFiltersPanel] = useState(false);
   const [workingGroupId, setWorkingGroupId] = useState("");
@@ -1850,13 +1845,11 @@ export const GroupsPrepareCockpit: React.FC = () => {
     );
   }
 
-  async function handleSettingsSave(nextSettings: GroupsTabSettings) {
+  async function handleOpenGroupsSettings(section?: string) {
     try {
-      await saveSettings(buildGroupsSettingsPatch(settings, { tab: nextSettings }));
-      setMsg("Settings da aba Groups guardados.");
-      setShowSettingsPanel(false);
+      await openGroupsTabSettings(section ? { section } : {});
     } catch (error) {
-      setMsg(getErrorMessage(error, "Nao foi possivel guardar os Settings da aba Groups."));
+      setMsg(getErrorMessage(error, "Nao foi possivel abrir os Settings da aba Groups."));
     }
   }
 
@@ -1957,7 +1950,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
         description={resolvedStorageHint}
       />
       <div style={S.limitedActions}>
-        <button type="button" style={S.secondaryBtn} onClick={() => setShowSettingsPanel(true)}>
+        <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenGroupsSettings()}>
           <Icons.Settings size={12} />
           Abrir Settings
         </button>
@@ -1974,7 +1967,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
           description={limitedStateDescription}
         />
         <div style={S.limitedActions}>
-          <button type="button" style={S.secondaryBtn} onClick={() => setShowSettingsPanel(true)}>
+          <button type="button" style={S.secondaryBtn} onClick={() => void handleOpenGroupsSettings()}>
             <Icons.Settings size={12} />
             Abrir Settings
           </button>
@@ -1992,7 +1985,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
             <div style={S.title}>Preparar</div>
           </div>
           <div style={S.headerTools}>
-            <button type="button" style={S.headerToolBtnEnabled} title="Settings da aba Groups" onClick={() => setShowSettingsPanel(true)}>
+            <button type="button" style={S.headerToolBtnEnabled} title="Settings da aba Groups" onClick={() => void handleOpenGroupsSettings()}>
               <Icons.Settings size={11} />
             </button>
           </div>
@@ -2003,12 +1996,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
           description="Abre um email no Outlook para preparar o conjunto de trabalho desta aba."
         />
         {groupsSettingsStatusCard}
-        <GroupsSettingsPanel
-          open={showSettingsPanel}
-          value={settings?.groups?.tab || null}
-          onClose={() => setShowSettingsPanel(false)}
-          onSave={handleSettingsSave}
-        />
       </div>
     );
   }
@@ -2024,7 +2011,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
           <button type="button" style={S.headerToolBtn} disabled title="Pesquisa entra noutra fase.">
             <Icons.Search size={11} />
           </button>
-          <button type="button" style={S.headerToolBtnEnabled} title="Settings da aba Groups" onClick={() => setShowSettingsPanel(true)}>
+          <button type="button" style={S.headerToolBtnEnabled} title="Settings da aba Groups" onClick={() => void handleOpenGroupsSettings()}>
             <Icons.Settings size={11} />
           </button>
         </div>
@@ -2345,13 +2332,6 @@ export const GroupsPrepareCockpit: React.FC = () => {
       </div>
       </>
       )}
-
-      <GroupsSettingsPanel
-        open={showSettingsPanel}
-        value={settings?.groups?.tab || null}
-        onClose={() => setShowSettingsPanel(false)}
-        onSave={handleSettingsSave}
-      />
     </div>
   );
 };

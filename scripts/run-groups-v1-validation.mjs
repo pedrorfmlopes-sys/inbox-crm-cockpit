@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { createServer } from "vite";
@@ -17,11 +18,19 @@ const outputDir = path.join(repoRoot, "output", "playwright");
 const reportPath = path.join(outputDir, "groups-v1-validation-report.json");
 const screenshotPath = path.join(outputDir, "groups-v1-validation-page.png");
 const studioScreenshotPath = path.join(outputDir, "groups-v1-classification-smoke.png");
+const settingsScreenshotPath = path.join(outputDir, "groups-v1-settings-surface-smoke.png");
 const port = 4178;
 const origin = `https://127.0.0.1:${port}`;
 
 function ensureDir(target) {
   fs.mkdirSync(target, { recursive: true });
+}
+
+function getValidatedCommitSha() {
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: repoRoot,
+    encoding: "utf-8",
+  }).trim();
 }
 
 async function runServerStorageChecks() {
@@ -112,8 +121,46 @@ async function runClassificationStudioSmoke(browser) {
   }
 }
 
+async function runGroupsSettingsSurfaceSmoke(browser) {
+  const page = await browser.newPage({ ignoreHTTPSErrors: true });
+  const pageErrors = [];
+  const consoleErrors = [];
+
+  page.on("pageerror", (error) => {
+    pageErrors.push(String(error?.message || error || ""));
+  });
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+
+  try {
+    await page.goto(`${origin}/?view=group-settings&surface=groups-tab`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("text=Settings da aba Groups", { timeout: 25000 });
+    await page.screenshot({ path: settingsScreenshotPath, fullPage: true });
+    return {
+      ok: pageErrors.length === 0,
+      entrypoint: "?view=group-settings&surface=groups-tab",
+      pageErrors,
+      consoleErrors,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      entrypoint: "?view=group-settings&surface=groups-tab",
+      pageErrors,
+      consoleErrors,
+      error: error instanceof Error ? error.message : String(error || "Erro desconhecido"),
+    };
+  } finally {
+    await page.close();
+  }
+}
+
 async function main() {
   ensureDir(outputDir);
+  const validatedCommitSha = getValidatedCommitSha();
 
   const viteServer = await createServer({
     root: clientRoot,
@@ -130,16 +177,31 @@ async function main() {
     await viteServer.listen();
     browser = await chromium.launch({ headless: true });
 
-    const [browserValidation, classificationSmoke, serverStorage] = await Promise.all([
+    const [browserValidation, classificationSmoke, groupsSettingsSurfaceSmoke, serverStorage] = await Promise.all([
       runBrowserChecks(browser),
       runClassificationStudioSmoke(browser),
+      runGroupsSettingsSurfaceSmoke(browser),
       runServerStorageChecks(),
     ]);
 
     const report = {
       generatedAtIso: new Date().toISOString(),
+      validatedCommitSha,
+      validationEntrypoints: [
+        "/groups-v1-validation.html",
+        "/?view=group-classification-studio",
+        "/?view=group-settings&surface=groups-tab",
+      ],
+      harnessFiles: [
+        "client/groups-v1-validation.html",
+        "client/src/modules/crm/groups-v1/testing/validationPage.tsx",
+        "client/src/modules/crm/groups-v1/testing/runtimeValidation.tsx",
+        "client/src/modules/crm/groups-v1/testing/settingsMatrix.ts",
+        "scripts/run-groups-v1-validation.mjs",
+      ],
       browserValidation,
       classificationSmoke,
+      groupsSettingsSurfaceSmoke,
       serverStorage,
     };
 

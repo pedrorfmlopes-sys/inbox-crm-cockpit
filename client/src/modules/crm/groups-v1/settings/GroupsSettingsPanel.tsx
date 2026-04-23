@@ -14,7 +14,7 @@ import {
   type GroupsTabSettings,
 } from "./groupsTabSettings";
 
-type GroupsSettingsSection =
+export type GroupsSettingsSection =
   | "general"
   | "intermediate_storage"
   | "attachments"
@@ -30,6 +30,9 @@ type Props = {
   value: GroupsTabSettings | null;
   onClose: () => void;
   onSave: (draft: GroupsTabSettings) => Promise<void> | void;
+  initialSection?: GroupsSettingsSection;
+  statusMessage?: string;
+  statusTone?: "success" | "error";
 };
 
 type SectionEntry = {
@@ -299,8 +302,16 @@ function readOnlyBoolean(value: boolean): string {
   return value ? "Ativo" : "Desativado";
 }
 
-export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JSX.Element | null {
-  const [activeSection, setActiveSection] = useState<GroupsSettingsSection>("general");
+export function GroupsSettingsPanel({
+  open,
+  value,
+  onClose,
+  onSave,
+  initialSection = "general",
+  statusMessage = "",
+  statusTone = "success",
+}: Props): JSX.Element | null {
+  const [activeSection, setActiveSection] = useState<GroupsSettingsSection>(initialSection);
   const [draft, setDraft] = useState<GroupsTabSettings>(() => buildDraft(value));
   const [isSaving, setIsSaving] = useState(false);
   const [maintenanceMessage, setMaintenanceMessage] = useState("");
@@ -313,11 +324,11 @@ export function GroupsSettingsPanel({ open, value, onClose, onSave }: Props): JS
   useEffect(() => {
     if (!open) return;
     setDraft(buildDraft(value));
-    setActiveSection("general");
+    setActiveSection(initialSection);
     setIsSaving(false);
-    setMaintenanceMessage("");
-    setMaintenanceError("");
-  }, [open, value]);
+    setMaintenanceMessage(statusTone === "success" ? statusMessage : "");
+    setMaintenanceError(statusTone === "error" ? statusMessage : "");
+  }, [initialSection, open, statusMessage, statusTone, value]);
 
   useEffect(() => {
     if (!open) return;

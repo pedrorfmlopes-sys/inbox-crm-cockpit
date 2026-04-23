@@ -3113,6 +3113,13 @@ export async function openGroupSettings(params: Record<string, string> = {}) {
   }
 }
 
+export async function openGroupsTabSettings(params: Record<string, string> = {}) {
+  return await openGroupSettings({
+    surface: "groups-tab",
+    ...params,
+  });
+}
+
 export async function openGroupClassificationStudio(params: Record<string, string> = {}) {
   const url = buildCockpitViewUrl("group-classification-studio", params);
   try {

@@ -27,6 +27,7 @@ import {
   type GroupPreparationSeed,
 } from "@/modules/crm/groups-v1/prepareSession";
 import { hydrateIntermediateCaseEmailsToRelatedEntries, mapIntermediateEmailToRelatedEmailEntry } from "@/modules/crm/groups-v1/storage/intermediateCaseAdapters";
+import { resolveClassificationIntermediateCase } from "@/modules/crm/groups-v1/storage/resolveClassificationIntermediateCase";
 import type { IntermediateCase } from "@/modules/crm/groups-v1/storage/intermediateCaseTypes";
 import "../../global.css";
 
