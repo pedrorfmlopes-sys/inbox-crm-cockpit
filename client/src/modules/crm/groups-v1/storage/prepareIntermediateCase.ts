@@ -7,8 +7,10 @@ import type {
   IntermediateCaseEmail,
   IntermediateEmailClassification,
   IntermediateCaseSourceOrigin,
+  IntermediateAttachmentStorageDecision,
   IntermediateLocalPresence,
   IntermediateServerPresence,
+  IntermediateStorageRef,
   IntermediateVisibleState,
 } from "./intermediateCaseTypes";
 import { buildIntermediateCaseSourceSummary } from "./intermediateCaseSummary";
@@ -26,6 +28,9 @@ export type PrepareIntermediateAttachmentInput = {
   previewReady?: boolean;
   selected?: boolean;
   contentBase64?: string;
+  storageDecision?: IntermediateAttachmentStorageDecision;
+  localRef?: IntermediateStorageRef;
+  serverRef?: IntermediateStorageRef;
 };
 
 export type PrepareIntermediateEmailInput = {
@@ -68,6 +73,13 @@ function normalizeAttachment(
   emailKey: string,
   input: PrepareIntermediateAttachmentInput
 ): IntermediateCaseAttachment {
+  const defaultLocalRef = input.selected && input.hasContent === true
+    ? {
+        kind: "relative_path" as const,
+        value: getIntermediateCaseAttachmentPath(caseId, emailKey, input.attachmentKey, input.name),
+        label: String(input.name || "").trim() || undefined,
+      }
+    : undefined;
   return {
     attachmentKey: input.attachmentKey,
     id: normalizeString(input.id),
@@ -78,14 +90,9 @@ function normalizeAttachment(
     contentId: normalizeString(input.contentId),
     hasContent: input.hasContent === true,
     documentState: normalizeString(input.documentState),
-    storageDecision: input.selected ? (input.hasContent === true ? "local" : "metadata_only") : "pending",
-    localRef: input.selected && input.hasContent === true
-      ? {
-          kind: "relative_path",
-          value: getIntermediateCaseAttachmentPath(caseId, emailKey, input.attachmentKey, input.name),
-          label: String(input.name || "").trim() || undefined,
-        }
-      : undefined,
+    storageDecision: input.storageDecision || (input.selected ? (input.hasContent === true ? "local" : "metadata_only") : "pending"),
+    localRef: input.localRef || defaultLocalRef,
+    serverRef: input.serverRef,
     previewReady: input.previewReady === true || (input.selected === true && input.hasContent === true),
   };
 }

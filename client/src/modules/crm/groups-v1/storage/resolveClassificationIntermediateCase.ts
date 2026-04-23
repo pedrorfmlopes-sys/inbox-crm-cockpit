@@ -1,5 +1,9 @@
 import { getSettings } from "@/settings";
 import { normalizeGroupsTabSettings } from "../settings/groupsTabSettings";
+import {
+  shouldReopenGroupsExistingCase,
+  validateGroupsTabStorageAvailability,
+} from "../settings/groupsTabRuntime";
 import { resolveIntermediateCaseStorage, type ResolvedIntermediateCaseStorage } from "./resolveIntermediateCaseStorage";
 import type { IntermediateCase } from "./intermediateCaseTypes";
 
@@ -16,6 +20,10 @@ export async function resolveClassificationIntermediateCase(input: {
   const settings = await getSettings().catch(() => null);
   const groupsSettings = normalizeGroupsTabSettings(settings?.groups?.tab || null);
   const storage = resolveIntermediateCaseStorage(groupsSettings);
+  const validation = await validateGroupsTabStorageAvailability({
+    settings: groupsSettings,
+    storage,
+  }).catch(() => null);
   const caseId = String(input.caseId || "").trim();
   const anchorEmailKey = String(input.anchorEmailKey || "").trim();
 
@@ -26,11 +34,22 @@ export async function resolveClassificationIntermediateCase(input: {
     }
   }
 
-  if (anchorEmailKey) {
+  if (anchorEmailKey && shouldReopenGroupsExistingCase({ groups: { tab: groupsSettings } })) {
     const byAnchor = await storage.repository.findCaseByEmailKey(anchorEmailKey).catch(() => null);
     if (byAnchor) {
       return { caseValue: byAnchor, lookup: "anchor_email_key", storage };
     }
+  }
+
+  if (validation && !validation.available && validation.blocked) {
+    return {
+      caseValue: null,
+      lookup: "none",
+      storage: {
+        ...storage,
+        reason: validation.reason,
+      },
+    };
   }
 
   return {

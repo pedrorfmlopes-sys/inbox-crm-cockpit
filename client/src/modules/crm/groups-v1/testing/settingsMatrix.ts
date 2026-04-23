@@ -3,7 +3,7 @@ export type GroupsSettingsMatrixEntry = {
   module: string;
   expectedEffect: string;
   testId: string;
-  linkage: "runtime" | "disabled_shell" | "derived";
+  linkage: "runtime" | "derived";
 };
 
 export const GROUPS_SETTINGS_MATRIX: GroupsSettingsMatrixEntry[] = [
@@ -107,31 +107,45 @@ export const GROUPS_SETTINGS_MATRIX: GroupsSettingsMatrixEntry[] = [
   },
   {
     setting: "settings.groups.tab.autoCreateCaseOnNewEmail / reopenExistingCase / recreateIntermediateCopy",
-    module: "modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx",
-    expectedEffect: "Shell herdada desativada explicitamente; nao manda no runtime nesta fase.",
-    testId: "settings-panel-host-safe-shells",
-    linkage: "disabled_shell",
+    module: "modules/crm/GroupsPrepareCockpit.tsx + groups-v1/storage/resolveClassificationIntermediateCase.ts + groups-v1/settings/groupsTabRuntime.ts",
+    expectedEffect: "Controla auto-criacao de checkpoint, reabertura automatica e projeccao do historico remoto para o intermédio.",
+    testId: "settings-tab-case-behavior",
+    linkage: "runtime",
   },
   {
     setting: "settings.groups.tab.validateLocationOnOpen / blockTabIfUnavailable / warnIfUnavailable / autoRetryValidation",
-    module: "modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx",
-    expectedEffect: "Shell herdada desativada explicitamente; o intermédio nao usa validacao de pasta fisica.",
-    testId: "settings-panel-host-safe-shells",
-    linkage: "disabled_shell",
+    module: "modules/crm/GroupsPrepareCockpit.tsx + groups-v1/storage/resolveClassificationIntermediateCase.ts + groups-v1/settings/groupsTabRuntime.ts",
+    expectedEffect: "Controla validacao real do namespace, bloqueio da aba, aviso funcional e tentativa adicional de revalidacao.",
+    testId: "settings-tab-storage-validation",
+    linkage: "runtime",
   },
   {
     setting: "settings.groups.tab.attachmentStrategy / saveAttachmentsOnServer / saveAttachmentsOutsideServer / attachmentServerLimitMb / attachmentIntermediateLimitMb / externalAttachmentFolder / showAttachmentMetadataOnServer / requireImmediatePreview",
-    module: "modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx",
-    expectedEffect: "Campos herdados mantidos apenas como informacao honesta; o runtime real vive em settings.groups.storage.",
-    testId: "settings-panel-host-safe-shells",
-    linkage: "disabled_shell",
+    module: "modules/crm/GroupsPrepareCockpit.tsx + group-classification/documentUtils.ts + groups-v1/settings/groupsTabRuntime.ts",
+    expectedEffect: "Controla selecao por defeito, destino final, metadata/binario e preview imediato dos anexos do modulo Groups.",
+    testId: "settings-tab-attachment-runtime",
+    linkage: "runtime",
   },
   {
-    setting: "settings.groups.tab.mixedCaseWarningDays / localAbandonedWarningDays / cleanupFrequency / warnUnclassifiedEmails / warnMixedCases / warningFrequency / prepareTasksBridge / explorer*",
-    module: "modules/crm/groups-v1/settings/GroupsSettingsPanel.tsx",
-    expectedEffect: "Shell desativada explicitamente; nao abre automacao paralela nem surfaces fora de scope.",
-    testId: "settings-panel-host-safe-shells",
-    linkage: "disabled_shell",
+    setting: "settings.groups.tab.mixedCaseWarningDays / localAbandonedWarningDays / cleanupFrequency / warnUnclassifiedEmails / warnMixedCases / warningFrequency",
+    module: "modules/crm/GroupsPrepareCockpit.tsx + groups-v1/storage/intermediateCaseMaintenance.ts + groups-v1/settings/groupsTabRuntime.ts",
+    expectedEffect: "Controla warnings locais do cockpit e a cadencia da limpeza real do intermédio.",
+    testId: "settings-tab-warning-runtime",
+    linkage: "runtime",
+  },
+  {
+    setting: "settings.groups.tab.prepareTasksBridge",
+    module: "modules/crm/GroupsPrepareCockpit.tsx + groups-v1/prepareSession.ts",
+    expectedEffect: "Controla a ponte local de contexto entre Preparar e Classificar.",
+    testId: "settings-tab-prepare-bridge",
+    linkage: "runtime",
+  },
+  {
+    setting: "settings.groups.tab.explorerServerPrimary / explorerOpenStoredAttachments / explorerGenerateReply",
+    module: "modules/crm/GroupClassificationStudioApp.tsx + groups-v1/settings/groupsTabRuntime.ts",
+    expectedEffect: "Controla a precedencia server/intermedio e as acoes de abrir anexos guardados e gerar resposta/reenvio no studio.",
+    testId: "settings-tab-explorer-bridges",
+    linkage: "runtime",
   },
   {
     setting: "settings.groups.labels.managerEnabled",

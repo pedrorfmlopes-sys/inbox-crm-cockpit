@@ -39,6 +39,7 @@ import { getIntermediateCaseAttachmentPath } from "@/modules/crm/groups-v1/stora
 import { persistIntermediateCaseAttachmentBinaries } from "@/modules/crm/groups-v1/storage/intermediateCaseAttachmentStorage";
 import { mapIntermediateEmailToRelatedEmailEntry } from "@/modules/crm/groups-v1/storage/intermediateCaseAdapters";
 import { type PrepareIntermediateAttachmentInput, type PrepareIntermediateEmailInput } from "@/modules/crm/groups-v1/storage/prepareIntermediateCase";
+import { cleanupIntermediateCases } from "@/modules/crm/groups-v1/storage/intermediateCaseMaintenance";
 import { buildPrepareIntermediateCaseFromSources } from "@/modules/crm/groups-v1/storage/prepareIntermediateCaseResolution";
 import { resolveIntermediateCaseStorage } from "@/modules/crm/groups-v1/storage/resolveIntermediateCaseStorage";
 import { loadPrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/loadWorkset";
@@ -47,6 +48,17 @@ import { savePrimaryGroupWorkset } from "@/modules/crm/groups-v1/storage/saveWor
 import {
   normalizeGroupsTabSettings,
 } from "@/modules/crm/groups-v1/settings/groupsTabSettings";
+import {
+  buildGroupsTabWarningMessages,
+  isGroupsTabFrequencyDue,
+  resolveGroupsTabAttachmentDecision,
+  shouldPersistGroupsPrepareCase,
+  shouldProjectServerCopyIntoIntermediate,
+  shouldReopenGroupsExistingCase,
+  shouldUsePrepareTasksBridge,
+  validateGroupsTabStorageAvailability,
+  type GroupsTabStorageValidation,
+} from "@/modules/crm/groups-v1/settings/groupsTabRuntime";
 import { getGroupWorksetManifestSignature } from "@/modules/crm/groups-v1/storage/worksetManifest";
 import { openGroupClassificationStudio, openGroupsTabSettings } from "@/office";
 import { getStatusDisplayConfig } from "@/statusUtils";
@@ -76,8 +88,27 @@ type EmailKeyCandidate = Partial<RelatedEmailEntry | RelevantEmailPayload> & {
 
 type VisibleInformationState = "draft" | "local" | "server";
 
+const GROUPS_PREPARE_LAST_CLEANUP_PREFIX = "groups_prepare_cleanup_v1:";
+const GROUPS_PREPARE_LAST_WARNING_PREFIX = "groups_prepare_warning_v1:";
+
 function normalizeText(value: string | undefined): string {
   return String(value || "").trim().toLowerCase();
+}
+
+function readGroupsPrepareRuntimeStamp(key: string): string {
+  try {
+    return String(localStorage.getItem(key) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function writeGroupsPrepareRuntimeStamp(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore
+  }
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -371,6 +402,12 @@ function mapRelatedEmailEntryToIntermediateEmail(
     localPresence: IntermediateLocalPresence;
     serverPresence: IntermediateServerPresence;
     selectedAttachmentKeys: Set<string>;
+    settings: {
+      groups: {
+        tab: ReturnType<typeof normalizeGroupsTabSettings>;
+        storage: any;
+      };
+    };
   }
 ): PrepareIntermediateEmailInput {
   const emailKey = makeEmailKey(email);
@@ -380,6 +417,13 @@ function mapRelatedEmailEntryToIntermediateEmail(
           const attachmentIdentity = makeAttachmentSelectionKey(attachment);
           if (!attachmentIdentity || !String(attachment.name || "").trim()) return null;
           const selectionKey = `${emailKey}:${attachmentIdentity}`;
+          const decision = resolveGroupsTabAttachmentDecision({
+            key: selectionKey,
+            name: attachment.name,
+            size: attachment.size,
+            isInline: attachment.isInline,
+            hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+          }, options.settings);
           return {
             attachmentKey: selectionKey,
             id: attachment.id,
@@ -390,8 +434,18 @@ function mapRelatedEmailEntryToIntermediateEmail(
             contentId: attachment.contentId,
             hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
             documentState: attachment.documentState,
-            previewReady: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+            previewReady: decision.requiresImmediatePreview
+              ? attachment.hasContent === true || Boolean(String(attachment.content || "").trim())
+              : attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
             selected: options.selectedAttachmentKeys.has(selectionKey),
+            storageDecision: decision.storageDecision,
+            serverRef: decision.includeMetadataOnServer
+              ? {
+                  kind: "storage_key",
+                  value: selectionKey,
+                  label: attachment.name,
+                }
+              : undefined,
           } satisfies PrepareIntermediateAttachmentInput;
         })
         .filter(Boolean) as PrepareIntermediateAttachmentInput[]
@@ -477,6 +531,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionScopeKey, setSessionScopeKey] = useState("");
+  const [storageValidation, setStorageValidation] = useState<GroupsTabStorageValidation | null>(null);
   const groupsSettings = useMemo(
     () => normalizeGroupsTabSettings(settings?.groups?.tab || null),
     [settings?.groups?.tab]
@@ -486,11 +541,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
     [groupsSettings]
   );
   const groupsTabEnabled = groupsSettings.groupsTabEnabled;
+  const allowReopenExistingCase = shouldReopenGroupsExistingCase({ groups: { tab: groupsSettings } });
+  const allowPrepareTasksBridge = shouldUsePrepareTasksBridge({ groups: { tab: groupsSettings } });
   const resolvedStorageAvailability = intermediateCaseStorage.availability;
   const groupsStorageEnabled = resolvedStorageAvailability !== "disabled";
   const groupsStorageReady = resolvedStorageAvailability === "ready";
   const groupsStorageMissingLocation = resolvedStorageAvailability === "missing_location";
-  const groupsAccessLimited = !groupsTabEnabled || resolvedStorageAvailability === "disabled";
+  const groupsStorageValidationBlocked = storageValidation ? storageValidation.blocked && !storageValidation.available : false;
+  const groupsAccessLimited = !groupsTabEnabled || resolvedStorageAvailability === "disabled" || groupsStorageValidationBlocked;
   const storageModeLabel = groupsStorageEnabled ? "Storage local do add-in (IndexedDB)" : "Armazenamento desativado";
   const locationPathLabel = String(groupsSettings.baseFolderPath || "").trim() || "Sem namespace definido";
   const resolvedStorageLabel = groupsStorageReady
@@ -500,7 +558,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       : "Desativado";
   const resolvedStorageBadgeStyle = groupsStorageReady ? S.localBadge : S.warningBadge;
   const resolvedStorageHint = groupsStorageReady
-    ? intermediateCaseStorage.reason
+    ? (storageValidation?.reason || intermediateCaseStorage.reason)
     : groupsStorageMissingLocation
       ? "Sem namespace configurado para persistencia local. A aba continua em modo transitorio em memoria nesta fase."
       : intermediateCaseStorage.reason;
@@ -510,7 +568,9 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const limitedStateTitle = !groupsTabEnabled ? "Aba Groups desativada" : "Armazenamento intermedio desativado";
   const limitedStateDescription = !groupsTabEnabled
     ? "A aba Groups esta desativada nos Settings. Podes reativa-la a qualquer momento sem perder a configuracao guardada."
-    : "Os Settings desta aba estao com o armazenamento intermedio desativado. A configuracao continua acessivel, mas o fluxo de Preparar fica bloqueado nesta fase.";
+    : groupsStorageValidationBlocked
+      ? (storageValidation?.reason || "A validacao do storage intermédio falhou e a aba ficou bloqueada pela politica atual.")
+      : "Os Settings desta aba estao com o armazenamento intermedio desativado. A configuracao continua acessivel, mas o fluxo de Preparar fica bloqueado nesta fase.";
 
   const sessionSnapshot = useMemo<GroupsPrepareSessionState>(() => buildGroupsPrepareSessionSnapshot({
     subview,
@@ -817,11 +877,46 @@ export const GroupsPrepareCockpit: React.FC = () => {
   }, [canPersistWorkset, legacyStorageRuntime, setMsg]);
 
   useEffect(() => {
+    let cancelled = false;
+    let retried = false;
+    void (async () => {
+      const validation = await validateGroupsTabStorageAvailability({
+        settings: groupsSettings,
+        storage: intermediateCaseStorage,
+      });
+      if (cancelled) return;
+      setStorageValidation(validation);
+      if (!validation.available && validation.warning) {
+        setMsg(validation.reason);
+      }
+      if (!validation.available && validation.retrySuggested && !retried) {
+        retried = true;
+        window.setTimeout(() => {
+          void validateGroupsTabStorageAvailability({
+            settings: groupsSettings,
+            storage: intermediateCaseStorage,
+          }).then((nextValidation) => {
+            if (cancelled) return;
+            setStorageValidation(nextValidation);
+          });
+        }, 250);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [groupsSettings, intermediateCaseStorage, setMsg]);
+
+  useEffect(() => {
     setPersistedCurrentEmail(null);
   }, [currentEmailKey]);
 
   useEffect(() => {
     if (groupsAccessLimited || !currentEmailKey || !currentCaseId) {
+      setHydratedIntermediateCase(null);
+      return;
+    }
+    if (!allowReopenExistingCase) {
       setHydratedIntermediateCase(null);
       return;
     }
@@ -841,7 +936,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [currentCaseId, currentEmailKey, groupsAccessLimited, intermediateCaseStorage]);
+  }, [allowReopenExistingCase, currentCaseId, currentEmailKey, groupsAccessLimited, intermediateCaseStorage]);
 
   useEffect(() => {
     if (groupsAccessLimited) {
@@ -1044,9 +1139,9 @@ export const GroupsPrepareCockpit: React.FC = () => {
     setSessionReady(false);
     setSessionScopeKey("");
     const sessionKey = String(currentEmailKey || "").trim();
-    const hasStoredSession = hasGroupsPrepareSession(sessionKey);
+    const hasStoredSession = allowReopenExistingCase && hasGroupsPrepareSession(sessionKey);
     hasStoredSessionRef.current = hasStoredSession;
-    const sessionState = sessionKey
+    const sessionState = sessionKey && allowReopenExistingCase
       ? buildGroupsPrepareSessionSnapshot(readGroupsPrepareSession(sessionKey))
       : { ...DEFAULT_GROUPS_PREPARE_SESSION_STATE };
     const sessionStateSignature = getGroupsPrepareSessionSignature(sessionState);
@@ -1072,7 +1167,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     preferredGroupAppliedForEmailRef.current = "";
     setSessionScopeKey(sessionKey);
     setSessionReady(Boolean(sessionKey));
-  }, [currentEmailKey, groupsAccessLimited]);
+  }, [allowReopenExistingCase, currentEmailKey, groupsAccessLimited]);
 
   useEffect(() => {
     renderedSessionRef.current = {
@@ -1084,6 +1179,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
   useEffect(() => {
     if (groupsAccessLimited) return;
+    if (!allowReopenExistingCase) return;
     if (!canPersistWorkset || !sessionReady || !currentEmailKey || hydratedWorksetScopeRef.current === currentEmailKey) return;
     let cancelled = false;
     void loadPrimaryGroupWorkset({
@@ -1132,7 +1228,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [canPersistWorkset, currentEmailKey, groupsAccessLimited, legacyStorageRuntime, sessionReady]);
+  }, [allowReopenExistingCase, canPersistWorkset, currentEmailKey, groupsAccessLimited, legacyStorageRuntime, sessionReady]);
 
   useEffect(() => {
     if (groupsAccessLimited) return;
@@ -1233,6 +1329,12 @@ export const GroupsPrepareCockpit: React.FC = () => {
     if (groupsAccessLimited || !currentEmailKey || !currentCaseId) return null;
     const selectedEmailKeySet = new Set(selectedEmailKeys);
     const selectedAttachmentKeySet = new Set(selectedAttachmentKeys);
+    const groupsRuntimeSettings = {
+      groups: {
+        tab: groupsSettings,
+        storage: settings?.groups?.storage || null,
+      },
+    };
     const anchorSelectedAttachmentCount = Array.isArray(outlookCurrentEmailEntry.attachments)
       ? outlookCurrentEmailEntry.attachments.filter((attachment) =>
           selectedAttachmentKeySet.has(`${currentEmailKey}:${makeAttachmentSelectionKey(attachment)}`)
@@ -1251,15 +1353,21 @@ export const GroupsPrepareCockpit: React.FC = () => {
         serverPresence: resolveIntermediateServerPresence(outlookCurrentEmailEntry, "outlook"),
         localPresence: anchorLocalPresence,
         selectedAttachmentKeys: selectedAttachmentKeySet,
+        settings: groupsRuntimeSettings,
       }),
     ];
-    const serverSeedEmails: PrepareIntermediateEmailInput[] = [
+    const shouldProjectServerCopy = shouldProjectServerCopyIntoIntermediate({
+      settingsLike: { groups: { tab: groupsSettings } },
+      hasHydratedCase: Boolean(hydratedIntermediateCase),
+    });
+    const serverSeedEmails: PrepareIntermediateEmailInput[] = shouldProjectServerCopy ? [
       ...(persistedCurrentEmail ? [mapRelatedEmailEntryToIntermediateEmail(persistedCurrentEmail, {
         sourceOrigin: "server",
         visibilityState: resolveDirectVisibleInformationState(persistedCurrentEmail, hasLocalPrepareCheckpoint),
         serverPresence: resolveIntermediateServerPresence(persistedCurrentEmail, "server"),
         localPresence: anchorLocalPresence,
         selectedAttachmentKeys: selectedAttachmentKeySet,
+        settings: groupsRuntimeSettings,
       })] : []),
       ...serverResolvedRelatedEmails.map((email) => {
         const emailKey = makeEmailKey(email);
@@ -1280,9 +1388,10 @@ export const GroupsPrepareCockpit: React.FC = () => {
             hasSelectedAttachments: selectedAttachmentCount > 0,
           }),
           selectedAttachmentKeys: selectedAttachmentKeySet,
+          settings: groupsRuntimeSettings,
         });
       }),
-    ];
+    ] : [];
     // The canonical case opens by source precedence:
     // server data wins when available, the intermediate case preserves local drafts,
     // and Outlook only fills what neither source already knows.
@@ -1298,12 +1407,14 @@ export const GroupsPrepareCockpit: React.FC = () => {
     currentCaseId,
     currentEmailKey,
     groupsAccessLimited,
+    groupsSettings,
     hasLocalPrepareCheckpoint,
     hydratedIntermediateCase,
     outlookCurrentEmailEntry,
     persistedCurrentEmail,
     selectedAttachmentKeys,
     selectedEmailKeys,
+    settings?.groups?.storage,
     serverResolvedRelatedEmails,
   ]);
 
@@ -1344,6 +1455,11 @@ export const GroupsPrepareCockpit: React.FC = () => {
 
   useEffect(() => {
     if (!prepareIntermediateCase) return;
+    if (!shouldPersistGroupsPrepareCase({
+      settingsLike: { groups: { tab: groupsSettings } },
+      hasHydratedCase: Boolean(hydratedIntermediateCase),
+      hasLocalCheckpoint: hasLocalPrepareCheckpoint,
+    })) return;
     void (async () => {
       await intermediateCaseStorage.repository.writeCase(prepareIntermediateCase);
       await persistIntermediateCaseAttachmentBinaries({
@@ -1352,7 +1468,49 @@ export const GroupsPrepareCockpit: React.FC = () => {
         binarySources: intermediateCaseBinarySources,
       });
     })();
-  }, [intermediateCaseBinarySources, intermediateCaseStorage, prepareIntermediateCase]);
+  }, [groupsSettings, hasLocalPrepareCheckpoint, hydratedIntermediateCase, intermediateCaseBinarySources, intermediateCaseStorage, prepareIntermediateCase]);
+
+  useEffect(() => {
+    if (groupsAccessLimited || !groupsStorageEnabled) return;
+    if (!isGroupsTabFrequencyDue(groupsSettings.cleanupFrequency, readGroupsPrepareRuntimeStamp(`${GROUPS_PREPARE_LAST_CLEANUP_PREFIX}${locationPathLabel}`))) {
+      return;
+    }
+    void (async () => {
+      const result = await cleanupIntermediateCases(groupsSettings).catch(() => null);
+      if (!result) return;
+      writeGroupsPrepareRuntimeStamp(`${GROUPS_PREPARE_LAST_CLEANUP_PREFIX}${locationPathLabel}`, new Date().toISOString());
+    })();
+  }, [groupsAccessLimited, groupsSettings, groupsStorageEnabled, locationPathLabel]);
+
+  useEffect(() => {
+    if (groupsAccessLimited || !sessionReady) return;
+    if (!isGroupsTabFrequencyDue(groupsSettings.warningFrequency, readGroupsPrepareRuntimeStamp(`${GROUPS_PREPARE_LAST_WARNING_PREFIX}${currentEmailKey}`))) {
+      return;
+    }
+    void (async () => {
+      const summaries = await intermediateCaseStorage.repository.listCases().catch(() => []);
+      const matchingSummary = summaries.find((summary) => summary.caseId === currentCaseId || summary.anchorEmailKey === currentEmailKey) || null;
+      const messages = buildGroupsTabWarningMessages({
+        settings: groupsSettings,
+        caseValue: prepareIntermediateCase,
+        summary: matchingSummary,
+        validation: storageValidation,
+      });
+      if (!messages.length) return;
+      writeGroupsPrepareRuntimeStamp(`${GROUPS_PREPARE_LAST_WARNING_PREFIX}${currentEmailKey}`, new Date().toISOString());
+      setMsg(messages.map((entry) => entry.message).join(" "));
+    })();
+  }, [
+    currentCaseId,
+    currentEmailKey,
+    groupsAccessLimited,
+    groupsSettings,
+    intermediateCaseStorage,
+    prepareIntermediateCase,
+    sessionReady,
+    setMsg,
+    storageValidation,
+  ]);
 
   const casePrepareEmails = useMemo(
     () => (prepareIntermediateCase?.emails || []).map((email) => mapIntermediateEmailToRelatedEmailEntry(email)),
@@ -1454,6 +1612,12 @@ export const GroupsPrepareCockpit: React.FC = () => {
   const attachmentRows = useMemo<PrepareAttachmentRow[]>(() => {
     const rows: PrepareAttachmentRow[] = [];
     const ignoreInline = ignoreInlineAttachmentsFromLegacyStorage;
+    const groupsRuntimeSettings = {
+      groups: {
+        tab: groupsSettings,
+        storage: settings?.groups?.storage || null,
+      },
+    };
 
     for (const email of attachmentSourceEmails) {
       const emailKey = makeEmailKey(email);
@@ -1462,7 +1626,15 @@ export const GroupsPrepareCockpit: React.FC = () => {
         const attachmentKey = makeAttachmentSelectionKey(attachment);
         if (!attachmentKey || !String(attachment.name || "").trim()) continue;
         if (isRejectedAttachmentState(attachment.documentState)) continue;
+        const decision = resolveGroupsTabAttachmentDecision({
+          key: `${emailKey}:${attachmentKey}`,
+          name: attachment.name,
+          size: Number(attachment.size || 0) || estimateBase64Size(attachment.content),
+          isInline: attachment.isInline,
+          hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+        }, groupsRuntimeSettings);
         if (ignoreInline && attachment.isInline) continue;
+        if (!decision.selectable) continue;
         rows.push({
           key: `${emailKey}:${attachmentKey}`,
           emailKey,
@@ -1484,13 +1656,26 @@ export const GroupsPrepareCockpit: React.FC = () => {
       if (a.emailDateIso !== b.emailDateIso) return b.emailDateIso.localeCompare(a.emailDateIso);
       return a.name.localeCompare(b.name, "pt-PT");
     });
-  }, [attachmentSourceEmails, currentEmailKey, ignoreInlineAttachmentsFromLegacyStorage]);
+  }, [attachmentSourceEmails, currentEmailKey, groupsSettings, ignoreInlineAttachmentsFromLegacyStorage, settings?.groups?.storage]);
 
   useEffect(() => {
     if (groupsAccessLimited) return;
     if (!sessionReady) return;
     const validKeys = new Set(attachmentRows.map((attachment) => attachment.key));
-    const defaultSelection = attachmentRows.map((attachment) => attachment.key);
+    const defaultSelection = attachmentRows
+      .filter((attachment) => resolveGroupsTabAttachmentDecision({
+        key: attachment.key,
+        name: attachment.name,
+        size: attachment.size,
+        isInline: attachment.isInline,
+        hasContent: attachment.hasContent,
+      }, {
+        groups: {
+          tab: groupsSettings,
+          storage: settings?.groups?.storage || null,
+        },
+      }).selectedByDefault)
+      .map((attachment) => attachment.key);
     setSelectedAttachmentKeys((current) => {
       const next = current.filter((key) => validKeys.has(key));
       if (!attachmentSelectionTouchedRef.current) {
@@ -1499,7 +1684,7 @@ export const GroupsPrepareCockpit: React.FC = () => {
       const resolved = next.length ? next : defaultSelection;
       return sameStringArray(resolved, current) ? current : resolved;
     });
-  }, [attachmentRows, groupsAccessLimited, sessionReady]);
+  }, [attachmentRows, groupsAccessLimited, groupsSettings, sessionReady, settings?.groups?.storage]);
 
   const selectedAttachments = useMemo(
     () => attachmentRows.filter((attachment) => selectedAttachmentKeys.includes(attachment.key)),
@@ -1789,19 +1974,21 @@ export const GroupsPrepareCockpit: React.FC = () => {
       // keep opening even if local seed write fails
     }
 
-    const prepareSeedKey = writeGroupPreparationSeed(
-      buildGroupPreparationSeed({
-        anchorEmailKey: currentEmailKey,
-        selectedEmailKeys,
-        selectedAttachmentKeys,
-        workingGroupId,
-        filterQuery,
-        attachmentMode,
-        groupMode,
-      })
-    );
-    if (prepareSeedKey) {
-      params[GROUPS_PREPARE_CLASSIFY_PARAM] = prepareSeedKey;
+    if (allowPrepareTasksBridge) {
+      const prepareSeedKey = writeGroupPreparationSeed(
+        buildGroupPreparationSeed({
+          anchorEmailKey: currentEmailKey,
+          selectedEmailKeys,
+          selectedAttachmentKeys,
+          workingGroupId,
+          filterQuery,
+          attachmentMode,
+          groupMode,
+        })
+      );
+      if (prepareSeedKey) {
+        params[GROUPS_PREPARE_CLASSIFY_PARAM] = prepareSeedKey;
+      }
     }
 
     try {

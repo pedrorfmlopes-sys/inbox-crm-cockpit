@@ -7,6 +7,10 @@ import {
 } from "./types";
 import { GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX, EMPTY_CLASSIFICATION_META } from "./constants";
 import { getGroupAttachmentStorageOptions } from "@/modules/crm/groups-v1/storage/resolveStorageMode";
+import {
+  buildGroupsTabAttachmentStorageOptions,
+  resolveGroupsTabAttachmentDecision,
+} from "@/modules/crm/groups-v1/settings/groupsTabRuntime";
 
 // StudioParams definition moved to types.ts
 
@@ -425,7 +429,7 @@ export function dedupeEmails(emails: RelatedEmailEntry[]): RelatedEmailEntry[] {
   return Array.from(seen.values());
 }
 
-export function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | null): RelevantEmailPayload | null {
+export function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEntry | null, settings?: any): RelevantEmailPayload | null {
   if (!email) return null;
   const normalizeRecipients = (values: Array<EmailRecipientEntry | null | undefined> | undefined): EmailRecipientEntry[] =>
     Array.isArray(values)
@@ -447,22 +451,38 @@ export function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEnt
     ? email.attachments
         .map((attachment) => normalizeStudioAttachment(attachment))
         .filter((attachment): attachment is NonNullable<ReturnType<typeof normalizeStudioAttachment>> => Boolean(attachment))
-        .map((attachment) => ({
-          key: attachment.key,
-          id: attachment.id,
-          name: attachment.name,
-          contentType: attachment.contentType,
-          size: attachment.size,
-          isInline: attachment.isInline,
-          contentId: attachment.contentId,
-          content: attachment.content,
-          storageProvider: attachment.storageProvider,
-          storageBasePath: attachment.storageBasePath,
-          storagePathHint: attachment.storagePathHint,
-          documentState: attachment.documentState,
-          hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
-          isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
-        }))
+        .map((attachment) => {
+          const decision = resolveGroupsTabAttachmentDecision({
+            key: attachment.key,
+            name: attachment.name,
+            size: attachment.size,
+            isInline: attachment.isInline,
+            hasContent: attachment.hasContent === true || Boolean(String(attachment.content || "").trim()),
+          }, settings || null);
+          if (decision.storageDecision === "skip_inline") return null;
+          const content = decision.includeBinaryInPayload ? attachment.content : undefined;
+          const hasContent = decision.includeBinaryInPayload
+            ? attachment.hasContent === true || Boolean(String(attachment.content || "").trim())
+            : false;
+          if (!decision.includeMetadataOnServer && !content) return null;
+          return {
+            key: attachment.key,
+            id: attachment.id,
+            name: attachment.name,
+            contentType: attachment.contentType,
+            size: attachment.size,
+            isInline: attachment.isInline,
+            contentId: attachment.contentId,
+            content,
+            storageProvider: attachment.storageProvider || decision.storageProvider,
+            storageBasePath: attachment.storageBasePath || decision.storageBasePath,
+            storagePathHint: attachment.storagePathHint || decision.storagePathHint,
+            documentState: attachment.documentState,
+            hasContent,
+            isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
+          };
+        })
+        .filter(Boolean)
     : [];
 
   return {
@@ -486,6 +506,10 @@ export function buildRelevantEmailPayloadFromRelatedEmail(email: RelatedEmailEnt
 }
 
 export function buildAttachmentStorageOptions(settings?: any): Pick<RelevantEmailPayload, "attachmentStorageProvider" | "attachmentStorageBasePath"> {
+  const tabAware = buildGroupsTabAttachmentStorageOptions(settings || null);
+  if (String(tabAware.attachmentStorageBasePath || "").trim()) {
+    return tabAware;
+  }
   return getGroupAttachmentStorageOptions(settings?.groups?.storage || null);
 }
 

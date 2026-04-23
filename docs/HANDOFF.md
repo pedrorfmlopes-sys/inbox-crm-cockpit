@@ -1,5 +1,37 @@
 # HANDOFF
 
+## Grupos v1: todos os settings visiveis da aba Groups deixam de ser shell e passam a mandar no runtime real (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - deixou de existir qualquer `disabled_shell` ativo na matriz canonica de settings de Groups
+  - os controls visiveis em `GroupsSettingsPanel.tsx` passam a mandar no comportamento real de `Preparar`, `Classificar`, storage intermÃ©dio/final, warnings, limpeza, migracao, anexos e bridges internas do studio
+- **Ligacoes reais fechadas agora**:
+  - `autoCreateCaseOnNewEmail`, `reopenExistingCase` e `recreateIntermediateCopy`
+    - governam bootstrap local, checkpoints, lookup por anchor e projecao do historico remoto para o `IntermediateCase`
+  - `validateLocationOnOpen`, `blockTabIfUnavailable`, `warnIfUnavailable` e `autoRetryValidation`
+    - governam validacao real do namespace/storage, bloqueio funcional da aba e retry controlado
+  - `attachmentStrategy`, `saveAttachmentsOnServer`, `saveAttachmentsOutsideServer`, `attachmentServerLimitMb`, `attachmentIntermediateLimitMb`, `externalAttachmentFolder`, `showAttachmentMetadataOnServer`, `requireImmediatePreview`
+    - governam decisao por anexo, selecao por defeito, metadata/binario, preview e destino final
+    - `server/src/linkStore.js` passa a respeitar `storageProvider` / `storageBasePath` por anexo, usando o global apenas como fallback
+  - `mixedCaseWarningDays`, `localAbandonedWarningDays`, `cleanupFrequency`, `warnUnclassifiedEmails`, `warnMixedCases`, `warningFrequency`
+    - governam warnings locais e cadencia de limpeza real
+  - `prepareTasksBridge`
+    - governa a ponte local `Preparar -> Classificar`
+  - `explorerServerPrimary`, `explorerOpenStoredAttachments`, `explorerGenerateReply`
+    - governam precedencia server/intermÃ©dio e acoes internas do studio (`Classificar`)
+- **Matriz e prova final**:
+  - `client/src/modules/crm/groups-v1/testing/settingsMatrix.ts` fica apenas com `linkage: "runtime" | "derived"`
+  - `node scripts/run-groups-v1-validation.mjs` passa com `34/34`
+  - `browserValidation.ok = true`
+  - `classificationSmoke.ok = true`
+  - `groupsSettingsSurfaceSmoke.ok = true`
+- **Fronteira que continua fora do perimetro desta decisao**:
+  - Graph / OneDrive / SharePoint por URL web continuam fora da fase aprovada
+  - Office.js / Outlook real continuam apenas para validacao manual da fronteira host-specific
+- **Classificacao objetiva apos esta ronda**:
+  - `settings.groups` continua fonte canonica unica
+  - os settings visiveis da aba Groups passam finalmente a ter efeito real verificavel
+  - a centralizacao + ligacao ao runtime da aba Groups fica fechada no perimetro aprovado
+
 ## Grupos v1: contradicoes da auditoria ao ZIP esclarecidas e corrigidas na branch atual (Abril 2026)
 - **Contradicao 1 confirmada e corrigida**:
   - o snapshot auditado da branch ainda tinha `GroupsPrepareCockpit.tsx` a abrir `GroupsSettingsPanel` embebido no taskpane (`showSettingsPanel`, `setShowSettingsPanel(true)` e render inline)

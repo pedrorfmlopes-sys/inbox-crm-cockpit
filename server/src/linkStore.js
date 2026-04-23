@@ -1004,10 +1004,16 @@ function persistEmailAttachmentsForProvider(email, attachments, options = {}) {
         hasContent: true,
       }, existing);
     }
+    const attachmentStorageProvider = Object.prototype.hasOwnProperty.call(attachment || {}, "storageProvider")
+      ? normalizeDocumentStorageProvider(attachment?.storageProvider)
+      : storageProvider;
+    const attachmentStorageBasePath = Object.prototype.hasOwnProperty.call(attachment || {}, "storageBasePath")
+      ? normalizeString(attachment?.storageBasePath)
+      : storageBasePath;
     return persistEmailAttachmentContentForProvider(email, {
       ...attachment,
-      storageProvider,
-      storageBasePath,
+      storageProvider: attachmentStorageProvider,
+      storageBasePath: attachmentStorageBasePath,
     });
   });
 }

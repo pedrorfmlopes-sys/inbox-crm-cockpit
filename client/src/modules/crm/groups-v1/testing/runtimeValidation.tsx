@@ -8,12 +8,28 @@ import {
   type CockpitSettingsV1,
 } from "@/settings";
 import { buildResolvedRemoteApplyExecutionPlan, buildResolvedStudioApplySelection } from "@/modules/crm/group-classification/applyResolution";
-import { buildAttachmentStorageOptions } from "@/modules/crm/group-classification/documentUtils";
+import {
+  buildAttachmentStorageOptions,
+  buildRelevantEmailPayloadFromRelatedEmail,
+} from "@/modules/crm/group-classification/documentUtils";
 import { projectApplyIntoIntermediateCase } from "@/modules/crm/group-classification/localCaseProjection";
 import { buildOutlookCategoryPlan, buildOutlookCategorySourceFromRelatedContext } from "@/outlookCategories";
 import { GroupsSettingsPanel } from "../settings/GroupsSettingsPanel";
 import { DEFAULT_GROUPS_MODULE_SETTINGS, type GroupsModuleSettings } from "../settings/groupsModuleSettings";
 import { DEFAULT_GROUPS_TAB_SETTINGS, normalizeGroupsTabSettings } from "../settings/groupsTabSettings";
+import {
+  buildGroupsTabAttachmentStorageOptions,
+  buildGroupsTabWarningMessages,
+  canGenerateReplyFromGroups,
+  canOpenStoredAttachmentsFromGroups,
+  isGroupsTabFrequencyDue,
+  resolveGroupsTabAttachmentDecision,
+  shouldPersistGroupsPrepareCase,
+  shouldProjectServerCopyIntoIntermediate,
+  shouldUseExplorerServerPrimary,
+  shouldUsePrepareTasksBridge,
+  validateGroupsTabStorageAvailability,
+} from "../settings/groupsTabRuntime";
 import { resolveGroupAttachmentStoragePolicy, resolvePreparedAttachmentStorageDecision } from "../storage/attachmentPolicy";
 import { buildPrepareWorksetManifest } from "../storage/buildPrepareWorksetManifest";
 import {
@@ -291,8 +307,28 @@ async function renderSettingsPanelScenario(): Promise<void> {
     const updatedNamespaceInput = host.querySelector<HTMLInputElement>('input[placeholder="ex.: grupos/cliente-acme"]');
     assert(updatedNamespaceInput?.value === "grupos/runtime", "O namespace inline nao refletiu a edicao local.");
 
-    const disabledToggles = Array.from(host.querySelectorAll('button[aria-pressed][disabled]'));
-    assert(disabledToggles.length >= 6, "Os toggles shell herdados da secao intermedia nao ficaram desativados.");
+    const enabledToggles = Array.from(host.querySelectorAll('button[aria-pressed]')).filter((button) => !button.hasAttribute("disabled"));
+    assert(enabledToggles.length >= 7, "Os toggles executaveis da secao intermedia nao ficaram interativos.");
+    enabledToggles[0]?.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const attachmentsButton = Array.from(host.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Anexos")
+    );
+    assert(attachmentsButton, "A secao de anexos nao foi renderizada.");
+    attachmentsButton?.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const externalPathInput = host.querySelector<HTMLInputElement>('input[placeholder="ex.: C:/dados/grupos/anexos"]');
+    assert(externalPathInput, "O campo do destino externo nao ficou editavel.");
+
+    const exploreButton = Array.from(host.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Explorar")
+    );
+    assert(exploreButton, "A secao de bridges internas nao foi renderizada.");
+    exploreButton?.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const enabledExploreToggles = Array.from(host.querySelectorAll('button[aria-pressed]')).filter((button) => !button.hasAttribute("disabled"));
+    assert(enabledExploreToggles.length >= 3, "Os toggles explorer* nao ficaram interativos.");
 
     const migrationButton = Array.from(host.querySelectorAll("button")).find((button) =>
       button.textContent?.includes("Migracao")
@@ -495,7 +531,223 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
 
   await runScenario(scenarios, "settings-panel-host-safe-shells", "settings", "Painel de settings host-safe e shells honestamente desativadas", async () => {
     await renderSettingsPanelScenario();
-    return "GroupsSettingsPanel renderizou editores inline e manteve toggles shell desativados sem prompt/alert/confirm.";
+    return "GroupsSettingsPanel renderizou editores inline e os toggles canonicos ficaram interativos sem prompt/alert/confirm.";
+  });
+
+  await runScenario(scenarios, "settings-tab-case-behavior", "settings", "Settings de caso mudam bootstrap e reabertura", async () => {
+    const namespace = "grupos/settings-case";
+    const storage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: namespace }));
+    const caseValue = buildPrepareIntermediateCaseFromSources({
+      caseId: "case-settings-runtime",
+      anchorEmailKey: "msg-settings-runtime",
+      outlookEmails: [buildPrepareEmailInput({ emailKey: "msg-settings-runtime" })],
+      serverEmails: [],
+      nowIso: FIXED_NOW_ISO,
+    });
+    await storage.repository.writeCase(caseValue);
+
+    await saveSettings({
+      groups: buildGroupsSettings({
+        tab: {
+          ...DEFAULT_GROUPS_MODULE_SETTINGS.tab,
+          storageMode: "local_indexeddb",
+          baseFolderPath: namespace,
+          reopenExistingCase: true,
+        },
+      }),
+    });
+    const reopened = await resolveClassificationIntermediateCase({ anchorEmailKey: "msg-settings-runtime" });
+    assert(reopened.caseValue?.caseId === caseValue.caseId, "Com reopenExistingCase=true o caso devia reabrir por anchor.");
+
+    await saveSettings({
+      groups: buildGroupsSettings({
+        tab: {
+          ...DEFAULT_GROUPS_MODULE_SETTINGS.tab,
+          storageMode: "local_indexeddb",
+          baseFolderPath: namespace,
+          reopenExistingCase: false,
+          autoCreateCaseOnNewEmail: false,
+          recreateIntermediateCopy: false,
+        },
+      }),
+    });
+    const blockedReopen = await resolveClassificationIntermediateCase({ anchorEmailKey: "msg-settings-runtime" });
+    assert(blockedReopen.caseValue === null, "Com reopenExistingCase=false o runtime nao devia reabrir por anchor.");
+    assert(
+      shouldPersistGroupsPrepareCase({
+        settingsLike: { groups: { tab: { autoCreateCaseOnNewEmail: false } } },
+        hasHydratedCase: false,
+        hasLocalCheckpoint: false,
+      }) === false,
+      "autoCreateCaseOnNewEmail=false devia impedir checkpoint automatico novo."
+    );
+    assert(
+      shouldProjectServerCopyIntoIntermediate({
+        settingsLike: { groups: { tab: { recreateIntermediateCopy: false } } },
+        hasHydratedCase: false,
+      }) === false,
+      "recreateIntermediateCopy=false devia impedir a projecao remota quando nao existe caso local."
+    );
+    return "autoCreate/reopen/recreate passaram a governar o bootstrap e a reabertura.";
+  });
+
+  await runScenario(scenarios, "settings-tab-storage-validation", "settings", "Settings de validacao mandam no acesso ao intermédio", async () => {
+    const missingNamespaceSettings = normalizeGroupsTabSettings({
+      storageMode: "local_indexeddb",
+      baseFolderPath: "",
+      validateLocationOnOpen: true,
+      blockTabIfUnavailable: true,
+      warnIfUnavailable: true,
+      autoRetryValidation: true,
+    });
+    const validation = await validateGroupsTabStorageAvailability({
+      settings: missingNamespaceSettings,
+      storage: resolveIntermediateCaseStorage(missingNamespaceSettings),
+    });
+    assert(validation.available === false, "Sem namespace a validacao devia falhar.");
+    assert(validation.blocked === true, "blockTabIfUnavailable=true devia bloquear a aba.");
+    assert(validation.warning === true, "warnIfUnavailable=true devia marcar warning.");
+
+    const relaxedValidation = await validateGroupsTabStorageAvailability({
+      settings: normalizeGroupsTabSettings({
+        ...missingNamespaceSettings,
+        validateLocationOnOpen: false,
+        blockTabIfUnavailable: false,
+        warnIfUnavailable: false,
+      }),
+      storage: resolveIntermediateCaseStorage(missingNamespaceSettings),
+    });
+    assert(relaxedValidation.available === true, "Com validateLocationOnOpen=false a validacao devia ser neutralizada.");
+    return "validateLocationOnOpen, blockTabIfUnavailable, warnIfUnavailable e autoRetryValidation passaram a ter contrato real.";
+  });
+
+  await runScenario(scenarios, "settings-tab-attachment-runtime", "attachments", "Settings de anexos mudam selecao, destino e payload", async () => {
+    const settingsLike = {
+      groups: {
+        tab: normalizeGroupsTabSettings({
+          attachmentStrategy: "by_size",
+          saveAttachmentsOnServer: true,
+          saveAttachmentsOutsideServer: true,
+          attachmentServerLimitMb: 1,
+          attachmentIntermediateLimitMb: 2,
+          externalAttachmentFolder: "C:/tmp/groups/outside",
+          showAttachmentMetadataOnServer: false,
+          requireImmediatePreview: false,
+        }),
+        storage: {
+          ...DEFAULT_GROUP_STORAGE_SETTINGS,
+          mode: "chosen_folder",
+          chosenFolder: { path: "C:/tmp/groups/chosen", kind: "filesystem" },
+        },
+      },
+    };
+    const small = resolveGroupsTabAttachmentDecision({
+      key: "doc-small",
+      name: "small.pdf",
+      size: 200 * 1024,
+      hasContent: true,
+    }, settingsLike);
+    const large = resolveGroupsTabAttachmentDecision({
+      key: "doc-large",
+      name: "large.pdf",
+      size: 4 * 1024 * 1024,
+      hasContent: true,
+    }, settingsLike);
+    assert(small.target === "server", "Anexo pequeno devia ir para server no modo by_size.");
+    assert(large.target === "outside", "Anexo grande devia ir para outside no modo by_size.");
+    assert(large.selectedByDefault === false, "attachmentIntermediateLimitMb devia tirar anexos grandes da selecao por defeito quando nao ha preview imediato.");
+    const forcedPreview = resolveGroupsTabAttachmentDecision({
+      key: "doc-large",
+      name: "large.pdf",
+      size: 4 * 1024 * 1024,
+      hasContent: true,
+    }, {
+      groups: {
+        ...settingsLike.groups,
+        tab: normalizeGroupsTabSettings({
+          ...settingsLike.groups.tab,
+          requireImmediatePreview: true,
+        }),
+      },
+    });
+    assert(forcedPreview.selectedByDefault === true, "requireImmediatePreview=true devia voltar a selecionar o anexo grande.");
+    const payload = buildRelevantEmailPayloadFromRelatedEmail(buildRelatedEmail({
+      emailKey: "msg-attachments-runtime",
+      attachments: [{
+        key: "doc-large",
+        id: "doc-large",
+        name: "large.pdf",
+        contentType: "application/pdf",
+        size: 4 * 1024 * 1024,
+        hasContent: true,
+        content: "ZmFrZQ==",
+      } as RelatedEmailAttachmentFixture],
+    }), settingsLike);
+    assert(payload?.attachments?.[0]?.storageBasePath === "C:/tmp/groups/outside", "externalAttachmentFolder devia seguir para o payload final.");
+    const options = buildGroupsTabAttachmentStorageOptions(settingsLike);
+    assert(options.attachmentStorageBasePath === "C:/tmp/groups/outside", "A bridge final de anexos devia respeitar o destino externo.");
+    return "attachmentStrategy/saveAttachments*/limits/externalAttachmentFolder/showAttachmentMetadataOnServer/requireImmediatePreview passaram a influenciar o runtime.";
+  });
+
+  await runScenario(scenarios, "settings-tab-warning-runtime", "cleanup", "Warnings e cadencia de limpeza obedecem aos settings", async () => {
+    const caseValue = buildPrepareIntermediateCaseFromSources({
+      caseId: "case-warning-runtime",
+      anchorEmailKey: "msg-warning-runtime",
+      outlookEmails: [buildPrepareEmailInput({ emailKey: "msg-warning-runtime" })],
+      serverEmails: [],
+      nowIso: "2026-04-01T12:00:00.000Z",
+    });
+    caseValue.classificationSummary = {
+      ...caseValue.classificationSummary,
+      mixedCase: true,
+      unclassifiedEmails: 2,
+    };
+    caseValue.lastAccessedAt = "2026-03-01T12:00:00.000Z";
+    const messages = buildGroupsTabWarningMessages({
+      settings: normalizeGroupsTabSettings({
+        mixedCaseWarningDays: 15,
+        localAbandonedWarningDays: 20,
+        warnUnclassifiedEmails: true,
+        warnMixedCases: true,
+      }),
+      caseValue,
+      summary: {
+        caseId: caseValue.caseId,
+        anchorEmailKey: caseValue.anchorEmailKey,
+        subject: "warning",
+        updatedAt: caseValue.updatedAt,
+        lastAccessedAt: caseValue.lastAccessedAt,
+        totalEmails: caseValue.emails.length,
+        classifiedEmails: 0,
+        unclassifiedEmails: 2,
+        visibleState: "draft",
+        retentionState: "local_only",
+        quickState: "draft",
+      },
+      nowMs: FIXED_NOW_MS,
+    });
+    assert(messages.some((entry) => entry.kind === "mixed_case"), "warnMixedCases/mixedCaseWarningDays nao geraram aviso.");
+    assert(messages.some((entry) => entry.kind === "unclassified"), "warnUnclassifiedEmails nao gerou aviso.");
+    assert(messages.some((entry) => entry.kind === "local_abandoned"), "localAbandonedWarningDays nao gerou aviso.");
+    assert(isGroupsTabFrequencyDue("daily", "2026-04-20T12:00:00.000Z", FIXED_NOW_MS) === true, "warningFrequency/cleanupFrequency deviam disparar quando a janela expirou.");
+    assert(isGroupsTabFrequencyDue("weekly", FIXED_NOW_ISO, FIXED_NOW_MS) === false, "warningFrequency/cleanupFrequency nao deviam disparar na mesma semana.");
+    return "mixedCaseWarningDays/localAbandonedWarningDays/cleanupFrequency/warnUnclassifiedEmails/warnMixedCases/warningFrequency passaram a ter efeito real.";
+  });
+
+  await runScenario(scenarios, "settings-tab-prepare-bridge", "settings", "prepareTasksBridge governa a ponte local Prepare -> Classificar", async () => {
+    assert(shouldUsePrepareTasksBridge({ groups: { tab: { prepareTasksBridge: true } } }) === true, "prepareTasksBridge=true devia ligar a ponte local.");
+    assert(shouldUsePrepareTasksBridge({ groups: { tab: { prepareTasksBridge: false } } }) === false, "prepareTasksBridge=false devia desligar a ponte local.");
+    return "prepareTasksBridge passou a governar a escrita do contexto local entre Preparar e Classificar.";
+  });
+
+  await runScenario(scenarios, "settings-tab-explorer-bridges", "settings", "explorer* governa as bridges internas do studio", async () => {
+    assert(shouldUseExplorerServerPrimary({ groups: { tab: { explorerServerPrimary: true } } }) === true, "explorerServerPrimary=true devia preferir o lado server.");
+    assert(shouldUseExplorerServerPrimary({ groups: { tab: { explorerServerPrimary: false } } }) === false, "explorerServerPrimary=false devia permitir preferencia local/intermédia.");
+    assert(canOpenStoredAttachmentsFromGroups({ groups: { tab: { explorerOpenStoredAttachments: true } } }) === true, "explorerOpenStoredAttachments=true devia permitir hidratar anexos guardados.");
+    assert(canOpenStoredAttachmentsFromGroups({ groups: { tab: { explorerOpenStoredAttachments: false } } }) === false, "explorerOpenStoredAttachments=false devia bloquear hidratação remota.");
+    assert(canGenerateReplyFromGroups({ groups: { tab: { explorerGenerateReply: true } } }) === true, "explorerGenerateReply=true devia permitir reply/forward.");
+    assert(canGenerateReplyFromGroups({ groups: { tab: { explorerGenerateReply: false } } }) === false, "explorerGenerateReply=false devia bloquear reply/forward.");
+    return "explorerServerPrimary/explorerOpenStoredAttachments/explorerGenerateReply passaram a governar o bootstrap e as acoes do studio.";
   });
 
   await runScenario(scenarios, "prepare-new-email-no-group", "prepare", "Preparar email novo sem grupo", async () => {

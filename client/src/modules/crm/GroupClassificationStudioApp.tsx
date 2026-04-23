@@ -26,6 +26,12 @@ import {
   readGroupPreparationSeed,
   type GroupPreparationSeed,
 } from "@/modules/crm/groups-v1/prepareSession";
+import { normalizeGroupsTabSettings } from "@/modules/crm/groups-v1/settings/groupsTabSettings";
+import {
+  canGenerateReplyFromGroups,
+  canOpenStoredAttachmentsFromGroups,
+  shouldUseExplorerServerPrimary,
+} from "@/modules/crm/groups-v1/settings/groupsTabRuntime";
 import { hydrateIntermediateCaseEmailsToRelatedEntries, mapIntermediateEmailToRelatedEmailEntry } from "@/modules/crm/groups-v1/storage/intermediateCaseAdapters";
 import { resolveClassificationIntermediateCase } from "@/modules/crm/groups-v1/storage/resolveClassificationIntermediateCase";
 import type { IntermediateCase } from "@/modules/crm/groups-v1/storage/intermediateCaseTypes";
@@ -626,6 +632,20 @@ function StudioInner() {
   const [managedGroupDocuments, setManagedGroupDocuments] = useState<GroupDocumentEntry[]>([]);
   const [managedGroupLoading, setManagedGroupLoading] = useState(false);
   const [favoriteGroupIds, setFavoriteGroupIds] = useState<string[]>([]);
+  const [groupsSettingsSnapshot, setGroupsSettingsSnapshot] = useState<any>({
+    groups: {
+      tab: normalizeGroupsTabSettings(null),
+      storage: null,
+    },
+  });
+  const explorerOpenStoredAttachments = useMemo(
+    () => canOpenStoredAttachmentsFromGroups(groupsSettingsSnapshot),
+    [groupsSettingsSnapshot]
+  );
+  const explorerGenerateReply = useMemo(
+    () => canGenerateReplyFromGroups(groupsSettingsSnapshot),
+    [groupsSettingsSnapshot]
+  );
   const hydratedEmailKeysRef = useRef<Set<string>>(new Set());
   const ticketSearchRequestSeqRef = useRef(0);
   const selectedEmailRef = useRef<RelatedEmailEntry | null>(null);
@@ -692,15 +712,28 @@ function StudioInner() {
     const anchorKey = makeEmailKey(classificationAnchorEmail || {}) || classificationAnchorEmailKey;
     return classificationCaseEmails.filter((email) => makeEmailKey(email) !== anchorKey);
   }, [classificationAnchorEmail, classificationAnchorEmailKey, classificationCase, classificationCaseEmails]);
+  const explorerServerPrimary = useMemo(
+    () => shouldUseExplorerServerPrimary(groupsSettingsSnapshot),
+    [groupsSettingsSnapshot]
+  );
   const classificationContextEmails = useMemo(
-    () => classificationCase ? classificationCaseEmails : dedupeEmails(relatedEmails),
-    [classificationCase, classificationCaseEmails, relatedEmails]
+    () => classificationCase
+      ? (explorerServerPrimary
+          ? classificationCaseEmails
+          : dedupeEmails([
+              ...classificationCaseEmails,
+              ...relatedEmails.filter((email) => !classificationCaseEmails.some((caseEmail) => makeEmailKey(caseEmail) === makeEmailKey(email))),
+            ]))
+      : dedupeEmails(relatedEmails),
+    [classificationCase, classificationCaseEmails, explorerServerPrimary, relatedEmails]
   );
   const classificationKnownEmails = useMemo(
     () => classificationCase
-      ? dedupeEmails([...classificationCaseEmails, ...relatedEmails, ...knownEmails])
+      ? (explorerServerPrimary
+          ? dedupeEmails([...classificationCaseEmails, ...relatedEmails, ...knownEmails])
+          : dedupeEmails([...relatedEmails, ...knownEmails, ...classificationCaseEmails]))
       : dedupeEmails([...relatedEmails, ...knownEmails]),
-    [classificationCase, classificationCaseEmails, knownEmails, relatedEmails]
+    [classificationCase, classificationCaseEmails, explorerServerPrimary, knownEmails, relatedEmails]
   );
   const mergeEmailsIntoClassificationCase = useCallback((incomingEmails: RelatedEmailEntry[]) => {
     setIntermediateCaseBootstrap((current) => {
@@ -759,7 +792,7 @@ function StudioInner() {
       fromName: String(currentContext.fromName || base.fromName || "").trim() || undefined,
       receivedAtIso: String(currentContext.receivedAtIso || base.receivedAtIso || base.messageDateIso || "").trim() || undefined,
       messageDateIso: String(base.messageDateIso || currentContext.receivedAtIso || base.receivedAtIso || "").trim() || undefined,
-    });
+    }, groupsSettingsSnapshot);
   }, [
     classificationAnchorEmail,
     currentContext.conversationId,
@@ -849,10 +882,22 @@ function StudioInner() {
         setFavoriteGroupIds(Array.isArray(settings.groups?.labels?.favoriteIds)
           ? Array.from(new Set(settings.groups.labels.favoriteIds.map((entry) => String(entry || "").trim()).filter(Boolean)))
           : []);
+        setGroupsSettingsSnapshot({
+          groups: {
+            tab: normalizeGroupsTabSettings(settings.groups?.tab || null),
+            storage: settings.groups?.storage || null,
+          },
+        });
       } catch {
         applySkin("soft" as any);
         setLabelCatalogEntries([]);
         setFavoriteGroupIds([]);
+        setGroupsSettingsSnapshot({
+          groups: {
+            tab: normalizeGroupsTabSettings(null),
+            storage: null,
+          },
+        });
       } finally {
         setLabelCatalogReady(true);
       }
@@ -1728,9 +1773,10 @@ function StudioInner() {
     [selectedAttachmentPreviewEmail?.emailKey, selectedAttachmentPreviewEmail?.id]
   );
   const selectedAttachmentPreviewContentUrl = useMemo(() => {
+    if (!explorerOpenStoredAttachments) return "";
     if (!selectedAttachmentPreviewEmailId || !selectedAttachmentPreviewRemoteId || selectedAttachmentPreview?.hasContent !== true) return "";
     return getEmailAttachmentContentUrl(selectedAttachmentPreviewEmailId, selectedAttachmentPreviewRemoteId);
-  }, [selectedAttachmentPreview?.hasContent, selectedAttachmentPreviewEmailId, selectedAttachmentPreviewRemoteId]);
+  }, [explorerOpenStoredAttachments, selectedAttachmentPreview?.hasContent, selectedAttachmentPreviewEmailId, selectedAttachmentPreviewRemoteId]);
 
   const selectedAttachmentPreviewMode = useMemo(() => {
     const attachment = selectedAttachmentPreview;
@@ -1775,6 +1821,8 @@ function StudioInner() {
     let cancelled = false;
     const localContent = String(selectedAttachmentPreview?.content || "").trim();
     if (
+      !explorerOpenStoredAttachments
+      ||
       (selectedAttachmentPreviewMode !== "image" && selectedAttachmentPreviewMode !== "pdf")
       || localContent
       || !selectedAttachmentPreview?.hasContent
@@ -1812,6 +1860,7 @@ function StudioInner() {
       cancelled = true;
     };
   }, [
+    explorerOpenStoredAttachments,
     selectedAttachmentPreview?.content,
     selectedAttachmentPreview?.hasContent,
     selectedAttachmentPreviewEmailId,
@@ -1865,6 +1914,8 @@ function StudioInner() {
     let cancelled = false;
     const localContent = String(selectedAttachmentPreview?.content || "").trim();
     if (
+      !explorerOpenStoredAttachments
+      ||
       selectedAttachmentPreviewMode !== "text"
       || localContent
       || !selectedAttachmentPreview?.hasContent
@@ -1889,6 +1940,7 @@ function StudioInner() {
       cancelled = true;
     };
   }, [
+    explorerOpenStoredAttachments,
     selectedAttachmentPreview?.content,
     selectedAttachmentPreview?.hasContent,
     selectedAttachmentPreviewEmailId,
@@ -2122,7 +2174,7 @@ function StudioInner() {
     if (hydratedEmailKeysRef.current.has(hydrationSignature)) return;
 
     hydratedEmailKeysRef.current.add(hydrationSignature);
-    void refreshSelectedEmailContext(buildRelevantEmailPayloadFromRelatedEmail(selectedEmail) || currentEmailPayload)
+    void refreshSelectedEmailContext(buildRelevantEmailPayloadFromRelatedEmail(selectedEmail, groupsSettingsSnapshot) || currentEmailPayload)
       .catch(() => {
         hydratedEmailKeysRef.current.delete(hydrationSignature);
       });
@@ -3284,7 +3336,7 @@ function StudioInner() {
         },
       }));
       const latestSettings = await getSettings().catch(() => null);
-      const payload = buildRelevantEmailPayloadFromRelatedEmail(updatedEmail);
+      const payload = buildRelevantEmailPayloadFromRelatedEmail(updatedEmail, latestSettings || groupsSettingsSnapshot);
       if (payload) {
         await registerRelevantEmail({
           ...payload,
@@ -3314,7 +3366,7 @@ function StudioInner() {
             const selectedEmailRemoteId = String(selectedEmail?.id || selectedEmail?.emailKey || "").trim();
             if (!contentBase64 && attachment.hasContent && selectedEmailRemoteId) {
               const remoteId = getStudioAttachmentRemoteId(attachment);
-              if (remoteId) {
+              if (remoteId && explorerOpenStoredAttachments) {
                 try {
                   const remote = await getEmailAttachmentContentBase64(selectedEmailRemoteId, remoteId);
                   contentBase64 = String(remote.base64 || "").trim();
@@ -3718,7 +3770,7 @@ function StudioInner() {
       setKnownEmails((current) => current.map((e) => makeEmailKey(e) === makeEmailKey(updatedEmail) ? updatedEmail : e));
       mergeEmailIntoClassificationCase(updatedEmail);
       const latestSettings = await getSettings().catch(() => null);
-      const payload = buildRelevantEmailPayloadFromRelatedEmail(updatedEmail);
+      const payload = buildRelevantEmailPayloadFromRelatedEmail(updatedEmail, latestSettings || groupsSettingsSnapshot);
       if (payload) {
         await registerRelevantEmail({
           ...payload,
@@ -3738,6 +3790,10 @@ function StudioInner() {
   }
 
   async function handlePreviewReply() {
+    if (!explorerGenerateReply) {
+      setStatus("A geracao de resposta a partir de documentos guardados esta desativada nos Settings de Groups.");
+      return;
+    }
     if (!selectedEmail) return;
     if (emailMatchesCurrentContext(selectedEmail, currentContext)) {
       const handled = await requestCockpitHostAction({ type: "reply-current" });
@@ -3749,6 +3805,10 @@ function StudioInner() {
   }
 
   async function handlePreviewForward() {
+    if (!explorerGenerateReply) {
+      setStatus("A geracao de reenvio a partir de documentos guardados esta desativada nos Settings de Groups.");
+      return;
+    }
     if (!selectedEmail) return;
     if (emailMatchesCurrentContext(selectedEmail, currentContext)) {
       const handled = await requestCockpitHostAction({ type: "forward-current" });
