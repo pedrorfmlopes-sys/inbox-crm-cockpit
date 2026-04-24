@@ -1,5 +1,5 @@
 {
-  "generatedAtIso": "2026-04-24T16:33:30.058Z",
+  "generatedAtIso": "2026-04-24T16:50:38.891Z",
   "validatedFiles": [
     "client/src/modules/crm/GroupClassificationStudioApp.tsx",
     "client/src/modules/crm/group-classification/components/ClassificationEditor.tsx",
@@ -23,44 +23,41 @@
       "editorConsumesSettings": true
     }
   },
+  "defaultCatalogChecks": {
+    "group": true,
+    "reference": true,
+    "label": true,
+    "ticket": true
+  },
   "managerSupportsCatalogEnabled": true,
   "noHardcodedArraysActive": true,
   "scenarios": [
     {
-      "scenarioId": "group-states-disabled",
+      "scenarioId": "group-states-defaults-no-config",
       "type": "group",
       "settingsInjected": {
         "groups": {
           "groups": {
             "states": {
               "enabled": false,
-              "states": [
-                {
-                  "name": "novo",
-                  "color": "#111111"
-                },
-                {
-                  "name": "em_validacao",
-                  "color": "#222222"
-                }
-              ]
+              "states": []
             }
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -84,6 +81,97 @@
           "id": "editor-renders-catalog",
           "pass": true,
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "group-states-disabled",
+      "type": "group",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": false,
+              "states": [
+                {
+                  "name": "novo",
+                  "color": "#111111"
+                },
+                {
+                  "name": "em_validacao",
+                  "color": "#222222"
+                }
+              ]
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
         },
         {
           "id": "enabled-gates-selector",
@@ -129,19 +217,19 @@
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -189,6 +277,11 @@
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
         },
         {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
+        },
+        {
           "id": "enabled-gates-selector",
           "pass": true,
           "message": "A visibilidade do seletor respeita enabled + lista configurada"
@@ -223,19 +316,19 @@
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -259,6 +352,11 @@
           "id": "editor-renders-catalog",
           "pass": true,
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
         },
         {
           "id": "enabled-gates-selector",
@@ -304,19 +402,19 @@
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -362,6 +460,88 @@
           "id": "editor-renders-catalog",
           "pass": true,
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "reference-states-defaults-no-config",
+      "type": "reference",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
         },
         {
           "id": "enabled-gates-selector",
@@ -392,7 +572,7 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -413,13 +593,13 @@
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -443,6 +623,11 @@
           "id": "editor-renders-catalog",
           "pass": true,
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
         },
         {
           "id": "enabled-gates-selector",
@@ -473,7 +658,7 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -494,13 +679,13 @@
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -546,6 +731,11 @@
           "id": "editor-renders-catalog",
           "pass": true,
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
         },
         {
           "id": "enabled-gates-selector",
@@ -576,7 +766,7 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -588,13 +778,13 @@
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -618,6 +808,11 @@
           "id": "editor-renders-catalog",
           "pass": true,
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
         },
         {
           "id": "enabled-gates-selector",
@@ -648,7 +843,7 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -669,13 +864,13 @@
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -721,6 +916,88 @@
           "id": "editor-renders-catalog",
           "pass": true,
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "ticket-states-defaults-no-config",
+      "type": "ticket",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
         },
         {
           "id": "enabled-gates-selector",
@@ -751,13 +1028,13 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -778,7 +1055,7 @@
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -802,6 +1079,11 @@
           "id": "editor-renders-catalog",
           "pass": true,
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
         },
         {
           "id": "enabled-gates-selector",
@@ -832,13 +1114,13 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -859,7 +1141,7 @@
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -907,6 +1189,11 @@
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
         },
         {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
+        },
+        {
           "id": "enabled-gates-selector",
           "pass": true,
           "message": "A visibilidade do seletor respeita enabled + lista configurada"
@@ -935,13 +1222,13 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -953,7 +1240,7 @@
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -977,6 +1264,11 @@
           "id": "editor-renders-catalog",
           "pass": true,
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
         },
         {
           "id": "enabled-gates-selector",
@@ -1007,13 +1299,13 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -1034,7 +1326,7 @@
           },
           "labels": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           }
@@ -1082,6 +1374,88 @@
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
         },
         {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "label-states-defaults-no-config",
+      "type": "label",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": false,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
+        },
+        {
           "id": "enabled-gates-selector",
           "pass": true,
           "message": "A visibilidade do seletor respeita enabled + lista configurada"
@@ -1110,19 +1484,19 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -1163,6 +1537,11 @@
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
         },
         {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
+        },
+        {
           "id": "enabled-gates-selector",
           "pass": true,
           "message": "A visibilidade do seletor respeita enabled + lista configurada"
@@ -1191,19 +1570,19 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -1266,6 +1645,11 @@
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
         },
         {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
+        },
+        {
           "id": "enabled-gates-selector",
           "pass": true,
           "message": "A visibilidade do seletor respeita enabled + lista configurada"
@@ -1294,19 +1678,19 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -1338,6 +1722,11 @@
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
         },
         {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
+        },
+        {
           "id": "enabled-gates-selector",
           "pass": true,
           "message": "A visibilidade do seletor respeita enabled + lista configurada"
@@ -1366,19 +1755,19 @@
         "groups": {
           "groups": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "references": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
           "tickets": {
             "states": {
-              "enabled": true,
+              "enabled": false,
               "states": []
             }
           },
@@ -1439,6 +1828,11 @@
           "id": "editor-renders-catalog",
           "pass": true,
           "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "defaults-disabled-empty",
+          "pass": true,
+          "message": "Os defaults canonicos arrancam com enabled=false e states=[]"
         },
         {
           "id": "enabled-gates-selector",

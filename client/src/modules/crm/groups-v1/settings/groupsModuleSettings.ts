@@ -102,17 +102,18 @@ export const DEFAULT_GROUP_OUTLOOK_CATEGORY_SETTINGS: GroupOutlookCategorySettin
   includeLabels: false,
 };
 
-export const DEFAULT_GROUP_ENTITY_STATES: GroupStateDefinition[] = [
+// Sugestoes opcionais para UI futura; nao entram como defaults ativos no runtime.
+export const SUGGESTED_GROUP_ENTITY_STATES: GroupStateDefinition[] = [
   { name: "em_analise", color: "#f59e0b" },
   { name: "em_progresso", color: "#3b82f6" },
   { name: "concluido", color: "#10b981" },
 ];
 
-export const DEFAULT_REFERENCE_ENTITY_STATES: GroupStateDefinition[] = [
-  ...DEFAULT_GROUP_ENTITY_STATES,
+export const SUGGESTED_REFERENCE_ENTITY_STATES: GroupStateDefinition[] = [
+  ...SUGGESTED_GROUP_ENTITY_STATES,
 ];
 
-export const DEFAULT_LABEL_ENTITY_STATES: GroupStateDefinition[] = [
+export const SUGGESTED_LABEL_ENTITY_STATES: GroupStateDefinition[] = [
   { name: "em_analise", color: "#f59e0b" },
   { name: "respondido", color: "#3b82f6" },
   { name: "confirmado", color: "#10b981" },
@@ -120,7 +121,7 @@ export const DEFAULT_LABEL_ENTITY_STATES: GroupStateDefinition[] = [
   { name: "cancelado", color: "#ef4444" },
 ];
 
-export const DEFAULT_TICKET_ENTITY_STATES: GroupStateDefinition[] = [
+export const SUGGESTED_TICKET_ENTITY_STATES: GroupStateDefinition[] = [
   { name: "open", color: "#3b82f6" },
   { name: "closed", color: "#10b981" },
 ];
@@ -134,14 +135,14 @@ export const DEFAULT_GROUPS_MODULE_SETTINGS: GroupsModuleSettings = {
   },
   groups: {
     states: {
-      enabled: true,
-      states: [...DEFAULT_GROUP_ENTITY_STATES],
+      enabled: false,
+      states: [],
     },
   },
   references: {
     states: {
-      enabled: true,
-      states: [...DEFAULT_REFERENCE_ENTITY_STATES],
+      enabled: false,
+      states: [],
     },
   },
   labels: {
@@ -149,8 +150,8 @@ export const DEFAULT_GROUPS_MODULE_SETTINGS: GroupsModuleSettings = {
     catalog: [],
     favoriteIds: [],
     states: {
-      enabled: true,
-      states: [...DEFAULT_LABEL_ENTITY_STATES],
+      enabled: false,
+      states: [],
     },
   },
   tickets: {
@@ -159,8 +160,8 @@ export const DEFAULT_GROUPS_MODULE_SETTINGS: GroupsModuleSettings = {
       ...DEFAULT_GROUP_TICKET_UI_SETTINGS,
     },
     states: {
-      enabled: true,
-      states: [...DEFAULT_TICKET_ENTITY_STATES],
+      enabled: false,
+      states: [],
     },
   },
   outlookCategories: {

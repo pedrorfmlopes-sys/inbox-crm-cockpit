@@ -43,6 +43,7 @@ function isConfiguredStateValue(value, options) {
 const studioSource = read("client/src/modules/crm/GroupClassificationStudioApp.tsx");
 const editorSource = read("client/src/modules/crm/group-classification/components/ClassificationEditor.tsx");
 const managerSource = read("client/src/modules/crm/GroupManagerCockpit.tsx");
+const settingsSource = read("client/src/modules/crm/groups-v1/settings/groupsModuleSettings.ts");
 
 const typeDefinitions = [
   {
@@ -81,6 +82,17 @@ const sourceChecks = Object.fromEntries(
   ])
 );
 
+const defaultCatalogChecks = {
+  group:
+    /groups:\s*\{\s*states:\s*\{\s*enabled:\s*false,\s*states:\s*\[\s*\]/m.test(settingsSource),
+  reference:
+    /references:\s*\{\s*states:\s*\{\s*enabled:\s*false,\s*states:\s*\[\s*\]/m.test(settingsSource),
+  label:
+    /labels:\s*\{[\s\S]*?states:\s*\{\s*enabled:\s*false,\s*states:\s*\[\s*\]/m.test(settingsSource),
+  ticket:
+    /tickets:\s*\{[\s\S]*?states:\s*\{\s*enabled:\s*false,\s*states:\s*\[\s*\]/m.test(settingsSource),
+};
+
 const noHardcodedArraysActive =
   !studioSource.includes("LABEL_STATUS_OPTIONS") &&
   !studioSource.includes("TICKET_STATUS_OPTIONS") &&
@@ -115,16 +127,35 @@ function buildSettings(type, catalog) {
   return {
     groups: {
       groups: {
-        states: type === "group" ? catalog : { enabled: true, states: [] },
+        states: type === "group" ? catalog : { enabled: false, states: [] },
       },
       references: {
-        states: type === "reference" ? catalog : { enabled: true, states: [] },
+        states: type === "reference" ? catalog : { enabled: false, states: [] },
       },
       tickets: {
-        states: type === "ticket" ? catalog : { enabled: true, states: [] },
+        states: type === "ticket" ? catalog : { enabled: false, states: [] },
       },
       labels: {
-        states: type === "label" ? catalog : { enabled: true, states: [] },
+        states: type === "label" ? catalog : { enabled: false, states: [] },
+      },
+    },
+  };
+}
+
+function buildDefaultSettings() {
+  return {
+    groups: {
+      groups: {
+        states: { enabled: false, states: [] },
+      },
+      references: {
+        states: { enabled: false, states: [] },
+      },
+      tickets: {
+        states: { enabled: false, states: [] },
+      },
+      labels: {
+        states: { enabled: false, states: [] },
       },
     },
   };
@@ -142,6 +173,12 @@ const scenarios = [];
 for (const definition of typeDefinitions) {
   const fixture = stateFixtures[definition.type];
   const variants = [
+    {
+      suffix: "defaults-no-config",
+      catalog: { enabled: false, states: [] },
+      settingsInjected: buildDefaultSettings(),
+      freeTextCandidate: "estado_livre",
+    },
     {
       suffix: "disabled",
       catalog: { enabled: false, states: fixture },
@@ -165,7 +202,8 @@ for (const definition of typeDefinitions) {
   ];
 
   for (const variant of variants) {
-    const settingsInjected = buildSettings(definition.type, variant.catalog);
+    const settingsInjected =
+      variant.settingsInjected || buildSettings(definition.type, variant.catalog);
     const resolved = resolveStateCatalog(readCatalogFromSettings(definition.type, settingsInjected));
     const expectedUiOptions = resolveStateCatalog(variant.catalog).options;
     const selectorVisibleExpected = variant.catalog.enabled !== false && expectedUiOptions.length > 0;
@@ -186,6 +224,11 @@ for (const definition of typeDefinitions) {
         id: "editor-renders-catalog",
         pass: sourceChecks[definition.type].editorConsumesSettings,
         message: "O editor usa apenas as opcoes recebidas do catalogo dinamico",
+      },
+      {
+        id: "defaults-disabled-empty",
+        pass: defaultCatalogChecks[definition.type],
+        message: "Os defaults canonicos arrancam com enabled=false e states=[]",
       },
       {
         id: "enabled-gates-selector",
@@ -235,6 +278,7 @@ const report = {
     "client/src/modules/crm/GroupManagerCockpit.tsx",
   ],
   sourceChecks,
+  defaultCatalogChecks,
   managerSupportsCatalogEnabled,
   noHardcodedArraysActive,
   scenarios,

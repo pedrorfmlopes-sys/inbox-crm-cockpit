@@ -1,5 +1,29 @@
 # HANDOFF
 
+## Grupos v1: defaults de `settings.groups.*.states` passam a arrancar vazios e inativos (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - os defaults canonicos de estados em `settings.groups` deixam de criar runtime ativo por omissao
+  - os quatro blocos passam a arrancar com:
+    - `enabled = false`
+    - `states = []`
+  - isto aplica-se a:
+    - `groups.states`
+    - `references.states`
+    - `labels.states`
+    - `tickets.states`
+- **Separacao agora explicita**:
+  - listas de estados predefinidas deixam de ser usadas como defaults ativos
+  - ficam apenas como sugestoes futuras de UI, sem entrarem automaticamente no runtime
+- **Harness reforcado**:
+  - `scripts/run-groups-state-alignment-report.mjs` passa a provar tambem o cenario `defaults-no-config` para:
+    - `group`
+    - `reference`
+    - `ticket`
+    - `label`
+  - o report passa a auditar no codigo-fonte que os defaults canonicos arrancam com `enabled=false` e `states=[]`
+- **Artefacto atualizado**:
+  - `output/playwright/groups-state-alignment-report.json`
+
 ## Grupos v1: micro-ronda de fecho da Fase 1 alinha `Grupo` e `Referencia` com `states.enabled` no `Classificar` (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - o `Classificar` passa a expor seletores de estado tambem para:
