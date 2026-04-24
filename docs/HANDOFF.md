@@ -1849,3 +1849,48 @@
   - `picker/path real`: fechado
   - `OneDrive/SharePoint por URL web`: nao fechado
   - enquanto URL web se mantiver requisito obrigatorio, a fundacao ainda nao pode ser dada como totalmente encerrada
+
+## Grupos v1: auditoria de categorizacao Outlook em `Classificar` conclui `NAO coerente` (Abril 2026)
+- **Scope auditado nesta ronda**:
+  - apenas a categorizacao de emails no modulo `Grupos`
+  - sem correcoes de runtime e sem alargar para CRM/IA/outras tabs
+- **Conclusao binaria**:
+  - `NAO coerente`
+- **Factos fechados pela auditoria**:
+  - backend continua a ser a fonte final da classificacao
+  - a projecao Outlook continua separada e dependente de confirmacao do host
+  - estados de grupo e ticket sao tratados como cor da categoria principal
+  - estados de etiqueta sao tratados como categoria propria (`E-Et: ...`)
+  - referencias podem colapsar para categorias `Grupo: ...` em cenarios sem principal explicito resolvido
+  - `includeLabels = false` nao impede categorias de estado de etiqueta quando `includeStatuses = true`
+- **Artefactos desta ronda**:
+  - `output/playwright/groups-email-categorization-audit-report.json`
+  - `output/playwright/groups-email-categorization-audit-report.md`
+  - `output/playwright/groups-email-categorization-audit-scenarios.json`
+  - `output/playwright/groups-email-categorization-expected-vs-actual.json`
+- **Proximo passo recomendado**:
+  - fechar antes de corrigir a regra funcional desejada para estados (`grupo`, `ticket`, `etiqueta`) e para a separacao `grupo principal` vs `referencia` na projecao Outlook
+
+## Grupos v1: alinhamento estrutural para preparar o motor v2 de categorizacao (Abril 2026)
+- **Objetivo desta ronda**:
+  - remover semantica antiga de estados/toggles locais no modulo `Grupos`, sem implementar ainda o novo motor v2
+- **O que ficou limpo**:
+  - `settings.groups` passa a ter estados canonicos por tipo em:
+    - `settings.groups.groups.states`
+    - `settings.groups.references.states`
+    - `settings.groups.tickets.states`
+    - `settings.groups.labels.states`
+  - `Classificar` deixa de usar arrays hardcoded de estados e passa a derivar as opcoes de UI dessas listas de settings
+  - foram removidos toggles por email de categoria/estado no `Classificar`
+  - o manager de `Grupos` deixa de definir arrays hardcoded locais para estados de grupo/ticket
+  - o catalogo de etiquetas deixa de guardar `categorize/hasStatus/status` como semantica ativa do runtime
+- **Separacao atual apos a limpeza**:
+  - `Classificar` seleciona entidades e estados disponiveis
+  - as regras de categorizacao Outlook deixam de ser decididas localmente nesta UI
+  - o motor antigo de Outlook continua intocado nesta fase e sera substituido na ronda v2
+- **Validacao desta ronda**:
+  - `node scripts/run-groups-state-alignment-report.mjs`
+  - `npm.cmd -w client run build`
+  - `lint` global continua a falhar por problemas antigos fora do scope; os ficheiros tocados passaram em lint isolado sem erros
+- **Artefacto novo**:
+  - `output/playwright/groups-state-alignment-report.json`

@@ -1,15 +1,9 @@
 export interface GroupLabelDraft {
-  categorize: boolean;
-  hasStatus: boolean;
   status?: string;
 }
 
-export type EmailLabelStatus = "em_analise" | "respondido" | "confirmado" | "arquivado" | "cancelado";
-
 export interface LabelDraft {
-  categorize: boolean;
-  hasStatus: boolean;
-  status?: EmailLabelStatus;
+  status?: string;
 }
 
 export type ClassificationFocus = "summary" | "principal" | "labels" | "ticket" | "references";
@@ -18,19 +12,9 @@ export type SectionId = "emails" | "details" | "managed-group" | "classification
 
 export interface ClassificationMetaDraft {
   principalGroupId: string;
-  principalCategorize: boolean;
-  principalStatusEnabled: boolean;
-  principalStatusCategorize: boolean;
   ticketId: string;
-  ticketCategorize: boolean;
-  ticketStatusEnabled: boolean;
-  ticketStatusCategorize: boolean;
-  categorizedLabelNames: string[];
   labelStates: Record<string, LabelDraft>;
   referenceGroupIds: string[];
-  referenceCategorize: boolean;
-  referenceStatusEnabled: boolean;
-  referenceStatusCategorize: boolean;
 }
 
 export type DocumentLifecycleState = "ingested" | "processed" | "accepted" | "rejected" | "reread_requested";

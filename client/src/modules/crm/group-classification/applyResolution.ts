@@ -39,12 +39,10 @@ export type ResolvedStudioApplySelection = {
   referenceGroupIds: string[];
   referenceGroups: LinkGroupEntry[];
   allGroupIds: string[];
-  emailLabelStatus: string;
   labels: string[];
   emailOwnedSelectedLabels: string[];
   removedInheritedLabels: string[];
   labelStates: Record<string, string>;
-  categorizedLabelNames: string[];
   selectedTicketId: string;
   selectedSeriesId: string;
   selectedTicket: GroupTicketEntry | null;
@@ -111,7 +109,6 @@ export function buildResolvedStudioApplySelection(args: {
   selectedLabels: string[];
   inheritedLabels: string[];
   selectedLabelStates: Record<string, string>;
-  categorizedLabelNames: string[];
   selectedTicketId?: string;
   selectedSeriesId?: string;
   selectedTicket?: GroupTicketEntry | null;
@@ -139,7 +136,6 @@ export function buildResolvedStudioApplySelection(args: {
     referenceGroupIds,
     referenceGroups: args.referenceGroups.filter(Boolean),
     allGroupIds: normalizeStringList([principalGroupId, ...referenceGroupIds]),
-    emailLabelStatus: normalizeString(Object.values(args.selectedLabelStates || {}).find(Boolean)),
     labels: selectedLabels,
     emailOwnedSelectedLabels,
     removedInheritedLabels,
@@ -148,15 +144,11 @@ export function buildResolvedStudioApplySelection(args: {
         .map(([label, status]) => [normalizeString(label), normalizeString(status)])
         .filter(([label, status]) => label && status)
     ),
-    categorizedLabelNames: normalizeStringList(args.categorizedLabelNames),
     selectedTicketId: normalizeString(args.selectedTicketId),
     selectedSeriesId: normalizeString(args.selectedSeriesId),
     selectedTicket: args.selectedTicket || null,
     desiredTicketStatus: normalizeString(args.ticketStatusDraft),
-    baseClassificationMeta: {
-      ...args.classificationMetaDraft,
-      categorizedLabelNames: normalizeStringList(args.categorizedLabelNames),
-    },
+    baseClassificationMeta: { ...args.classificationMetaDraft },
     targetMembershipKind: principalGroupId ? "principal" : "referencia",
     hasAnyClassificationValue: Boolean(
       principalGroupId
@@ -248,7 +240,6 @@ export function buildResolvedClassifiedEmailPayload(args: {
   });
   return {
     ...basePayload,
-    status: args.resolvedApplySelection.emailLabelStatus,
     labels: args.resolvedApplySelection.emailOwnedSelectedLabels,
     removedInheritedLabels: args.resolvedApplySelection.removedInheritedLabels,
     labelStates: args.resolvedApplySelection.labelStates,
@@ -269,11 +260,10 @@ export function buildResolvedIntermediateCaseClassificationDraft(args: {
     labels: args.resolvedApplySelection.labels,
     removedInheritedLabels: args.resolvedApplySelection.removedInheritedLabels,
     labelStates: args.resolvedApplySelection.labelStates,
-    categorizedLabelNames: args.resolvedApplySelection.categorizedLabelNames,
+    categorizedLabelNames: [],
     ticketIds: [normalizeString(resolvedCaseTicket?.id || args.resolvedApplySelection.selectedTicketId)].filter(Boolean),
     ticketCodes: [normalizeString(resolvedCaseTicket?.code)].filter(Boolean),
     state: normalizeString(args.localClassificationState) || undefined,
-    status: args.resolvedApplySelection.emailLabelStatus || undefined,
     classifiedAt: new Date().toISOString(),
     classifiedSource: "user",
   };
@@ -352,7 +342,6 @@ export function buildRemoteApplyFallbackCurrentCategoryEmail(args: {
     fromName: normalizeString(currentTargetEmail.fromName || args.currentContext.fromName) || undefined,
     receivedAtIso: normalizeString(currentTargetEmail.receivedAtIso || currentTargetEmail.messageDateIso || args.currentContext.receivedAtIso) || undefined,
     messageDateIso: normalizeString(currentTargetEmail.messageDateIso || currentTargetEmail.receivedAtIso || args.currentContext.receivedAtIso) || undefined,
-    status: args.resolvedApplySelection.emailLabelStatus,
     labels: args.resolvedApplySelection.emailOwnedSelectedLabels,
     removedInheritedLabels: args.resolvedApplySelection.removedInheritedLabels,
     labelStates: args.resolvedApplySelection.labelStates,

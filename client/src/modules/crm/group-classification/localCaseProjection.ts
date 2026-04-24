@@ -25,12 +25,9 @@ export function projectApplyIntoIntermediateCase(args: {
   classificationMetaDraft: ClassificationMetaDraft;
 }): ApplyLocalCaseProjectionResult {
   const localClassificationState = String(
-    (args.classificationMetaDraft.ticketStatusEnabled
-      ? args.resolvedApplySelection.desiredTicketStatus || args.resolvedCaseTicket?.status
-      : "")
-    || (args.classificationMetaDraft.principalStatusEnabled
-      ? args.resolvedApplySelection.principalGroup?.status
-      : "")
+    args.resolvedApplySelection.desiredTicketStatus
+    || args.resolvedCaseTicket?.status
+    || args.resolvedApplySelection.principalGroup?.status
     || ""
   ).trim();
 

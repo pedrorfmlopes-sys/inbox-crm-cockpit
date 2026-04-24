@@ -13,8 +13,8 @@ import {
 import {
   DEFAULT_GROUPS_MODULE_SETTINGS,
   normalizeGroupsModuleSettings,
+  type GroupStateDefinition,
   type GroupLabelCatalogEntry,
-  type GroupLabelStatus,
   type GroupOutlookCategorySettings,
   type GroupsLegacySettingsInput,
   type GroupsModuleSettings,
@@ -25,7 +25,9 @@ export { normalizeGroupStorageSettings } from "./modules/crm/groups-v1/storage/s
 export { normalizeGroupsTabSettings } from "./modules/crm/groups-v1/settings/groupsTabSettings";
 export {
   findGroupLabelCatalogEntry,
+  findGroupStateDefinition,
   getGroupLabelCatalogLabels,
+  getGroupStateCatalogLabels,
   normalizeGroupLabelCatalog,
 } from "./modules/crm/groups-v1/settings/groupsModuleSettings";
 
@@ -92,8 +94,8 @@ export type Crm2OdooLayoutTarget = "project" | "lead" | "task" | "ticket";
 export type { GroupStorageMode, GroupStorageProvider, GroupStorageSettings };
 export type { GroupsTabSettings };
 export type {
+  GroupStateDefinition,
   GroupLabelCatalogEntry,
-  GroupLabelStatus,
   GroupOutlookCategorySettings,
   GroupsModuleSettings,
   GroupTicketAutoLinkMode,

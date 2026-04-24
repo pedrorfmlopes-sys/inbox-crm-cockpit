@@ -2,7 +2,7 @@ import {
   EmailRecipientEntry, RelatedEmailEntry, RelevantEmailPayload, LinkGroupEntry, GroupTicketEntry
 } from "@/api";
 import {
-  ClassificationMetaDraft, DocumentLifecycleState, LabelDraft, EmailLabelStatus,
+  ClassificationMetaDraft, DocumentLifecycleState, LabelDraft,
   GroupContactDraft, GroupEntityDraft, StudioParams
 } from "./types";
 import { GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX, EMPTY_CLASSIFICATION_META } from "./constants";
@@ -358,7 +358,6 @@ export function normalizeClassificationMetaDraft(
   return {
     ...EMPTY_CLASSIFICATION_META,
     ...base,
-    categorizedLabelNames: mergeUniqueStrings(base.categorizedLabelNames || []),
     referenceGroupIds: mergeUniqueStrings(base.referenceGroupIds || []),
     labelStates: base.labelStates || {},
   };
@@ -372,18 +371,8 @@ export function mergeClassificationMetaDrafts(
   const r = normalizeClassificationMetaDraft(right);
   return {
     principalGroupId: r.principalGroupId || l.principalGroupId,
-    principalCategorize: r.principalCategorize || l.principalCategorize,
-    principalStatusEnabled: r.principalStatusEnabled || l.principalStatusEnabled,
-    principalStatusCategorize: r.principalStatusCategorize || l.principalStatusCategorize,
     ticketId: r.ticketId || l.ticketId,
-    ticketCategorize: r.ticketCategorize || l.ticketCategorize,
-    ticketStatusEnabled: r.ticketStatusEnabled || l.ticketStatusEnabled,
-    ticketStatusCategorize: r.ticketStatusCategorize || l.ticketStatusCategorize,
-    categorizedLabelNames: Array.from(new Set([...l.categorizedLabelNames, ...r.categorizedLabelNames])),
     referenceGroupIds: Array.from(new Set([...l.referenceGroupIds, ...r.referenceGroupIds])),
-    referenceCategorize: r.referenceCategorize || l.referenceCategorize,
-    referenceStatusEnabled: r.referenceStatusEnabled || l.referenceStatusEnabled,
-    referenceStatusCategorize: r.referenceStatusCategorize || l.referenceStatusCategorize,
     labelStates: { ...l.labelStates, ...r.labelStates },
   };
 }

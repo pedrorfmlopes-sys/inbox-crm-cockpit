@@ -1,0 +1,180 @@
+{
+  "generatedAtIso": "2026-04-24T15:47:11.601Z",
+  "scenarioId": "settings-drive-group-state-options",
+  "input": {
+    "groups": {
+      "groups": {
+        "states": [
+          {
+            "name": "novo",
+            "color": "#111111"
+          },
+          {
+            "name": "em_validacao",
+            "color": "#222222"
+          }
+        ]
+      },
+      "references": {
+        "states": [
+          {
+            "name": "ligada",
+            "color": "#333333"
+          }
+        ]
+      },
+      "tickets": {
+        "states": [
+          {
+            "name": "pendente",
+            "color": "#444444"
+          },
+          {
+            "name": "fechado",
+            "color": "#555555"
+          }
+        ]
+      },
+      "labels": {
+        "states": [
+          {
+            "name": "aguarda_cliente",
+            "color": "#666666"
+          },
+          {
+            "name": "resolvida",
+            "color": "#777777"
+          }
+        ]
+      }
+    }
+  },
+  "expectedUiOptions": {
+    "groups": [
+      {
+        "value": "novo",
+        "label": "Novo",
+        "color": "#111111"
+      },
+      {
+        "value": "em_validacao",
+        "label": "Em Validacao",
+        "color": "#222222"
+      }
+    ],
+    "references": [
+      {
+        "value": "ligada",
+        "label": "Ligada",
+        "color": "#333333"
+      }
+    ],
+    "tickets": [
+      {
+        "value": "pendente",
+        "label": "Pendente",
+        "color": "#444444"
+      },
+      {
+        "value": "fechado",
+        "label": "Fechado",
+        "color": "#555555"
+      }
+    ],
+    "labels": [
+      {
+        "value": "aguarda_cliente",
+        "label": "Aguarda Cliente",
+        "color": "#666666"
+      },
+      {
+        "value": "resolvida",
+        "label": "Resolvida",
+        "color": "#777777"
+      }
+    ]
+  },
+  "obtainedUiOptions": {
+    "groups": [
+      {
+        "value": "novo",
+        "label": "Novo",
+        "color": "#111111"
+      },
+      {
+        "value": "em_validacao",
+        "label": "Em Validacao",
+        "color": "#222222"
+      }
+    ],
+    "references": [
+      {
+        "value": "ligada",
+        "label": "Ligada",
+        "color": "#333333"
+      }
+    ],
+    "tickets": [
+      {
+        "value": "pendente",
+        "label": "Pendente",
+        "color": "#444444"
+      },
+      {
+        "value": "fechado",
+        "label": "Fechado",
+        "color": "#555555"
+      }
+    ],
+    "labels": [
+      {
+        "value": "aguarda_cliente",
+        "label": "Aguarda Cliente",
+        "color": "#666666"
+      },
+      {
+        "value": "resolvida",
+        "label": "Resolvida",
+        "color": "#777777"
+      }
+    ]
+  },
+  "checks": [
+    {
+      "id": "studio-label-states",
+      "description": "Classificar deriva estados de etiquetas de settings.groups.labels.states",
+      "pass": true
+    },
+    {
+      "id": "studio-ticket-states",
+      "description": "Classificar deriva estados de tickets de settings.groups.tickets.states",
+      "pass": true
+    },
+    {
+      "id": "editor-label-options",
+      "description": "UI do editor de Classificar renderiza select a partir de labelStateOptions",
+      "pass": true
+    },
+    {
+      "id": "editor-ticket-options",
+      "description": "UI do editor de Classificar renderiza select a partir de ticketStateOptions",
+      "pass": true
+    },
+    {
+      "id": "manager-group-states",
+      "description": "Manager de Groups deriva estados de groups.states",
+      "pass": true
+    },
+    {
+      "id": "manager-ticket-states",
+      "description": "Manager de Groups deriva estados de tickets.states",
+      "pass": true
+    },
+    {
+      "id": "no-hardcoded-classifier-status-arrays",
+      "description": "Classificar deixou de declarar arrays LABEL_STATUS_OPTIONS/TICKET_STATUS_OPTIONS",
+      "pass": true
+    }
+  ],
+  "pass": true
+}

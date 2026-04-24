@@ -1,16 +1,17 @@
 import React from "react";
-import * as Icons from "@/ui/icons";
-import { type LinkGroupEntry, type GroupTicketEntry, type GroupTicketSeriesEntry, type RelatedEmailEntry } from "@/api";
-import { 
-  type ClassificationFocus, 
-  type ClassificationLayoutMode, 
-  type ClassificationMetaDraft, 
-  type LabelDraft, 
-  type EmailLabelStatus,
-  type TicketEditorMode
+import { type LinkGroupEntry, type GroupTicketEntry, type GroupTicketSeriesEntry } from "@/api";
+import {
+  type ClassificationFocus,
+  type ClassificationLayoutMode,
+  type LabelDraft,
+  type TicketEditorMode,
 } from "../types";
-import StatusLegend from "./StatusLegend";
-import { PanelState } from "@/ui/PanelState";
+
+type StateOption = {
+  value: string;
+  label: string;
+  color?: string;
+};
 
 export interface ClassificationEditorProps {
   classificationFocus: ClassificationFocus;
@@ -28,8 +29,6 @@ export interface ClassificationEditorProps {
   exactPrincipalSearchGroup: LinkGroupEntry | null;
   principalSearchResults: LinkGroupEntry[];
   principalGroup: LinkGroupEntry | null;
-  classificationMetaDraft: ClassificationMetaDraft;
-  updateClassificationMeta: (patch: Partial<ClassificationMetaDraft>) => void;
   suggestedLabelSeeds: string[];
   selectedLabels: string[];
   applySuggestedLabel: (label: string) => void;
@@ -40,10 +39,10 @@ export interface ClassificationEditorProps {
   filteredClassificationLabels: string[];
   removeLabel: (label: string) => void;
   addLabel: (label: string) => void;
-  selectedLabelSharedStatus: EmailLabelStatus | "";
+  selectedLabelSharedStatus: string;
   updateLabelDraft: (label: string, patch: Partial<LabelDraft>) => void;
   labelDrafts: Record<string, LabelDraft>;
-  LABEL_STATUS_OPTIONS: any[];
+  labelStateOptions: StateOption[];
   normalizedTicketSearch: string;
   ticketSearchResults: GroupTicketEntry[];
   availableTicketChoices: GroupTicketEntry[];
@@ -62,7 +61,7 @@ export interface ClassificationEditorProps {
   setCreateTicketTitle: (val: string) => void;
   ticketStatusDraft: string;
   setTicketStatusDraft: (status: string) => void;
-  TICKET_STATUS_OPTIONS: any[];
+  ticketStateOptions: StateOption[];
   effectiveTicketStatus: string | undefined;
   ticketStatusLabel: string;
   selectedTicketId: string;
@@ -96,8 +95,6 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
     exactPrincipalSearchGroup,
     principalSearchResults,
     principalGroup,
-    classificationMetaDraft,
-    updateClassificationMeta,
     suggestedLabelSeeds,
     selectedLabels,
     applySuggestedLabel,
@@ -111,7 +108,7 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
     selectedLabelSharedStatus,
     updateLabelDraft,
     labelDrafts,
-    LABEL_STATUS_OPTIONS,
+    labelStateOptions,
     normalizedTicketSearch,
     ticketSearchResults,
     availableTicketChoices,
@@ -130,7 +127,7 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
     setCreateTicketTitle,
     ticketStatusDraft,
     setTicketStatusDraft,
-    TICKET_STATUS_OPTIONS,
+    ticketStateOptions,
     effectiveTicketStatus,
     ticketStatusLabel,
     selectedTicketId,
@@ -144,7 +141,6 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
     exactReferenceSearchGroup,
     referenceSearchResults,
     referenceGroupIds,
-    actionBusy,
     ...rest
   } = props;
 
@@ -266,12 +262,7 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
         </div>
         {classificationLayoutMode === "advanced" ? (
           <div style={S.editorBlock}>
-            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-            <div style={S.editorOptionGrid}>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.principalCategorize} onChange={(event) => updateClassificationMeta({ principalCategorize: event.target.checked })} /> Grupo em categoria Outlook</label>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.principalStatusCategorize} onChange={(event) => updateClassificationMeta({ principalStatusEnabled: event.target.checked, principalStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
-            </div>
-              <StatusLegend />
+            <div style={S.cardMeta}>A categorizacao Outlook deixou de ser configurada aqui. O editor usa apenas o estado real do grupo selecionado.</div>
           </div>
         ) : null}
       </div>
@@ -353,29 +344,27 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
         </div>
         {classificationLayoutMode === "advanced" ? (
           <div style={S.editorBlock}>
-            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-            <div style={S.editorAdvancedFieldGrid}>
+            <div style={S.editorBlockTitle}>Estado</div>
+            {labelStateOptions.length ? (
               <label style={S.field}>
-                <span style={S.cardMeta}>Estado da etiqueta</span>
+                <span style={S.cardMeta}>Estado das etiquetas selecionadas</span>
                 <select
                   style={S.select}
                   value={selectedLabelSharedStatus}
                   onChange={(event) => {
-                    const nextValue = String(event.target.value || "").trim() as EmailLabelStatus | "";
+                    const nextValue = String(event.target.value || "").trim();
                     selectedLabels.forEach((label) => updateLabelDraft(label, {
-                      hasStatus: Boolean(nextValue),
                       status: nextValue || undefined,
                     }));
                   }}
                 >
                   <option value="">Sem estado</option>
-                  {LABEL_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  {labelStateOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </label>
-              <label style={S.compactCheckBoxField}><input type="checkbox" checked={selectedLabels.some((label) => labelDrafts[label]?.categorize === true)} onChange={(event) => selectedLabels.forEach((label) => updateLabelDraft(label, { categorize: event.target.checked }))} /> Etiqueta em categoria Outlook</label>
-            </div>
-            <label style={S.compactCheckBoxField}><input type="checkbox" checked={selectedLabels.some((label) => labelDrafts[label]?.hasStatus === true)} onChange={(event) => selectedLabels.forEach((label) => updateLabelDraft(label, { hasStatus: event.target.checked, status: event.target.checked ? (labelDrafts[label]?.status || "em_analise") : undefined }))} /> Refletir estado pela cor da categoria</label>
-              <StatusLegend />
+            ) : (
+              <div style={S.cardMeta}>Nao existem estados configurados em `settings.groups.labels.states`.</div>
+            )}
           </div>
         ) : null}
       </div>
@@ -450,18 +439,26 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
         )}
         {classificationLayoutMode === "advanced" ? (
           <div style={S.editorBlock}>
-            <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-            <div style={S.editorAdvancedFieldGrid}>
+            <div style={S.editorBlockTitle}>Estado do ticket</div>
+            {ticketStateOptions.length ? (
               <label style={S.field}>
-                <span style={S.cardMeta}>Estado do ticket</span>
+                <span style={S.cardMeta}>Estado disponivel em settings</span>
                 <select style={S.select} value={ticketStatusDraft} onChange={(event) => setTicketStatusDraft(event.target.value)}>
-                  {TICKET_STATUS_OPTIONS.map((option) => <option key={option.value || "none"} value={option.value}>{option.label}</option>)}
+                  <option value="">Sem estado</option>
+                  {ticketStateOptions.map((option) => <option key={option.value || "none"} value={option.value}>{option.label}</option>)}
                 </select>
               </label>
-              <label style={S.compactCheckBoxField}><input type="checkbox" checked={Boolean(selectedTicketId || selectedSeriesId)} onChange={(event) => { if (!event.target.checked) clearTicketSelection(); }} /> Ticket em categoria Outlook</label>
+            ) : (
+              <div style={S.cardMeta}>Nao existem estados configurados em `settings.groups.tickets.states`.</div>
+            )}
+            <div style={S.cardMeta}>
+              {effectiveTicketStatus ? `Estado atual: ${ticketStatusLabel}` : "Sem estado definido neste ticket."}
             </div>
-            <label style={S.compactCheckBoxField}><input type="checkbox" checked={classificationMetaDraft.ticketStatusCategorize} onChange={(event) => updateClassificationMeta({ ticketStatusEnabled: event.target.checked, ticketStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
-              <StatusLegend />
+            {(selectedTicketId || selectedSeriesId) ? (
+              <button type="button" style={S.secondaryBtn} onClick={clearTicketSelection}>
+                Limpar ticket
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -548,16 +545,7 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
           ) : null}
         </div>
         <div style={S.editorBlock}>
-          <div style={S.editorBlockTitle}>Opcoes avancadas</div>
-          <div style={S.editorOptionStackLoose}>
-            <div style={S.editorOptionGrid}>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceCategorize} onChange={(event) => updateClassificationMeta({ referenceCategorize: event.target.checked })} /> Referencia em categoria Outlook</label>
-              <label style={S.compactCheck}><input type="checkbox" checked={classificationMetaDraft.referenceStatusCategorize} onChange={(event) => updateClassificationMeta({ referenceStatusEnabled: event.target.checked, referenceStatusCategorize: event.target.checked })} /> Refletir estado pela cor da categoria</label>
-            </div>
-            <div style={S.editorLegendWrap}>
-              <StatusLegend />
-            </div>
-          </div>
+          <div style={S.cardMeta}>As referencias usam apenas o estado real dos grupos ligados e as definicoes centrais em `settings.groups.references.states`.</div>
         </div>
       </div>
     );
@@ -598,21 +586,15 @@ const S: Record<string, React.CSSProperties> = {
   searchResultBtnOn: { display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "6px 8px", border: "none", borderBottom: "1px solid var(--skin-border-main)", background: "var(--skin-bg-active)", color: "var(--skin-accent-main)", fontSize: 11, fontWeight: 600, textAlign: "left", cursor: "pointer" },
   resultMiniMeta: { fontSize: 9, color: "var(--skin-text-muted)", fontWeight: 400 },
   editorValueStrong: { fontSize: 14, fontWeight: 700, color: "var(--skin-text-main)", padding: "4px 0" },
-  editorOptionGrid: { display: "flex", flexDirection: "column", gap: 6 },
-  compactCheck: { display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--skin-text-main)", cursor: "pointer" },
   editorAdvancedFieldGrid: { display: "flex", flexDirection: "column", gap: 12 },
   field: { display: "flex", flexDirection: "column", gap: 4 },
   cardMeta: { fontSize: 10, color: "var(--skin-text-muted)", lineHeight: "1.4" },
   select: { height: 28, fontSize: 11, padding: "0 4px", borderRadius: 4, border: "1px solid var(--skin-border-main)", background: "var(--skin-bg-input)", color: "var(--skin-text-main)" },
-  compactCheckBoxField: { display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--skin-text-main)", cursor: "pointer" },
-  groupChipBtn: { padding: "4px 8px", fontSize: 11, border: "1px solid var(--skin-border-main)", background: "var(--skin-bg-main)", color: "var(--skin-text-muted)", borderRadius: 4, cursor: "pointer" },
   groupChipBtnOn: { padding: "4px 8px", fontSize: 11, border: "1px solid var(--skin-accent-main)", background: "var(--skin-bg-active)", color: "var(--skin-accent-main)", borderRadius: 4, cursor: "pointer", fontWeight: 600 },
   editorSplitRow: { display: "flex", gap: 1, background: "var(--skin-border-main)", borderRadius: 6, overflow: "hidden", border: "1px solid var(--skin-border-main)" },
   editorModeBtn: { flex: 1, padding: "8px 4px", fontSize: 11, border: "none", background: "var(--skin-bg-main)", color: "var(--skin-text-muted)", cursor: "pointer", fontWeight: 500 },
   editorModeBtnOn: { flex: 1, padding: "8px 4px", fontSize: 11, border: "none", background: "var(--skin-bg-active)", color: "var(--skin-accent-main)", cursor: "pointer", fontWeight: 600 },
   mutedMini: { fontSize: 10, color: "var(--skin-text-muted)", fontStyle: "italic" },
-  editorOptionStackLoose: { display: "flex", flexDirection: "column", gap: 12 },
-  editorLegendWrap: { marginTop: 4 },
 };
 
 export default ClassificationEditor;

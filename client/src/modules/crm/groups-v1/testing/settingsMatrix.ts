@@ -162,6 +162,13 @@ export const GROUPS_SETTINGS_MATRIX: GroupsSettingsMatrixEntry[] = [
     linkage: "runtime",
   },
   {
+    setting: "settings.groups.groups.states / references.states / tickets.states / labels.states",
+    module: "modules/crm/GroupClassificationStudioApp.tsx + modules/crm/GroupManagerCockpit.tsx",
+    expectedEffect: "Define todas as opcoes de estado mostradas no Classificar e no manager de Groups, sem estados hardcoded locais.",
+    testId: "settings-drive-group-state-options",
+    linkage: "runtime",
+  },
+  {
     setting: "settings.groups.labels.favoriteIds",
     module: "modules/crm/GroupClassificationStudioApp.tsx",
     expectedEffect: "Persiste favoritos de etiquetas do studio dentro da arvore canonica de Groups.",

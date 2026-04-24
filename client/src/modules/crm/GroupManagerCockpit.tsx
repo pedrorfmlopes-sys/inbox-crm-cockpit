@@ -37,7 +37,7 @@ import {
   normalizeGroupLabelCatalog,
   saveSettings,
   type GroupLabelCatalogEntry,
-  type GroupLabelStatus,
+  type GroupStateDefinition,
 } from "@/settings";
 import { buildGroupsSettingsPatch } from "@/modules/crm/groups-v1/settings/groupsModuleSettings";
 import {
@@ -52,13 +52,11 @@ import { PanelState } from "@/ui/PanelState";
 import * as Icons from "@/ui/icons";
 
 type GroupManagerView = "groups" | "detail" | "library" | "quicklink" | "settings" | "labels" | "tickets";
-type GroupStatusFilter = "all" | "em_analise" | "em_progresso" | "concluido";
+type GroupStatusFilter = "all" | string;
 type GroupArchiveFilter = "active" | "archived" | "all";
 type MembershipKind = GroupMembershipKind;
 type ManagedLabelDraft = {
-  categorize: boolean;
-  hasStatus: boolean;
-  status: GroupLabelStatus;
+  status?: string;
 };
 
 type TicketSeriesDraft = {
@@ -86,7 +84,7 @@ type QuickLinkDraft = {
   ticketMode: "none" | "existing" | "new";
   ticketId: string;
   ticketSeriesId: string;
-  ticketStatus: "open" | "closed" | string;
+  ticketStatus: string;
   principalGroupId: string;
   secondaryGroupIds: string[];
   labelsText: string;
@@ -95,24 +93,11 @@ type QuickLinkDraft = {
 type GroupDraft = {
   name: string;
   description: string;
-  status: "" | "em_analise" | "em_progresso" | "concluido";
+  status: string;
   labelsText: string;
   documentsEnabled: boolean;
   isArchived: boolean;
 };
-
-const STATUS_OPTIONS: Array<{ value: GroupDraft["status"]; label: string }> = [
-  { value: "", label: "Sem estado" },
-  { value: "em_analise", label: "Em analise" },
-  { value: "em_progresso", label: "Em progresso" },
-  { value: "concluido", label: "Concluido" },
-];
-
-const LABEL_STATUS_OPTIONS: Array<{ value: GroupLabelStatus; label: string }> = [
-  { value: "em_analise", label: "Em analise" },
-  { value: "em_progresso", label: "Em progresso" },
-  { value: "concluido", label: "Concluido" },
-];
 
 const MEMBERSHIP_OPTIONS: Array<{ value: MembershipKind; label: string }> = [
   { value: "principal", label: "Principal" },
@@ -133,10 +118,47 @@ const TICKET_SEPARATOR_OPTIONS: Array<{ value: TicketSeriesDraft["separator"]; l
   { value: "", label: "Sem separador" },
 ];
 
-const TICKET_STATUS_OPTIONS: Array<{ value: "open" | "closed"; label: string }> = [
-  { value: "open", label: "Aberto" },
-  { value: "closed", label: "Fechado" },
-];
+type StateOption = {
+  value: string;
+  label: string;
+  color?: string;
+};
+
+function buildStateOptions(states: GroupStateDefinition[] | null | undefined): StateOption[] {
+  const seen = new Set<string>();
+  const options: StateOption[] = [];
+  for (const entry of states || []) {
+    const value = String(entry?.name || "").trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    options.push({
+      value,
+      label: value.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase()),
+      color: String(entry?.color || "").trim() || undefined,
+    });
+  }
+  return options;
+}
+
+function resolveStateLabel(
+  value: string | undefined,
+  options: StateOption[],
+  emptyLabel = "Sem estado"
+): string {
+  const normalized = String(value || "").trim();
+  if (!normalized) return emptyLabel;
+  return options.find((option) => option.value === normalized)?.label || normalized;
+}
+
+function resolveStateColor(value: string | undefined, options: StateOption[]): string | undefined {
+  const normalized = String(value || "").trim();
+  if (!normalized) return undefined;
+  return options.find((option) => option.value === normalized)?.color;
+}
+
+function resolveFirstStateValue(options: StateOption[]): string {
+  return options[0]?.value || "";
+}
 
 function normalizeText(value: string | undefined): string {
   return String(value || "").trim().toLowerCase();
@@ -267,30 +289,16 @@ function labelsToText(labels: string[] | undefined): string {
 }
 
 function createManagedLabelDraft(entry?: Partial<GroupLabelCatalogEntry> | null): ManagedLabelDraft {
-  const hasStatus = entry?.hasStatus === true;
   return {
-    categorize: entry?.categorize === true,
-    hasStatus,
-    status: hasStatus ? (entry?.status || "em_analise") : "em_analise",
+    status: undefined,
   };
 }
 
 function buildGroupLabelCatalogEntry(label: string, draft?: Partial<ManagedLabelDraft> | null): GroupLabelCatalogEntry {
   const normalizedLabel = String(label || "").trim();
-  const hasStatus = draft?.hasStatus === true;
   return {
     label: normalizedLabel,
-    categorize: draft?.categorize === true,
-    hasStatus,
-    status: hasStatus ? (draft?.status || "em_analise") : undefined,
   };
-}
-
-function statusLabel(value: string | undefined): string {
-  if (!String(value || "").trim()) return "Sem estado";
-  if (value === "concluido") return "Concluido";
-  if (value === "em_progresso") return "Em progresso";
-  return "Em analise";
 }
 
 function formatDate(value: string | undefined): string {
@@ -330,9 +338,7 @@ function createDraft(group: LinkGroupEntry | null): GroupDraft {
   return {
     name: String(group?.name || "").trim(),
     description: String(group?.description || "").trim(),
-    status: group?.status === "em_analise" || group?.status === "em_progresso" || group?.status === "concluido"
-      ? group.status
-      : "",
+    status: String(group?.status || "").trim(),
     labelsText: labelsToText(group?.labels),
     documentsEnabled: group?.documentsEnabled !== false,
     isArchived: group?.isArchived === true,
@@ -442,7 +448,7 @@ function createQuickLinkDraft(partial: Partial<QuickLinkDraft> = {}): QuickLinkD
     ticketMode: partial.ticketMode === "existing" || partial.ticketMode === "new" ? partial.ticketMode : "none",
     ticketId: String(partial.ticketId || "").trim(),
     ticketSeriesId: String(partial.ticketSeriesId || "").trim(),
-    ticketStatus: String(partial.ticketStatus || "").trim() || "open",
+    ticketStatus: String(partial.ticketStatus || "").trim(),
     principalGroupId: normalizedSelection.principalGroupId,
     secondaryGroupIds: normalizedSelection.referenceGroupIds,
     labelsText: String(partial.labelsText || "").trim(),
@@ -458,7 +464,7 @@ function createQuickLinkDraftFromTicket(ticket: GroupTicketEntry | null): QuickL
   return createQuickLinkDraft({
     ticketMode: ticket ? "existing" : "none",
     ticketId: String(ticket?.id || "").trim(),
-    ticketStatus: String(ticket?.status || "").trim() || "open",
+    ticketStatus: String(ticket?.status || "").trim(),
     principalGroupId: normalizedSelection.principalGroupId,
     secondaryGroupIds: normalizedSelection.referenceGroupIds,
     labelsText: labelsToText(ticket?.labels),
@@ -740,6 +746,10 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   const currentEmailLinkPayload = useMemo(() => stripEmailPayloadAttachmentContent(currentEmailPayload), [currentEmailPayload]);
   const currentEmailKey = useMemo(() => makeEmailKey(currentEmailLinkPayload), [currentEmailLinkPayload]);
   const groupsSettings = settings?.groups;
+  const groupStateOptions = useMemo(() => buildStateOptions(groupsSettings?.groups?.states), [groupsSettings?.groups?.states]);
+  const referenceStateOptions = useMemo(() => buildStateOptions(groupsSettings?.references?.states), [groupsSettings?.references?.states]);
+  const labelStateOptions = useMemo(() => buildStateOptions(groupsSettings?.labels?.states), [groupsSettings?.labels?.states]);
+  const ticketStateOptions = useMemo(() => buildStateOptions(groupsSettings?.tickets?.states), [groupsSettings?.tickets?.states]);
   const favoriteGroupIds = groupsSettings?.labels?.favoriteIds || [];
   const favoriteGroupSet = useMemo(() => new Set(favoriteGroupIds), [favoriteGroupIds]);
   const groupTicketsEnabled = groupsSettings?.tickets?.enabled !== false;
@@ -1164,18 +1174,14 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
   const labelUsage = useMemo(
     () =>
       allLabels.map((label) => {
-        const meta = findGroupLabelCatalogEntry(labelCatalogEntries, label);
         return {
           label,
           count: groups.filter((group) =>
             (group.labels || []).some((entry) => normalizeText(entry) === normalizeText(label))
           ).length,
-          categorize: meta?.categorize === true,
-          hasStatus: meta?.hasStatus === true,
-          status: meta?.status,
         };
       }),
-    [allLabels, groups, labelCatalogEntries]
+    [allLabels, groups]
   );
 
   const selectedManagedLabelEntry = useMemo(
@@ -1205,7 +1211,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
       .filter((group) => {
         if (archiveFilter === "active" && group.isArchived) return false;
         if (archiveFilter === "archived" && !group.isArchived) return false;
-        if (statusFilter !== "all" && String(group.status || "em_analise") !== statusFilter) return false;
+        if (statusFilter !== "all" && String(group.status || "").trim() !== statusFilter) return false;
         if (activeLabelFilters.length) {
           const labels = new Set((group.labels || []).map((entry) => normalizeText(entry)));
           if (!activeLabelFilters.every((entry) => labels.has(normalizeText(entry)))) return false;
@@ -1214,7 +1220,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
         const haystack = [
           group.name,
           group.description,
-          statusLabel(group.status),
+          resolveStateLabel(group.status, groupStateOptions),
           ...(group.labels || []),
         ]
           .filter(Boolean)
@@ -1235,7 +1241,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
     const hasManualFilters = statusFilter !== "all" || archiveFilter !== "active" || activeLabelFilters.length > 0;
     if (query || hasManualFilters) return sorted;
     return sorted.slice(0, 8);
-  }, [activeLabelFilters, archiveFilter, favoriteGroupSet, groupQuery, groups, statusFilter]);
+  }, [activeLabelFilters, archiveFilter, favoriteGroupSet, groupQuery, groupStateOptions, groups, statusFilter]);
 
   const exactGroupMatch = useMemo(
     () => groups.some((group) => normalizeText(group.name) === normalizeText(groupQuery)),
@@ -1384,22 +1390,11 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
 
   async function persistLabelCatalog(nextCatalog: GroupLabelCatalogEntry[]) {
     const normalizedCatalog = normalizeGroupLabelCatalog(nextCatalog);
-    const hasCategorizedLabels = normalizedCatalog.some((entry) => entry.categorize === true);
-    const nextOutlookCategories = hasCategorizedLabels
-      ? {
-          enabled: groupsSettings?.outlookCategories?.enabled === true,
-          includeGroups: groupsSettings?.outlookCategories?.includeGroups !== false,
-          includeTickets: groupsSettings?.outlookCategories?.includeTickets !== false,
-          includeStatuses: groupsSettings?.outlookCategories?.includeStatuses !== false,
-          includeLabels: true,
-        }
-      : undefined;
     await saveSettings(buildGroupsSettingsPatch(settings, {
       labels: {
         ...(groupsSettings?.labels || {}),
         catalog: normalizedCatalog,
       },
-      ...(nextOutlookCategories ? { outlookCategories: nextOutlookCategories } : {}),
     }));
   }
 
@@ -1463,7 +1458,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
         ...current,
         ticketMode: "none",
         ticketId: "",
-        ticketStatus: "open",
+        ticketStatus: "",
       })
     );
     setQuickLinkTicketQuery("");
@@ -1476,7 +1471,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
         ticketMode: "new",
         ticketId: "",
         ticketSeriesId: current.ticketSeriesId || selectedTicketSeriesId || ticketSeries.find((entry) => entry.isActive !== false)?.id || "",
-        ticketStatus: "open",
+        ticketStatus: resolveFirstStateValue(ticketStateOptions),
       })
     );
   }
@@ -1635,7 +1630,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
           labels,
           groupIds,
         });
-        if ((quickLinkDraft.ticketStatus || "open") !== "open") {
+        if (String(quickLinkDraft.ticketStatus || "").trim()) {
           finalTicket = await updateGroupTicket(finalTicket.id, {
             labels,
             groupIds,
@@ -2607,38 +2602,13 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                     <label style={S.toggleRow}>
                       <input
                         type="checkbox"
-                        checked={newCatalogLabelDraft.categorize}
-                        onChange={(event) => setNewCatalogLabelDraft((current) => ({ ...current, categorize: event.target.checked }))}
+                        checked={false}
+                        onChange={() => undefined}
+                        disabled
                       />
-                      <span>Categoria Outlook</span>
+                      <span>Sem toggles locais</span>
                     </label>
-                    <label style={S.toggleRow}>
-                      <input
-                        type="checkbox"
-                        checked={newCatalogLabelDraft.hasStatus}
-                        onChange={(event) =>
-                          setNewCatalogLabelDraft((current) => ({
-                            ...current,
-                            hasStatus: event.target.checked,
-                            status: event.target.checked ? current.status || "em_analise" : "em_analise",
-                          }))
-                        }
-                      />
-                      <span>Tem estado</span>
-                    </label>
-                    {newCatalogLabelDraft.hasStatus ? (
-                      <select
-                        style={S.compactSelect}
-                        value={newCatalogLabelDraft.status}
-                        onChange={(event) =>
-                          setNewCatalogLabelDraft((current) => ({ ...current, status: event.target.value as GroupLabelStatus }))
-                        }
-                      >
-                        {LABEL_STATUS_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    ) : null}
+                    <div style={S.smallMeta}>Estados disponiveis para Classificar sao definidos em `settings.groups.labels.states`.</div>
                   </div>
                   <div style={S.smallMeta}>Catalogo central usado para evitar duplicados e normalizar etiquetas dos grupos.</div>
                 </div>
@@ -2661,8 +2631,8 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                             <div style={{ display: "grid", gap: 2, textAlign: "left" }}>
                               <span>{entry.label}</span>
                               <small style={S.managerMetaRow}>
-                                {entry.categorize ? "Cat." : "Sem cat."}
-                                {entry.hasStatus ? ` · ${LABEL_STATUS_OPTIONS.find((option) => option.value === entry.status)?.label || "Em analise"}` : " · Sem estado"}
+                                {"Catalogo central"}
+                                {""}
                               </small>
                             </div>
                             <span style={S.managerCount}>{entry.count}</span>
@@ -2682,45 +2652,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                           onChange={(event) => setRenameLabelValue(event.target.value)}
                           placeholder="Novo nome da etiqueta"
                         />
-                        <div style={S.inlineRow}>
-                          <label style={S.toggleRow}>
-                            <input
-                              type="checkbox"
-                              checked={managedLabelDraft.categorize}
-                              onChange={(event) =>
-                                setManagedLabelDraft((current) => ({ ...current, categorize: event.target.checked }))
-                              }
-                            />
-                            <span>Categoria Outlook</span>
-                          </label>
-                          <label style={S.toggleRow}>
-                            <input
-                              type="checkbox"
-                              checked={managedLabelDraft.hasStatus}
-                              onChange={(event) =>
-                                setManagedLabelDraft((current) => ({
-                                  ...current,
-                                  hasStatus: event.target.checked,
-                                  status: event.target.checked ? current.status || "em_analise" : "em_analise",
-                                }))
-                              }
-                            />
-                            <span>Tem estado</span>
-                          </label>
-                          {managedLabelDraft.hasStatus ? (
-                            <select
-                              style={S.compactSelect}
-                              value={managedLabelDraft.status}
-                              onChange={(event) =>
-                                setManagedLabelDraft((current) => ({ ...current, status: event.target.value as GroupLabelStatus }))
-                              }
-                            >
-                              {LABEL_STATUS_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
-                              ))}
-                            </select>
-                          ) : null}
-                        </div>
+                        <div style={S.smallMeta}>A configuracao de estados deixou de ser feita por etiqueta. O catalogo guarda apenas o nome central da etiqueta.</div>
                         <div style={S.smallMeta}>As acoes abaixo atualizam todos os grupos que usam esta etiqueta.</div>
                         <div style={S.inlineRow}>
                           <button type="button" style={S.primaryBtn} onClick={() => void handleSaveManagedLabelSettings()} disabled={busy}>
@@ -3154,7 +3086,8 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                       value={quickLinkDraft.ticketStatus}
                       onChange={(event) => setQuickLinkDraft((current) => createQuickLinkDraft({ ...current, ticketStatus: event.target.value }))}
                     >
-                      {TICKET_STATUS_OPTIONS.map((option) => (
+                      <option value="">Sem estado</option>
+                      {ticketStateOptions.map((option) => (
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
@@ -3182,7 +3115,8 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                     value={quickLinkDraft.ticketStatus}
                     onChange={(event) => setQuickLinkDraft((current) => createQuickLinkDraft({ ...current, ticketStatus: event.target.value }))}
                   >
-                    {TICKET_STATUS_OPTIONS.map((option) => (
+                    <option value="">Sem estado</option>
+                    {ticketStateOptions.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </select>
@@ -3393,7 +3327,7 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
               <div style={S.inlineRow}>
                 <select style={S.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as GroupStatusFilter)}>
                   <option value="all">Todos os estados</option>
-                  {STATUS_OPTIONS.map((option) => (
+                  {groupStateOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
@@ -3438,8 +3372,19 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                       >
                         <div style={S.groupName}>{group.name}</div>
                         {String(group.status || "").trim() ? (
-                          <span style={{ ...S.statusBadge, ...(group.status === "concluido" ? S.statusDone : group.status === "em_progresso" ? S.statusProgress : S.statusAnalysis) }}>
-                            {statusLabel(group.status)}
+                          <span
+                            style={{
+                              ...S.statusBadge,
+                              ...(resolveStateColor(group.status, groupStateOptions)
+                                ? {
+                                    background: `${resolveStateColor(group.status, groupStateOptions)}20`,
+                                    color: resolveStateColor(group.status, groupStateOptions),
+                                    borderColor: `${resolveStateColor(group.status, groupStateOptions)}55`,
+                                  }
+                                : S.statusAnalysis),
+                            }}
+                          >
+                            {resolveStateLabel(group.status, groupStateOptions)}
                           </span>
                         ) : null}
                       </button>
@@ -3494,7 +3439,8 @@ export const GroupManagerCockpit: React.FC<GroupManagerCockpitProps> = ({
                   <textarea style={S.textarea} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Descricao do grupo" />
                   <div style={S.inlineRow}>
                     <select style={S.select} value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as GroupDraft["status"] }))}>
-                      {STATUS_OPTIONS.map((option) => (
+                      <option value="">Sem estado</option>
+                      {groupStateOptions.map((option) => (
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>

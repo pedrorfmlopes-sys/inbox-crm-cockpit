@@ -4,12 +4,11 @@ import { addEmailToLinkGroup, createLinkGroup, deleteGroupDocument, extractAttac
 import { clientLog } from "@/logger";
 import { getManagedOutlookCategorySnapshot, OUTLOOK_CATEGORY_SYNC_DEBUG_STORAGE_KEY, requestCockpitHostAction, setOutlookCategoryOperationPhase } from "@/office";
 import {
-  findGroupLabelCatalogEntry,
   getGroupLabelCatalogLabels,
   getSettings,
   normalizeGroupLabelCatalog,
+  type GroupStateDefinition,
   type GroupLabelCatalogEntry,
-  type GroupLabelStatus,
 } from "@/settings";
 import { PanelState } from "@/ui/PanelState";
 import { applySkin } from "@/ui/skins";
@@ -39,15 +38,14 @@ import "../../global.css";
 
 import {
   type SectionId, type ScopeMode, type ApplyScopeMode, type ApplyDialogScopeMode, type PreviewMode,
-  type ClassificationLayoutMode, type EmailLabelStatus, type DocumentLifecycleState,
+  type ClassificationLayoutMode, type DocumentLifecycleState,
   type ClassificationFocus, type TicketEditorMode, type AttachmentPreviewState,
   type LabelDraft, type ReadingSuggestionChip, type GroupContactDraft, type GroupEntityDraft,
   type ClassificationMetaDraft, type StudioParams
 } from "./group-classification/types";
 
 import {
-  GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX, MENU, LABEL_STATUS_OPTIONS,
-  TICKET_STATUS_OPTIONS, DOCUMENT_STATE_OPTIONS, EMPTY_CLASSIFICATION_META
+  GROUP_CLASSIFICATION_SEED_STORAGE_PREFIX, MENU, DOCUMENT_STATE_OPTIONS, EMPTY_CLASSIFICATION_META
 } from "./group-classification/constants";
 
 import {
@@ -137,20 +135,47 @@ function formatTicketStatusLabel(value: string | undefined): string {
   return getStatusDisplayConfig(value).label || "--";
 }
 
+type StateOption = {
+  value: string;
+  label: string;
+  color?: string;
+};
+
+function buildConfiguredStateOptions(states: GroupStateDefinition[] | null | undefined): StateOption[] {
+  const options: StateOption[] = [];
+  const seen = new Set<string>();
+  for (const entry of states || []) {
+    const value = String(entry?.name || "").trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    options.push({
+      value,
+      label: getStatusDisplayConfig(value).label || value,
+      color: String(entry?.color || "").trim() || undefined,
+    });
+  }
+  return options;
+}
+
+function isConfiguredStateValue(value: string | undefined, options: StateOption[]): boolean {
+  const normalized = String(value || "").trim();
+  if (!normalized) return false;
+  return options.some((option) => option.value === normalized);
+}
+
 function createLabelDraftFromCatalog(
-  entry?: Partial<GroupLabelCatalogEntry> | null,
   current?: Partial<LabelDraft> | null,
   explicitStatus?: string,
-  explicitCategorize?: boolean
+  stateOptions: StateOption[] = []
 ): LabelDraft {
-  const normalizedExplicitStatus = String(explicitStatus || "").trim() as EmailLabelStatus | "";
-  const hasStatus = current?.hasStatus ?? (normalizedExplicitStatus ? true : entry?.hasStatus === true);
+  const normalizedExplicitStatus = String(explicitStatus || "").trim();
+  const nextStatus = isConfiguredStateValue(current?.status, stateOptions)
+    ? String(current?.status || "").trim()
+    : isConfiguredStateValue(normalizedExplicitStatus, stateOptions)
+      ? normalizedExplicitStatus
+      : undefined;
   return {
-    categorize: current?.categorize ?? (typeof explicitCategorize === "boolean" ? explicitCategorize : entry?.categorize === true),
-    hasStatus,
-    status: hasStatus
-      ? ((current?.status || normalizedExplicitStatus || entry?.status || "em_analise") as EmailLabelStatus)
-      : undefined,
+    status: nextStatus,
   };
 }
 
@@ -175,19 +200,13 @@ function normalizeComparableStringMap(values: unknown): Record<string, string> {
 function buildCanonicalLabelDraftsFromEmail(args: {
   email: RelatedEmailEntry | null;
   labels: string[];
-  labelCatalogEntries: GroupLabelCatalogEntry[];
+  labelStateOptions: StateOption[];
 }): Record<string, LabelDraft> {
   const labelStates = normalizeComparableStringMap(args.email?.labelStates);
-  const categorizedLabelNames = normalizeComparableStringList(args.email?.classificationMeta?.categorizedLabelNames);
   return Object.fromEntries(
     args.labels.map((label) => [
       label,
-      createLabelDraftFromCatalog(
-        findGroupLabelCatalogEntry(args.labelCatalogEntries, label),
-        null,
-        labelStates[label],
-        categorizedLabelNames.includes(label)
-      ),
+      createLabelDraftFromCatalog(null, labelStates[label], args.labelStateOptions),
     ])
   );
 }
@@ -240,9 +259,7 @@ function getComparableLabelDraftsSignature(drafts: Record<string, LabelDraft>): 
         const draft = drafts[label];
         return {
           label,
-          categorize: draft?.categorize === true,
-          hasStatus: draft?.hasStatus === true,
-          status: draft?.hasStatus ? String(draft?.status || "").trim() || undefined : undefined,
+          status: String(draft?.status || "").trim() || undefined,
         };
       })
   );
@@ -251,10 +268,7 @@ function getComparableLabelDraftsSignature(drafts: Record<string, LabelDraft>): 
 // Local state comparison helper (derived from extracted types)
 function getComparableClassificationMetaSignature(value?: Partial<ClassificationMetaDraft> | null): string {
   const normalized = normalizeClassificationMetaDraft(value);
-  return JSON.stringify({
-    ...normalized,
-    categorizedLabelNames: [...(normalized.categorizedLabelNames || [])].sort((left, right) => left.localeCompare(right, "pt")),
-  });
+  return JSON.stringify(normalized);
 }
 
 // redundant functions removed
@@ -636,8 +650,28 @@ function StudioInner() {
     groups: {
       tab: normalizeGroupsTabSettings(null),
       storage: null,
+      groups: { states: [] },
+      references: { states: [] },
+      labels: { states: [] },
+      tickets: { states: [] },
     },
   });
+  const groupStateOptions = useMemo(
+    () => buildConfiguredStateOptions(groupsSettingsSnapshot?.groups?.groups?.states),
+    [groupsSettingsSnapshot]
+  );
+  const referenceStateOptions = useMemo(
+    () => buildConfiguredStateOptions(groupsSettingsSnapshot?.groups?.references?.states),
+    [groupsSettingsSnapshot]
+  );
+  const labelStateOptions = useMemo(
+    () => buildConfiguredStateOptions(groupsSettingsSnapshot?.groups?.labels?.states),
+    [groupsSettingsSnapshot]
+  );
+  const ticketStateOptions = useMemo(
+    () => buildConfiguredStateOptions(groupsSettingsSnapshot?.groups?.tickets?.states),
+    [groupsSettingsSnapshot]
+  );
   const explorerOpenStoredAttachments = useMemo(
     () => canOpenStoredAttachmentsFromGroups(groupsSettingsSnapshot),
     [groupsSettingsSnapshot]
@@ -884,6 +918,7 @@ function StudioInner() {
           : []);
         setGroupsSettingsSnapshot({
           groups: {
+            ...(settings.groups || {}),
             tab: normalizeGroupsTabSettings(settings.groups?.tab || null),
             storage: settings.groups?.storage || null,
           },
@@ -896,6 +931,10 @@ function StudioInner() {
           groups: {
             tab: normalizeGroupsTabSettings(null),
             storage: null,
+            groups: { states: [] },
+            references: { states: [] },
+            labels: { states: [] },
+            tickets: { states: [] },
           },
         });
       } finally {
@@ -1226,7 +1265,7 @@ function StudioInner() {
     const nextLabelDrafts = buildCanonicalLabelDraftsFromEmail({
       email,
       labels: nextLabels,
-      labelCatalogEntries,
+      labelStateOptions,
     });
     const nextTicketId = normalizeComparableString((email.classificationMeta as any)?.ticketId);
     const nextPrincipalSearch = "";
@@ -1238,7 +1277,6 @@ function StudioInner() {
       principalGroupId: normalizedSelection.principalGroupId,
       referenceGroupIds: normalizedSelection.referenceGroupIds,
       ticketId: nextTicketId,
-      categorizedLabelNames: normalizeComparableStringList(email.classificationMeta?.categorizedLabelNames),
     });
     const nextSelectionTouched = { principal: false, references: false, ticket: false };
 
@@ -1275,7 +1313,7 @@ function StudioInner() {
     classificationMetaDraft,
     createTicketTitle,
     getEmailGroupRelations,
-    labelCatalogEntries,
+    labelStateOptions,
     ticketStatusDraft,
   ]);
 
@@ -2375,7 +2413,7 @@ function StudioInner() {
           key: "principal" as const,
           title: "Grupo principal",
           value: principalGroup?.name || "Sem grupo principal",
-          description: classificationMetaDraft.principalStatusEnabled ? principalStatusValue || "Sem estado ativo" : "Sem estado ativo",
+          description: principalStatusValue || "Sem estado ativo",
           onClick: () => openClassificationEditor("principal"),
         },
         {
@@ -2389,7 +2427,7 @@ function StudioInner() {
           key: "ticket" as const,
           title: "Ticket",
           value: ticketValue,
-          description: classificationMetaDraft.ticketStatusEnabled ? ticketStatusValue || "Sem estado ativo" : "Sem seguimento ligado",
+          description: ticketStatusValue || "Sem seguimento ligado",
           onClick: () => openClassificationEditor("ticket"),
         },
         {
@@ -2402,8 +2440,6 @@ function StudioInner() {
       ];
     },
     [
-      classificationMetaDraft.principalStatusEnabled,
-      classificationMetaDraft.ticketStatusEnabled,
       principalGroup?.name,
       principalGroup?.status,
       referenceGroups.length,
@@ -2517,25 +2553,15 @@ function StudioInner() {
       : {},
     [selectedEmail?.labelStates]
   );
-  const selectedEmailCategorizedLabelNames = useMemo(
-    () => Array.isArray(selectedEmail?.classificationMeta?.categorizedLabelNames)
-      ? selectedEmail.classificationMeta.categorizedLabelNames.map((label) => String(label || "").trim()).filter(Boolean)
-      : [],
-    [selectedEmail?.classificationMeta?.categorizedLabelNames]
-  );
   const summaryLabels = useMemo(
     () => selectedLabels,
     [selectedLabels]
   );
-  const categorizableLabels = useMemo(
-    () => summaryLabels.filter((label) => labelDrafts[label]?.categorize === true),
-    [labelDrafts, summaryLabels]
-  );
   const selectedLabelStates = useMemo(() => {
-    const entries: Record<string, EmailLabelStatus> = {};
+    const entries: Record<string, string> = {};
     for (const label of selectedLabels) {
       const draft = labelDrafts[label];
-      if (!draft?.hasStatus || !draft.status) continue;
+      if (!draft?.status) continue;
       entries[label] = draft.status;
     }
     return entries;
@@ -2602,7 +2628,6 @@ function StudioInner() {
       selectedLabels,
       inheritedLabels,
       selectedLabelStates,
-      categorizedLabelNames: categorizableLabels,
       selectedTicketId,
       selectedSeriesId,
       selectedTicket,
@@ -2614,7 +2639,6 @@ function StudioInner() {
       existingSelectedEmailStatus: selectedEmail?.status,
     }),
     [
-      categorizableLabels,
       classificationMetaDraft,
       effectivePrincipalGroupId,
       effectiveReferenceGroupIds,
@@ -2730,7 +2754,7 @@ function StudioInner() {
   useEffect(() => {
     if (selectedTicketId) {
       const nextStatus = String(selectedTicket?.status || "").trim();
-      setTicketStatusDraft(nextStatus);
+      setTicketStatusDraft(isConfiguredStateValue(nextStatus, ticketStateOptions) ? nextStatus : "");
       return;
     }
     if (selectedSeriesId) {
@@ -2738,7 +2762,7 @@ function StudioInner() {
       return;
     }
     setTicketStatusDraft("");
-  }, [selectedSeriesId, selectedTicketId]);
+  }, [selectedSeriesId, selectedTicket?.status, selectedTicketId, ticketStateOptions]);
 
   useEffect(() => {
     const currentSelectedEmail = selectedEmailRef.current;
@@ -2769,16 +2793,11 @@ function StudioInner() {
     setLabelDrafts((current) => {
       const next = { ...current };
       for (const label of seedLabels) {
-        next[label] = createLabelDraftFromCatalog(
-          findGroupLabelCatalogEntry(labelCatalogEntries, label),
-          current[label],
-          selectedEmailLabelStates[label],
-          selectedEmailCategorizedLabelNames.includes(label)
-        );
+        next[label] = createLabelDraftFromCatalog(current[label], selectedEmailLabelStates[label], labelStateOptions);
       }
       return next;
     });
-  }, [inheritedLabels, labelCatalogEntries, labelCatalogReady, selectedEmailCategorizedLabelNames, selectedEmailLabelStates, selectedEmailRemovedInheritedLabels, selectedEmailStoredLabels, selectedLabels.length]);
+  }, [inheritedLabels, labelCatalogReady, labelStateOptions, selectedEmailLabelStates, selectedEmailRemovedInheritedLabels, selectedEmailStoredLabels, selectedLabels.length]);
 
   useEffect(() => {
     if (!selectedLabels.length) return;
@@ -2786,17 +2805,10 @@ function StudioInner() {
       let changed = false;
       const next = { ...current };
       for (const label of selectedLabels) {
-        const resolved = createLabelDraftFromCatalog(
-          findGroupLabelCatalogEntry(labelCatalogEntries, label),
-          current[label],
-          selectedEmailLabelStates[label],
-          selectedEmailCategorizedLabelNames.includes(label)
-        );
+        const resolved = createLabelDraftFromCatalog(current[label], selectedEmailLabelStates[label], labelStateOptions);
         const previous = current[label];
         if (
           !previous
-          || previous.categorize !== resolved.categorize
-          || previous.hasStatus !== resolved.hasStatus
           || previous.status !== resolved.status
         ) {
           next[label] = resolved;
@@ -2805,7 +2817,7 @@ function StudioInner() {
       }
       return changed ? next : current;
     });
-  }, [labelCatalogEntries, selectedEmailCategorizedLabelNames, selectedEmailLabelStates, selectedLabels]);
+  }, [labelStateOptions, selectedEmailLabelStates, selectedLabels]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2842,15 +2854,11 @@ function StudioInner() {
       const next = { ...current };
       for (const label of outlookLabelCategories) {
         const resolved = {
-          categorize: true,
-          hasStatus: current[label]?.hasStatus ?? false,
           status: current[label]?.status,
         };
         const previous = current[label];
         if (
           !previous
-          || previous.categorize !== resolved.categorize
-          || previous.hasStatus !== resolved.hasStatus
           || previous.status !== resolved.status
         ) {
           next[label] = resolved;
@@ -3153,18 +3161,13 @@ function StudioInner() {
       ? current
       : {
           ...current,
-          [value]: createLabelDraftFromCatalog(
-            findGroupLabelCatalogEntry(labelCatalogEntries, value),
-            undefined,
-            selectedEmailLabelStates[value],
-            selectedEmailCategorizedLabelNames.includes(value)
-          ),
+          [value]: createLabelDraftFromCatalog(undefined, selectedEmailLabelStates[value], labelStateOptions),
         });
     setLabelCatalogEntries((current) => {
       if (current.some((entry) => String(entry?.label || "").trim().toLowerCase() === value.toLowerCase())) {
         return current;
       }
-      return [...current, { label: value, categorize: false, hasStatus: false }];
+      return [...current, { label: value }];
     });
     setLabelInput("");
   }
@@ -3187,14 +3190,10 @@ function StudioInner() {
 
   function updateLabelDraft(label: string, patch: Partial<LabelDraft>) {
     setLabelDrafts((current) => {
+      const requestedStatus = String((patch.status ?? current[label]?.status) || "").trim();
       const next: LabelDraft = {
-        categorize: current[label]?.categorize ?? false,
-        hasStatus: current[label]?.hasStatus ?? false,
-        status: current[label]?.status,
-        ...patch,
+        status: isConfiguredStateValue(requestedStatus, labelStateOptions) ? requestedStatus : undefined,
       };
-      if (next.hasStatus && !next.status) next.status = "em_analise";
-      if (!next.hasStatus) next.status = undefined;
       return { ...current, [label]: next };
     });
   }
@@ -3202,17 +3201,6 @@ function StudioInner() {
   function removeLabel(label: string) {
     setSelectedLabels((current) => current.filter((entry) => entry !== label));
   }
-
-  function updateClassificationMeta(patch: Partial<ClassificationMetaDraft>) {
-    setClassificationMetaDraft((current) => {
-      const next = { ...current, ...patch };
-      if (!next.principalStatusEnabled) next.principalStatusCategorize = false;
-      if (!next.referenceStatusEnabled) next.referenceStatusCategorize = false;
-      if (!next.ticketStatusEnabled) next.ticketStatusCategorize = false;
-      return next;
-    });
-  }
-
   async function handleCreateGroupAndLink(kind: "principal" | "referencia" = "principal", nameOverride?: string) {
     const name = String(nameOverride || createGroupName || (kind === "principal" ? principalSearch : referenceSearch) || "").trim();
     if (!name) {
@@ -4204,33 +4192,9 @@ function StudioInner() {
                 ) : null}
               </div>
               <div style={S.inlineChecks}>
-                <label style={S.check}>
-                  <input
-                    type="checkbox"
-                    checked={classificationMetaDraft.principalCategorize}
-                    onChange={(event) => updateClassificationMeta({ principalCategorize: event.target.checked })}
-                    disabled={!principalGroup}
-                  />
-                  <span>Grupo em categoria Outlook</span>
-                </label>
-                <label style={S.check}>
-                  <input
-                    type="checkbox"
-                    checked={classificationMetaDraft.principalStatusEnabled}
-                    onChange={(event) => updateClassificationMeta({ principalStatusEnabled: event.target.checked })}
-                    disabled={!principalGroup?.status}
-                  />
-                  <span>Estado do grupo</span>
-                </label>
-                <label style={S.check}>
-                  <input
-                    type="checkbox"
-                    checked={classificationMetaDraft.principalStatusCategorize}
-                    onChange={(event) => updateClassificationMeta({ principalStatusCategorize: event.target.checked, principalStatusEnabled: event.target.checked ? true : classificationMetaDraft.principalStatusEnabled })}
-                    disabled={!principalGroup?.status || !classificationMetaDraft.principalStatusEnabled}
-                  />
-                  <span>Estado em categoria Outlook</span>
-                </label>
+                <span style={S.cardMeta}>
+                  O estado do grupo vem do registo selecionado e as regras de categorizacao passam a vir apenas de settings.
+                </span>
               </div>
               <div style={S.cardMeta}>
                 {principalGroup?.status ? `Estado atual: ${principalGroupStatusLabel}` : "Sem estado definido neste grupo."}
@@ -4335,33 +4299,9 @@ function StudioInner() {
                 ) : null}
               </div>
               <div style={S.inlineChecks}>
-                <label style={S.check}>
-                  <input
-                    type="checkbox"
-                    checked={classificationMetaDraft.referenceCategorize}
-                    onChange={(event) => updateClassificationMeta({ referenceCategorize: event.target.checked })}
-                    disabled={!referenceGroups.length}
-                  />
-                  <span>Referencias em categoria Outlook</span>
-                </label>
-                <label style={S.check}>
-                  <input
-                    type="checkbox"
-                    checked={classificationMetaDraft.referenceStatusEnabled}
-                    onChange={(event) => updateClassificationMeta({ referenceStatusEnabled: event.target.checked })}
-                    disabled={!referenceGroupStatusEntries.length}
-                  />
-                  <span>Estado das referencias</span>
-                </label>
-                <label style={S.check}>
-                  <input
-                    type="checkbox"
-                    checked={classificationMetaDraft.referenceStatusCategorize}
-                    onChange={(event) => updateClassificationMeta({ referenceStatusCategorize: event.target.checked, referenceStatusEnabled: event.target.checked ? true : classificationMetaDraft.referenceStatusEnabled })}
-                    disabled={!referenceGroupStatusEntries.length || !classificationMetaDraft.referenceStatusEnabled}
-                  />
-                  <span>Estado em categoria Outlook</span>
-                </label>
+                <span style={S.cardMeta}>
+                  As referencias mantem apenas o estado real dos grupos ligados; nao ha toggles locais por email.
+                </span>
               </div>
               <div style={S.inlineWrap}>
                 {referenceGroupStatusEntries.length ? referenceGroupStatusEntries.map((entry) => (
@@ -4445,20 +4385,17 @@ function StudioInner() {
               {selectedLabels.length ? (
                 <div style={S.labelGrid}>
                   {selectedLabels.map((label) => {
-                    const draft = labelDrafts[label] || { categorize: false, hasStatus: false };
+                    const draft = labelDrafts[label] || {};
                     return (
                       <div key={label} style={S.labelRowCompact}>
                         <div style={S.labelHead}>
                           <strong>{label}</strong>
                           <button type="button" style={S.linkBtn} onClick={() => removeLabel(label)}>Off</button>
                         </div>
-                        <div style={S.inlineChecks}>
-                          <label style={S.check}><input type="checkbox" checked={draft.categorize} onChange={(event) => updateLabelDraft(label, { categorize: event.target.checked })} /><span>Categoria</span></label>
-                          <label style={S.check}><input type="checkbox" checked={draft.hasStatus} onChange={(event) => updateLabelDraft(label, { hasStatus: event.target.checked, status: event.target.checked ? (draft.status || "em_analise") : undefined })} /><span>Estado</span></label>
-                        </div>
-                        {draft.hasStatus ? (
-                          <select style={S.select} value={draft.status || "em_analise"} onChange={(event) => updateLabelDraft(label, { status: event.target.value as EmailLabelStatus, hasStatus: true })}>
-                            {LABEL_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        {labelStateOptions.length ? (
+                          <select style={S.select} value={draft.status || ""} onChange={(event) => updateLabelDraft(label, { status: event.target.value || undefined })}>
+                            <option value="">Sem estado</option>
+                            {labelStateOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                           </select>
                         ) : null}
                       </div>
@@ -4536,7 +4473,8 @@ function StudioInner() {
                   }}
                   disabled={!selectedTicketId && !selectedSeriesId}
                 >
-                  {TICKET_STATUS_OPTIONS.map((option) => (
+                  <option value="">Sem estado</option>
+                  {ticketStateOptions.map((option) => (
                     <option key={option.value || "empty"} value={option.value}>{option.label}</option>
                   ))}
                 </select>
@@ -4544,28 +4482,10 @@ function StudioInner() {
                   {effectiveTicketStatus ? `Estado preparado: ${ticketStatusLabel}` : "Sem estado definido neste ticket."}
                 </div>
               </div>
-              <div style={S.inlineChecks}>
-                <label style={S.check}>
-                  <input
-                    type="checkbox"
-                    checked={classificationMetaDraft.ticketStatusEnabled}
-                    onChange={(event) => updateClassificationMeta({ ticketStatusEnabled: event.target.checked })}
-                    disabled={!effectiveTicketStatus}
-                  />
-                  <span>Estado do ticket</span>
-                </label>
-                <label style={S.check}>
-                  <input
-                    type="checkbox"
-                    checked={classificationMetaDraft.ticketStatusCategorize}
-                    onChange={(event) => updateClassificationMeta({ ticketStatusCategorize: event.target.checked, ticketStatusEnabled: event.target.checked ? true : classificationMetaDraft.ticketStatusEnabled })}
-                    disabled={!effectiveTicketStatus || !classificationMetaDraft.ticketStatusEnabled}
-                  />
-                  <span>Estado em categoria Outlook</span>
-                </label>
-              </div>
               <div style={S.cardMeta}>
-                {effectiveTicketStatus ? `Estado atual: ${ticketStatusLabel}` : "Sem estado definido neste ticket."}
+                {ticketStateOptions.length
+                  ? (effectiveTicketStatus ? `Estado atual: ${ticketStatusLabel}` : "Sem estado definido neste ticket.")
+                  : "Os estados disponiveis do ticket sao lidos de settings.groups.tickets.states."}
               </div>
             </div>
           </div>
@@ -4595,11 +4515,11 @@ function StudioInner() {
               <div style={S.subTitle}>Atualizar email</div>
               <div style={S.summaryGrid}>
                 <div style={S.summaryRow}><span>Grupo principal</span><strong>{principalGroup?.name || principalGroupId || "--"}</strong></div>
-                <div style={S.summaryRow}><span>Estado grupo</span><strong>{classificationMetaDraft.principalStatusEnabled ? principalGroupStatusLabel || "--" : "--"}</strong></div>
+                <div style={S.summaryRow}><span>Estado grupo</span><strong>{principalGroupStatusLabel || "--"}</strong></div>
                 <div style={S.summaryRow}><span>Referencias</span><strong>{referenceGroupSummary}</strong></div>
-                <div style={S.summaryRow}><span>Estado referencias</span><strong>{classificationMetaDraft.referenceStatusEnabled ? (referenceGroupStatusEntries.length ? referenceGroupStatusEntries.map((entry) => entry.status).join(", ") : "--") : "--"}</strong></div>
+                <div style={S.summaryRow}><span>Estado referencias</span><strong>{referenceGroupStatusEntries.length ? referenceGroupStatusEntries.map((entry) => entry.status).join(", ") : "--"}</strong></div>
                 <div style={S.summaryRow}><span>Ticket</span><strong>{ticketSummary}</strong></div>
-                <div style={S.summaryRow}><span>Estado ticket</span><strong>{classificationMetaDraft.ticketStatusEnabled ? ticketStatusLabel || "--" : "--"}</strong></div>
+                <div style={S.summaryRow}><span>Estado ticket</span><strong>{ticketStatusLabel || "--"}</strong></div>
                 <div style={S.summaryRow}><span>Etiquetas</span><strong>{summaryLabels.length ? summaryLabels.join(", ") : "--"}</strong></div>
                 <div style={S.summaryRow}><span>Estado por etiquetas</span><strong>{emailStatusSummary}</strong></div>
               </div>
@@ -4633,17 +4553,16 @@ function StudioInner() {
           <div style={S.card}>
             <div style={S.cardTitle}>Etiquetas selecionadas</div>
             {selectedLabels.length ? selectedLabels.map((label) => {
-              const draft = labelDrafts[label] || { categorize: false, hasStatus: false };
+              const draft = labelDrafts[label] || {};
               return (
                 <div key={label} style={S.labelRow}>
                   <div style={S.labelHead}><strong>{label}</strong><button type="button" style={S.linkBtn} onClick={() => removeLabel(label)}>Remover</button></div>
-                  <label style={S.check}><input type="checkbox" checked={draft.categorize} onChange={(event) => updateLabelDraft(label, { categorize: event.target.checked })} /><span>Virar categoria Outlook</span></label>
-                  <label style={S.check}><input type="checkbox" checked={draft.hasStatus} onChange={(event) => updateLabelDraft(label, { hasStatus: event.target.checked, status: event.target.checked ? (draft.status || "em_analise") : undefined })} /><span>Tem estado associado</span></label>
-                  {draft.hasStatus ? (
+                  {labelStateOptions.length ? (
                     <label style={S.field}>
                       <span style={S.label}>Estado desta etiqueta</span>
-                      <select style={S.select} value={draft.status || "em_analise"} onChange={(event) => updateLabelDraft(label, { status: event.target.value as EmailLabelStatus, hasStatus: true })}>
-                        {LABEL_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      <select style={S.select} value={draft.status || ""} onChange={(event) => updateLabelDraft(label, { status: event.target.value || undefined })}>
+                        <option value="">Sem estado</option>
+                        {labelStateOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
                     </label>
                   ) : null}
@@ -4969,13 +4888,13 @@ function StudioInner() {
                 <div style={S.cardMeta}>Etiquetas com estado</div>
                 <div style={S.inlineWrap}>
                   {summaryLabels
-                    .filter((label) => labelDrafts[label]?.hasStatus && labelDrafts[label]?.status)
+                    .filter((label) => labelDrafts[label]?.status)
                     .map((label) => (
                       <button
                         key={`${label}-status`}
                         type="button"
                         style={S.selectedChipPending}
-                        onClick={() => updateLabelDraft(label, { hasStatus: false, status: undefined })}
+                        onClick={() => updateLabelDraft(label, { status: undefined })}
                       >
                         {label}: {formatEmailLabelStatus(labelDrafts[label]?.status)}
                       </button>
@@ -5172,8 +5091,6 @@ function StudioInner() {
                     exactPrincipalSearchGroup={exactPrincipalSearchGroup}
                     principalSearchResults={principalSearchResults}
                     principalGroup={principalGroup}
-                    classificationMetaDraft={classificationMetaDraft}
-                    updateClassificationMeta={updateClassificationMeta}
                     suggestedLabelSeeds={suggestedLabelSeeds}
                     selectedLabels={selectedLabels}
                     applySuggestedLabel={applySuggestedLabel}
@@ -5187,7 +5104,7 @@ function StudioInner() {
                     selectedLabelSharedStatus={selectedLabelSharedStatus}
                     updateLabelDraft={updateLabelDraft}
                     labelDrafts={labelDrafts}
-                    LABEL_STATUS_OPTIONS={LABEL_STATUS_OPTIONS}
+                    labelStateOptions={labelStateOptions}
                     normalizedTicketSearch={normalizedTicketSearch}
                     ticketSearchResults={ticketSearchResults}
                     availableTicketChoices={ticketPickerChoices}
@@ -5206,7 +5123,7 @@ function StudioInner() {
                     setCreateTicketTitle={setCreateTicketTitle}
                     ticketStatusDraft={ticketStatusDraft}
                     setTicketStatusDraft={setTicketStatusDraft}
-                    TICKET_STATUS_OPTIONS={TICKET_STATUS_OPTIONS}
+                    ticketStateOptions={ticketStateOptions}
                     effectiveTicketStatus={effectiveTicketStatus}
                     ticketStatusLabel={ticketStatusLabel}
                     selectedTicketId={selectedTicketId}
