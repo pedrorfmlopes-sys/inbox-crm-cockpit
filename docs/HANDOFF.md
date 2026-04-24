@@ -1,5 +1,47 @@
 # HANDOFF
 
+## Grupos v1: o fluxo `Preparar -> Classificar -> persistencia final no servidor` fica provado com artefactos deterministas (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - o modo fallback do add-in fica provado internamente sem ambiguidade:
+    - sem pasta local valida na arquitetura publicada, `Preparar` usa `IndexedDB` do add-in como storage intermedio principal
+    - memoria fica apenas como `fallback tecnico`
+  - `Classificar` passa a ficar coberto por prova deterministica de escrita final no backend central, sem vender o storage local como fonte final
+  - a reabertura fica coberta por expected-vs-actual entre:
+    - estado intermedio local antes/depois da projecao
+    - payload final enviado ao backend
+    - resposta do backend
+    - estado persistido no backend
+    - estado lido na reabertura
+- **Infraestrutura de prova acrescentada**:
+  - `client/src/modules/crm/groups-v1/testing/runtimeValidation.tsx`
+    - ganha um mock backend central para `/api/links/email`, `/api/links/groups/:groupId/emails`, `/api/links/group-tickets*` e `GET /api/links/related`
+    - passa a gerar `writeProofs` completos por cenario
+  - `scripts/run-groups-v1-validation.mjs`
+    - passa a escrever:
+      - `output/playwright/groups-v1-validation-report.json`
+      - `output/playwright/groups-v1-final-write-proofs.json`
+    - falha automaticamente se alguma prova de escrita final divergir
+- **Cenarios finais cobertos com prova de escrita/leitura**:
+  - `classification-server-write-principal-reopen`
+  - `classification-server-write-groups-labels-reopen`
+  - `classification-server-write-multi-scope-targeted`
+  - `classification-server-write-attachments-reopen`
+  - `classification-server-write-ticket-reopen`
+- **O que estes artefactos provam**:
+  - o `IntermediateCase` local continua a ser apenas a ponte de `Preparar`
+  - a escrita final relevante vai para o backend central (`/api/links/*`)
+  - a reabertura volta a ler o que ficou persistido no backend, incluindo:
+    - grupo principal
+    - referencias
+    - etiquetas
+    - ticket de Grupos
+    - anexos com `documentState`, `isHidden` e refs de storage quando aplicavel
+- **Classificacao objetiva apos esta ronda**:
+  - `Preparar` = local/intermedio
+  - `Classificar` = final no servidor
+  - o add-in/local deixa de poder ser confundido com fonte final nos cenarios cobertos
+  - a fronteira que continua dependente do Outlook real permanece apenas em `Office.js`/Outlook host
+
 ## Grupos v1: a validacao interna fica fechada com separacao explicita entre "interno ok" e "producao ok" (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - o modulo `Groups` passa a distinguir explicitamente o que esta validado internamente no host local atual do que e realmente valido na arquitetura publicada com backend remoto

@@ -1,6 +1,12 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import type { GroupTicketEntry, LinkGroupEntry, RelatedEmailEntry } from "@/api";
+import {
+  getRelatedEmailContext,
+  type GroupTicketEntry,
+  type LinkGroupEntry,
+  type RelatedEmailEntry,
+  type RelevantEmailPayload,
+} from "@/api";
 import {
   getSettings,
   resetSettings,
@@ -11,8 +17,15 @@ import { buildResolvedRemoteApplyExecutionPlan, buildResolvedStudioApplySelectio
 import {
   buildAttachmentStorageOptions,
   buildRelevantEmailPayloadFromRelatedEmail,
+  makeEmailKey,
 } from "@/modules/crm/group-classification/documentUtils";
+import {
+  executeLegacyBaseTicketApply,
+  executeLegacyRemoteApplyForTarget,
+} from "@/modules/crm/group-classification/legacyRemoteApply";
 import { projectApplyIntoIntermediateCase } from "@/modules/crm/group-classification/localCaseProjection";
+import { persistAndRefreshClassificationCase } from "@/modules/crm/group-classification/casePersistence";
+import type { ClassificationMetaDraft } from "@/modules/crm/group-classification/types";
 import { buildOutlookCategoryPlan, buildOutlookCategorySourceFromRelatedContext } from "@/outlookCategories";
 import { GroupsSettingsPanel } from "../settings/GroupsSettingsPanel";
 import { DEFAULT_GROUPS_MODULE_SETTINGS, type GroupsModuleSettings } from "../settings/groupsModuleSettings";
@@ -47,6 +60,7 @@ import { resolveGroupStorageRuntime } from "../storage/resolveStorageMode";
 import { savePrimaryGroupWorkset } from "../storage/saveWorkset";
 import { loadPrimaryGroupWorkset } from "../storage/loadWorkset";
 import { DEFAULT_GROUP_STORAGE_SETTINGS } from "../storage/settings";
+import type { IntermediateCase } from "../storage/intermediateCaseTypes";
 import type { GroupWorksetManifest } from "../storage/types";
 import { GROUPS_SETTINGS_MATRIX, type GroupsSettingsMatrixEntry } from "./settingsMatrix";
 
@@ -70,10 +84,85 @@ type ValidationScenarioResult = {
   details: string;
 };
 
+type MockFetchCall = {
+  url: string;
+  method: string;
+  body?: string;
+  responseStatus?: number;
+  responseBody?: unknown;
+};
+
+type FinalWriteProofSnapshot = {
+  emails: Array<{
+    emailKey: string;
+    subject?: string;
+    labels: string[];
+    principalGroupId?: string;
+    referenceGroupIds: string[];
+    ticketIds: string[];
+    attachments: Array<{
+      attachmentKey: string;
+      name: string;
+      documentState?: string;
+      isHidden?: boolean;
+      storageDecision?: string;
+      hasContent?: boolean;
+      storageProvider?: string;
+      storageBasePath?: string;
+      storagePathHint?: string;
+    }>;
+  }>;
+  groups: Array<{
+    id: string;
+    name: string;
+    memberEmailKeys: string[];
+  }>;
+  tickets: Array<{
+    id: string;
+    code: string;
+    status?: string;
+    groupIds: string[];
+    emailKeys: string[];
+  }>;
+};
+
+type FinalWriteProofArtifact = {
+  scenarioId: string;
+  title: string;
+  inputContext: Record<string, unknown>;
+  relevantSettings: Record<string, unknown>;
+  intermediateState: {
+    beforeWrite: unknown;
+    afterProjection: unknown;
+    reopenedLocalCase: unknown;
+  };
+  finalPayloads: Array<{
+    url: string;
+    method: string;
+    body: unknown;
+  }>;
+  backendResponses: Array<{
+    url: string;
+    method: string;
+    status: number;
+    body: unknown;
+  }>;
+  persistedBackendState: FinalWriteProofSnapshot;
+  reopenedState: {
+    serverContext: unknown;
+    refreshedContext: unknown;
+  };
+  expected: Record<string, unknown>;
+  actual: Record<string, unknown>;
+  pass: boolean;
+  failureReason?: string;
+};
+
 export type GroupsBrowserValidationReport = {
   generatedAtIso: string;
   settingsMatrix: GroupsSettingsMatrixEntry[];
   scenarios: ValidationScenarioResult[];
+  writeProofs: FinalWriteProofArtifact[];
   passed: number;
   failed: number;
 };
@@ -407,18 +496,483 @@ function buildManifestForRuntime(runtimeMode: ReturnType<typeof resolveGroupStor
   return manifest!;
 }
 
+type MockServerTicketState = {
+  ticket: GroupTicketEntry;
+  emailKeys: Set<string>;
+  groupIds: Set<string>;
+};
+
+type MockGroupsServerState = {
+  emailsByKey: Map<string, RelatedEmailEntry>;
+  groupsById: Map<string, LinkGroupEntry>;
+  groupMembersById: Map<string, Set<string>>;
+  ticketsById: Map<string, MockServerTicketState>;
+  nextTicketSequence: number;
+};
+
+type MockFetchHarness = Array<MockFetchCall> & {
+  serverState: MockGroupsServerState;
+  pickedFolderPath: string;
+  getServerSnapshot: () => FinalWriteProofSnapshot;
+};
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function normalizeString(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function normalizeStringList(values: unknown[]): string[] {
+  return Array.from(new Set(values.map((value) => normalizeString(value)).filter(Boolean)));
+}
+
+function normalizeRecipientEntries(values: RelevantEmailPayload["toRecipients"] | RelevantEmailPayload["ccRecipients"]): Array<{ email: string; name?: string }> {
+  if (!Array.isArray(values)) return [];
+  return values
+    .map((recipient) => ({
+      email: normalizeString(recipient?.email).toLowerCase(),
+      name: normalizeString(recipient?.name) || undefined,
+    }))
+    .filter((recipient) => recipient.email);
+}
+
+function buildMockGroup(groupId: string, groupName?: string, relationKind?: string): LinkGroupEntry {
+  return buildGroup({
+    id: groupId,
+    name: groupName || groupId,
+    kind: "custom",
+    status: "em_analise",
+    labels: [],
+    ...(relationKind ? { relationKind } : {}),
+  } as LinkGroupEntry);
+}
+
+function buildMockServerState(): MockGroupsServerState {
+  return {
+    emailsByKey: new Map(),
+    groupsById: new Map(),
+    groupMembersById: new Map(),
+    ticketsById: new Map(),
+    nextTicketSequence: 1,
+  };
+}
+
+function ensureMockGroup(serverState: MockGroupsServerState, groupId: string, groupName?: string): LinkGroupEntry {
+  const normalizedGroupId = normalizeString(groupId);
+  const existing = serverState.groupsById.get(normalizedGroupId);
+  if (existing) return existing;
+  const next = buildMockGroup(normalizedGroupId, groupName);
+  serverState.groupsById.set(normalizedGroupId, next);
+  serverState.groupMembersById.set(normalizedGroupId, new Set());
+  return next;
+}
+
+function normalizeMockAttachments(
+  attachments: RelevantEmailPayload["attachments"],
+  existing: NonNullable<RelatedEmailEntry["attachments"]> = [],
+  defaults?: {
+    storageProvider?: string;
+    storageBasePath?: string;
+  }
+): NonNullable<RelatedEmailEntry["attachments"]> {
+  const existingByKey = new Map(
+    existing.map((attachment) => [normalizeString(attachment.key || attachment.id || attachment.name), attachment] as const)
+  );
+  return (attachments || []).map((attachment, index) => {
+    const attachmentKey = normalizeString(attachment?.key || attachment?.id || attachment?.name || `attachment-${index + 1}`);
+    const current = existingByKey.get(attachmentKey);
+    return {
+      key: attachmentKey,
+      id: normalizeString(attachment?.id) || current?.id || attachmentKey,
+      name: normalizeString(attachment?.name) || current?.name || attachmentKey,
+      contentType: normalizeString(attachment?.contentType) || current?.contentType || "application/octet-stream",
+      size: Number(attachment?.size || current?.size || 0) || 0,
+      isInline: attachment?.isInline === true || current?.isInline === true,
+      contentId: normalizeString(attachment?.contentId) || current?.contentId || undefined,
+      content: normalizeString(attachment?.content) || current?.content || undefined,
+      storageProvider:
+        normalizeString(attachment?.storageProvider) ||
+        normalizeString(defaults?.storageProvider) ||
+        current?.storageProvider ||
+        undefined,
+      storageBasePath:
+        normalizeString(attachment?.storageBasePath) ||
+        normalizeString(defaults?.storageBasePath) ||
+        current?.storageBasePath ||
+        undefined,
+      storagePathHint: normalizeString(attachment?.storagePathHint) || current?.storagePathHint || undefined,
+      documentState: normalizeString(attachment?.documentState) || current?.documentState || "ingested",
+      hasContent: attachment?.hasContent === true || Boolean(normalizeString(attachment?.content)) || current?.hasContent === true,
+      isHidden: typeof attachment?.isHidden === "boolean" ? attachment.isHidden : current?.isHidden,
+    };
+  });
+}
+
+function upsertMockServerEmail(
+  serverState: MockGroupsServerState,
+  payload: RelevantEmailPayload
+): RelatedEmailEntry {
+  const emailKey = makeEmailKey(payload as RelatedEmailEntry);
+  const existing = serverState.emailsByKey.get(emailKey);
+  const next: RelatedEmailEntry = {
+    ...(existing || {}),
+    emailKey,
+    itemId: normalizeString(payload.itemId) || existing?.itemId,
+    internetMessageId: normalizeString(payload.internetMessageId) || existing?.internetMessageId,
+    conversationId: normalizeString(payload.conversationId) || existing?.conversationId,
+    subject: normalizeString(payload.subject) || existing?.subject || "(sem assunto)",
+    fromEmail: normalizeString(payload.fromEmail) || existing?.fromEmail || undefined,
+    fromName: normalizeString(payload.fromName) || existing?.fromName || undefined,
+    emailWebLink: normalizeString(payload.emailWebLink) || existing?.emailWebLink || undefined,
+    sentAtIso: normalizeString(payload.sentAtIso) || existing?.sentAtIso || undefined,
+    receivedAtIso: normalizeString(payload.receivedAtIso) || normalizeString(payload.messageDateIso) || existing?.receivedAtIso || FIXED_NOW_ISO,
+    messageDateIso: normalizeString(payload.messageDateIso) || normalizeString(payload.receivedAtIso) || existing?.messageDateIso || FIXED_NOW_ISO,
+    toRecipients: normalizeRecipientEntries(payload.toRecipients).length
+      ? normalizeRecipientEntries(payload.toRecipients)
+      : (existing?.toRecipients || []),
+    ccRecipients: normalizeRecipientEntries(payload.ccRecipients).length
+      ? normalizeRecipientEntries(payload.ccRecipients)
+      : (existing?.ccRecipients || []),
+    bodyText: normalizeString(payload.bodyText) || existing?.bodyText || "",
+    bodyHtml: normalizeString(payload.bodyHtml) || existing?.bodyHtml || "",
+    status: normalizeString(payload.status) || existing?.status || undefined,
+    labels: payload.labels ? normalizeStringList(payload.labels) : (existing?.labels || []),
+    removedInheritedLabels: payload.removedInheritedLabels
+      ? normalizeStringList(payload.removedInheritedLabels)
+      : (existing?.removedInheritedLabels || []),
+    labelStates: payload.labelStates
+      ? Object.fromEntries(
+          Object.entries(payload.labelStates)
+            .map(([label, status]) => [normalizeString(label), normalizeString(status)])
+            .filter(([label, status]) => label && status)
+        )
+      : (existing?.labelStates || {}),
+    classificationMeta: payload.classificationMeta
+      ? cloneJson(payload.classificationMeta)
+      : (existing?.classificationMeta || {}),
+    relatedGroups: existing?.relatedGroups || [],
+    relatedReasons: existing?.relatedReasons || [],
+    attachments: payload.attachments
+      ? normalizeMockAttachments(payload.attachments, existing?.attachments || [], {
+          storageProvider: normalizeString(payload.attachmentStorageProvider),
+          storageBasePath: normalizeString(payload.attachmentStorageBasePath),
+        })
+      : (existing?.attachments || []),
+  };
+  serverState.emailsByKey.set(emailKey, next);
+  return next;
+}
+
+function applyMockGroupMembership(args: {
+  serverState: MockGroupsServerState;
+  email: RelatedEmailEntry;
+  groupId: string;
+  groupName?: string;
+  relationKind: string;
+}): RelatedEmailEntry {
+  const group = ensureMockGroup(args.serverState, args.groupId, args.groupName);
+  const currentEmail = args.serverState.emailsByKey.get(args.email.emailKey || "") || args.email;
+  const nextGroups = [
+    ...(currentEmail.relatedGroups || []).filter((entry) => normalizeString(entry.id) !== group.id),
+    {
+      id: group.id,
+      name: group.name,
+      kind: group.kind,
+      relationKind: args.relationKind,
+    },
+  ];
+  args.serverState.groupMembersById.get(group.id)?.add(currentEmail.emailKey || "");
+  const nextEmail = {
+    ...currentEmail,
+    relatedGroups: nextGroups,
+  };
+  args.serverState.emailsByKey.set(currentEmail.emailKey || "", nextEmail);
+  return nextEmail;
+}
+
+function removeMockGroupMembership(args: {
+  serverState: MockGroupsServerState;
+  email: RelatedEmailEntry;
+  groupId: string;
+}): RelatedEmailEntry {
+  const normalizedGroupId = normalizeString(args.groupId);
+  const currentEmail = args.serverState.emailsByKey.get(args.email.emailKey || "") || args.email;
+  const nextEmail = {
+    ...currentEmail,
+    relatedGroups: (currentEmail.relatedGroups || []).filter((entry) => normalizeString(entry.id) !== normalizedGroupId),
+  };
+  args.serverState.groupMembersById.get(normalizedGroupId)?.delete(currentEmail.emailKey || "");
+  args.serverState.emailsByKey.set(currentEmail.emailKey || "", nextEmail);
+  return nextEmail;
+}
+
+function ensureMockTicket(
+  serverState: MockGroupsServerState,
+  ticketId: string,
+  overrides?: Partial<GroupTicketEntry>
+): MockServerTicketState {
+  const normalizedTicketId = normalizeString(ticketId);
+  const existing = serverState.ticketsById.get(normalizedTicketId);
+  if (existing) return existing;
+  const nextTicket = buildTicket({
+    id: normalizedTicketId,
+    code: overrides?.code || `TK-${String(serverState.nextTicketSequence).padStart(3, "0")}`,
+    sequenceNumber: serverState.nextTicketSequence,
+    seriesId: overrides?.seriesId || "series-default",
+    title: overrides?.title || `Ticket ${serverState.nextTicketSequence}`,
+    status: overrides?.status || "em_analise",
+    groupIds: overrides?.groupIds || [],
+    ...overrides,
+  });
+  serverState.nextTicketSequence += 1;
+  const state: MockServerTicketState = {
+    ticket: nextTicket,
+    emailKeys: new Set(),
+    groupIds: new Set(normalizeStringList(nextTicket.groupIds || [])),
+  };
+  serverState.ticketsById.set(normalizedTicketId, state);
+  return state;
+}
+
+function buildMockTicketResponse(ticketState: MockServerTicketState, emailLinked?: boolean): GroupTicketEntry {
+  return {
+    ...ticketState.ticket,
+    groupIds: Array.from(ticketState.groupIds),
+    emailCount: ticketState.emailKeys.size,
+    emailLinked,
+  };
+}
+
+function findMockServerEmail(serverState: MockGroupsServerState, payload: Partial<RelevantEmailPayload>): RelatedEmailEntry | null {
+  const emailKey = makeEmailKey(payload as RelatedEmailEntry);
+  if (emailKey && serverState.emailsByKey.has(emailKey)) {
+    return serverState.emailsByKey.get(emailKey) || null;
+  }
+  for (const email of serverState.emailsByKey.values()) {
+    if (normalizeString(payload.itemId) && normalizeString(payload.itemId) === normalizeString(email.itemId)) return email;
+    if (normalizeString(payload.internetMessageId) && normalizeString(payload.internetMessageId) === normalizeString(email.internetMessageId)) return email;
+    if (
+      normalizeString(payload.conversationId)
+      && normalizeString(payload.subject)
+      && normalizeString(payload.fromEmail).toLowerCase()
+      && normalizeString(payload.receivedAtIso || payload.messageDateIso)
+      && normalizeString(payload.conversationId) === normalizeString(email.conversationId)
+      && normalizeString(payload.subject) === normalizeString(email.subject)
+      && normalizeString(payload.fromEmail).toLowerCase() === normalizeString(email.fromEmail).toLowerCase()
+      && normalizeString(payload.receivedAtIso || payload.messageDateIso) === normalizeString(email.receivedAtIso || email.messageDateIso)
+    ) {
+      return email;
+    }
+  }
+  return null;
+}
+
+function buildMockServerSnapshot(serverState: MockGroupsServerState): FinalWriteProofSnapshot {
+  const emails = Array.from(serverState.emailsByKey.values())
+    .map((email) => ({
+      emailKey: normalizeString(email.emailKey),
+      subject: email.subject,
+      labels: normalizeStringList(email.labels || []),
+      principalGroupId: (email.relatedGroups || []).find((group) => group.relationKind === "principal")?.id,
+      referenceGroupIds: (email.relatedGroups || [])
+        .filter((group) => group.relationKind !== "principal")
+        .map((group) => normalizeString(group.id))
+        .filter(Boolean),
+      ticketIds: Array.from(serverState.ticketsById.values())
+        .filter((ticketState) => ticketState.emailKeys.has(normalizeString(email.emailKey)))
+        .map((ticketState) => normalizeString(ticketState.ticket.id)),
+      attachments: (email.attachments || []).map((attachment) => ({
+        attachmentKey: normalizeString(attachment.key || attachment.id || attachment.name),
+        name: normalizeString(attachment.name),
+        documentState: normalizeString(attachment.documentState) || undefined,
+        isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : undefined,
+        hasContent: attachment.hasContent === true,
+        storageProvider: normalizeString(attachment.storageProvider) || undefined,
+        storageBasePath: normalizeString(attachment.storageBasePath) || undefined,
+        storagePathHint: normalizeString(attachment.storagePathHint) || undefined,
+      })),
+    }))
+    .sort((left, right) => left.emailKey.localeCompare(right.emailKey));
+  const groups = Array.from(serverState.groupsById.values())
+    .map((group) => ({
+      id: normalizeString(group.id),
+      name: normalizeString(group.name),
+      memberEmailKeys: Array.from(serverState.groupMembersById.get(normalizeString(group.id)) || []).sort(),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const tickets = Array.from(serverState.ticketsById.values())
+    .map((ticketState) => ({
+      id: normalizeString(ticketState.ticket.id),
+      code: normalizeString(ticketState.ticket.code),
+      status: normalizeString(ticketState.ticket.status) || undefined,
+      groupIds: Array.from(ticketState.groupIds).sort(),
+      emailKeys: Array.from(ticketState.emailKeys).sort(),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  return { emails, groups, tickets };
+}
+
+function buildMockRelatedContext(serverState: MockGroupsServerState, payload: Partial<RelevantEmailPayload>) {
+  const targetEmail = findMockServerEmail(serverState, payload);
+  if (!targetEmail) {
+    return { email: null, emails: [], groups: [], tickets: [] };
+  }
+  const relatedEmails = Array.from(serverState.emailsByKey.values())
+    .filter((email) =>
+      normalizeString(email.emailKey) === normalizeString(targetEmail.emailKey)
+      || (
+        normalizeString(email.conversationId)
+        && normalizeString(email.conversationId) === normalizeString(targetEmail.conversationId)
+      )
+    )
+    .sort((left, right) => normalizeString(left.emailKey).localeCompare(normalizeString(right.emailKey)));
+  const relatedEmailKeys = new Set(relatedEmails.map((email) => normalizeString(email.emailKey)));
+  const groups = Array.from(
+    new Map(
+      relatedEmails.flatMap((email) => (email.relatedGroups || []).map((group) => [
+        normalizeString(group.id),
+        ensureMockGroup(serverState, normalizeString(group.id), normalizeString(group.name) || undefined),
+      ]))
+    ).values()
+  );
+  const tickets = Array.from(serverState.ticketsById.values())
+    .filter((ticketState) => Array.from(ticketState.emailKeys).some((emailKey) => relatedEmailKeys.has(emailKey)))
+    .map((ticketState) => buildMockTicketResponse(ticketState, relatedEmailKeys.has(normalizeString(targetEmail.emailKey))))
+    .sort((left, right) => normalizeString(left.id).localeCompare(normalizeString(right.id)));
+  return {
+    email: cloneJson(targetEmail),
+    emails: cloneJson(relatedEmails),
+    groups: cloneJson(groups),
+    tickets: cloneJson(tickets),
+  };
+}
+
+function simplifyIntermediateCase(caseValue: IntermediateCase | null) {
+  if (!caseValue) return null;
+  return {
+    caseId: caseValue.caseId,
+    anchorEmailKey: caseValue.anchorEmailKey,
+    source: caseValue.sourceSummary.primarySource,
+    retentionState: caseValue.retentionSummary.state,
+    emails: caseValue.emails.map((email) => ({
+      emailKey: email.emailKey,
+      principalGroupId: email.classification.principalGroupId || null,
+      referenceGroupIds: [...email.classification.referenceGroupIds],
+      labels: [...email.classification.labels],
+      ticketIds: [...email.classification.ticketIds],
+      attachments: email.attachments.map((attachment) => ({
+        attachmentKey: attachment.attachmentKey,
+        name: attachment.name,
+        documentState: attachment.documentState || null,
+        isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : null,
+        storageDecision: attachment.storageDecision,
+      })),
+    })),
+  };
+}
+
+function simplifyRelatedContext(context: Awaited<ReturnType<typeof getRelatedEmailContext>> | null) {
+  if (!context) return null;
+  return {
+    email: context.email
+      ? {
+          emailKey: context.email.emailKey,
+          labels: context.email.labels || [],
+          relatedGroups: (context.email.relatedGroups || [])
+            .map((group) => ({
+              id: group.id,
+              relationKind: group.relationKind,
+            }))
+            .sort((left, right) => String(left.id).localeCompare(String(right.id))),
+          attachments: (context.email.attachments || [])
+            .map((attachment) => ({
+              key: attachment.key,
+              name: attachment.name,
+              documentState: attachment.documentState || null,
+              isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : null,
+              storageProvider: attachment.storageProvider || null,
+              storageBasePath: attachment.storageBasePath || null,
+            }))
+            .sort((left, right) => String(left.key || "").localeCompare(String(right.key || ""))),
+        }
+      : null,
+    emails: context.emails
+      .map((email) => ({
+        emailKey: email.emailKey,
+        labels: email.labels || [],
+        relatedGroups: (email.relatedGroups || [])
+          .map((group) => ({
+            id: group.id,
+            relationKind: group.relationKind,
+          }))
+          .sort((left, right) => String(left.id).localeCompare(String(right.id))),
+        attachments: (email.attachments || [])
+          .map((attachment) => ({
+            key: attachment.key,
+            name: attachment.name,
+            documentState: attachment.documentState || null,
+            isHidden: typeof attachment.isHidden === "boolean" ? attachment.isHidden : null,
+            storageProvider: attachment.storageProvider || null,
+            storageBasePath: attachment.storageBasePath || null,
+          }))
+          .sort((left, right) => String(left.key || "").localeCompare(String(right.key || ""))),
+      }))
+      .sort((left, right) => String(left.emailKey || "").localeCompare(String(right.emailKey || ""))),
+    groups: context.groups
+      .map((group) => ({ id: group.id, name: group.name }))
+      .sort((left, right) => String(left.id).localeCompare(String(right.id))),
+    tickets: context.tickets
+      .map((ticket) => ({
+        id: ticket.id,
+        code: ticket.code,
+        status: ticket.status || null,
+        groupIds: (ticket.groupIds || []).slice().sort(),
+        emailLinked: ticket.emailLinked === true,
+      }))
+      .sort((left, right) => String(left.id).localeCompare(String(right.id))),
+  };
+}
+
+function parseCallBody(body: string | undefined): unknown {
+  if (!body) return null;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return body;
+  }
+}
+
+function isCentralFinalWriteCall(url: string, method: string): boolean {
+  if (method === "POST" && /\/api\/links\/email(?:\?|$)/i.test(url)) return true;
+  if (method === "POST" && /\/api\/links\/groups\/[^/]+\/emails(?:\?|$)/i.test(url)) return true;
+  if (method === "DELETE" && /\/api\/links\/groups\/[^/]+\/emails(?:\?|$)/i.test(url)) return true;
+  if (method === "POST" && /\/api\/links\/group-tickets(?:\?|$)/i.test(url)) return true;
+  if (method === "PATCH" && /\/api\/links\/group-tickets\/[^/]+(?:\?|$)/i.test(url)) return true;
+  if (method === "POST" && /\/api\/links\/group-tickets\/[^/]+\/email(?:\?|$)/i.test(url)) return true;
+  if (method === "DELETE" && /\/api\/links\/group-tickets\/[^/]+\/email(?:\?|$)/i.test(url)) return true;
+  return false;
+}
+
 async function withMockedFetch<T>(
-  run: (calls: Array<{ url: string; method: string; body?: string }>) => Promise<T>,
+  run: (calls: MockFetchHarness) => Promise<T>,
   options?: {
     pickedFolderPath?: string;
   }
 ): Promise<T> {
   const originalFetch = window.fetch.bind(window);
-  const calls: Array<{ url: string; method: string; body?: string }> = [];
+  const rawCalls: MockFetchCall[] = [];
+  const serverState = buildMockServerState();
   const manifestByKey = new Map<string, GroupWorksetManifest>();
   const intermediateTextByKey = new Map<string, string>();
   const intermediateBinaryByKey = new Map<string, { contentBase64: string; contentType?: string }>();
   const pickedFolderPath = String(options?.pickedFolderPath || "C:/Users/test/OneDrive - Demo/Groups").trim();
+  const calls = Object.assign(rawCalls, {
+    serverState,
+    pickedFolderPath,
+    getServerSnapshot: () => buildMockServerSnapshot(serverState),
+  }) as MockFetchHarness;
 
   const makeIntermediateKey = (basePath: string, relativePath: string) => `${basePath}::${relativePath}`;
   const listIntermediatePaths = (basePath: string, prefix: string) =>
@@ -430,30 +984,34 @@ async function withMockedFetch<T>(
       .map((entry) => entry.slice(`${basePath}::`.length))
       .filter((relativePath) => !prefix || relativePath === prefix || relativePath.startsWith(`${prefix}/`));
 
+  const respondJson = (call: MockFetchCall, status: number, payload: unknown) => {
+    call.responseStatus = status;
+    call.responseBody = cloneJson(payload);
+    return new Response(JSON.stringify(payload), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
   window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = String(init?.method || "GET").toUpperCase();
     const body = typeof init?.body === "string" ? init.body : undefined;
-    calls.push({ url, method, body });
+    const call: MockFetchCall = { url, method, body };
+    calls.push(call);
 
     if (url.includes("/api/links/groups/worksets") && method === "POST") {
       const parsed = JSON.parse(body || "{}") as { manifest?: GroupWorksetManifest };
       if (parsed.manifest?.worksetKey) {
         manifestByKey.set(parsed.manifest.worksetKey, parsed.manifest);
       }
-      return new Response(JSON.stringify({ ok: true, manifest: parsed.manifest || null }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return respondJson(call, 200, { ok: true, manifest: parsed.manifest || null });
     }
 
     if (url.includes("/api/links/groups/worksets/") && method === "GET") {
       const match = url.match(/\/api\/links\/groups\/worksets\/([^?]+)/i);
       const worksetKey = match ? decodeURIComponent(match[1]) : "";
-      return new Response(
-        JSON.stringify({ ok: true, manifest: manifestByKey.get(worksetKey) || null }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return respondJson(call, 200, { ok: true, manifest: manifestByKey.get(worksetKey) || null });
     }
 
     if (url.includes("/api/links/groups/storage/validate")) {
@@ -464,53 +1022,47 @@ async function withMockedFetch<T>(
       };
       const basePath = String(parsed?.chosenFolder?.path || parsed?.baseFolderPath || "").trim();
       const blocked = basePath.includes("INVALID");
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          result: {
-            mode: parsed?.mode || (basePath ? "chosen_folder" : "supabase"),
-            provider: basePath ? "local" : "cloud",
-            fileBacked: Boolean(basePath),
-            supported: !blocked,
-            basePath,
-            normalizedBasePath: basePath,
-            isWebUrl: false,
-            requiresServerAccessiblePath: Boolean(basePath),
-            canStoreManifest: !blocked,
-            canStoreBinary: !blocked,
-            pickerAvailable: true,
-            notes: ["mocked"],
-            architecturalBlocker: null,
-            requiredChange: null,
-            blockingReason: blocked ? "Mocked invalid folder path." : null,
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return respondJson(call, 200, {
+        ok: true,
+        result: {
+          mode: parsed?.mode || (basePath ? "chosen_folder" : "supabase"),
+          provider: basePath ? "local" : "cloud",
+          fileBacked: Boolean(basePath),
+          supported: !blocked,
+          basePath,
+          normalizedBasePath: basePath,
+          isWebUrl: false,
+          requiresServerAccessiblePath: Boolean(basePath),
+          canStoreManifest: !blocked,
+          canStoreBinary: !blocked,
+          pickerAvailable: true,
+          notes: ["mocked"],
+          architecturalBlocker: null,
+          requiredChange: null,
+          blockingReason: blocked ? "Mocked invalid folder path." : null,
+        },
+      });
     }
 
     if (url.includes("/api/links/groups/intermediate-storage/")) {
       if (url.includes("/pick-folder")) {
-        return new Response(
-          JSON.stringify({
-            ok: true,
-            result: {
+        return respondJson(call, 200, {
+          ok: true,
+          result: {
+            supported: true,
+            selected: true,
+            cancelled: false,
+            path: pickedFolderPath,
+            normalizedPath: pickedFolderPath,
+            picker: "windows_folder_browser",
+            reason: "mocked picker",
+            validation: {
               supported: true,
-              selected: true,
-              cancelled: false,
-              path: pickedFolderPath,
-              normalizedPath: pickedFolderPath,
-              picker: "windows_folder_browser",
-              reason: "mocked picker",
-              validation: {
-                supported: true,
-                normalizedBasePath: pickedFolderPath,
-                notes: ["mocked"],
-              },
+              normalizedBasePath: pickedFolderPath,
+              notes: ["mocked"],
             },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        );
+          },
+        });
       }
       const parsed = JSON.parse(body || "{}") as {
         basePath?: string;
@@ -524,44 +1076,32 @@ async function withMockedFetch<T>(
       const relativePath = String(parsed.path || "").trim();
       const prefix = String(parsed.prefix || "").trim();
       if (basePath.includes("INVALID")) {
-        return new Response(JSON.stringify({
+        return respondJson(call, 500, {
           ok: false,
           error: "group_intermediate_mock_invalid_path",
           details: "Mocked invalid folder path.",
-        }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
         });
       }
       if (url.includes("/read-text")) {
-        return new Response(
-          JSON.stringify({ ok: true, content: intermediateTextByKey.get(makeIntermediateKey(basePath, relativePath)) || null }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        );
+        return respondJson(call, 200, {
+          ok: true,
+          content: intermediateTextByKey.get(makeIntermediateKey(basePath, relativePath)) || null,
+        });
       }
       if (url.includes("/write-text")) {
         intermediateTextByKey.set(makeIntermediateKey(basePath, relativePath), String(parsed.content || ""));
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return respondJson(call, 200, { ok: true });
       }
       if (url.includes("/read-binary")) {
         const payload = intermediateBinaryByKey.get(makeIntermediateKey(basePath, relativePath)) || null;
-        return new Response(JSON.stringify({ ok: true, ...payload }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return respondJson(call, 200, { ok: true, ...payload });
       }
       if (url.includes("/write-binary")) {
         intermediateBinaryByKey.set(makeIntermediateKey(basePath, relativePath), {
           contentBase64: String(parsed.contentBase64 || ""),
           contentType: String(parsed.contentType || "").trim() || undefined,
         });
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return respondJson(call, 200, { ok: true });
       }
       if (url.includes("/delete-tree")) {
         const normalizedPrefix = `${basePath}::${relativePath.replace(/\/+$/, "")}`;
@@ -575,15 +1115,148 @@ async function withMockedFetch<T>(
             intermediateBinaryByKey.delete(key);
           }
         }
-        return new Response(JSON.stringify({ ok: true, deleted: true }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return respondJson(call, 200, { ok: true, deleted: true });
       }
       if (url.includes("/list-paths")) {
-        return new Response(JSON.stringify({ ok: true, paths: listIntermediatePaths(basePath, prefix) }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
+        return respondJson(call, 200, { ok: true, paths: listIntermediatePaths(basePath, prefix) });
+      }
+    }
+
+    if (/\/api\/links\/email(?:\?|$)/i.test(url) && method === "POST") {
+      const parsed = JSON.parse(body || "{}") as RelevantEmailPayload;
+      const email = upsertMockServerEmail(serverState, parsed);
+      return respondJson(call, 200, {
+        email,
+        groups: (email.relatedGroups || []).map((group) => ensureMockGroup(serverState, normalizeString(group.id), normalizeString(group.name) || undefined)),
+      });
+    }
+
+    if (/\/api\/links\/related\?/i.test(url) && method === "GET") {
+      const parsedUrl = new URL(url, window.location.origin);
+      const payload: Partial<RelevantEmailPayload> = {
+        conversationId: parsedUrl.searchParams.get("conversationId") || undefined,
+        internetMessageId: parsedUrl.searchParams.get("internetMessageId") || undefined,
+        itemId: parsedUrl.searchParams.get("itemId") || undefined,
+        subject: parsedUrl.searchParams.get("subject") || undefined,
+        fromEmail: parsedUrl.searchParams.get("fromEmail") || undefined,
+        receivedAtIso: parsedUrl.searchParams.get("receivedAtIso") || undefined,
+      };
+      return respondJson(call, 200, buildMockRelatedContext(serverState, payload));
+    }
+
+    if (/\/api\/links\/groups\/[^/]+\/emails(?:\?|$)/i.test(url)) {
+      const match = url.match(/\/api\/links\/groups\/([^/]+)\/emails/i);
+      const groupId = match ? decodeURIComponent(match[1]) : "";
+      if (method === "POST") {
+        const parsed = JSON.parse(body || "{}") as RelevantEmailPayload;
+        const email = upsertMockServerEmail(serverState, parsed);
+        const updatedEmail = applyMockGroupMembership({
+          serverState,
+          email,
+          groupId,
+          relationKind: normalizeString(parsed.membershipKind) || "referencia",
+        });
+        return respondJson(call, 200, {
+          group: ensureMockGroup(serverState, groupId),
+          email: updatedEmail,
+        });
+      }
+      if (method === "DELETE") {
+        const parsed = JSON.parse(body || "{}") as RelevantEmailPayload & { emailKey?: string };
+        const email = findMockServerEmail(serverState, {
+          ...parsed,
+          internetMessageId: parsed.internetMessageId,
+          itemId: parsed.itemId,
+        }) || (parsed.emailKey ? serverState.emailsByKey.get(parsed.emailKey) || null : null);
+        if (email) {
+          removeMockGroupMembership({ serverState, email, groupId });
+        }
+        return respondJson(call, 200, { ok: true });
+      }
+    }
+
+    if (/\/api\/links\/group-tickets(?:\?|$)/i.test(url) && method === "POST") {
+      const parsed = JSON.parse(body || "{}") as {
+        seriesId?: string;
+        title?: string;
+        description?: string;
+        labels?: string[];
+        groupIds?: string[];
+      };
+      const state = ensureMockTicket(serverState, `ticket-${serverState.nextTicketSequence}`, {
+        seriesId: normalizeString(parsed.seriesId) || "series-default",
+        title: normalizeString(parsed.title) || "Ticket",
+        description: normalizeString(parsed.description) || undefined,
+        labels: normalizeStringList(parsed.labels || []),
+        groupIds: normalizeStringList(parsed.groupIds || []),
+      });
+      return respondJson(call, 200, { ticket: buildMockTicketResponse(state, false) });
+    }
+
+    if (/\/api\/links\/group-tickets\/[^/]+(?:\?|$)/i.test(url) && method === "PATCH") {
+      const match = url.match(/\/api\/links\/group-tickets\/([^/]+)(?:\?|$)/i);
+      const ticketId = match ? decodeURIComponent(match[1]) : "";
+      const parsed = JSON.parse(body || "{}") as Partial<GroupTicketEntry>;
+      const state = ensureMockTicket(serverState, ticketId);
+      state.ticket = {
+        ...state.ticket,
+        ...parsed,
+        groupIds: parsed.groupIds ? normalizeStringList(parsed.groupIds) : Array.from(state.groupIds),
+      };
+      state.groupIds = new Set(normalizeStringList(state.ticket.groupIds || []));
+      return respondJson(call, 200, { ticket: buildMockTicketResponse(state, false) });
+    }
+
+    if (/\/api\/links\/group-tickets\/[^/]+\/email(?:\?|$)/i.test(url)) {
+      const match = url.match(/\/api\/links\/group-tickets\/([^/]+)\/email/i);
+      const ticketId = match ? decodeURIComponent(match[1]) : "";
+      const ticketState = ensureMockTicket(serverState, ticketId);
+      if (method === "POST") {
+        const parsed = JSON.parse(body || "{}") as {
+          email?: RelevantEmailPayload;
+          applyGroups?: boolean;
+          groupIds?: string[];
+          membershipKind?: string;
+        };
+        const email = upsertMockServerEmail(serverState, parsed.email || {});
+        ticketState.emailKeys.add(normalizeString(email.emailKey));
+        const appliedGroups: LinkGroupEntry[] = [];
+        if (parsed.applyGroups) {
+          for (const groupId of normalizeStringList(parsed.groupIds || [])) {
+            const updatedEmail = applyMockGroupMembership({
+              serverState,
+              email,
+              groupId,
+              relationKind: normalizeString(parsed.membershipKind) || "referencia",
+            });
+            appliedGroups.push(
+              ensureMockGroup(serverState, groupId, (updatedEmail.relatedGroups || []).find((group) => group.id === groupId)?.name)
+            );
+          }
+        }
+        for (const groupId of normalizeStringList(parsed.groupIds || [])) {
+          ticketState.groupIds.add(groupId);
+        }
+        return respondJson(call, 200, {
+          ok: true,
+          ticket: buildMockTicketResponse(ticketState, true),
+          appliedGroups,
+          email: serverState.emailsByKey.get(normalizeString(email.emailKey)) || email,
+        });
+      }
+      if (method === "DELETE") {
+        const parsed = JSON.parse(body || "{}") as { email?: RelevantEmailPayload; emailKey?: string };
+        const email = parsed.email
+          ? findMockServerEmail(serverState, parsed.email)
+          : (parsed.emailKey ? serverState.emailsByKey.get(normalizeString(parsed.emailKey)) || null : null);
+        if (email?.emailKey) {
+          ticketState.emailKeys.delete(normalizeString(email.emailKey));
+        }
+        return respondJson(call, 200, {
+          ok: true,
+          removed: true,
+          ticket: buildMockTicketResponse(ticketState, false),
+          emailKey: normalizeString(email?.emailKey),
         });
       }
     }
@@ -596,6 +1269,189 @@ async function withMockedFetch<T>(
   } finally {
     window.fetch = originalFetch;
   }
+}
+
+type FinalPersistenceScenarioArgs = {
+  mock: MockFetchHarness;
+  scenarioId: string;
+  title: string;
+  classificationCase: IntermediateCase;
+  targetEmails: RelatedEmailEntry[];
+  selectedEmail: RelatedEmailEntry;
+  currentContext: {
+    itemId?: string;
+    internetMessageId?: string;
+    conversationId?: string;
+    subject?: string;
+    fromEmail?: string;
+    fromName?: string;
+    receivedAtIso?: string;
+    toRecipients?: RelevantEmailPayload["toRecipients"];
+    ccRecipients?: RelevantEmailPayload["ccRecipients"];
+  };
+  resolvedApplySelection: ReturnType<typeof buildResolvedStudioApplySelection>;
+  classificationMetaDraft: ClassificationMetaDraft;
+  emailContextMeta?: Map<string, { groupIds: string[]; labels: string[]; ticketIds: string[] }>;
+  relevantSettings: Record<string, unknown>;
+  expected: Record<string, unknown>;
+  writeProofs: FinalWriteProofArtifact[];
+  attachmentStorageOptions?: ReturnType<typeof buildAttachmentStorageOptions>;
+  createTicketTitle?: string;
+  currentOutlookTicket?: GroupTicketEntry | null;
+};
+
+async function executeFinalPersistenceProof(args: FinalPersistenceScenarioArgs): Promise<string> {
+  const {
+    mock,
+    scenarioId,
+    title,
+    classificationCase,
+    targetEmails,
+    selectedEmail,
+    currentContext,
+    resolvedApplySelection,
+    classificationMetaDraft,
+    emailContextMeta,
+    relevantSettings,
+    expected,
+    writeProofs,
+    attachmentStorageOptions,
+    createTicketTitle,
+    currentOutlookTicket,
+  } = args;
+
+  await saveSettings({
+    groups: buildGroupsSettings({
+      storage: {
+        ...DEFAULT_GROUP_STORAGE_SETTINGS,
+        mode: "supabase",
+      },
+      tab: {
+        ...DEFAULT_GROUPS_MODULE_SETTINGS.tab,
+        storageMode: "local_indexeddb",
+        baseFolderPath: "",
+      },
+    }),
+  });
+
+  const intermediateStorage = resolveIntermediateCaseStorage(normalizeGroupsTabSettings({ storageMode: "local_indexeddb", baseFolderPath: "" }));
+  assert(intermediateStorage.mode === "indexeddb", "O modo add-in fallback devia usar IndexedDB como storage intermédio principal.");
+  await intermediateStorage.repository.writeCase(classificationCase);
+
+  const remoteApplyPlan = buildResolvedRemoteApplyExecutionPlan({
+    targetEmails,
+    resolvedApplySelection,
+    currentContext,
+    emailContextMeta: emailContextMeta || new Map(),
+  });
+
+  const baseTicketApply = await executeLegacyBaseTicketApply({
+    remoteApplyPlan,
+    resolvedApplySelection,
+    currentContext,
+    createTicketTitle,
+    currentOutlookTicket: currentOutlookTicket || null,
+    attachmentStorageOptions,
+  });
+
+  let finalTicket = baseTicketApply.finalTicket;
+  for (const targetPlan of remoteApplyPlan.targetPlans) {
+    finalTicket = await executeLegacyRemoteApplyForTarget({
+      targetPlan,
+      resolvedApplySelection,
+      finalTicket,
+      attachmentStorageOptions,
+      skipTicketLink: false,
+    });
+  }
+
+  const projected = projectApplyIntoIntermediateCase({
+    classificationCase,
+    resolvedApplySelection,
+    resolvedCaseTicket: finalTicket,
+    targetEmails,
+    classificationMetaDraft,
+  });
+
+  const selectedEmailPayload = buildRelevantEmailPayloadFromRelatedEmail(selectedEmail);
+  assert(selectedEmailPayload, "Nao foi possivel construir payload de reabertura para o email selecionado.");
+
+  const persisted = await persistAndRefreshClassificationCase({
+    classificationCase,
+    nextClassificationCase: projected.nextClassificationCase,
+    preferredSelectedEmailKey: makeEmailKey(selectedEmail),
+    preferredTargetEmailKeys: targetEmails.map((email) => makeEmailKey(email)),
+    syncClassificationCaseEmails: () => undefined,
+    refreshSelectedEmailContext: async () => getRelatedEmailContext(selectedEmailPayload),
+  });
+
+  const reopenedLocal = await resolveClassificationIntermediateCase({
+    caseId: classificationCase.caseId,
+    anchorEmailKey: classificationCase.anchorEmailKey,
+  });
+  const reopenedServer = await getRelatedEmailContext(selectedEmailPayload);
+  const finalCalls = mock
+    .filter((call) => isCentralFinalWriteCall(call.url, call.method))
+    .map((call) => ({
+      url: call.url,
+      method: call.method,
+      body: parseCallBody(call.body),
+      status: Number(call.responseStatus || 0),
+      responseBody: cloneJson(call.responseBody ?? null),
+    }));
+
+  const actual = {
+    intermediateMode: intermediateStorage.mode,
+    localCase: simplifyIntermediateCase(reopenedLocal.caseValue),
+    serverContext: simplifyRelatedContext(reopenedServer),
+    persistedGroups: mock.getServerSnapshot().groups,
+    persistedTickets: mock.getServerSnapshot().tickets,
+  };
+  const pass = JSON.stringify(expected) === JSON.stringify(actual.serverContext ? {
+    serverContext: actual.serverContext,
+    persistedGroups: actual.persistedGroups,
+    persistedTickets: actual.persistedTickets,
+  } : actual);
+
+  writeProofs.push({
+    scenarioId,
+    title,
+    inputContext: {
+      anchorEmailKey: classificationCase.anchorEmailKey,
+      caseId: classificationCase.caseId,
+      targetEmailKeys: targetEmails.map((email) => makeEmailKey(email)),
+      selectedEmailKey: makeEmailKey(selectedEmail),
+    },
+    relevantSettings,
+    intermediateState: {
+      beforeWrite: simplifyIntermediateCase(classificationCase),
+      afterProjection: simplifyIntermediateCase(projected.nextClassificationCase),
+      reopenedLocalCase: simplifyIntermediateCase(reopenedLocal.caseValue),
+    },
+    finalPayloads: finalCalls.map((call) => ({
+      url: call.url,
+      method: call.method,
+      body: call.body,
+    })),
+    backendResponses: finalCalls.map((call) => ({
+      url: call.url,
+      method: call.method,
+      status: call.status,
+      body: call.responseBody,
+    })),
+    persistedBackendState: mock.getServerSnapshot(),
+    reopenedState: {
+      serverContext: simplifyRelatedContext(reopenedServer),
+      refreshedContext: simplifyRelatedContext(persisted.refreshedContext),
+    },
+    expected,
+    actual,
+    pass,
+    failureReason: pass ? undefined : "Expected vs actual diverged on persisted server state or reopened context.",
+  });
+
+  assert(pass, "A reabertura nao refletiu o estado final esperado do backend central.");
+  return `Persistencia final provada com ${finalCalls.length} writes centrais e reabertura coerente a partir do backend.`;
 }
 
 async function runScenario(
@@ -624,6 +1480,7 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
   await resetSettings();
 
   const scenarios: ValidationScenarioResult[] = [];
+  const writeProofs: FinalWriteProofArtifact[] = [];
 
   await runScenario(scenarios, "settings-groups-roundtrip", "settings", "settings.groups roundtrip sem aliases runtime", async () => {
     const groups = buildGroupsSettings({
@@ -1507,6 +2364,535 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     return "Falha controlada confirmada quando nao existe caso e o storage intermédio esta desligado.";
   });
 
+  await runScenario(scenarios, "classification-server-write-principal-reopen", "classify", "Preparar -> Classificar grava grupo principal no backend e reabre coerente", async () => {
+    return await withMockedFetch(async (mock) => {
+      const email = buildRelatedEmail({
+        emailKey: "item-proof-1",
+        itemId: "item-proof-1",
+        internetMessageId: "<proof-1@example.com>",
+        conversationId: "conv-proof-1",
+        subject: "Proof 1",
+        receivedAtIso: FIXED_NOW_ISO,
+      });
+      const classificationCase = buildPrepareIntermediateCaseFromSources({
+        caseId: "case-proof-1",
+        anchorEmailKey: email.emailKey,
+        conversationId: email.conversationId,
+        outlookEmails: [buildPrepareEmailInput({ emailKey: email.emailKey, subject: email.subject })],
+        serverEmails: [],
+        nowIso: FIXED_NOW_ISO,
+      });
+      const resolvedApplySelection = buildResolvedStudioApplySelection({
+        targetEmails: [email],
+        principalGroupId: "grp-main",
+        principalGroup: buildGroup({ id: "grp-main", name: "Grupo Main" }),
+        referenceGroupIds: [],
+        referenceGroups: [],
+        selectedLabels: [],
+        inheritedLabels: [],
+        selectedLabelStates: {},
+        categorizedLabelNames: [],
+        selectedTicketId: "",
+        selectedSeriesId: "",
+        selectedTicket: null,
+        ticketStatusDraft: "",
+        classificationMetaDraft: {},
+      });
+      return await executeFinalPersistenceProof({
+        mock,
+        scenarioId: "classification-server-write-principal-reopen",
+        title: "Preparar -> Classificar grava grupo principal no backend e reabre coerente",
+        classificationCase,
+        targetEmails: [email],
+        selectedEmail: email,
+        currentContext: {
+          itemId: email.itemId,
+          internetMessageId: email.internetMessageId,
+          conversationId: email.conversationId,
+          subject: email.subject,
+          fromEmail: email.fromEmail,
+          fromName: email.fromName,
+          receivedAtIso: email.receivedAtIso,
+          toRecipients: email.toRecipients,
+          ccRecipients: email.ccRecipients,
+        },
+        resolvedApplySelection,
+        classificationMetaDraft: {},
+        relevantSettings: {
+          intermediate: "indexeddb_addin_primary",
+          final: "server_backend",
+        },
+        expected: {
+          serverContext: {
+            email: {
+              emailKey: "item-proof-1",
+              labels: [],
+              relatedGroups: [{ id: "grp-main", relationKind: "principal" }],
+              attachments: [],
+            },
+            emails: [{
+              emailKey: "item-proof-1",
+              labels: [],
+              relatedGroups: [{ id: "grp-main", relationKind: "principal" }],
+              attachments: [],
+            }],
+            groups: [{ id: "grp-main", name: "grp-main" }],
+            tickets: [],
+          },
+          persistedGroups: [{ id: "grp-main", name: "grp-main", memberEmailKeys: ["item-proof-1"] }],
+          persistedTickets: [],
+        },
+        writeProofs,
+      });
+    });
+  });
+
+  await runScenario(scenarios, "classification-server-write-groups-labels-reopen", "classify", "Grupo principal, referencias e etiquetas reaparecem na reabertura", async () => {
+    return await withMockedFetch(async (mock) => {
+      const email = buildRelatedEmail({
+        emailKey: "item-proof-2",
+        itemId: "item-proof-2",
+        internetMessageId: "<proof-2@example.com>",
+        conversationId: "conv-proof-2",
+        subject: "Proof 2",
+        receivedAtIso: FIXED_NOW_ISO,
+      });
+      const classificationCase = buildPrepareIntermediateCaseFromSources({
+        caseId: "case-proof-2",
+        anchorEmailKey: email.emailKey,
+        conversationId: email.conversationId,
+        outlookEmails: [buildPrepareEmailInput({ emailKey: email.emailKey, subject: email.subject })],
+        serverEmails: [],
+        nowIso: FIXED_NOW_ISO,
+      });
+      const resolvedApplySelection = buildResolvedStudioApplySelection({
+        targetEmails: [email],
+        principalGroupId: "grp-main",
+        principalGroup: buildGroup({ id: "grp-main", name: "Grupo Main" }),
+        referenceGroupIds: ["grp-ref-1", "grp-ref-2"],
+        referenceGroups: [
+          buildGroup({ id: "grp-ref-1", name: "Ref 1" }),
+          buildGroup({ id: "grp-ref-2", name: "Ref 2" }),
+        ],
+        selectedLabels: ["Financeiro", "Urgente"],
+        inheritedLabels: [],
+        selectedLabelStates: { Financeiro: "em_analise" },
+        categorizedLabelNames: ["Financeiro"],
+        selectedTicketId: "",
+        selectedSeriesId: "",
+        selectedTicket: null,
+        ticketStatusDraft: "",
+        classificationMetaDraft: { referenceCategorize: true },
+      });
+      return await executeFinalPersistenceProof({
+        mock,
+        scenarioId: "classification-server-write-groups-labels-reopen",
+        title: "Grupo principal, referencias e etiquetas reaparecem na reabertura",
+        classificationCase,
+        targetEmails: [email],
+        selectedEmail: email,
+        currentContext: {
+          itemId: email.itemId,
+          internetMessageId: email.internetMessageId,
+          conversationId: email.conversationId,
+          subject: email.subject,
+          fromEmail: email.fromEmail,
+          fromName: email.fromName,
+          receivedAtIso: email.receivedAtIso,
+          toRecipients: email.toRecipients,
+          ccRecipients: email.ccRecipients,
+        },
+        resolvedApplySelection,
+        classificationMetaDraft: { referenceCategorize: true },
+        relevantSettings: {
+          intermediate: "indexeddb_addin_primary",
+          final: "server_backend",
+          labels: true,
+        },
+        expected: {
+          serverContext: {
+            email: {
+              emailKey: "item-proof-2",
+              labels: ["Financeiro", "Urgente"],
+              relatedGroups: [
+                { id: "grp-main", relationKind: "principal" },
+                { id: "grp-ref-1", relationKind: "referencia" },
+                { id: "grp-ref-2", relationKind: "referencia" },
+              ],
+              attachments: [],
+            },
+            emails: [{
+              emailKey: "item-proof-2",
+              labels: ["Financeiro", "Urgente"],
+              relatedGroups: [
+                { id: "grp-main", relationKind: "principal" },
+                { id: "grp-ref-1", relationKind: "referencia" },
+                { id: "grp-ref-2", relationKind: "referencia" },
+              ],
+              attachments: [],
+            }],
+            groups: [
+              { id: "grp-main", name: "grp-main" },
+              { id: "grp-ref-1", name: "grp-ref-1" },
+              { id: "grp-ref-2", name: "grp-ref-2" },
+            ],
+            tickets: [],
+          },
+          persistedGroups: [
+            { id: "grp-main", name: "grp-main", memberEmailKeys: ["item-proof-2"] },
+            { id: "grp-ref-1", name: "grp-ref-1", memberEmailKeys: ["item-proof-2"] },
+            { id: "grp-ref-2", name: "grp-ref-2", memberEmailKeys: ["item-proof-2"] },
+          ],
+          persistedTickets: [],
+        },
+        writeProofs,
+      });
+    });
+  });
+
+  await runScenario(scenarios, "classification-server-write-multi-scope-targeted", "classify", "Scope multiplo altera so os alvos e reabre coerente", async () => {
+    return await withMockedFetch(async (mock) => {
+      const emailA = buildRelatedEmail({
+        emailKey: "item-proof-3a",
+        itemId: "item-proof-3a",
+        internetMessageId: "<proof-3a@example.com>",
+        conversationId: "conv-proof-3",
+        subject: "Proof 3A",
+        receivedAtIso: FIXED_NOW_ISO,
+      });
+      const emailB = buildRelatedEmail({
+        emailKey: "item-proof-3b",
+        itemId: "item-proof-3b",
+        internetMessageId: "<proof-3b@example.com>",
+        conversationId: "conv-proof-3",
+        subject: "Proof 3B",
+        receivedAtIso: FIXED_NOW_ISO,
+      });
+      const emailUntouched = buildRelatedEmail({
+        emailKey: "item-proof-3c",
+        itemId: "item-proof-3c",
+        internetMessageId: "<proof-3c@example.com>",
+        conversationId: "conv-proof-3",
+        subject: "Proof 3C",
+        receivedAtIso: FIXED_NOW_ISO,
+        relatedGroups: [{ id: "grp-legacy", name: "Legacy", kind: "custom", relationKind: "principal" }],
+      });
+      mock.serverState.emailsByKey.set(emailUntouched.emailKey || "", cloneJson(emailUntouched));
+      ensureMockGroup(mock.serverState, "grp-legacy", "Legacy");
+      mock.serverState.groupMembersById.get("grp-legacy")?.add(emailUntouched.emailKey || "");
+
+      const classificationCase = buildPrepareIntermediateCaseFromSources({
+        caseId: "case-proof-3",
+        anchorEmailKey: emailA.emailKey,
+        conversationId: emailA.conversationId,
+        outlookEmails: [
+          buildPrepareEmailInput({ emailKey: emailA.emailKey, subject: emailA.subject }),
+          buildPrepareEmailInput({ emailKey: emailB.emailKey, subject: emailB.subject }),
+          buildPrepareEmailInput({ emailKey: emailUntouched.emailKey, subject: emailUntouched.subject }),
+        ],
+        serverEmails: [],
+        nowIso: FIXED_NOW_ISO,
+      });
+      const resolvedApplySelection = buildResolvedStudioApplySelection({
+        targetEmails: [emailA, emailB],
+        principalGroupId: "grp-main",
+        principalGroup: buildGroup({ id: "grp-main", name: "Grupo Main" }),
+        referenceGroupIds: [],
+        referenceGroups: [],
+        selectedLabels: ["Financeiro"],
+        inheritedLabels: [],
+        selectedLabelStates: {},
+        categorizedLabelNames: [],
+        selectedTicketId: "",
+        selectedSeriesId: "",
+        selectedTicket: null,
+        ticketStatusDraft: "",
+        classificationMetaDraft: {},
+      });
+      return await executeFinalPersistenceProof({
+        mock,
+        scenarioId: "classification-server-write-multi-scope-targeted",
+        title: "Scope multiplo altera so os alvos e reabre coerente",
+        classificationCase,
+        targetEmails: [emailA, emailB],
+        selectedEmail: emailA,
+        currentContext: {
+          itemId: emailA.itemId,
+          internetMessageId: emailA.internetMessageId,
+          conversationId: emailA.conversationId,
+          subject: emailA.subject,
+          fromEmail: emailA.fromEmail,
+          fromName: emailA.fromName,
+          receivedAtIso: emailA.receivedAtIso,
+          toRecipients: emailA.toRecipients,
+          ccRecipients: emailA.ccRecipients,
+        },
+        resolvedApplySelection,
+        classificationMetaDraft: {},
+        relevantSettings: {
+          intermediate: "indexeddb_addin_primary",
+          final: "server_backend",
+          multiScope: true,
+        },
+        expected: {
+          serverContext: {
+            email: {
+              emailKey: "item-proof-3a",
+              labels: ["Financeiro"],
+              relatedGroups: [{ id: "grp-main", relationKind: "principal" }],
+              attachments: [],
+            },
+            emails: [
+              {
+                emailKey: "item-proof-3a",
+                labels: ["Financeiro"],
+                relatedGroups: [{ id: "grp-main", relationKind: "principal" }],
+                attachments: [],
+              },
+              {
+                emailKey: "item-proof-3b",
+                labels: ["Financeiro"],
+                relatedGroups: [{ id: "grp-main", relationKind: "principal" }],
+                attachments: [],
+              },
+              {
+                emailKey: "item-proof-3c",
+                labels: [],
+                relatedGroups: [{ id: "grp-legacy", relationKind: "principal" }],
+                attachments: [],
+              },
+            ],
+            groups: [
+              { id: "grp-legacy", name: "Legacy" },
+              { id: "grp-main", name: "grp-main" },
+            ],
+            tickets: [],
+          },
+          persistedGroups: [
+            { id: "grp-legacy", name: "Legacy", memberEmailKeys: ["item-proof-3c"] },
+            { id: "grp-main", name: "grp-main", memberEmailKeys: ["item-proof-3a", "item-proof-3b"] },
+          ],
+          persistedTickets: [],
+        },
+        writeProofs,
+      });
+    });
+  });
+
+  await runScenario(scenarios, "classification-server-write-attachments-reopen", "classify", "Anexos persistem no write final e reabrem por email dono", async () => {
+    return await withMockedFetch(async (mock) => {
+      const email = buildRelatedEmail({
+        emailKey: "item-proof-4",
+        itemId: "item-proof-4",
+        internetMessageId: "<proof-4@example.com>",
+        conversationId: "conv-proof-4",
+        subject: "Proof 4",
+        receivedAtIso: FIXED_NOW_ISO,
+        attachments: [{
+          key: "doc-proof-4",
+          id: "doc-proof-4",
+          name: "doc-proof-4.pdf",
+          contentType: "application/pdf",
+          size: 2048,
+          hasContent: true,
+          content: "ZmFrZQ==",
+          documentState: "processed",
+          isHidden: true,
+        } as RelatedEmailAttachmentFixture],
+      });
+      const classificationCase = buildPrepareIntermediateCaseFromSources({
+        caseId: "case-proof-4",
+        anchorEmailKey: email.emailKey,
+        conversationId: email.conversationId,
+        outlookEmails: [buildPrepareEmailInput({
+          emailKey: email.emailKey,
+          subject: email.subject,
+          attachments: [{ key: "doc-proof-4", name: "doc-proof-4.pdf", hasContent: true, documentState: "processed" }],
+        })],
+        serverEmails: [],
+        nowIso: FIXED_NOW_ISO,
+      });
+      const resolvedApplySelection = buildResolvedStudioApplySelection({
+        targetEmails: [email],
+        principalGroupId: "grp-main",
+        principalGroup: buildGroup({ id: "grp-main", name: "Grupo Main" }),
+        referenceGroupIds: [],
+        referenceGroups: [],
+        selectedLabels: [],
+        inheritedLabels: [],
+        selectedLabelStates: {},
+        categorizedLabelNames: [],
+        selectedTicketId: "",
+        selectedSeriesId: "",
+        selectedTicket: null,
+        ticketStatusDraft: "",
+        classificationMetaDraft: {},
+      });
+      return await executeFinalPersistenceProof({
+        mock,
+        scenarioId: "classification-server-write-attachments-reopen",
+        title: "Anexos persistem no write final e reabrem por email dono",
+        classificationCase,
+        targetEmails: [email],
+        selectedEmail: email,
+        currentContext: {
+          itemId: email.itemId,
+          internetMessageId: email.internetMessageId,
+          conversationId: email.conversationId,
+          subject: email.subject,
+          fromEmail: email.fromEmail,
+          fromName: email.fromName,
+          receivedAtIso: email.receivedAtIso,
+          toRecipients: email.toRecipients,
+          ccRecipients: email.ccRecipients,
+        },
+        resolvedApplySelection,
+        classificationMetaDraft: {},
+        relevantSettings: {
+          intermediate: "indexeddb_addin_primary",
+          final: "server_backend",
+          attachments: true,
+        },
+        attachmentStorageOptions: {
+          attachmentStorageProvider: "cloud",
+          attachmentStorageBasePath: "groups/final",
+        },
+        expected: {
+          serverContext: {
+            email: {
+              emailKey: "item-proof-4",
+              labels: [],
+              relatedGroups: [{ id: "grp-main", relationKind: "principal" }],
+              attachments: [{
+                key: "doc-proof-4",
+                name: "doc-proof-4.pdf",
+                documentState: "processed",
+                isHidden: true,
+                storageProvider: "cloud",
+                storageBasePath: "groups/final",
+              }],
+            },
+            emails: [{
+              emailKey: "item-proof-4",
+              labels: [],
+              relatedGroups: [{ id: "grp-main", relationKind: "principal" }],
+              attachments: [{
+                key: "doc-proof-4",
+                name: "doc-proof-4.pdf",
+                documentState: "processed",
+                isHidden: true,
+                storageProvider: "cloud",
+                storageBasePath: "groups/final",
+              }],
+            }],
+            groups: [{ id: "grp-main", name: "grp-main" }],
+            tickets: [],
+          },
+          persistedGroups: [{ id: "grp-main", name: "grp-main", memberEmailKeys: ["item-proof-4"] }],
+          persistedTickets: [],
+        },
+        writeProofs,
+      });
+    });
+  });
+
+  await runScenario(scenarios, "classification-server-write-ticket-reopen", "classify", "Ticket de Grupos persiste no backend e reaparece na reabertura", async () => {
+    return await withMockedFetch(async (mock) => {
+      const email = buildRelatedEmail({
+        emailKey: "item-proof-5",
+        itemId: "item-proof-5",
+        internetMessageId: "<proof-5@example.com>",
+        conversationId: "conv-proof-5",
+        subject: "Proof 5",
+        receivedAtIso: FIXED_NOW_ISO,
+      });
+      const classificationCase = buildPrepareIntermediateCaseFromSources({
+        caseId: "case-proof-5",
+        anchorEmailKey: email.emailKey,
+        conversationId: email.conversationId,
+        outlookEmails: [buildPrepareEmailInput({ emailKey: email.emailKey, subject: email.subject })],
+        serverEmails: [],
+        nowIso: FIXED_NOW_ISO,
+      });
+      const resolvedApplySelection = buildResolvedStudioApplySelection({
+        targetEmails: [email],
+        principalGroupId: "grp-main",
+        principalGroup: buildGroup({ id: "grp-main", name: "Grupo Main" }),
+        referenceGroupIds: [],
+        referenceGroups: [],
+        selectedLabels: ["Financeiro"],
+        inheritedLabels: [],
+        selectedLabelStates: { Financeiro: "em_analise" },
+        categorizedLabelNames: ["Financeiro"],
+        selectedTicketId: "",
+        selectedSeriesId: "series-proof",
+        selectedTicket: null,
+        ticketStatusDraft: "em_progresso",
+        classificationMetaDraft: { ticketStatusEnabled: true, ticketStatusCategorize: true },
+      });
+      return await executeFinalPersistenceProof({
+        mock,
+        scenarioId: "classification-server-write-ticket-reopen",
+        title: "Ticket de Grupos persiste no backend e reaparece na reabertura",
+        classificationCase,
+        targetEmails: [email],
+        selectedEmail: email,
+        currentContext: {
+          itemId: email.itemId,
+          internetMessageId: email.internetMessageId,
+          conversationId: email.conversationId,
+          subject: email.subject,
+          fromEmail: email.fromEmail,
+          fromName: email.fromName,
+          receivedAtIso: email.receivedAtIso,
+          toRecipients: email.toRecipients,
+          ccRecipients: email.ccRecipients,
+        },
+        resolvedApplySelection,
+        classificationMetaDraft: { ticketStatusEnabled: true, ticketStatusCategorize: true },
+        relevantSettings: {
+          intermediate: "indexeddb_addin_primary",
+          final: "server_backend",
+          tickets: true,
+        },
+        createTicketTitle: "Ticket Proof 5",
+        expected: {
+          serverContext: {
+            email: {
+              emailKey: "item-proof-5",
+              labels: ["Financeiro"],
+              relatedGroups: [{ id: "grp-main", relationKind: "principal" }],
+              attachments: [],
+            },
+            emails: [{
+              emailKey: "item-proof-5",
+              labels: ["Financeiro"],
+              relatedGroups: [{ id: "grp-main", relationKind: "principal" }],
+              attachments: [],
+            }],
+            groups: [{ id: "grp-main", name: "grp-main" }],
+            tickets: [{
+              id: "ticket-1",
+              code: "TK-001",
+              status: "em_progresso",
+              groupIds: ["grp-main"],
+              emailLinked: true,
+            }],
+          },
+          persistedGroups: [{ id: "grp-main", name: "grp-main", memberEmailKeys: ["item-proof-5"] }],
+          persistedTickets: [{
+            id: "ticket-1",
+            code: "TK-001",
+            status: "em_progresso",
+            groupIds: ["grp-main"],
+            emailKeys: ["item-proof-5"],
+          }],
+        },
+        writeProofs,
+      });
+    });
+  });
+
   await runScenario(scenarios, "workset-cloud-roundtrip", "storage", "Workset cloud roundtrip com fetch mockado", async () => {
     await withMockedFetch(async (calls) => {
       const runtime = resolveGroupStorageRuntime({ ...DEFAULT_GROUP_STORAGE_SETTINGS, mode: "supabase" });
@@ -1796,6 +3182,7 @@ export async function runGroupsV1BrowserValidation(): Promise<GroupsBrowserValid
     generatedAtIso: new Date().toISOString(),
     settingsMatrix: GROUPS_SETTINGS_MATRIX,
     scenarios,
+    writeProofs,
     passed: scenarios.length - failed,
     failed,
   };

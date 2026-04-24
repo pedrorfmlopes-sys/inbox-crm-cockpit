@@ -27,6 +27,7 @@ const clientRoot = path.join(repoRoot, "client");
 const clientSrcRoot = path.join(repoRoot, "client", "src");
 const outputDir = path.join(repoRoot, "output", "playwright");
 const reportPath = path.join(outputDir, "groups-v1-validation-report.json");
+const writeProofsPath = path.join(outputDir, "groups-v1-final-write-proofs.json");
 const screenshotPath = path.join(outputDir, "groups-v1-validation-page.png");
 const studioScreenshotPath = path.join(outputDir, "groups-v1-classification-smoke.png");
 const settingsScreenshotPath = path.join(outputDir, "groups-v1-settings-surface-smoke.png");
@@ -433,6 +434,7 @@ async function main() {
 
     const browserReport = browserValidation?.report || {};
     const settingsMatrixWithStatus = decorateSettingsMatrix(browserReport?.settingsMatrix || []);
+    const writeProofs = Array.isArray(browserReport?.writeProofs) ? browserReport.writeProofs : [];
     const internalScenarioSummary = {
       total: Number(browserReport?.scenarios?.length || 0),
       passed: Number(browserReport?.passed || 0),
@@ -443,6 +445,12 @@ async function main() {
       pending: Array.isArray(browserReport?.scenarios)
         ? browserReport.scenarios.filter((scenario) => scenario.status === "pending").length
         : 0,
+    };
+    const finalWriteProofSummary = {
+      total: writeProofs.length,
+      passed: writeProofs.filter((artifact) => artifact?.pass === true).length,
+      failed: writeProofs.filter((artifact) => artifact?.pass !== true).length,
+      scenarioIds: writeProofs.map((artifact) => artifact?.scenarioId).filter(Boolean),
     };
 
     const report = {
@@ -463,6 +471,8 @@ async function main() {
       legacyAliasAudit,
       settingsMatrixWithStatus,
       internalScenarioSummary,
+      finalWriteProofSummary,
+      writeProofs,
       browserValidation,
       classificationSmoke,
       groupsSettingsSurfaceSmoke,
@@ -470,7 +480,9 @@ async function main() {
     };
 
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf-8");
+    fs.writeFileSync(writeProofsPath, JSON.stringify(writeProofs, null, 2), "utf-8");
     console.log(`GROUPS_V1_VALIDATION_REPORT:${reportPath}`);
+    console.log(`GROUPS_V1_FINAL_WRITE_PROOFS:${writeProofsPath}`);
     console.log(JSON.stringify(report, null, 2));
     const hasBrowserFailures = Number(browserReport?.failed || 0) > 0;
     const serverStorageOk = Boolean(
@@ -487,7 +499,14 @@ async function main() {
       && !serverStorage?.publishedArchitecture?.results?.picker?.supported
       && !serverStorage?.publishedArchitecture?.results?.pickerInvoked
     );
-    if (hasBrowserFailures || !classificationSmoke?.ok || !groupsSettingsSurfaceSmoke?.ok || !legacyAliasAudit.ok || !serverStorageOk) {
+    if (
+      hasBrowserFailures
+      || finalWriteProofSummary.failed > 0
+      || !classificationSmoke?.ok
+      || !groupsSettingsSurfaceSmoke?.ok
+      || !legacyAliasAudit.ok
+      || !serverStorageOk
+    ) {
       process.exitCode = 1;
     }
   } finally {

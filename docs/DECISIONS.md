@@ -114,3 +114,19 @@
   - estado transitório de interface
   - fallback técnico temporário quando nem pasta nem IndexedDB estão disponíveis
 - a gravação final continua a obedecer a `settings.groups.storage`; o intermédio é apenas a ponte local do caso
+# DECISIONS
+
+## Abril 2026 - Grupos v1: persistencia final valida-se contra o backend central, nao contra o intermédio local
+- **Decisao**:
+  - no perimetro interno de `Groups`, o storage local do add-in e o `IntermediateCase` existem apenas como ponte de `Preparar`
+  - a persistencia final do fluxo de `Classificar` considera-se fechada apenas quando o write final passa pelo backend central (`/api/links/*`) e a reabertura consegue ler esse estado persistido
+- **Implicacao de validacao**:
+  - qualquer prova interna do fluxo `Preparar -> Classificar -> reabertura` tem de registar, por cenario:
+    - payload final enviado
+    - resposta do backend
+    - estado persistido no backend
+    - estado lido depois na reabertura
+    - comparacao `expected vs actual`
+- **Guardrail**:
+  - o add-in/local nao pode ser vendido como fonte final so porque a projecao local continua coerente depois do apply
+  - o harness de `Groups` falha se alguma prova de persistencia final divergir
