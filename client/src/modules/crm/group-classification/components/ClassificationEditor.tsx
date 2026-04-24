@@ -29,6 +29,10 @@ export interface ClassificationEditorProps {
   exactPrincipalSearchGroup: LinkGroupEntry | null;
   principalSearchResults: LinkGroupEntry[];
   principalGroup: LinkGroupEntry | null;
+  groupStateEnabled: boolean;
+  groupStateOptions: StateOption[];
+  effectivePrincipalGroupState: string;
+  updatePrincipalGroupStateDraft: (status: string) => void;
   suggestedLabelSeeds: string[];
   selectedLabels: string[];
   applySuggestedLabel: (label: string) => void;
@@ -42,6 +46,7 @@ export interface ClassificationEditorProps {
   selectedLabelSharedStatus: string;
   updateLabelDraft: (label: string, patch: Partial<LabelDraft>) => void;
   labelDrafts: Record<string, LabelDraft>;
+  labelStateEnabled: boolean;
   labelStateOptions: StateOption[];
   normalizedTicketSearch: string;
   ticketSearchResults: GroupTicketEntry[];
@@ -61,6 +66,7 @@ export interface ClassificationEditorProps {
   setCreateTicketTitle: (val: string) => void;
   ticketStatusDraft: string;
   setTicketStatusDraft: (status: string) => void;
+  ticketStateEnabled: boolean;
   ticketStateOptions: StateOption[];
   effectiveTicketStatus: string | undefined;
   ticketStatusLabel: string;
@@ -75,6 +81,10 @@ export interface ClassificationEditorProps {
   exactReferenceSearchGroup: LinkGroupEntry | null;
   referenceSearchResults: LinkGroupEntry[];
   referenceGroupIds: string[];
+  referenceStateEnabled: boolean;
+  referenceStateOptions: StateOption[];
+  referenceGroupStateDrafts: Record<string, string>;
+  updateReferenceGroupStateDraft: (groupId: string, status: string) => void;
   actionBusy: boolean;
 }
 
@@ -95,6 +105,10 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
     exactPrincipalSearchGroup,
     principalSearchResults,
     principalGroup,
+    groupStateEnabled,
+    groupStateOptions,
+    effectivePrincipalGroupState,
+    updatePrincipalGroupStateDraft,
     suggestedLabelSeeds,
     selectedLabels,
     applySuggestedLabel,
@@ -108,6 +122,7 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
     selectedLabelSharedStatus,
     updateLabelDraft,
     labelDrafts,
+    labelStateEnabled,
     labelStateOptions,
     normalizedTicketSearch,
     ticketSearchResults,
@@ -127,6 +142,7 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
     setCreateTicketTitle,
     ticketStatusDraft,
     setTicketStatusDraft,
+    ticketStateEnabled,
     ticketStateOptions,
     effectiveTicketStatus,
     ticketStatusLabel,
@@ -141,6 +157,10 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
     exactReferenceSearchGroup,
     referenceSearchResults,
     referenceGroupIds,
+    referenceStateEnabled,
+    referenceStateOptions,
+    referenceGroupStateDrafts,
+    updateReferenceGroupStateDraft,
     ...rest
   } = props;
 
@@ -262,7 +282,25 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
         </div>
         {classificationLayoutMode === "advanced" ? (
           <div style={S.editorBlock}>
-            <div style={S.cardMeta}>A categorizacao Outlook deixou de ser configurada aqui. O editor usa apenas o estado real do grupo selecionado.</div>
+            <div style={S.editorBlockTitle}>Estado do grupo</div>
+            {!groupStateEnabled ? (
+              <div style={S.cardMeta}>O seletor fica oculto porque `settings.groups.groups.states.enabled` esta desligado.</div>
+            ) : groupStateOptions.length ? (
+              <label style={S.field}>
+                <span style={S.cardMeta}>Estados permitidos por settings</span>
+                <select
+                  style={S.select}
+                  value={effectivePrincipalGroupState}
+                  onChange={(event) => updatePrincipalGroupStateDraft(String(event.target.value || "").trim())}
+                  disabled={!principalGroupId}
+                >
+                  <option value="">Sem estado</option>
+                  {groupStateOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+            ) : (
+              <div style={S.cardMeta}>Nao existem estados configurados em `settings.groups.groups.states`.</div>
+            )}
           </div>
         ) : null}
       </div>
@@ -345,7 +383,9 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
         {classificationLayoutMode === "advanced" ? (
           <div style={S.editorBlock}>
             <div style={S.editorBlockTitle}>Estado</div>
-            {labelStateOptions.length ? (
+            {!labelStateEnabled ? (
+              <div style={S.cardMeta}>O seletor fica oculto porque `settings.groups.labels.states.enabled` esta desligado.</div>
+            ) : labelStateOptions.length ? (
               <label style={S.field}>
                 <span style={S.cardMeta}>Estado das etiquetas selecionadas</span>
                 <select
@@ -440,7 +480,9 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
         {classificationLayoutMode === "advanced" ? (
           <div style={S.editorBlock}>
             <div style={S.editorBlockTitle}>Estado do ticket</div>
-            {ticketStateOptions.length ? (
+            {!ticketStateEnabled ? (
+              <div style={S.cardMeta}>O seletor fica oculto porque `settings.groups.tickets.states.enabled` esta desligado.</div>
+            ) : ticketStateOptions.length ? (
               <label style={S.field}>
                 <span style={S.cardMeta}>Estado disponivel em settings</span>
                 <select style={S.select} value={ticketStatusDraft} onChange={(event) => setTicketStatusDraft(event.target.value)}>
@@ -545,7 +587,32 @@ const ClassificationEditor: React.FC<ClassificationEditorProps & React.HTMLAttri
           ) : null}
         </div>
         <div style={S.editorBlock}>
-          <div style={S.cardMeta}>As referencias usam apenas o estado real dos grupos ligados e as definicoes centrais em `settings.groups.references.states`.</div>
+          <div style={S.editorBlockTitle}>Estado por referencia</div>
+          {!referenceStateEnabled ? (
+            <div style={S.cardMeta}>Os seletores ficam ocultos porque `settings.groups.references.states.enabled` esta desligado.</div>
+          ) : referenceStateOptions.length ? (
+            referenceGroups.length ? (
+              <div style={S.editorAdvancedFieldGrid}>
+                {referenceGroups.map((group) => (
+                  <label key={group.id} style={S.field}>
+                    <span style={S.cardMeta}>{group.name || group.id}</span>
+                    <select
+                      style={S.select}
+                      value={referenceGroupStateDrafts[group.id] || ""}
+                      onChange={(event) => updateReferenceGroupStateDraft(group.id, String(event.target.value || "").trim())}
+                    >
+                      <option value="">Sem estado</option>
+                      {referenceStateOptions.map((option) => <option key={`${group.id}-${option.value}`} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div style={S.cardMeta}>Seleciona primeiro pelo menos uma referencia.</div>
+            )
+          ) : (
+            <div style={S.cardMeta}>Nao existem estados configurados em `settings.groups.references.states`.</div>
+          )}
         </div>
       </div>
     );

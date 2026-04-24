@@ -13,6 +13,7 @@ import {
 import {
   DEFAULT_GROUPS_MODULE_SETTINGS,
   normalizeGroupsModuleSettings,
+  type GroupStateCatalogSettings,
   type GroupStateDefinition,
   type GroupLabelCatalogEntry,
   type GroupOutlookCategorySettings,
@@ -94,6 +95,7 @@ export type Crm2OdooLayoutTarget = "project" | "lead" | "task" | "ticket";
 export type { GroupStorageMode, GroupStorageProvider, GroupStorageSettings };
 export type { GroupsTabSettings };
 export type {
+  GroupStateCatalogSettings,
   GroupStateDefinition,
   GroupLabelCatalogEntry,
   GroupOutlookCategorySettings,

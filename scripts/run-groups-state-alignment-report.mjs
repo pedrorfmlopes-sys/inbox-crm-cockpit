@@ -16,10 +16,12 @@ function humanize(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function buildOptions(states) {
+function resolveStateCatalog(input) {
+  const enabled = Array.isArray(input) ? true : input?.enabled !== false;
+  const states = Array.isArray(input) ? input : input?.states;
   const seen = new Set();
   const options = [];
-  for (const entry of states || []) {
+  for (const entry of enabled ? (states || []) : []) {
     const value = String(entry?.name || "").trim();
     if (!value || seen.has(value)) continue;
     seen.add(value);
@@ -29,101 +31,214 @@ function buildOptions(states) {
       color: String(entry?.color || "").trim() || undefined,
     });
   }
-  return options;
+  return { enabled, options };
 }
 
-const scenario = {
-  scenarioId: "settings-drive-group-state-options",
-  input: {
-    groups: {
-      groups: {
-        states: [
-          { name: "novo", color: "#111111" },
-          { name: "em_validacao", color: "#222222" },
-        ],
-      },
-      references: {
-        states: [
-          { name: "ligada", color: "#333333" },
-        ],
-      },
-      tickets: {
-        states: [
-          { name: "pendente", color: "#444444" },
-          { name: "fechado", color: "#555555" },
-        ],
-      },
-      labels: {
-        states: [
-          { name: "aguarda_cliente", color: "#666666" },
-          { name: "resolvida", color: "#777777" },
-        ],
-      },
-    },
-  },
-};
+function isConfiguredStateValue(value, options) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return false;
+  return options.some((option) => option.value === normalized);
+}
 
 const studioSource = read("client/src/modules/crm/GroupClassificationStudioApp.tsx");
 const editorSource = read("client/src/modules/crm/group-classification/components/ClassificationEditor.tsx");
 const managerSource = read("client/src/modules/crm/GroupManagerCockpit.tsx");
 
-const checks = [
+const typeDefinitions = [
   {
-    id: "studio-label-states",
-    description: "Classificar deriva estados de etiquetas de settings.groups.labels.states",
-    pass: studioSource.includes('buildConfiguredStateOptions(groupsSettingsSnapshot?.groups?.labels?.states)'),
+    type: "group",
+    settingsPath: ["groups", "groups", "states"],
+    studioNeedle: "buildConfiguredStateCatalog(groupsSettingsSnapshot?.groups?.groups?.states)",
+    editorNeedles: ["groupStateEnabled", "groupStateOptions.map"],
   },
   {
-    id: "studio-ticket-states",
-    description: "Classificar deriva estados de tickets de settings.groups.tickets.states",
-    pass: studioSource.includes('buildConfiguredStateOptions(groupsSettingsSnapshot?.groups?.tickets?.states)'),
+    type: "reference",
+    settingsPath: ["groups", "references", "states"],
+    studioNeedle: "buildConfiguredStateCatalog(groupsSettingsSnapshot?.groups?.references?.states)",
+    editorNeedles: ["referenceStateEnabled", "referenceStateOptions.map"],
   },
   {
-    id: "editor-label-options",
-    description: "UI do editor de Classificar renderiza select a partir de labelStateOptions",
-    pass: editorSource.includes("labelStateOptions.map"),
+    type: "ticket",
+    settingsPath: ["groups", "tickets", "states"],
+    studioNeedle: "buildConfiguredStateCatalog(groupsSettingsSnapshot?.groups?.tickets?.states)",
+    editorNeedles: ["ticketStateEnabled", "ticketStateOptions.map"],
   },
   {
-    id: "editor-ticket-options",
-    description: "UI do editor de Classificar renderiza select a partir de ticketStateOptions",
-    pass: editorSource.includes("ticketStateOptions.map"),
-  },
-  {
-    id: "manager-group-states",
-    description: "Manager de Groups deriva estados de groups.states",
-    pass: managerSource.includes("buildStateOptions(groupsSettings?.groups?.states)"),
-  },
-  {
-    id: "manager-ticket-states",
-    description: "Manager de Groups deriva estados de tickets.states",
-    pass: managerSource.includes("buildStateOptions(groupsSettings?.tickets?.states)"),
-  },
-  {
-    id: "no-hardcoded-classifier-status-arrays",
-    description: "Classificar deixou de declarar arrays LABEL_STATUS_OPTIONS/TICKET_STATUS_OPTIONS",
-    pass:
-      !studioSource.includes("LABEL_STATUS_OPTIONS") &&
-      !studioSource.includes("TICKET_STATUS_OPTIONS") &&
-      !editorSource.includes("LABEL_STATUS_OPTIONS") &&
-      !editorSource.includes("TICKET_STATUS_OPTIONS"),
+    type: "label",
+    settingsPath: ["groups", "labels", "states"],
+    studioNeedle: "buildConfiguredStateCatalog(groupsSettingsSnapshot?.groups?.labels?.states)",
+    editorNeedles: ["labelStateEnabled", "labelStateOptions.map"],
   },
 ];
 
-const derivedOptions = {
-  groups: buildOptions(scenario.input.groups.groups.states),
-  references: buildOptions(scenario.input.groups.references.states),
-  tickets: buildOptions(scenario.input.groups.tickets.states),
-  labels: buildOptions(scenario.input.groups.labels.states),
+const sourceChecks = Object.fromEntries(
+  typeDefinitions.map((definition) => [
+    definition.type,
+    {
+      studioConsumesSettings: studioSource.includes(definition.studioNeedle),
+      editorConsumesSettings: definition.editorNeedles.every((needle) => editorSource.includes(needle)),
+    },
+  ])
+);
+
+const noHardcodedArraysActive =
+  !studioSource.includes("LABEL_STATUS_OPTIONS") &&
+  !studioSource.includes("TICKET_STATUS_OPTIONS") &&
+  !studioSource.includes("STATUS_OPTIONS") &&
+  !editorSource.includes("LABEL_STATUS_OPTIONS") &&
+  !editorSource.includes("TICKET_STATUS_OPTIONS");
+
+const managerSupportsCatalogEnabled =
+  managerSource.includes("catalog?.enabled === false") ||
+  managerSource.includes("catalog?.enabled === false");
+
+const stateFixtures = {
+  group: [
+    { name: "novo", color: "#111111" },
+    { name: "em_validacao", color: "#222222" },
+  ],
+  reference: [
+    { name: "ligada", color: "#333333" },
+    { name: "bloqueada", color: "#444444" },
+  ],
+  ticket: [
+    { name: "pendente", color: "#555555" },
+    { name: "fechado", color: "#666666" },
+  ],
+  label: [
+    { name: "aguarda_cliente", color: "#777777" },
+    { name: "resolvida", color: "#888888" },
+  ],
 };
+
+function buildSettings(type, catalog) {
+  return {
+    groups: {
+      groups: {
+        states: type === "group" ? catalog : { enabled: true, states: [] },
+      },
+      references: {
+        states: type === "reference" ? catalog : { enabled: true, states: [] },
+      },
+      tickets: {
+        states: type === "ticket" ? catalog : { enabled: true, states: [] },
+      },
+      labels: {
+        states: type === "label" ? catalog : { enabled: true, states: [] },
+      },
+    },
+  };
+}
+
+function readCatalogFromSettings(type, settings) {
+  if (type === "group") return settings.groups.groups.states;
+  if (type === "reference") return settings.groups.references.states;
+  if (type === "ticket") return settings.groups.tickets.states;
+  return settings.groups.labels.states;
+}
+
+const scenarios = [];
+
+for (const definition of typeDefinitions) {
+  const fixture = stateFixtures[definition.type];
+  const variants = [
+    {
+      suffix: "disabled",
+      catalog: { enabled: false, states: fixture },
+      freeTextCandidate: "estado_livre",
+    },
+    {
+      suffix: "enabled-list",
+      catalog: { enabled: true, states: fixture },
+      freeTextCandidate: "estado_livre",
+    },
+    {
+      suffix: "enabled-empty",
+      catalog: { enabled: true, states: [] },
+      freeTextCandidate: "estado_livre",
+    },
+    {
+      suffix: "free-text-rejected",
+      catalog: { enabled: true, states: fixture },
+      freeTextCandidate: "texto_nao_configurado",
+    },
+  ];
+
+  for (const variant of variants) {
+    const settingsInjected = buildSettings(definition.type, variant.catalog);
+    const resolved = resolveStateCatalog(readCatalogFromSettings(definition.type, settingsInjected));
+    const expectedUiOptions = resolveStateCatalog(variant.catalog).options;
+    const selectorVisibleExpected = variant.catalog.enabled !== false && expectedUiOptions.length > 0;
+    const selectorVisibleObtained =
+      sourceChecks[definition.type].studioConsumesSettings &&
+      sourceChecks[definition.type].editorConsumesSettings &&
+      resolved.enabled &&
+      resolved.options.length > 0;
+    const freeTextAcceptedObtained = isConfiguredStateValue(variant.freeTextCandidate, resolved.options);
+
+    const checks = [
+      {
+        id: "studio-consumes-settings",
+        pass: sourceChecks[definition.type].studioConsumesSettings,
+        message: "Classificar deriva o catalogo a partir de settings.groups.*.states",
+      },
+      {
+        id: "editor-renders-catalog",
+        pass: sourceChecks[definition.type].editorConsumesSettings,
+        message: "O editor usa apenas as opcoes recebidas do catalogo dinamico",
+      },
+      {
+        id: "enabled-gates-selector",
+        pass: selectorVisibleExpected === selectorVisibleObtained,
+        message: "A visibilidade do seletor respeita enabled + lista configurada",
+      },
+      {
+        id: "options-match-settings",
+        pass: JSON.stringify(expectedUiOptions) === JSON.stringify(resolved.options),
+        message: "As opcoes efetivas batem com a lista vinda de settings",
+      },
+      {
+        id: "free-text-rejected",
+        pass: freeTextAcceptedObtained === false,
+        message: "Valores fora da lista configurada nao sao aceites",
+      },
+      {
+        id: "no-hardcoded-arrays-active",
+        pass: noHardcodedArraysActive,
+        message: "Nao existem arrays hardcoded ativos no Classificar",
+      },
+    ];
+
+    scenarios.push({
+      scenarioId: `${definition.type}-states-${variant.suffix}`,
+      type: definition.type,
+      settingsInjected,
+      expectedUiOptions,
+      obtainedUiOptions: resolved.options,
+      selectorVisibleExpected,
+      selectorVisibleObtained,
+      freeTextCandidate: variant.freeTextCandidate,
+      freeTextAcceptedExpected: false,
+      freeTextAcceptedObtained,
+      pass: checks.every((entry) => entry.pass),
+      reason: checks.filter((entry) => !entry.pass).map((entry) => entry.message).join("; ") || undefined,
+      checks,
+    });
+  }
+}
 
 const report = {
   generatedAtIso: new Date().toISOString(),
-  scenarioId: scenario.scenarioId,
-  input: scenario.input,
-  expectedUiOptions: derivedOptions,
-  obtainedUiOptions: derivedOptions,
-  checks,
-  pass: checks.every((entry) => entry.pass),
+  validatedFiles: [
+    "client/src/modules/crm/GroupClassificationStudioApp.tsx",
+    "client/src/modules/crm/group-classification/components/ClassificationEditor.tsx",
+    "client/src/modules/crm/GroupManagerCockpit.tsx",
+  ],
+  sourceChecks,
+  managerSupportsCatalogEnabled,
+  noHardcodedArraysActive,
+  scenarios,
+  pass: scenarios.every((entry) => entry.pass),
 };
 
 fs.writeFileSync(

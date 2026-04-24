@@ -25,7 +25,12 @@ export type GroupStateDefinition = {
 };
 
 export type GroupStateCatalogSettings = {
+  enabled: boolean;
   states: GroupStateDefinition[];
+};
+
+export type GroupEntityStateSettings = {
+  states: GroupStateCatalogSettings;
 };
 
 export type GroupLabelCatalogEntry = {
@@ -43,18 +48,18 @@ export type GroupOutlookCategorySettings = {
 export type GroupsModuleSettings = {
   storage: GroupStorageSettings;
   tab: GroupsTabSettings;
-  groups: GroupStateCatalogSettings;
-  references: GroupStateCatalogSettings;
+  groups: GroupEntityStateSettings;
+  references: GroupEntityStateSettings;
   labels: {
     managerEnabled: boolean;
     catalog: GroupLabelCatalogEntry[];
     favoriteIds: string[];
-    states: GroupStateDefinition[];
+    states: GroupStateCatalogSettings;
   };
   tickets: {
     enabled: boolean;
     ui: GroupTicketUiSettings;
-    states: GroupStateDefinition[];
+    states: GroupStateCatalogSettings;
   };
   outlookCategories: GroupOutlookCategorySettings;
 };
@@ -128,23 +133,35 @@ export const DEFAULT_GROUPS_MODULE_SETTINGS: GroupsModuleSettings = {
     ...DEFAULT_GROUPS_TAB_SETTINGS,
   },
   groups: {
-    states: [...DEFAULT_GROUP_ENTITY_STATES],
+    states: {
+      enabled: true,
+      states: [...DEFAULT_GROUP_ENTITY_STATES],
+    },
   },
   references: {
-    states: [...DEFAULT_REFERENCE_ENTITY_STATES],
+    states: {
+      enabled: true,
+      states: [...DEFAULT_REFERENCE_ENTITY_STATES],
+    },
   },
   labels: {
     managerEnabled: true,
     catalog: [],
     favoriteIds: [],
-    states: [...DEFAULT_LABEL_ENTITY_STATES],
+    states: {
+      enabled: true,
+      states: [...DEFAULT_LABEL_ENTITY_STATES],
+    },
   },
   tickets: {
     enabled: true,
     ui: {
       ...DEFAULT_GROUP_TICKET_UI_SETTINGS,
     },
-    states: [...DEFAULT_TICKET_ENTITY_STATES],
+    states: {
+      enabled: true,
+      states: [...DEFAULT_TICKET_ENTITY_STATES],
+    },
   },
   outlookCategories: {
     ...DEFAULT_GROUP_OUTLOOK_CATEGORY_SETTINGS,
@@ -174,18 +191,20 @@ function normalizeGroupStateDefinition(value: unknown): GroupStateDefinition | n
 
 function normalizeGroupStateCatalogSettings(
   input: unknown,
-  fallback: GroupStateDefinition[]
+  fallback: GroupStateCatalogSettings
 ): GroupStateCatalogSettings {
   const seen = new Map<string, GroupStateDefinition>();
-  for (const entry of Array.isArray(fallback) ? fallback : []) {
+  const fallbackStates = Array.isArray(fallback?.states) ? fallback.states : [];
+  for (const entry of fallbackStates) {
     const normalized = normalizeGroupStateDefinition(entry);
     if (!normalized) continue;
     seen.set(normalized.name, normalized);
   }
-  const rawStates =
+  const record =
     input && typeof input === "object" && !Array.isArray(input)
-      ? (input as Record<string, unknown>).states
-      : input;
+      ? (input as Record<string, unknown>)
+      : null;
+  const rawStates = record ? record.states : input;
   for (const entry of Array.isArray(rawStates) ? rawStates : []) {
     const normalized = normalizeGroupStateDefinition(entry);
     if (!normalized) continue;
@@ -196,6 +215,7 @@ function normalizeGroupStateCatalogSettings(
     });
   }
   return {
+    enabled: typeof record?.enabled === "boolean" ? record.enabled : fallback.enabled !== false,
     states: Array.from(seen.values()),
   };
 }
@@ -271,19 +291,25 @@ export function getGroupLabelCatalogLabels(
 }
 
 export function getGroupStateCatalogLabels(
-  catalog: GroupStateDefinition[] | null | undefined
+  catalog: GroupStateCatalogSettings | GroupStateDefinition[] | null | undefined
 ): string[] {
-  return normalizeGroupStateCatalogSettings(catalog || [], []).states.map((entry) => entry.name);
+  return normalizeGroupStateCatalogSettings(catalog || null, {
+    enabled: true,
+    states: [],
+  }).states.map((entry) => entry.name);
 }
 
 export function findGroupStateDefinition(
-  catalog: GroupStateDefinition[] | null | undefined,
+  catalog: GroupStateCatalogSettings | GroupStateDefinition[] | null | undefined,
   state: string
 ): GroupStateDefinition | null {
   const normalized = normalizeGroupStateName(state);
   if (!normalized) return null;
   return (
-    normalizeGroupStateCatalogSettings(catalog || [], []).states.find(
+    normalizeGroupStateCatalogSettings(catalog || null, {
+      enabled: true,
+      states: [],
+    }).states.find(
       (entry) => entry.name === normalized
     ) || null
   );
@@ -320,11 +346,11 @@ export function normalizeGroupsModuleSettings(
     ...(next.tab || {}),
   });
   const groups = normalizeGroupStateCatalogSettings(
-    next.groups,
+    next.groups?.states ?? next.groups,
     fallback.groups.states
   );
   const references = normalizeGroupStateCatalogSettings(
-    next.references,
+    next.references?.states ?? next.references,
     fallback.references.states
   );
   const labels = {
@@ -344,7 +370,7 @@ export function normalizeGroupsModuleSettings(
     states: normalizeGroupStateCatalogSettings(
       next.labels?.states,
       fallback.labels.states
-    ).states,
+    ),
   };
   const tickets = {
     enabled:
@@ -361,7 +387,7 @@ export function normalizeGroupsModuleSettings(
     states: normalizeGroupStateCatalogSettings(
       next.tickets?.states,
       fallback.tickets.states
-    ).states,
+    ),
   };
   const outlookCategories = normalizeGroupOutlookCategorySettings({
     ...fallback.outlookCategories,
@@ -372,8 +398,12 @@ export function normalizeGroupsModuleSettings(
   return {
     storage,
     tab,
-    groups,
-    references,
+    groups: {
+      states: groups,
+    },
+    references: {
+      states: references,
+    },
     labels,
     tickets,
     outlookCategories,

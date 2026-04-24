@@ -1,5 +1,37 @@
 # HANDOFF
 
+## Grupos v1: micro-ronda de fecho da Fase 1 alinha `Grupo` e `Referencia` com `states.enabled` no `Classificar` (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - o `Classificar` passa a expor seletores de estado tambem para:
+    - `Grupo`, consumindo apenas `settings.groups.groups.states`
+    - `Referencia`, consumindo apenas `settings.groups.references.states`
+  - `Etiqueta` e `Ticket` ficam alinhados com a mesma regra de gating:
+    - o seletor so aparece quando `states.enabled = true`
+    - as opcoes saem apenas da lista configurada
+    - texto livre continua rejeitado
+  - `outlookCategories.ts` e `office.ts` ficam intactos; esta ronda fecha apenas a superficie/configuracao do `Classificar`
+- **Ajuste estrutural nos settings canonicos**:
+  - `settings.groups.*.states` passa a aceitar o catalogo com:
+    - `enabled`
+    - `states`
+  - a normalizacao continua a aceitar o formato array anterior como compatibilidade transitória
+- **Persistencia/local draft nesta fase**:
+  - o `Classificar` guarda os drafts de estado de `Grupo` e `Referencia` em `classificationMetaDraft`
+  - isto fecha a superficie e a reidratacao local sem introduzir ainda o motor v2 de categorizacao
+- **Harness reforcado**:
+  - `scripts/run-groups-state-alignment-report.mjs` passa a gerar cenarios por tipo:
+    - `group`
+    - `reference`
+    - `ticket`
+    - `label`
+  - cada tipo fica provado para:
+    - `enabled = false`
+    - `enabled = true` com lista
+    - `enabled = true` sem estados
+    - rejeicao de texto livre
+- **Artefacto atualizado**:
+  - `output/playwright/groups-state-alignment-report.json`
+
 ## Grupos v1: o fluxo `Preparar -> Classificar -> persistencia final no servidor` fica provado com artefactos deterministas (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - o modo fallback do add-in fica provado internamente sem ambiguidade:

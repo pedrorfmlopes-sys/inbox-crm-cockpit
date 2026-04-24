@@ -164,7 +164,7 @@ export const GROUPS_SETTINGS_MATRIX: GroupsSettingsMatrixEntry[] = [
   {
     setting: "settings.groups.groups.states / references.states / tickets.states / labels.states",
     module: "modules/crm/GroupClassificationStudioApp.tsx + modules/crm/GroupManagerCockpit.tsx",
-    expectedEffect: "Define todas as opcoes de estado mostradas no Classificar e no manager de Groups, sem estados hardcoded locais.",
+    expectedEffect: "Define e gateia por enabled todas as opcoes de estado mostradas no Classificar e no manager de Groups, sem estados hardcoded locais.",
     testId: "settings-drive-group-state-options",
     linkage: "runtime",
   },

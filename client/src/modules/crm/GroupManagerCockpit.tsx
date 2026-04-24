@@ -37,6 +37,7 @@ import {
   normalizeGroupLabelCatalog,
   saveSettings,
   type GroupLabelCatalogEntry,
+  type GroupStateCatalogSettings,
   type GroupStateDefinition,
 } from "@/settings";
 import { buildGroupsSettingsPatch } from "@/modules/crm/groups-v1/settings/groupsModuleSettings";
@@ -124,7 +125,14 @@ type StateOption = {
   color?: string;
 };
 
-function buildStateOptions(states: GroupStateDefinition[] | null | undefined): StateOption[] {
+function buildStateOptions(
+  catalog: GroupStateCatalogSettings | GroupStateDefinition[] | null | undefined
+): StateOption[] {
+  const states = Array.isArray(catalog)
+    ? catalog
+    : catalog?.enabled === false
+      ? []
+      : catalog?.states;
   const seen = new Set<string>();
   const options: StateOption[] = [];
   for (const entry of states || []) {

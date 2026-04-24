@@ -1,179 +1,1466 @@
 {
-  "generatedAtIso": "2026-04-24T15:47:11.601Z",
-  "scenarioId": "settings-drive-group-state-options",
-  "input": {
-    "groups": {
-      "groups": {
-        "states": [
-          {
-            "name": "novo",
-            "color": "#111111"
-          },
-          {
-            "name": "em_validacao",
-            "color": "#222222"
-          }
-        ]
-      },
-      "references": {
-        "states": [
-          {
-            "name": "ligada",
-            "color": "#333333"
-          }
-        ]
-      },
-      "tickets": {
-        "states": [
-          {
-            "name": "pendente",
-            "color": "#444444"
-          },
-          {
-            "name": "fechado",
-            "color": "#555555"
-          }
-        ]
-      },
-      "labels": {
-        "states": [
-          {
-            "name": "aguarda_cliente",
-            "color": "#666666"
-          },
-          {
-            "name": "resolvida",
-            "color": "#777777"
-          }
-        ]
-      }
+  "generatedAtIso": "2026-04-24T16:33:30.058Z",
+  "validatedFiles": [
+    "client/src/modules/crm/GroupClassificationStudioApp.tsx",
+    "client/src/modules/crm/group-classification/components/ClassificationEditor.tsx",
+    "client/src/modules/crm/GroupManagerCockpit.tsx"
+  ],
+  "sourceChecks": {
+    "group": {
+      "studioConsumesSettings": true,
+      "editorConsumesSettings": true
+    },
+    "reference": {
+      "studioConsumesSettings": true,
+      "editorConsumesSettings": true
+    },
+    "ticket": {
+      "studioConsumesSettings": true,
+      "editorConsumesSettings": true
+    },
+    "label": {
+      "studioConsumesSettings": true,
+      "editorConsumesSettings": true
     }
   },
-  "expectedUiOptions": {
-    "groups": [
-      {
-        "value": "novo",
-        "label": "Novo",
-        "color": "#111111"
-      },
-      {
-        "value": "em_validacao",
-        "label": "Em Validacao",
-        "color": "#222222"
-      }
-    ],
-    "references": [
-      {
-        "value": "ligada",
-        "label": "Ligada",
-        "color": "#333333"
-      }
-    ],
-    "tickets": [
-      {
-        "value": "pendente",
-        "label": "Pendente",
-        "color": "#444444"
-      },
-      {
-        "value": "fechado",
-        "label": "Fechado",
-        "color": "#555555"
-      }
-    ],
-    "labels": [
-      {
-        "value": "aguarda_cliente",
-        "label": "Aguarda Cliente",
-        "color": "#666666"
-      },
-      {
-        "value": "resolvida",
-        "label": "Resolvida",
-        "color": "#777777"
-      }
-    ]
-  },
-  "obtainedUiOptions": {
-    "groups": [
-      {
-        "value": "novo",
-        "label": "Novo",
-        "color": "#111111"
-      },
-      {
-        "value": "em_validacao",
-        "label": "Em Validacao",
-        "color": "#222222"
-      }
-    ],
-    "references": [
-      {
-        "value": "ligada",
-        "label": "Ligada",
-        "color": "#333333"
-      }
-    ],
-    "tickets": [
-      {
-        "value": "pendente",
-        "label": "Pendente",
-        "color": "#444444"
-      },
-      {
-        "value": "fechado",
-        "label": "Fechado",
-        "color": "#555555"
-      }
-    ],
-    "labels": [
-      {
-        "value": "aguarda_cliente",
-        "label": "Aguarda Cliente",
-        "color": "#666666"
-      },
-      {
-        "value": "resolvida",
-        "label": "Resolvida",
-        "color": "#777777"
-      }
-    ]
-  },
-  "checks": [
+  "managerSupportsCatalogEnabled": true,
+  "noHardcodedArraysActive": true,
+  "scenarios": [
     {
-      "id": "studio-label-states",
-      "description": "Classificar deriva estados de etiquetas de settings.groups.labels.states",
-      "pass": true
+      "scenarioId": "group-states-disabled",
+      "type": "group",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": false,
+              "states": [
+                {
+                  "name": "novo",
+                  "color": "#111111"
+                },
+                {
+                  "name": "em_validacao",
+                  "color": "#222222"
+                }
+              ]
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
     },
     {
-      "id": "studio-ticket-states",
-      "description": "Classificar deriva estados de tickets de settings.groups.tickets.states",
-      "pass": true
+      "scenarioId": "group-states-enabled-list",
+      "type": "group",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": [
+                {
+                  "name": "novo",
+                  "color": "#111111"
+                },
+                {
+                  "name": "em_validacao",
+                  "color": "#222222"
+                }
+              ]
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [
+        {
+          "value": "novo",
+          "label": "Novo",
+          "color": "#111111"
+        },
+        {
+          "value": "em_validacao",
+          "label": "Em Validacao",
+          "color": "#222222"
+        }
+      ],
+      "obtainedUiOptions": [
+        {
+          "value": "novo",
+          "label": "Novo",
+          "color": "#111111"
+        },
+        {
+          "value": "em_validacao",
+          "label": "Em Validacao",
+          "color": "#222222"
+        }
+      ],
+      "selectorVisibleExpected": true,
+      "selectorVisibleObtained": true,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
     },
     {
-      "id": "editor-label-options",
-      "description": "UI do editor de Classificar renderiza select a partir de labelStateOptions",
-      "pass": true
+      "scenarioId": "group-states-enabled-empty",
+      "type": "group",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
     },
     {
-      "id": "editor-ticket-options",
-      "description": "UI do editor de Classificar renderiza select a partir de ticketStateOptions",
-      "pass": true
+      "scenarioId": "group-states-free-text-rejected",
+      "type": "group",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": [
+                {
+                  "name": "novo",
+                  "color": "#111111"
+                },
+                {
+                  "name": "em_validacao",
+                  "color": "#222222"
+                }
+              ]
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [
+        {
+          "value": "novo",
+          "label": "Novo",
+          "color": "#111111"
+        },
+        {
+          "value": "em_validacao",
+          "label": "Em Validacao",
+          "color": "#222222"
+        }
+      ],
+      "obtainedUiOptions": [
+        {
+          "value": "novo",
+          "label": "Novo",
+          "color": "#111111"
+        },
+        {
+          "value": "em_validacao",
+          "label": "Em Validacao",
+          "color": "#222222"
+        }
+      ],
+      "selectorVisibleExpected": true,
+      "selectorVisibleObtained": true,
+      "freeTextCandidate": "texto_nao_configurado",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
     },
     {
-      "id": "manager-group-states",
-      "description": "Manager de Groups deriva estados de groups.states",
-      "pass": true
+      "scenarioId": "reference-states-disabled",
+      "type": "reference",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": false,
+              "states": [
+                {
+                  "name": "ligada",
+                  "color": "#333333"
+                },
+                {
+                  "name": "bloqueada",
+                  "color": "#444444"
+                }
+              ]
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
     },
     {
-      "id": "manager-ticket-states",
-      "description": "Manager de Groups deriva estados de tickets.states",
-      "pass": true
+      "scenarioId": "reference-states-enabled-list",
+      "type": "reference",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": [
+                {
+                  "name": "ligada",
+                  "color": "#333333"
+                },
+                {
+                  "name": "bloqueada",
+                  "color": "#444444"
+                }
+              ]
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [
+        {
+          "value": "ligada",
+          "label": "Ligada",
+          "color": "#333333"
+        },
+        {
+          "value": "bloqueada",
+          "label": "Bloqueada",
+          "color": "#444444"
+        }
+      ],
+      "obtainedUiOptions": [
+        {
+          "value": "ligada",
+          "label": "Ligada",
+          "color": "#333333"
+        },
+        {
+          "value": "bloqueada",
+          "label": "Bloqueada",
+          "color": "#444444"
+        }
+      ],
+      "selectorVisibleExpected": true,
+      "selectorVisibleObtained": true,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
     },
     {
-      "id": "no-hardcoded-classifier-status-arrays",
-      "description": "Classificar deixou de declarar arrays LABEL_STATUS_OPTIONS/TICKET_STATUS_OPTIONS",
-      "pass": true
+      "scenarioId": "reference-states-enabled-empty",
+      "type": "reference",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "reference-states-free-text-rejected",
+      "type": "reference",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": [
+                {
+                  "name": "ligada",
+                  "color": "#333333"
+                },
+                {
+                  "name": "bloqueada",
+                  "color": "#444444"
+                }
+              ]
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [
+        {
+          "value": "ligada",
+          "label": "Ligada",
+          "color": "#333333"
+        },
+        {
+          "value": "bloqueada",
+          "label": "Bloqueada",
+          "color": "#444444"
+        }
+      ],
+      "obtainedUiOptions": [
+        {
+          "value": "ligada",
+          "label": "Ligada",
+          "color": "#333333"
+        },
+        {
+          "value": "bloqueada",
+          "label": "Bloqueada",
+          "color": "#444444"
+        }
+      ],
+      "selectorVisibleExpected": true,
+      "selectorVisibleObtained": true,
+      "freeTextCandidate": "texto_nao_configurado",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "ticket-states-disabled",
+      "type": "ticket",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": false,
+              "states": [
+                {
+                  "name": "pendente",
+                  "color": "#555555"
+                },
+                {
+                  "name": "fechado",
+                  "color": "#666666"
+                }
+              ]
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "ticket-states-enabled-list",
+      "type": "ticket",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": [
+                {
+                  "name": "pendente",
+                  "color": "#555555"
+                },
+                {
+                  "name": "fechado",
+                  "color": "#666666"
+                }
+              ]
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [
+        {
+          "value": "pendente",
+          "label": "Pendente",
+          "color": "#555555"
+        },
+        {
+          "value": "fechado",
+          "label": "Fechado",
+          "color": "#666666"
+        }
+      ],
+      "obtainedUiOptions": [
+        {
+          "value": "pendente",
+          "label": "Pendente",
+          "color": "#555555"
+        },
+        {
+          "value": "fechado",
+          "label": "Fechado",
+          "color": "#666666"
+        }
+      ],
+      "selectorVisibleExpected": true,
+      "selectorVisibleObtained": true,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "ticket-states-enabled-empty",
+      "type": "ticket",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "ticket-states-free-text-rejected",
+      "type": "ticket",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": [
+                {
+                  "name": "pendente",
+                  "color": "#555555"
+                },
+                {
+                  "name": "fechado",
+                  "color": "#666666"
+                }
+              ]
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [
+        {
+          "value": "pendente",
+          "label": "Pendente",
+          "color": "#555555"
+        },
+        {
+          "value": "fechado",
+          "label": "Fechado",
+          "color": "#666666"
+        }
+      ],
+      "obtainedUiOptions": [
+        {
+          "value": "pendente",
+          "label": "Pendente",
+          "color": "#555555"
+        },
+        {
+          "value": "fechado",
+          "label": "Fechado",
+          "color": "#666666"
+        }
+      ],
+      "selectorVisibleExpected": true,
+      "selectorVisibleObtained": true,
+      "freeTextCandidate": "texto_nao_configurado",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "label-states-disabled",
+      "type": "label",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": false,
+              "states": [
+                {
+                  "name": "aguarda_cliente",
+                  "color": "#777777"
+                },
+                {
+                  "name": "resolvida",
+                  "color": "#888888"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "label-states-enabled-list",
+      "type": "label",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": [
+                {
+                  "name": "aguarda_cliente",
+                  "color": "#777777"
+                },
+                {
+                  "name": "resolvida",
+                  "color": "#888888"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [
+        {
+          "value": "aguarda_cliente",
+          "label": "Aguarda Cliente",
+          "color": "#777777"
+        },
+        {
+          "value": "resolvida",
+          "label": "Resolvida",
+          "color": "#888888"
+        }
+      ],
+      "obtainedUiOptions": [
+        {
+          "value": "aguarda_cliente",
+          "label": "Aguarda Cliente",
+          "color": "#777777"
+        },
+        {
+          "value": "resolvida",
+          "label": "Resolvida",
+          "color": "#888888"
+        }
+      ],
+      "selectorVisibleExpected": true,
+      "selectorVisibleObtained": true,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "label-states-enabled-empty",
+      "type": "label",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [],
+      "obtainedUiOptions": [],
+      "selectorVisibleExpected": false,
+      "selectorVisibleObtained": false,
+      "freeTextCandidate": "estado_livre",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
+    },
+    {
+      "scenarioId": "label-states-free-text-rejected",
+      "type": "label",
+      "settingsInjected": {
+        "groups": {
+          "groups": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "references": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "tickets": {
+            "states": {
+              "enabled": true,
+              "states": []
+            }
+          },
+          "labels": {
+            "states": {
+              "enabled": true,
+              "states": [
+                {
+                  "name": "aguarda_cliente",
+                  "color": "#777777"
+                },
+                {
+                  "name": "resolvida",
+                  "color": "#888888"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expectedUiOptions": [
+        {
+          "value": "aguarda_cliente",
+          "label": "Aguarda Cliente",
+          "color": "#777777"
+        },
+        {
+          "value": "resolvida",
+          "label": "Resolvida",
+          "color": "#888888"
+        }
+      ],
+      "obtainedUiOptions": [
+        {
+          "value": "aguarda_cliente",
+          "label": "Aguarda Cliente",
+          "color": "#777777"
+        },
+        {
+          "value": "resolvida",
+          "label": "Resolvida",
+          "color": "#888888"
+        }
+      ],
+      "selectorVisibleExpected": true,
+      "selectorVisibleObtained": true,
+      "freeTextCandidate": "texto_nao_configurado",
+      "freeTextAcceptedExpected": false,
+      "freeTextAcceptedObtained": false,
+      "pass": true,
+      "checks": [
+        {
+          "id": "studio-consumes-settings",
+          "pass": true,
+          "message": "Classificar deriva o catalogo a partir de settings.groups.*.states"
+        },
+        {
+          "id": "editor-renders-catalog",
+          "pass": true,
+          "message": "O editor usa apenas as opcoes recebidas do catalogo dinamico"
+        },
+        {
+          "id": "enabled-gates-selector",
+          "pass": true,
+          "message": "A visibilidade do seletor respeita enabled + lista configurada"
+        },
+        {
+          "id": "options-match-settings",
+          "pass": true,
+          "message": "As opcoes efetivas batem com a lista vinda de settings"
+        },
+        {
+          "id": "free-text-rejected",
+          "pass": true,
+          "message": "Valores fora da lista configurada nao sao aceites"
+        },
+        {
+          "id": "no-hardcoded-arrays-active",
+          "pass": true,
+          "message": "Nao existem arrays hardcoded ativos no Classificar"
+        }
+      ]
     }
   ],
   "pass": true

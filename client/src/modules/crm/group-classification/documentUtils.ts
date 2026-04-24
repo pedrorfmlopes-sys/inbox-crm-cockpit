@@ -360,6 +360,15 @@ export function normalizeClassificationMetaDraft(
     ...base,
     referenceGroupIds: mergeUniqueStrings(base.referenceGroupIds || []),
     labelStates: base.labelStates || {},
+    principalGroupState: String(base.principalGroupState || "").trim(),
+    referenceGroupStates:
+      base.referenceGroupStates && typeof base.referenceGroupStates === "object"
+        ? Object.fromEntries(
+            Object.entries(base.referenceGroupStates)
+              .map(([groupId, state]) => [String(groupId || "").trim(), String(state || "").trim()])
+              .filter(([groupId, state]) => groupId && state)
+          )
+        : {},
   };
 }
 
@@ -371,9 +380,11 @@ export function mergeClassificationMetaDrafts(
   const r = normalizeClassificationMetaDraft(right);
   return {
     principalGroupId: r.principalGroupId || l.principalGroupId,
+    principalGroupState: r.principalGroupState || l.principalGroupState,
     ticketId: r.ticketId || l.ticketId,
     referenceGroupIds: Array.from(new Set([...l.referenceGroupIds, ...r.referenceGroupIds])),
     labelStates: { ...l.labelStates, ...r.labelStates },
+    referenceGroupStates: { ...l.referenceGroupStates, ...r.referenceGroupStates },
   };
 }
 

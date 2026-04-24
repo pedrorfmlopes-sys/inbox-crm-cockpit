@@ -12,9 +12,11 @@ export type SectionId = "emails" | "details" | "managed-group" | "classification
 
 export interface ClassificationMetaDraft {
   principalGroupId: string;
+  principalGroupState: string;
   ticketId: string;
   labelStates: Record<string, LabelDraft>;
   referenceGroupIds: string[];
+  referenceGroupStates: Record<string, string>;
 }
 
 export type DocumentLifecycleState = "ingested" | "processed" | "accepted" | "rejected" | "reread_requested";

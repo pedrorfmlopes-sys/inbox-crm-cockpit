@@ -20,7 +20,9 @@ export const DOCUMENT_STATE_OPTIONS: Array<{ value: string; label: string }> = [
 
 export const EMPTY_CLASSIFICATION_META: ClassificationMetaDraft = {
   principalGroupId: "",
+  principalGroupState: "",
   ticketId: "",
   labelStates: {},
   referenceGroupIds: [],
+  referenceGroupStates: {},
 };

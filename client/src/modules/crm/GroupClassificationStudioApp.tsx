@@ -7,6 +7,7 @@ import {
   getGroupLabelCatalogLabels,
   getSettings,
   normalizeGroupLabelCatalog,
+  type GroupStateCatalogSettings,
   type GroupStateDefinition,
   type GroupLabelCatalogEntry,
 } from "@/settings";
@@ -141,10 +142,14 @@ type StateOption = {
   color?: string;
 };
 
-function buildConfiguredStateOptions(states: GroupStateDefinition[] | null | undefined): StateOption[] {
+type ConfiguredStateCatalogInput = GroupStateCatalogSettings | GroupStateDefinition[] | null | undefined;
+
+function buildConfiguredStateCatalog(input: ConfiguredStateCatalogInput): { enabled: boolean; options: StateOption[] } {
+  const enabled = Array.isArray(input) ? true : input?.enabled !== false;
+  const states = Array.isArray(input) ? input : input?.states;
   const options: StateOption[] = [];
   const seen = new Set<string>();
-  for (const entry of states || []) {
+  for (const entry of enabled ? (states || []) : []) {
     const value = String(entry?.name || "").trim();
     if (!value || seen.has(value)) continue;
     seen.add(value);
@@ -154,13 +159,48 @@ function buildConfiguredStateOptions(states: GroupStateDefinition[] | null | und
       color: String(entry?.color || "").trim() || undefined,
     });
   }
-  return options;
+  return {
+    enabled,
+    options,
+  };
 }
 
 function isConfiguredStateValue(value: string | undefined, options: StateOption[]): boolean {
   const normalized = String(value || "").trim();
   if (!normalized) return false;
   return options.some((option) => option.value === normalized);
+}
+
+function resolveConfiguredStateDraft(
+  draftValue: string | undefined,
+  currentValue: string | undefined,
+  options: StateOption[]
+): string {
+  const normalizedDraftValue = String(draftValue || "").trim();
+  if (isConfiguredStateValue(normalizedDraftValue, options)) {
+    return normalizedDraftValue;
+  }
+  const normalizedCurrentValue = String(currentValue || "").trim();
+  if (isConfiguredStateValue(normalizedCurrentValue, options)) {
+    return normalizedCurrentValue;
+  }
+  return "";
+}
+
+function sanitizeReferenceGroupStateDrafts(args: {
+  drafts: Record<string, string>;
+  referenceGroups: LinkGroupEntry[];
+  options: StateOption[];
+}): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const group of args.referenceGroups) {
+    const groupId = String(group?.id || "").trim();
+    if (!groupId) continue;
+    const resolved = resolveConfiguredStateDraft(args.drafts[groupId], group?.status, args.options);
+    if (!resolved) continue;
+    next[groupId] = resolved;
+  }
+  return next;
 }
 
 function createLabelDraftFromCatalog(
@@ -650,28 +690,36 @@ function StudioInner() {
     groups: {
       tab: normalizeGroupsTabSettings(null),
       storage: null,
-      groups: { states: [] },
-      references: { states: [] },
-      labels: { states: [] },
-      tickets: { states: [] },
+      groups: { states: { enabled: false, states: [] } },
+      references: { states: { enabled: false, states: [] } },
+      labels: { states: { enabled: false, states: [] } },
+      tickets: { states: { enabled: false, states: [] } },
     },
   });
-  const groupStateOptions = useMemo(
-    () => buildConfiguredStateOptions(groupsSettingsSnapshot?.groups?.groups?.states),
+  const groupStateCatalog = useMemo(
+    () => buildConfiguredStateCatalog(groupsSettingsSnapshot?.groups?.groups?.states),
     [groupsSettingsSnapshot]
   );
-  const referenceStateOptions = useMemo(
-    () => buildConfiguredStateOptions(groupsSettingsSnapshot?.groups?.references?.states),
+  const referenceStateCatalog = useMemo(
+    () => buildConfiguredStateCatalog(groupsSettingsSnapshot?.groups?.references?.states),
     [groupsSettingsSnapshot]
   );
-  const labelStateOptions = useMemo(
-    () => buildConfiguredStateOptions(groupsSettingsSnapshot?.groups?.labels?.states),
+  const labelStateCatalog = useMemo(
+    () => buildConfiguredStateCatalog(groupsSettingsSnapshot?.groups?.labels?.states),
     [groupsSettingsSnapshot]
   );
-  const ticketStateOptions = useMemo(
-    () => buildConfiguredStateOptions(groupsSettingsSnapshot?.groups?.tickets?.states),
+  const ticketStateCatalog = useMemo(
+    () => buildConfiguredStateCatalog(groupsSettingsSnapshot?.groups?.tickets?.states),
     [groupsSettingsSnapshot]
   );
+  const groupStateEnabled = groupStateCatalog.enabled;
+  const groupStateOptions = groupStateCatalog.options;
+  const referenceStateEnabled = referenceStateCatalog.enabled;
+  const referenceStateOptions = referenceStateCatalog.options;
+  const labelStateEnabled = labelStateCatalog.enabled;
+  const labelStateOptions = labelStateCatalog.options;
+  const ticketStateEnabled = ticketStateCatalog.enabled;
+  const ticketStateOptions = ticketStateCatalog.options;
   const explorerOpenStoredAttachments = useMemo(
     () => canOpenStoredAttachmentsFromGroups(groupsSettingsSnapshot),
     [groupsSettingsSnapshot]
@@ -1252,8 +1300,14 @@ function StudioInner() {
 
   const rehydrateClassificationEditorFromCaseEmail = useCallback((email: RelatedEmailEntry | null) => {
     if (!email) return;
+    const currentClassificationMeta = normalizeClassificationMetaDraft(email.classificationMeta as Partial<ClassificationMetaDraft> | null);
     const principalGroupId = normalizeComparableString(email.groupId || email.classificationMeta?.principalGroupId);
     const relationGroups = getEmailGroupRelations(email);
+    const relationGroupById = new Map(
+      relationGroups
+        .map((group) => [String(group?.id || "").trim(), group] as const)
+        .filter(([groupId]) => Boolean(groupId))
+    );
     const referenceGroupIds = relationGroups
       .filter((group) => group.id && group.id !== principalGroupId)
       .map((group) => String(group.id || "").trim());
@@ -1275,7 +1329,19 @@ function StudioInner() {
     const nextClassificationMetaDraft = normalizeClassificationMetaDraft({
       ...classificationMetaDraft,
       principalGroupId: normalizedSelection.principalGroupId,
+      principalGroupState: resolveConfiguredStateDraft(
+        currentClassificationMeta.principalGroupState,
+        relationGroupById.get(normalizedSelection.principalGroupId)?.status,
+        groupStateOptions
+      ),
       referenceGroupIds: normalizedSelection.referenceGroupIds,
+      referenceGroupStates: sanitizeReferenceGroupStateDrafts({
+        drafts: currentClassificationMeta.referenceGroupStates,
+        referenceGroups: normalizedSelection.referenceGroupIds
+          .map((groupId) => relationGroupById.get(groupId))
+          .filter(Boolean) as LinkGroupEntry[],
+        options: referenceStateOptions,
+      }),
       ticketId: nextTicketId,
     });
     const nextSelectionTouched = { principal: false, references: false, ticket: false };
@@ -1313,7 +1379,9 @@ function StudioInner() {
     classificationMetaDraft,
     createTicketTitle,
     getEmailGroupRelations,
+    groupStateOptions,
     labelStateOptions,
+    referenceStateOptions,
     ticketStatusDraft,
   ]);
 
@@ -2375,8 +2443,12 @@ function StudioInner() {
     [principalGroup?.entities, selectedManagedGroup?.entities]
   );
   const caseState = useMemo(
-    () => formatGroupStatusLabel(principalGroup?.status || selectedManagedGroup?.status || ""),
-    [principalGroup?.status, selectedManagedGroup?.status]
+    () => formatGroupStatusLabel(
+      resolveConfiguredStateDraft(classificationMetaDraft.principalGroupState, principalGroup?.status, groupStateOptions)
+      || selectedManagedGroup?.status
+      || ""
+    ),
+    [classificationMetaDraft.principalGroupState, groupStateOptions, principalGroup?.status, selectedManagedGroup?.status]
   );
   const classificationEditorActive = section === "classification" && classificationFocus !== "summary";
   const auxiliaryEditorActive = section === "labels" || section === "filters" || section === "groups";
@@ -2405,7 +2477,7 @@ function StudioInner() {
         || (ticketCodes.length ? ticketCodes.join(", ") : "")
         || (selectedSeriesId ? (ticketSeriesPrefix ? `${ticketSeriesPrefix} (novo)` : "Novo ticket") : "")
         || "--";
-      const principalStatusValue = principalGroup?.status ? formatGroupStatusLabel(principalGroup.status) : "";
+      const principalStatusValue = effectivePrincipalGroupState ? formatGroupStatusLabel(effectivePrincipalGroupState) : "";
       const ticketStatusValue = effectiveTicketStatus ? formatTicketStatusLabel(effectiveTicketStatus) : "";
       const referenceSummaryValue = referenceGroups.length ? referenceGroups.map((group) => group.name || group.id).join(", ") : "--";
       return [
@@ -2441,7 +2513,7 @@ function StudioInner() {
     },
     [
       principalGroup?.name,
-      principalGroup?.status,
+      effectivePrincipalGroupState,
       referenceGroups.length,
       selectedLabels,
       selectedSeriesId,
@@ -2586,9 +2658,13 @@ function StudioInner() {
     () => (referenceGroups.length ? referenceGroups.map((group) => group.name || group.id).join(", ") : "--"),
     [referenceGroups]
   );
+  const effectivePrincipalGroupState = useMemo(
+    () => resolveConfiguredStateDraft(classificationMetaDraft.principalGroupState, principalGroup?.status, groupStateOptions),
+    [classificationMetaDraft.principalGroupState, groupStateOptions, principalGroup?.status]
+  );
   const principalGroupStatusLabel = useMemo(
-    () => principalGroup?.status ? formatGroupStatusLabel(principalGroup.status) : "",
-    [principalGroup?.status]
+    () => effectivePrincipalGroupState ? formatGroupStatusLabel(effectivePrincipalGroupState) : "",
+    [effectivePrincipalGroupState]
   );
   const referenceGroupStatusEntries = useMemo(
     () =>
@@ -2596,11 +2672,15 @@ function StudioInner() {
         .map((group) => ({
           id: group.id,
           name: group.name || group.id,
-          status: formatGroupStatusLabel(group.status),
-          hasStatus: Boolean(String(group.status || "").trim()),
+          status: formatGroupStatusLabel(
+            resolveConfiguredStateDraft(classificationMetaDraft.referenceGroupStates[group.id], group.status, referenceStateOptions)
+          ),
+          hasStatus: Boolean(
+            resolveConfiguredStateDraft(classificationMetaDraft.referenceGroupStates[group.id], group.status, referenceStateOptions)
+          ),
         }))
         .filter((entry) => entry.hasStatus),
-    [referenceGroups]
+    [classificationMetaDraft.referenceGroupStates, referenceGroups, referenceStateOptions]
   );
   const ticketStatusLabel = useMemo(
     () => effectiveTicketStatus ? formatTicketStatusLabel(effectiveTicketStatus) : "",
@@ -2763,6 +2843,39 @@ function StudioInner() {
     }
     setTicketStatusDraft("");
   }, [selectedSeriesId, selectedTicket?.status, selectedTicketId, ticketStateOptions]);
+
+  useEffect(() => {
+    setClassificationMetaDraft((current) => {
+      const nextPrincipalGroupState = groupStateEnabled
+        ? resolveConfiguredStateDraft(current.principalGroupState, principalGroup?.status, groupStateOptions)
+        : "";
+      const nextReferenceGroupStates = referenceStateEnabled
+        ? sanitizeReferenceGroupStateDrafts({
+            drafts: current.referenceGroupStates,
+            referenceGroups,
+            options: referenceStateOptions,
+          })
+        : {};
+      if (
+        current.principalGroupState === nextPrincipalGroupState
+        && JSON.stringify(current.referenceGroupStates || {}) === JSON.stringify(nextReferenceGroupStates)
+      ) {
+        return current;
+      }
+      return normalizeClassificationMetaDraft({
+        ...current,
+        principalGroupState: nextPrincipalGroupState,
+        referenceGroupStates: nextReferenceGroupStates,
+      });
+    });
+  }, [
+    groupStateEnabled,
+    groupStateOptions,
+    principalGroup?.status,
+    referenceGroups,
+    referenceStateEnabled,
+    referenceStateOptions,
+  ]);
 
   useEffect(() => {
     const currentSelectedEmail = selectedEmailRef.current;
@@ -3195,6 +3308,30 @@ function StudioInner() {
         status: isConfiguredStateValue(requestedStatus, labelStateOptions) ? requestedStatus : undefined,
       };
       return { ...current, [label]: next };
+    });
+  }
+
+  function updatePrincipalGroupStateDraft(status: string) {
+    setClassificationMetaDraft((current) => normalizeClassificationMetaDraft({
+      ...current,
+      principalGroupState: isConfiguredStateValue(status, groupStateOptions) ? status : "",
+    }));
+  }
+
+  function updateReferenceGroupStateDraft(groupId: string, status: string) {
+    const normalizedGroupId = String(groupId || "").trim();
+    if (!normalizedGroupId) return;
+    setClassificationMetaDraft((current) => {
+      const nextReferenceGroupStates = { ...(current.referenceGroupStates || {}) };
+      if (isConfiguredStateValue(status, referenceStateOptions)) {
+        nextReferenceGroupStates[normalizedGroupId] = status;
+      } else {
+        delete nextReferenceGroupStates[normalizedGroupId];
+      }
+      return normalizeClassificationMetaDraft({
+        ...current,
+        referenceGroupStates: nextReferenceGroupStates,
+      });
     });
   }
 
@@ -4191,14 +4328,30 @@ function StudioInner() {
                   </div>
                 ) : null}
               </div>
-              <div style={S.inlineChecks}>
-                <span style={S.cardMeta}>
-                  O estado do grupo vem do registo selecionado e as regras de categorizacao passam a vir apenas de settings.
-                </span>
-              </div>
-              <div style={S.cardMeta}>
-                {principalGroup?.status ? `Estado atual: ${principalGroupStatusLabel}` : "Sem estado definido neste grupo."}
-              </div>
+              {!groupStateEnabled ? (
+                <div style={S.cardMeta}>
+                  O seletor fica oculto porque `settings.groups.groups.states.enabled` esta desligado.
+                </div>
+              ) : groupStateOptions.length ? (
+                <div style={S.grid2}>
+                  <select
+                    style={S.select}
+                    value={effectivePrincipalGroupState}
+                    onChange={(event) => updatePrincipalGroupStateDraft(String(event.target.value || "").trim())}
+                    disabled={!effectivePrincipalGroupId}
+                  >
+                    <option value="">Sem estado</option>
+                    {groupStateOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <div style={S.cardMeta}>
+                    {effectivePrincipalGroupState ? `Estado preparado: ${principalGroupStatusLabel}` : "Sem estado definido neste grupo."}
+                  </div>
+                </div>
+              ) : (
+                <div style={S.cardMeta}>Nao existem estados configurados em `settings.groups.groups.states`.</div>
+              )}
             </div>
           </div>
           ) : null}
@@ -4298,18 +4451,37 @@ function StudioInner() {
                   </div>
                 ) : null}
               </div>
-              <div style={S.inlineChecks}>
-                <span style={S.cardMeta}>
-                  As referencias mantem apenas o estado real dos grupos ligados; nao ha toggles locais por email.
-                </span>
-              </div>
-              <div style={S.inlineWrap}>
-                {referenceGroupStatusEntries.length ? referenceGroupStatusEntries.map((entry) => (
-                  <span key={`${entry.id}-status`} style={S.groupChip}>
-                    {entry.name}: {entry.status}
-                  </span>
-                )) : <span style={S.mutedMini}>Sem estado nas referencias atuais.</span>}
-              </div>
+              {!referenceStateEnabled ? (
+                <div style={S.cardMeta}>
+                  Os seletores ficam ocultos porque `settings.groups.references.states.enabled` esta desligado.
+                </div>
+              ) : referenceStateOptions.length ? (
+                referenceGroups.length ? (
+                  <div style={S.labelGrid}>
+                    {referenceGroups.map((group) => (
+                      <div key={`${group.id}-state`} style={S.labelRowCompact}>
+                        <div style={S.labelHead}>
+                          <strong>{group.name || group.id}</strong>
+                        </div>
+                        <select
+                          style={S.select}
+                          value={classificationMetaDraft.referenceGroupStates[group.id] || ""}
+                          onChange={(event) => updateReferenceGroupStateDraft(group.id, String(event.target.value || "").trim())}
+                        >
+                          <option value="">Sem estado</option>
+                          {referenceStateOptions.map((option) => (
+                            <option key={`${group.id}-${option.value}`} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={S.cardMeta}>Seleciona primeiro pelo menos uma referencia.</div>
+                )
+              ) : (
+                <div style={S.cardMeta}>Nao existem estados configurados em `settings.groups.references.states`.</div>
+              )}
             </div>
           </div>
           ) : null}
@@ -4392,7 +4564,9 @@ function StudioInner() {
                           <strong>{label}</strong>
                           <button type="button" style={S.linkBtn} onClick={() => removeLabel(label)}>Off</button>
                         </div>
-                        {labelStateOptions.length ? (
+                        {!labelStateEnabled ? (
+                          <div style={S.cardMeta}>O seletor fica oculto porque `settings.groups.labels.states.enabled` esta desligado.</div>
+                        ) : labelStateOptions.length ? (
                           <select style={S.select} value={draft.status || ""} onChange={(event) => updateLabelDraft(label, { status: event.target.value || undefined })}>
                             <option value="">Sem estado</option>
                             {labelStateOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -4463,27 +4637,33 @@ function StudioInner() {
                   Criar ticket
                 </button>
               </div>
-              <div style={S.grid2}>
-                <select
-                  style={S.select}
-                  value={ticketStatusDraft}
-                  onChange={(event) => {
-                    setSelectionTouched((current) => ({ ...current, ticket: true }));
-                    setTicketStatusDraft(event.target.value);
-                  }}
-                  disabled={!selectedTicketId && !selectedSeriesId}
-                >
-                  <option value="">Sem estado</option>
-                  {ticketStateOptions.map((option) => (
-                    <option key={option.value || "empty"} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-                <div style={S.cardMeta}>
-                  {effectiveTicketStatus ? `Estado preparado: ${ticketStatusLabel}` : "Sem estado definido neste ticket."}
+              {ticketStateEnabled ? (
+                <div style={S.grid2}>
+                  <select
+                    style={S.select}
+                    value={ticketStatusDraft}
+                    onChange={(event) => {
+                      setSelectionTouched((current) => ({ ...current, ticket: true }));
+                      setTicketStatusDraft(event.target.value);
+                    }}
+                    disabled={!selectedTicketId && !selectedSeriesId}
+                  >
+                    <option value="">Sem estado</option>
+                    {ticketStateOptions.map((option) => (
+                      <option key={option.value || "empty"} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <div style={S.cardMeta}>
+                    {effectiveTicketStatus ? `Estado preparado: ${ticketStatusLabel}` : "Sem estado definido neste ticket."}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div style={S.cardMeta}>O seletor fica oculto porque `settings.groups.tickets.states.enabled` esta desligado.</div>
+              )}
               <div style={S.cardMeta}>
-                {ticketStateOptions.length
+                {!ticketStateEnabled
+                  ? "O seletor fica oculto porque `settings.groups.tickets.states.enabled` esta desligado."
+                  : ticketStateOptions.length
                   ? (effectiveTicketStatus ? `Estado atual: ${ticketStatusLabel}` : "Sem estado definido neste ticket.")
                   : "Os estados disponiveis do ticket sao lidos de settings.groups.tickets.states."}
               </div>
@@ -4557,7 +4737,9 @@ function StudioInner() {
               return (
                 <div key={label} style={S.labelRow}>
                   <div style={S.labelHead}><strong>{label}</strong><button type="button" style={S.linkBtn} onClick={() => removeLabel(label)}>Remover</button></div>
-                  {labelStateOptions.length ? (
+                  {!labelStateEnabled ? (
+                    <div style={S.cardMeta}>O seletor fica oculto porque `settings.groups.labels.states.enabled` esta desligado.</div>
+                  ) : labelStateOptions.length ? (
                     <label style={S.field}>
                       <span style={S.label}>Estado desta etiqueta</span>
                       <select style={S.select} value={draft.status || ""} onChange={(event) => updateLabelDraft(label, { status: event.target.value || undefined })}>
@@ -5091,6 +5273,10 @@ function StudioInner() {
                     exactPrincipalSearchGroup={exactPrincipalSearchGroup}
                     principalSearchResults={principalSearchResults}
                     principalGroup={principalGroup}
+                    groupStateEnabled={groupStateEnabled}
+                    groupStateOptions={groupStateOptions}
+                    effectivePrincipalGroupState={effectivePrincipalGroupState}
+                    updatePrincipalGroupStateDraft={updatePrincipalGroupStateDraft}
                     suggestedLabelSeeds={suggestedLabelSeeds}
                     selectedLabels={selectedLabels}
                     applySuggestedLabel={applySuggestedLabel}
@@ -5104,6 +5290,7 @@ function StudioInner() {
                     selectedLabelSharedStatus={selectedLabelSharedStatus}
                     updateLabelDraft={updateLabelDraft}
                     labelDrafts={labelDrafts}
+                    labelStateEnabled={labelStateEnabled}
                     labelStateOptions={labelStateOptions}
                     normalizedTicketSearch={normalizedTicketSearch}
                     ticketSearchResults={ticketSearchResults}
@@ -5123,6 +5310,7 @@ function StudioInner() {
                     setCreateTicketTitle={setCreateTicketTitle}
                     ticketStatusDraft={ticketStatusDraft}
                     setTicketStatusDraft={setTicketStatusDraft}
+                    ticketStateEnabled={ticketStateEnabled}
                     ticketStateOptions={ticketStateOptions}
                     effectiveTicketStatus={effectiveTicketStatus}
                     ticketStatusLabel={ticketStatusLabel}
@@ -5137,6 +5325,10 @@ function StudioInner() {
                     exactReferenceSearchGroup={exactReferenceSearchGroup}
                     referenceSearchResults={referenceSearchResults}
                     referenceGroupIds={referenceGroupIds}
+                    referenceStateEnabled={referenceStateEnabled}
+                    referenceStateOptions={referenceStateOptions}
+                    referenceGroupStateDrafts={classificationMetaDraft.referenceGroupStates}
+                    updateReferenceGroupStateDraft={updateReferenceGroupStateDraft}
                     actionBusy={actionBusy}
                   />
                 </div>
