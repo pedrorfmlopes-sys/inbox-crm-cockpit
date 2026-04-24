@@ -388,11 +388,11 @@ export function GroupsSettingsPanel({
       });
       setDraft(nextDraft);
       const summaries = await validateStorageDraft(nextDraft);
-      setMaintenanceMessage(
-        summaries.length
-          ? `Pasta intermédia validada via seletor real. ${summaries.length} caso(s) já existe(m) nesta localização.`
-          : "Pasta intermédia escolhida e validada com sucesso via seletor real."
-      );
+      if (summaries.length) {
+        setMaintenanceMessage(`Pasta intermédia validada neste host. ${summaries.length} caso(s) já existe(m) nesta localização.`);
+      } else {
+        setMaintenanceMessage("Pasta intermédia escolhida e validada com sucesso neste host atual.");
+      }
     } catch (error) {
       setMaintenanceError(error instanceof Error ? error.message : "Nao foi possivel selecionar uma pasta real.");
     } finally {
@@ -596,9 +596,16 @@ export function GroupsSettingsPanel({
           <FieldRow label="Estado" hint="Resumo do modo intermedio realmente executavel.">
             <div style={S.inlineValue}>{draft.locationStatus}</div>
           </FieldRow>
+          <InfoBlock tone="warning" title="Verdade arquitetural desta fase">
+            <ul style={S.infoList}>
+              <li>Pasta local e OneDrive sincronizado localmente funcionam como storage intermédio real quando o backend corre localmente em Windows.</li>
+              <li>Na arquitetura publicada com backend remoto, esse caminho fica bloqueado porque o servidor remoto não consegue abrir o seletor nem aceder ao filesystem local do utilizador.</li>
+              <li>Nesse cenário, o fallback de produção continua a ser o storage local do add-in, com memória apenas como último recurso técnico.</li>
+            </ul>
+          </InfoBlock>
           <InfoBlock title="O que grava de verdade">
             <ul style={S.infoList}>
-              <li>Com pasta definida: `IntermediateCase` grava logo nessa pasta local, incluindo pastas do OneDrive sincronizado localmente.</li>
+              <li>Com pasta definida e host local compatível: `IntermediateCase` grava logo nessa pasta local, incluindo pastas do OneDrive sincronizado localmente.</li>
               <li>Sem pasta definida: o fallback principal é o storage local do add-in em IndexedDB.</li>
               <li>Sem pasta e sem IndexedDB disponível: memória apenas como fallback técnico temporário.</li>
               <li>Desativado: sem storage intermedio e sem promessa de retoma local.</li>

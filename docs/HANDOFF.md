@@ -1,5 +1,31 @@
 # HANDOFF
 
+## Grupos v1: a validacao interna fica fechada com separacao explicita entre "interno ok" e "producao ok" (Abril 2026)
+- **O que ficou fechado nesta ronda**:
+  - o modulo `Groups` passa a distinguir explicitamente o que esta validado internamente no host local atual do que e realmente valido na arquitetura publicada com backend remoto
+  - `server/src/groupStorageRuntime.js` ganha `resolveGroupStorageHostCapabilities(...)` e passa a bloquear modos file-backed (`local_device`, `chosen_folder`, `hybrid` e pasta OneDrive sincronizada localmente) quando o backend corre remoto em Render
+  - `server/src/nativeFolderPicker.js` deixa de anunciar picker nativo como disponivel fora de backend local Windows; o picker nao chega sequer a ser invocado na simulacao de arquitetura publicada
+  - `GroupsSettingsPanel.tsx` passa a mostrar aviso honesto na secao de storage intermÃ©dio: pasta local/OneDrive sincronizado localmente sao reais no host local Windows, mas ficam bloqueados na arquitetura publicada com backend remoto
+- **O que foi revalidado**:
+  - o harness `scripts/run-groups-v1-validation.mjs` continua a passar no miolo interno de `Groups`
+  - o report passa a trazer:
+    - `settingsMatrixWithStatus`
+    - `internalScenarioSummary`
+    - `legacyAliasAudit`
+    - `serverStorage.currentHost`
+    - `serverStorage.publishedArchitecture`
+  - `serverStorage.publishedArchitecture` prova que:
+    - `cloud` continua valido
+    - `local_device`, `chosen_folder`, `hybrid` e OneDrive sincronizado localmente ficam **bloqueados** na arquitetura publicada
+    - o picker real tambem fica bloqueado nessa arquitetura
+- **Classificacao objetiva apos esta ronda**:
+  - `settings.groups` continua a ser a unica fonte canonica
+  - o miolo do modulo `Groups` fica testado internamente por harness/browser/server local
+  - apenas a fronteira Outlook/Office.js real fica pendente de validacao manual
+  - filesystem/pasta local/OneDrive sincronizado localmente deixam de ser vendidos como "producao ok" no backend publicado; ficam como:
+    - **interno ok** no host local Windows
+    - **bloqueado** na arquitetura publicada com backend remoto
+
 ## Graph delegated self-test: prova minima de OneDrive write como user fica isolada e rastreavel, mas nao fecha automaticamente fora do host com sessao Microsoft resolvida (Abril 2026)
 - **O que ficou implementado nesta ronda**:
   - `client/src/office.ts` passa a expor um self-test isolado `runGraphDriveWriteSelfTest(...)`

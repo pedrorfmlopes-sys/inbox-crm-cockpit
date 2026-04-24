@@ -7,6 +7,7 @@ import { chromium } from "@playwright/test";
 import { createServer } from "vite";
 import {
   buildGroupWorksetMirrorFileLocation,
+  resolveGroupStorageHostCapabilities,
   validateGroupStorageTarget,
 } from "../server/src/groupStorageRuntime.js";
 import {
@@ -115,6 +116,51 @@ function auditLegacyGroupsAliasUsage() {
   };
 }
 
+function describeSettingsProductionTruth(setting) {
+  if (
+    setting === "settings.groups.storage.localDevice.rootPath"
+    || setting === "settings.groups.storage.chosenFolder.path"
+    || setting === "settings.groups.storage.chosenFolder.kind"
+    || setting === "settings.groups.storage.hybrid.primaryTarget"
+    || setting === "settings.groups.tab.baseFolderPath"
+  ) {
+    return {
+      internalStatus: "interno ok",
+      productionStatus: "bloqueado",
+      productionNote:
+        "Depende de backend local Windows com acesso ao filesystem do utilizador; na arquitetura publicada com backend remoto este caminho fica bloqueado.",
+    };
+  }
+
+  if (
+    setting === "settings.groups.storage.mode"
+    || setting === "settings.groups.storage.provider + baseFolderPath"
+    || setting === "settings.groups.tab.migrationTarget / migrationMode / allowMoveExistingData / strictMigrationSafety / mergeExistingData"
+    || setting === "settings.groups.tab.attachmentStrategy / saveAttachmentsOnServer / saveAttachmentsOutsideServer / attachmentServerLimitMb / attachmentIntermediateLimitMb / externalAttachmentFolder / showAttachmentMetadataOnServer / requireImmediatePreview"
+  ) {
+    return {
+      internalStatus: "interno ok",
+      productionStatus: "produção ok com bloqueios honestos",
+      productionNote:
+        "O runtime continua válido em produção para cloud/add-in local/metadata, e bloqueia explicitamente os ramos file-backed que exigem acesso ao path local do utilizador.",
+    };
+  }
+
+  return {
+    internalStatus: "interno ok",
+    productionStatus: "produção ok",
+    productionNote:
+      "O efeito mantém-se válido no módulo Groups sem depender de filesystem local do utilizador nem de Office.js host real.",
+  };
+}
+
+function decorateSettingsMatrix(matrix = []) {
+  return matrix.map((entry) => ({
+    ...entry,
+    ...describeSettingsProductionTruth(String(entry?.setting || "")),
+  }));
+}
+
 async function runServerStorageChecks() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "iccc-groups-v1-"));
   const localDeviceRoot = path.join(tempRoot, "local-device");
@@ -145,6 +191,7 @@ async function runServerStorageChecks() {
     mode: "chosen_folder",
     chosenFolder: { path: oneDriveLocalRoot, kind: "filesystem" },
   });
+  const currentHostCapabilities = resolveGroupStorageHostCapabilities();
   const mirrorLocation = buildGroupWorksetMirrorFileLocation({
     mode: "chosen_folder",
     chosenFolder: { path: chosenFolderRoot, kind: "filesystem" },
@@ -199,17 +246,70 @@ async function runServerStorageChecks() {
     }),
   });
 
+  const publishedExecutionHost = { platform: "linux", render: true };
+  const publishedHostCapabilities = resolveGroupStorageHostCapabilities(publishedExecutionHost);
+  const publishedCloud = validateGroupStorageTarget({
+    mode: "supabase",
+    executionHostOverride: publishedExecutionHost,
+  });
+  const publishedLocalDevice = validateGroupStorageTarget({
+    mode: "local_device",
+    localDevice: { rootPath: localDeviceRoot },
+    executionHostOverride: publishedExecutionHost,
+  });
+  const publishedChosenFolder = validateGroupStorageTarget({
+    mode: "chosen_folder",
+    chosenFolder: { path: chosenFolderRoot, kind: "filesystem" },
+    executionHostOverride: publishedExecutionHost,
+  });
+  const publishedHybrid = validateGroupStorageTarget({
+    mode: "hybrid",
+    chosenFolder: { path: hybridRoot, kind: "filesystem" },
+    hybrid: { primaryTarget: "chosen_folder" },
+    executionHostOverride: publishedExecutionHost,
+  });
+  const publishedOneDriveLocal = validateGroupStorageTarget({
+    mode: "chosen_folder",
+    chosenFolder: { path: oneDriveLocalRoot, kind: "filesystem" },
+    executionHostOverride: publishedExecutionHost,
+  });
+  let publishedPickerInvoked = false;
+  const publishedPicker = await pickNativeFilesystemFolder({
+    initialPath: oneDriveLocalRoot,
+    description: "Selecione a pasta de trabalho de Grupos",
+    executionHostOverride: publishedExecutionHost,
+    runPicker: async () => {
+      publishedPickerInvoked = true;
+      return JSON.stringify({ selected: true, path: oneDriveLocalRoot });
+    },
+  });
+
   return {
     tempRoot,
-    results: {
-      cloud,
-      localDevice,
-      chosenFolder,
-      hybrid,
-      blockedWeb,
-      oneDriveLocal,
-      pickerSelection,
-      pickerCancellation,
+    currentHost: {
+      hostCapabilities: currentHostCapabilities,
+      results: {
+        cloud,
+        localDevice,
+        chosenFolder,
+        hybrid,
+        blockedWeb,
+        oneDriveLocal,
+        pickerSelection,
+        pickerCancellation,
+      },
+    },
+    publishedArchitecture: {
+      hostCapabilities: publishedHostCapabilities,
+      results: {
+        cloud: publishedCloud,
+        localDevice: publishedLocalDevice,
+        chosenFolder: publishedChosenFolder,
+        hybrid: publishedHybrid,
+        oneDriveLocal: publishedOneDriveLocal,
+        picker: publishedPicker,
+        pickerInvoked: publishedPickerInvoked,
+      },
     },
     mirrorLocation,
     intermediateStorage: {
@@ -331,6 +431,20 @@ async function main() {
       runServerStorageChecks(),
     ]);
 
+    const browserReport = browserValidation?.report || {};
+    const settingsMatrixWithStatus = decorateSettingsMatrix(browserReport?.settingsMatrix || []);
+    const internalScenarioSummary = {
+      total: Number(browserReport?.scenarios?.length || 0),
+      passed: Number(browserReport?.passed || 0),
+      failed: Number(browserReport?.failed || 0),
+      corrected: Array.isArray(browserReport?.scenarios)
+        ? browserReport.scenarios.filter((scenario) => scenario.status === "corrected").length
+        : 0,
+      pending: Array.isArray(browserReport?.scenarios)
+        ? browserReport.scenarios.filter((scenario) => scenario.status === "pending").length
+        : 0,
+    };
+
     const report = {
       generatedAtIso: new Date().toISOString(),
       validatedCommitSha,
@@ -347,6 +461,8 @@ async function main() {
         "scripts/run-groups-v1-validation.mjs",
       ],
       legacyAliasAudit,
+      settingsMatrixWithStatus,
+      internalScenarioSummary,
       browserValidation,
       classificationSmoke,
       groupsSettingsSurfaceSmoke,
@@ -356,13 +472,20 @@ async function main() {
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf-8");
     console.log(`GROUPS_V1_VALIDATION_REPORT:${reportPath}`);
     console.log(JSON.stringify(report, null, 2));
-    const hasBrowserFailures = Number(browserValidation?.failed || 0) > 0;
+    const hasBrowserFailures = Number(browserReport?.failed || 0) > 0;
     const serverStorageOk = Boolean(
-      serverStorage?.results?.oneDriveLocal?.supported
-      && serverStorage?.results?.pickerSelection?.selected
-      && serverStorage?.results?.pickerSelection?.validation?.supported
+      serverStorage?.currentHost?.results?.oneDriveLocal?.supported
+      && serverStorage?.currentHost?.results?.pickerSelection?.selected
+      && serverStorage?.currentHost?.results?.pickerSelection?.validation?.supported
       && serverStorage?.intermediateStorage?.readTextOk
       && serverStorage?.intermediateStorage?.readBinaryOk
+      && serverStorage?.publishedArchitecture?.results?.cloud?.supported
+      && !serverStorage?.publishedArchitecture?.results?.localDevice?.supported
+      && !serverStorage?.publishedArchitecture?.results?.chosenFolder?.supported
+      && !serverStorage?.publishedArchitecture?.results?.hybrid?.supported
+      && !serverStorage?.publishedArchitecture?.results?.oneDriveLocal?.supported
+      && !serverStorage?.publishedArchitecture?.results?.picker?.supported
+      && !serverStorage?.publishedArchitecture?.results?.pickerInvoked
     );
     if (hasBrowserFailures || !classificationSmoke?.ok || !groupsSettingsSurfaceSmoke?.ok || !legacyAliasAudit.ok || !serverStorageOk) {
       process.exitCode = 1;

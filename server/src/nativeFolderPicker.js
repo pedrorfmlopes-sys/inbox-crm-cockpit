@@ -1,6 +1,9 @@
 import path from "node:path";
 import { execFile } from "node:child_process";
-import { validateGroupStorageTarget } from "./groupStorageRuntime.js";
+import {
+  resolveGroupStorageHostCapabilities,
+  validateGroupStorageTarget,
+} from "./groupStorageRuntime.js";
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -66,11 +69,12 @@ function runPowerShellFolderPicker(script) {
 }
 
 export async function pickNativeFilesystemFolder(input = {}) {
+  const hostCapabilities = resolveGroupStorageHostCapabilities(input.executionHostOverride || {});
   const runPicker = typeof input.runPicker === "function"
     ? input.runPicker
     : runPowerShellFolderPicker;
 
-  if (process.platform !== "win32") {
+  if (!hostCapabilities.nativeFolderPickerAvailable) {
     return {
       supported: false,
       selected: false,
@@ -79,7 +83,8 @@ export async function pickNativeFilesystemFolder(input = {}) {
       normalizedPath: "",
       validation: null,
       picker: null,
-      reason: "O picker nativo desta fase usa o seletor de pasta do Windows via backend local.",
+      hostCapabilities,
+      reason: hostCapabilities.blockingReason || "O picker nativo desta fase exige backend local Windows.",
     };
   }
 
@@ -108,6 +113,7 @@ export async function pickNativeFilesystemFolder(input = {}) {
       normalizedPath: "",
       validation: null,
       picker: "windows_folder_browser",
+      hostCapabilities,
       reason: "Selecao cancelada pelo utilizador.",
     };
   }
@@ -131,8 +137,9 @@ export async function pickNativeFilesystemFolder(input = {}) {
     normalizedPath,
     validation,
     picker: "windows_folder_browser",
+    hostCapabilities,
     reason: validation?.supported
-      ? "Pasta local escolhida via seletor nativo do Windows."
+      ? "Pasta local escolhida via seletor nativo do Windows no host atual."
       : validation?.blockingReason || "A pasta escolhida nao passou na validacao real do servidor.",
   };
 }

@@ -7,7 +7,42 @@ function normalizeString(value) {
 }
 
 function isNativeFolderPickerSupported() {
-  return process.platform === "win32";
+  return resolveGroupStorageHostCapabilities().nativeFolderPickerAvailable;
+}
+
+function hasRenderEnvironment(env = process.env) {
+  return Boolean(
+    env?.RENDER
+    || env?.RENDER_SERVICE_NAME
+    || env?.RENDER_INSTANCE_ID
+    || env?.RENDER_EXTERNAL_URL
+  );
+}
+
+export function resolveGroupStorageHostCapabilities(input = {}) {
+  const env = input.env || process.env;
+  const platform = normalizeString(input.platform || process.platform).toLowerCase() || process.platform;
+  const render = typeof input.render === "boolean" ? input.render : hasRenderEnvironment(env);
+  const localWindowsBackend = platform === "win32" && !render;
+  const productionArchitecture = render ? "render_remote_backend" : localWindowsBackend ? "local_windows_backend" : "non_windows_backend";
+  const userScopedFilesystemAvailable = localWindowsBackend;
+  const nativeFolderPickerAvailable = localWindowsBackend;
+
+  let blockingReason = null;
+  if (!userScopedFilesystemAvailable) {
+    blockingReason = render
+      ? "A arquitetura publicada usa backend remoto em Render; esse backend nao consegue abrir o seletor de pasta do utilizador nem escrever no filesystem local/OneDrive sincronizado da maquina do utilizador."
+      : "A bridge desta fase exige backend local Windows para picker nativo e escrita no path local do utilizador.";
+  }
+
+  return {
+    platform,
+    render,
+    productionArchitecture,
+    userScopedFilesystemAvailable,
+    nativeFolderPickerAvailable,
+    blockingReason,
+  };
 }
 
 function normalizeStorageMode(value) {
@@ -99,6 +134,7 @@ export function resolveGroupStorageInput(input = {}) {
 
 export function validateGroupStorageTarget(input = {}) {
   const resolved = resolveGroupStorageInput(input);
+  const hostCapabilities = resolveGroupStorageHostCapabilities(input.executionHostOverride || {});
   const notes = [];
 
   if (!resolved.fileBacked) {
@@ -113,13 +149,41 @@ export function validateGroupStorageTarget(input = {}) {
       requiresServerAccessiblePath: false,
       canStoreManifest: true,
       canStoreBinary: true,
-      pickerAvailable: isNativeFolderPickerSupported(),
-      pickerBlockedReason: isNativeFolderPickerSupported()
-        ? null
-        : "O picker nativo desta fase usa o seletor de pasta do Windows via backend local.",
+      pickerAvailable: hostCapabilities.nativeFolderPickerAvailable,
+      pickerBlockedReason: hostCapabilities.blockingReason,
+      hostCapabilities,
       architecturalBlocker: null,
       requiredChange: null,
       notes: ["Modo cloud: a persistencia final continua centralizada na app."],
+    };
+  }
+
+  if (!hostCapabilities.userScopedFilesystemAvailable) {
+    return {
+      mode: resolved.mode,
+      provider: resolved.provider,
+      fileBacked: true,
+      supported: false,
+      basePath: normalizeString(resolved.basePath),
+      normalizedBasePath: "",
+      isWebUrl: looksLikeWebUrl(resolved.basePath),
+      requiresServerAccessiblePath: true,
+      canStoreManifest: false,
+      canStoreBinary: false,
+      pickerAvailable: hostCapabilities.nativeFolderPickerAvailable,
+      pickerBlockedReason: hostCapabilities.blockingReason,
+      hostCapabilities,
+      blockingReason: hostCapabilities.blockingReason,
+      architecturalBlocker: hostCapabilities.render
+        ? "published_remote_backend_cannot_access_user_folder"
+        : "local_filesystem_bridge_requires_windows_local_backend",
+      requiredChange: hostCapabilities.render
+        ? "Executar um backend local na maquina do utilizador ou substituir o fluxo file-backed por integracao Graph/SharePoint adequada."
+        : "Correr a bridge local deste modulo num backend Windows local ou criar uma bridge multiplataforma equivalente.",
+      notes: [
+        hostCapabilities.blockingReason,
+        "Os modos file-backed desta fase sao internos/dev quando existe backend local Windows; nao sao producao-ok na arquitetura publicada com backend remoto.",
+      ],
     };
   }
 
@@ -136,10 +200,9 @@ export function validateGroupStorageTarget(input = {}) {
       requiresServerAccessiblePath: true,
       canStoreManifest: false,
       canStoreBinary: false,
-      pickerAvailable: isNativeFolderPickerSupported(),
-      pickerBlockedReason: isNativeFolderPickerSupported()
-        ? null
-        : "O picker nativo desta fase usa o seletor de pasta do Windows via backend local.",
+      pickerAvailable: hostCapabilities.nativeFolderPickerAvailable,
+      pickerBlockedReason: hostCapabilities.blockingReason,
+      hostCapabilities,
       blockingReason: "Define primeiro um caminho local, pasta sincronizada ou UNC acessivel ao processo do servidor.",
       architecturalBlocker: null,
       requiredChange: null,
@@ -162,6 +225,7 @@ export function validateGroupStorageTarget(input = {}) {
       pickerAvailable: false,
       pickerBlockedReason:
         "O picker desta fase devolve apenas caminhos locais reais do Windows; URLs web continuam fora do perimetro.",
+      hostCapabilities,
       blockingReason:
         "OneDrive/SharePoint por URL web ou document library nao e suportado nesta arquitetura porque a escrita final atual usa filesystem no servidor, nao Graph/SharePoint API.",
       architecturalBlocker: "web_document_library_requires_graph_backend",
@@ -210,10 +274,9 @@ export function validateGroupStorageTarget(input = {}) {
       requiresServerAccessiblePath: true,
       canStoreManifest: true,
       canStoreBinary: true,
-      pickerAvailable: isNativeFolderPickerSupported(),
-      pickerBlockedReason: isNativeFolderPickerSupported()
-        ? null
-        : "O picker nativo desta fase usa o seletor de pasta do Windows via backend local.",
+      pickerAvailable: hostCapabilities.nativeFolderPickerAvailable,
+      pickerBlockedReason: hostCapabilities.blockingReason,
+      hostCapabilities,
       architecturalBlocker: null,
       requiredChange: null,
       notes,
@@ -236,10 +299,9 @@ export function validateGroupStorageTarget(input = {}) {
       requiresServerAccessiblePath: true,
       canStoreManifest: false,
       canStoreBinary: false,
-      pickerAvailable: isNativeFolderPickerSupported(),
-      pickerBlockedReason: isNativeFolderPickerSupported()
-        ? null
-        : "O picker nativo desta fase usa o seletor de pasta do Windows via backend local.",
+      pickerAvailable: hostCapabilities.nativeFolderPickerAvailable,
+      pickerBlockedReason: hostCapabilities.blockingReason,
+      hostCapabilities,
       blockingReason: `O servidor nao conseguiu escrever no destino configurado: ${normalizeString(error?.message) || "erro desconhecido"}`,
       architecturalBlocker: null,
       requiredChange: null,
