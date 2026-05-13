@@ -135,6 +135,11 @@ const GK = "__ICCC_COCKPIT_CONTEXT_v1__";
 const ACTIVE_TAB_STORAGE_KEY = "iccc_active_tab_v1";
 const ACTIVE_SETTINGS_SECTION_STORAGE_KEY = "iccc_settings_section_v1";
 const CONNECTIVITY_CACHE_STORAGE_KEY = "iccc_connectivity_status_v1";
+const AI_CACHE_STORAGE_KEY = "iccc_ai_cache_v1";
+const AI_CACHE_LEGACY_STORAGE_KEY = "icc_ai_cache_v1";
+const AI_CACHE_MAX_ENTRIES = 12;
+const AI_CACHE_MAX_TEXT_CHARS = 8000;
+const AI_CACHE_MAX_HISTORY_ITEMS = 12;
 const WARM_BOOT_STORAGE_KEY = "iccc_warm_boot_v1";
 const WARM_BOOT_MAX_AGE_MS = 10 * 60 * 1000;
 const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
@@ -234,6 +239,71 @@ function persistConnectivitySnapshot(snapshot: ConnectivitySnapshot) {
         localStorage.setItem(CONNECTIVITY_CACHE_STORAGE_KEY, JSON.stringify(snapshot));
     } catch {
         // ignore persistence failures
+    }
+}
+
+function trimAiText(value: unknown): string {
+    const text = String(value || "");
+    if (text.length <= AI_CACHE_MAX_TEXT_CHARS) return text;
+    return text.slice(0, AI_CACHE_MAX_TEXT_CHARS);
+}
+
+function compactAiState(state: AiState): AiState {
+    return {
+        ...state,
+        prompt: trimAiText(state.prompt),
+        output: trimAiText(state.output),
+        history: Array.isArray(state.history)
+            ? state.history.slice(-AI_CACHE_MAX_HISTORY_ITEMS).map((entry) => ({
+                role: entry.role,
+                content: trimAiText(entry.content),
+            }))
+            : [],
+        smartReplies: Array.isArray(state.smartReplies)
+            ? state.smartReplies.slice(0, 12).map((reply) => trimAiText(reply))
+            : [],
+        suggestedTo: Array.isArray(state.suggestedTo) ? state.suggestedTo.slice(0, 20) : [],
+        suggestedCc: Array.isArray(state.suggestedCc) ? state.suggestedCc.slice(0, 20) : [],
+        suggestedSubject: trimAiText(state.suggestedSubject),
+    };
+}
+
+function compactAiCache(cache: Record<string, AiState>): Record<string, AiState> {
+    const entries = Object.entries(cache || {}).slice(-AI_CACHE_MAX_ENTRIES);
+    return Object.fromEntries(entries.map(([key, state]) => [key, compactAiState(state)]));
+}
+
+function readAiCache(): Record<string, AiState> {
+    try {
+        const saved = localStorage.getItem(AI_CACHE_STORAGE_KEY)
+            || localStorage.getItem(AI_CACHE_LEGACY_STORAGE_KEY);
+        if (!saved) return {};
+        const parsed = JSON.parse(saved);
+        return compactAiCache(parsed && typeof parsed === "object" ? parsed : {});
+    } catch {
+        return {};
+    }
+}
+
+function writeAiCache(cache: Record<string, AiState>): void {
+    const compacted = compactAiCache(cache);
+    try {
+        localStorage.setItem(AI_CACHE_STORAGE_KEY, JSON.stringify(compacted));
+        localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
+    } catch (error) {
+        const latestOnly = Object.fromEntries(Object.entries(compacted).slice(-1));
+        try {
+            localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
+            localStorage.setItem(AI_CACHE_STORAGE_KEY, JSON.stringify(latestOnly));
+        } catch {
+            try {
+                localStorage.removeItem(AI_CACHE_STORAGE_KEY);
+                localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
+            } catch {
+                // ignore storage failures
+            }
+        }
+        clientLog("warn", "[Cockpit] AI cache exceeded localStorage quota and was pruned", error);
     }
 }
 
@@ -530,20 +600,11 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }, []);
 
     // AI History Persistence
-    const [aiCache, setAiCache] = useState<Record<string, AiState>>(() => {
-        try {
-            const saved = localStorage.getItem("iccc_ai_cache_v1");
-            return saved ? JSON.parse(saved) : {};
-        } catch { return {}; }
-    });
+    const [aiCache, setAiCache] = useState<Record<string, AiState>>(readAiCache);
 
     // Save AI cache whenever it changes
     useEffect(() => {
-        try {
-            localStorage.setItem("iccc_ai_cache_v1", JSON.stringify(aiCache));
-        } catch (e) {
-            clientLog("error", "[Cockpit] Failed to save AI cache to localStorage", e);
-        }
+        writeAiCache(aiCache);
     }, [aiCache]);
 
     const [currentAiState, setCurrentAiState] = useState<AiState>({
@@ -1539,8 +1600,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const setAiState = (update: Partial<AiState>) => {
         if (!ctx.conversationId) return;
         setCurrentAiState(prev => {
-            const newState = { ...prev, ...update };
-            setAiCache(cache => ({
+            const newState = compactAiState({ ...prev, ...update });
+            setAiCache(cache => compactAiCache({
                 ...cache,
                 [ctx.conversationId!]: newState
             }));

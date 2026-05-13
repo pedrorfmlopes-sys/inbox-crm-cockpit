@@ -1,5 +1,25 @@
 # HANDOFF
 
+## IA: cache local deixa de rebentar quota do `localStorage` (Maio 2026)
+- **Erro tratado nesta ronda**:
+  - o console mostrava `QuotaExceededError` ao gravar o cache IA em `localStorage`
+  - a chave reportada pelo bundle era `icc_ai_cache_v1`, enquanto o código fonte atual usa `iccc_ai_cache_v1`
+- **O que foi alterado**:
+  - `CockpitProvider` passa a carregar o cache IA pela chave atual e pela chave legacy
+  - o cache passa a ser compactado antes de guardar:
+    - máximo de 12 conversas
+    - textos longos truncados
+    - histórico interno limitado
+    - listas auxiliares limitadas
+  - em caso de quota cheia, o runtime tenta guardar apenas a conversa mais recente
+  - se ainda falhar, limpa as chaves de cache IA para desbloquear o add-in
+- **Impacto esperado**:
+  - a IA pode perder histórico local antigo quando o browser estiver sem quota
+  - a falha deixa de bloquear o fluxo principal e passa a ser uma limpeza controlada de cache
+- **Validação desta ronda**:
+  - `npm.cmd -w client run build` passou
+  - `npx.cmd eslint src/components/shell/CockpitProvider.tsx` passou sem erros; mantém warnings antigos do ficheiro
+
 ## Grupos v1: defaults de `settings.groups.*.states` passam a arrancar vazios e inativos (Abril 2026)
 - **O que ficou fechado nesta ronda**:
   - os defaults canonicos de estados em `settings.groups` deixam de criar runtime ativo por omissao
