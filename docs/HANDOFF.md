@@ -1,5 +1,20 @@
 # HANDOFF
 
+## IA: cache local deixa de rebentar quota do `localStorage` (Maio 2026)
+- **Erro tratado nesta ronda**:
+  - o console mostrava `QuotaExceededError` ao gravar o cache IA em `localStorage`
+  - `main` ja tinha compactacao do cache atual `iccc_ai_cache_v1`, mas nao lia nem limpava a chave legacy reportada pelo bundle (`icc_ai_cache_v1`)
+- **O que foi alterado**:
+  - `CockpitProvider` passa a carregar o cache IA pela chave atual e pela chave legacy
+  - ao persistir o cache atual, a chave legacy e removida
+  - se a quota continuar cheia depois da compactacao, o runtime limpa as chaves de cache IA e segue sem bloquear o add-in
+- **Impacto esperado**:
+  - a IA pode perder historico local antigo quando o browser estiver sem quota
+  - a falha deixa de bloquear o fluxo principal e passa a ser uma limpeza controlada de cache
+- **Validacao desta ronda**:
+  - `npm.cmd -w client run build` passou
+  - `npx.cmd eslint src/components/shell/CockpitProvider.tsx` passou sem erros; mantem warnings antigos do ficheiro
+
 ## Hotfix: `Classificar` deixa de cair no bootstrap por import em falta de `resolveClassificationIntermediateCase` (Abril 2026)
 - **Causa raiz confirmada**:
   - `client/src/modules/crm/GroupClassificationStudioApp.tsx` chamava `resolveClassificationIntermediateCase(...)` no bootstrap do studio sem importar o helper

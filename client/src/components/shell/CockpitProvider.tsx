@@ -135,12 +135,13 @@ const GK = "__ICCC_COCKPIT_CONTEXT_v1__";
 const ACTIVE_TAB_STORAGE_KEY = "iccc_active_tab_v1";
 const ACTIVE_SETTINGS_SECTION_STORAGE_KEY = "iccc_settings_section_v1";
 const CONNECTIVITY_CACHE_STORAGE_KEY = "iccc_connectivity_status_v1";
+const AI_CACHE_STORAGE_KEY = "iccc_ai_cache_v1";
+const AI_CACHE_LEGACY_STORAGE_KEY = "icc_ai_cache_v1";
 const WARM_BOOT_STORAGE_KEY = "iccc_warm_boot_v1";
 const WARM_BOOT_MAX_AGE_MS = 10 * 60 * 1000;
 const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
 const LINKS_CACHE_MESSAGE_PREFIX = "iccc_links_cache_msg_v1:";
 const LINKS_CACHE_ITEM_PREFIX = "iccc_links_cache_item_v1:";
-const AI_CACHE_STORAGE_KEY = "iccc_ai_cache_v1";
 const AI_CACHE_MAX_CONVERSATIONS = 6;
 const AI_CACHE_MAX_PROMPT_CHARS = 2000;
 const AI_CACHE_MAX_OUTPUT_CHARS = 6000;
@@ -261,7 +262,8 @@ function serializeAiCacheForPersistence(cache: Record<string, AiState>): string 
 
 function readPersistedAiCache(): Record<string, AiState> {
     try {
-        const saved = localStorage.getItem(AI_CACHE_STORAGE_KEY);
+        const saved = localStorage.getItem(AI_CACHE_STORAGE_KEY)
+            || localStorage.getItem(AI_CACHE_LEGACY_STORAGE_KEY);
         if (!saved) return {};
         const parsed = JSON.parse(saved);
         if (!parsed || typeof parsed !== "object") return {};
@@ -283,11 +285,13 @@ function persistAiCacheSnapshot(cache: Record<string, AiState>) {
     const normalizedCache = normalizeAiCacheForPersistence(cache);
     if (!Object.keys(normalizedCache).length) {
         localStorage.removeItem(AI_CACHE_STORAGE_KEY);
+        localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
         return;
     }
 
     try {
         localStorage.setItem(AI_CACHE_STORAGE_KEY, serializeAiCacheForPersistence(normalizedCache));
+        localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
         return;
     } catch (error) {
         if (!isQuotaExceededStorageError(error)) throw error;
@@ -296,15 +300,18 @@ function persistAiCacheSnapshot(cache: Record<string, AiState>) {
     const compactCache = normalizeAiCacheForPersistence(cache, true);
     if (!Object.keys(compactCache).length) {
         localStorage.removeItem(AI_CACHE_STORAGE_KEY);
+        localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
         return;
     }
 
     try {
         localStorage.setItem(AI_CACHE_STORAGE_KEY, serializeAiCacheForPersistence(compactCache));
+        localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
     } catch (error) {
         if (!isQuotaExceededStorageError(error)) throw error;
         localStorage.removeItem(AI_CACHE_STORAGE_KEY);
-        throw error;
+        localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
+        clientLog("warn", "[Cockpit] AI cache exceeded localStorage quota and was cleared", error);
     }
 }
 
