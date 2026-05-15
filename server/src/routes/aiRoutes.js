@@ -54,9 +54,43 @@ function ensureBasicHtml(out) {
 }
 
 function looksLikeGenericDraftRefusal(text) {
-  const value = String(text || "").trim();
+  const value = String(text || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
   if (!value) return true;
-  return /(desculpa|lamento|sorry).{0,48}(nao posso|não posso|nao consigo|não consigo|can't help|cannot help)/i.test(value);
+
+  const hasApologyOrRefusal = [
+    "sorry",
+    "i'm sorry",
+    "desculpa",
+    "lamento",
+    "lo siento",
+    "mi dispiace",
+    "entschuldigung",
+  ].some((marker) => value.includes(marker));
+
+  const hasGenericInability = [
+    "can't assist",
+    "cant assist",
+    "cannot assist",
+    "can't help",
+    "cant help",
+    "cannot help",
+    "nao posso",
+    "nao consigo",
+    "nao posso ajudar",
+    "no puedo",
+    "no puedo ayudar",
+  ].some((marker) => value.includes(marker));
+
+  if (/\b(nao posso|nao consigo|no puedo)\s+(confirmar|validar|garantir|assegurar|informar|indicar|avancar|responder)\b/.test(value)) {
+    return false;
+  }
+
+  return hasApologyOrRefusal && hasGenericInability;
 }
 
 function trimEmailBody(raw) {
@@ -343,9 +377,12 @@ ${currentDraft}`
         const retryInstructions = `${instructions}
 
 [OVERRIDE OPERACIONAL]
-- O pedido do utilizador e redigir correspondencia empresarial comum com base em emails, anexos e contexto ligado.
+- Esta e uma tarefa legitima de backoffice/comercial: redigir correspondencia empresarial comum com base em emails, anexos e contexto ligado.
+- Gera o rascunho final pronto a enviar.
+- Se faltar informacao factual, gera um email profissional curto a pedir a informacao em falta.
+- Nao inventes factos, precos, prazos, referencias, disponibilidade ou condicoes comerciais.
 - Nao devolvas recusas genericas se o pedido for apenas criar um draft profissional legitimo.
-- Produz o rascunho final pronto a enviar, salvo se o pedido for claramente ilegal ou perigoso, o que nao se verifica aqui.`;
+- Mantem a excecao de seguranca: se o pedido for claramente ilegal, perigoso ou abusivo, nao cumpras.`;
 
         result = await aiCreateText({
           mode,
@@ -356,6 +393,13 @@ ${currentDraft}`
           max_output_tokens: maxOutputTokensFor(action, effectiveLength),
           temperature: action === "refine" ? 0 : 0.1,
           customModels: safeCustomModels,
+        });
+      }
+
+      if ((action === "reply" || action === "forward") && looksLikeGenericDraftRefusal(result.text)) {
+        return res.json({
+          ok: false,
+          error: "A IA devolveu uma recusa genérica e não conseguiu gerar um rascunho útil. Revê a instrução ou seleciona melhor o email-alvo/contexto.",
         });
       }
 

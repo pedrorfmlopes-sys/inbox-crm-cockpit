@@ -295,6 +295,10 @@ PERFIL DE COMUNICAÇÃO:
       `- PROIBIDO EXPOR CONTEXTO INTERNO: nao menciones colegas, pedidos internos, nem a cadeia interna de decisao, salvo instrucao explicita do utilizador.\n` +
       `- ESCREVE COMO REMETENTE FINAL: o email deve soar como uma comunicacao tua/da empresa para os destinatarios finais.\n` +
       `- Se houver anexos relevantes selecionados para reenviar, assume que seguem com o email e podes referi-los quando fizer sentido.\n` +
+      `- Se o pedido for apenas reencaminhar informacao, redige uma comunicacao profissional pronta a enviar.\n` +
+      `- Se os dados estiverem nos anexos/contexto, assume que seguem em anexo quando aplicavel.\n` +
+      `- Se a informacao for insuficiente, escreve um email curto a pedir os elementos em falta, em vez de devolver uma recusa generica.\n` +
+      `- Nao inventes precos, prazos, referencias, disponibilidade ou condicoes comerciais.\n` +
       `- Nao comeces com "[Rascunho para Reenvio]". O resultado deve ficar pronto a usar.\n` +
       `- Se o utilizador forneceu instrucoes em 'inputText', segue-as rigorosamente: "${inputText || ""}"\n` +
       `- Devolve apenas o corpo do email.` +
