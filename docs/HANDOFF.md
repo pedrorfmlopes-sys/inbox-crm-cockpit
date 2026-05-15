@@ -1,5 +1,28 @@
 # HANDOFF
 
+## HOTFIX IA: recusa generica deixa de ser mostrada como rascunho em reply/forward (Maio 2026)
+- **Causa raiz**:
+  - `server/src/routes/aiRoutes.js` ja tinha retry para recusas genericas em `reply`/`forward`, mas o detector nao apanhava respostas como `I'm sorry,\n\nI can't assist with that.`
+  - a regex antiga nao normalizava quebras de linha e cobria `can't help` / `cannot help`, mas nao `can't assist` / `cannot assist`
+  - quando a recusa escapava ao detector, o endpoint devolvia `ok:true` e o frontend mostrava a recusa como se fosse email gerado
+- **Ficheiros alterados**:
+  - `server/src/routes/aiRoutes.js`
+  - `server/src/ai/promptTemplates.js`
+  - `docs/HANDOFF.md`
+- **Impacto esperado**:
+  - recusas genericas em `reply`/`forward` disparam o retry operacional com instrucoes mais claras de backoffice/comercial
+  - se a IA insistir na recusa generica, o endpoint devolve `ok:false` com erro amigavel em vez de entregar `I'm sorry...` como rascunho
+  - o prompt de `forward` passa a orientar melhor reencaminhamentos legitimos, anexos/contexto e pedidos de informacao em falta, sem inventar factos comerciais
+- **Validacoes realizadas**:
+  - `node --check server/src/routes/aiRoutes.js` passou
+  - `node --check server/src/ai/promptTemplates.js` passou
+  - `npm.cmd -w client run build` passou
+  - teste isolado do detector confirmou `I'm sorry,\n\nI can't assist with that.` como recusa generica
+  - teste isolado confirmou que `Lamento, nao posso confirmar o prazo sem validacao.` nao e tratado como recusa generica
+  - chamada real a `/api/ai/generate` nao executada nesta shell porque `AI_ENABLED`, `OPENAI_API_KEY` e `GEMINI_API_KEY` nao estavam definidos
+- **Fora de scope / nao alterado**:
+  - sem alteracoes em Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest ou settings globais
+
 ## IA: cache local deixa de rebentar quota do `localStorage` (Maio 2026)
 - **Erro tratado nesta ronda**:
   - o console mostrava `QuotaExceededError` ao gravar o cache IA em `localStorage`
