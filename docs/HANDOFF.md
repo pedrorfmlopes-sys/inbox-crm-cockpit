@@ -1,36 +1,36 @@
 # HANDOFF
 
-## HOTFIX IA/DRAFTS: selecao e insercao de anexos no rascunho (Maio 2026)
+## HOTFIX IA/DRAFTS: selecao de anexos do rascunho isolada e estavel (Maio 2026)
 - **Causa raiz identificada**:
-  - os anexos selecionados para incluir no rascunho eram resolvidos quase so a partir de `persistedEmailAttachments`
-  - se a persistencia ainda nao tivesse conteudo/base64 carregavel, a lista efetiva para anexar ficava vazia
-  - no caminho normal de `REPLY`, a app abria `displayReplyForm(output)` mas nao tentava anexar ficheiros depois de o compose abrir
-- **Nova regra do campo Anexos**:
-  - `Detalhes do Rascunho` passa a incluir `Anexos` no mesmo card de `Para`, `CC`, `Bcc` e `Assunto`
-  - o campo usa chips e dropdown multi-selecao compacto
-  - a dropdown mostra `Anexos disponiveis`, com nome, tipo/tamanho, origem e estado `pronto para anexar` ou `pode exigir anexacao manual`
+  - a selecao de anexos a incluir no rascunho estava acoplada a `fileUsage.forward`, estado tambem usado pelos controlos de ficheiros/anexos;
+  - no modo `FORWARD`, a auto-selecao por defeito podia voltar a marcar anexos depois de o utilizador os desmarcar;
+  - a resolucao para anexacao dependia demasiado do nome do ficheiro, em vez de usar identidade estavel por `key`, `id`, `contentId` ou `nome+tamanho`.
+- **Solucao implementada**:
+  - `AiCockpit` passa a manter estado proprio para anexos a incluir no rascunho final;
+  - foi adicionado controlo de `draftAttachmentsTouched` para impedir que os defaults do `FORWARD` sejam reaplicados apos intervencao do utilizador;
+  - a resolucao de anexos selecionados passa a deduplicar e resolver por chave estavel, com fallback por nome/tamanho;
+  - o campo `Anexos` continua dentro de `Detalhes do Rascunho`, com chips e dropdown compacto.
 - **Regras por modo**:
-  - em `FORWARD`, anexos nao-inline do email aberto continuam selecionados por defeito para incluir no email final
-  - em `REPLY`, anexos aparecem disponiveis mas nao ficam selecionados por defeito
-  - o `FORWARD` nativo so e usado quando representa todos os anexos originais selecionados; selecao parcial usa nova mensagem com anexos controlados pela app
-  - `REPLY` ao email atual passa a tentar anexar os ficheiros selecionados depois de abrir o compose
+  - em `REPLY`, anexos aparecem disponiveis mas nao ficam selecionados por defeito; so os selecionados sao tentados no compose de resposta;
+  - em `FORWARD`, anexos reais nao-inline do email aberto ficam selecionados por defeito; se o utilizador desmarcar, a app respeita a selecao e usa o caminho controlado quando necessario.
 - **Separacao Analisar vs Reenviar/Incluir**:
-  - o campo `Anexos` controla apenas inclusao no email final (`fileUsage.forward`)
-  - selecionar anexos para incluir nao ativa `Analisar`
-  - conteudo/base64 so vai para IA quando o anexo esta explicitamente marcado para analisar
+  - `Analisar` continua a controlar apenas conteudo enviado a IA;
+  - `Incluir/Reenviar` controla apenas anexacao ao rascunho final;
+  - selecionar anexos para incluir nao ativa `Analisar` nem envia conteudo/base64 para IA.
 - **Ficheiros alterados**:
   - `client/src/modules/ai/AiCockpit.tsx`
   - `docs/HANDOFF.md`
-- **Validacoes realizadas**:
-  - `npm.cmd -w client run build` passou
-  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; ficaram warnings antigos fora de scope
-  - `git diff --check` passou
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
 - **Riscos remanescentes**:
-  - a anexacao automatica continua dependente do suporte do host Outlook/WebView
-  - anexos sem conteudo/base64 disponivel podem exigir anexacao manual pelo utilizador
+  - a anexacao automatica continua dependente do suporte do host Outlook/WebView;
+  - anexos sem conteudo/base64 disponivel podem exigir anexacao manual pelo utilizador.
 - **Fora de scope / nao alterado**:
-  - sem alteracoes em Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes, package scripts ou backend
-  - sem alteracoes na regra `FORWARD body-only`: IA escreve o corpo; a app trata destinatarios, assunto, anexos e Outlook
+  - sem alteracoes em Para/CC/Bcc, touched state de destinatarios ou dropdowns de contactos;
+  - sem alteracoes em Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes, package scripts ou backend;
+  - sem alteracoes na regra `FORWARD body-only`: IA escreve o corpo; a app trata destinatarios, assunto, anexos e Outlook.
 
 ## HOTFIX IA/OUTLOOK: dropdowns de destinatarios e item vazio controlado (Maio 2026)
 - **Causa raiz da lista de sugestoes fora dos campos**:

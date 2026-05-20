@@ -43,6 +43,7 @@ type FileUsageState = {
     forward: boolean;
 };
 
+type AttachmentLike = { [key: string]: unknown };
 type PersistedEmailAttachment = NonNullable<RelatedEmailEntry["attachments"]>[number];
 type DraftAttachmentOption = {
     key: string;
@@ -105,6 +106,31 @@ function isLikelyInlineAttachment(attachment: any): boolean {
     const name = String(attachment?.name || "").trim().toLowerCase();
     const type = String(attachment?.contentType || attachment?.type || "").trim().toLowerCase();
     return Boolean(name && type.startsWith("image/") && /^(image|logo|signature|assinatura|cid[:_-]?)/i.test(name));
+}
+
+function buildDraftAttachmentKey(attachment: AttachmentLike | null | undefined, fallbackSource = "attachment"): string {
+    const explicitKey = String(attachment?.key || "").trim();
+    if (explicitKey) return `key:${explicitKey}`;
+    const id = String(attachment?.id || attachment?.attachmentId || "").trim();
+    if (id) return `id:${id}`;
+    const contentId = String(attachment?.contentId || "").trim();
+    if (contentId) return `cid:${contentId}`;
+    const name = String(attachment?.name || "").trim().toLowerCase();
+    const size = Number(attachment?.size || 0) || 0;
+    return `${fallbackSource}:${name}|size:${size}`;
+}
+
+function buildDraftAttachmentDedupeKey(attachment: AttachmentLike | null | undefined): string {
+    const explicitKey = String(attachment?.key || "").trim();
+    if (explicitKey) return `key:${explicitKey}`;
+    const id = String(attachment?.id || attachment?.attachmentId || "").trim();
+    if (id) return `id:${id}`;
+    const contentId = String(attachment?.contentId || "").trim();
+    if (contentId) return `cid:${contentId}`;
+    const name = String(attachment?.name || "").trim().toLowerCase();
+    const size = Number(attachment?.size || 0) || 0;
+    const type = String(attachment?.contentType || attachment?.type || "").trim().toLowerCase();
+    return `file:${name}|size:${size}|type:${type}`;
 }
 
 function normalizeHistoryEntry(raw: any, now = Date.now()): HistoryEntry | null {
@@ -632,6 +658,8 @@ export const AiCockpit: React.FC = () => {
     const [replyAddresseeContext, setReplyAddresseeContext] = useState("");
     const [generationError, setGenerationError] = useState("");
     const [fileUsage, setFileUsage] = useState<Record<string, FileUsageState>>({});
+    const [selectedDraftAttachmentKeys, setSelectedDraftAttachmentKeys] = useState<string[]>([]);
+    const [draftAttachmentsTouched, setDraftAttachmentsTouched] = useState(false);
     const [persistedCurrentEmail, setPersistedCurrentEmail] = useState<RelatedEmailEntry | null>(null);
 
     // Responsive UI Scale
@@ -826,35 +854,6 @@ export const AiCockpit: React.FC = () => {
 
     const selectedAction: AiAction = aiState.action === "forward" ? "forward" : "reply";
 
-    useEffect(() => {
-        if (!Array.isArray(persistedEmailAttachments) || persistedEmailAttachments.length === 0) return;
-        const shouldPrimeForward = selectedAction === "forward" && !Object.values(fileUsage || {}).some((flags) => flags?.forward);
-        let changed = false;
-
-        setFileUsage((prev) => {
-            const next: Record<string, FileUsageState> = { ...(prev || {}) };
-            for (const attachment of persistedEmailAttachments) {
-                const name = String(attachment?.name || "").trim();
-                if (!name) continue;
-                const defaultForward = shouldPrimeForward && !isLikelyInlineAttachment(attachment);
-
-                if (!next[name]) {
-                    next[name] = { analyze: false, forward: defaultForward };
-                    syncAttachmentSelection(name, next[name]);
-                    changed = true;
-                    continue;
-                }
-
-                if (defaultForward && !next[name].forward) {
-                    next[name] = { ...next[name], forward: true };
-                    syncAttachmentSelection(name, next[name]);
-                    changed = true;
-                }
-            }
-            return changed ? next : prev;
-        });
-    }, [persistedEmailAttachments, selectedAction]);
-
     function hasEmailIdentity() {
         return Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
     }
@@ -929,80 +928,86 @@ export const AiCockpit: React.FC = () => {
     }
 
     async function resolveSelectedDraftAttachments(): Promise<DraftAttachmentResolution> {
-        const selectedNames = new Set(
-            Object.entries(fileUsage || {})
-                .filter(([, flags]) => flags?.forward)
-                .map(([name]) => String(name || "").trim())
-                .filter(Boolean)
-        );
+        const selectedKeys = new Set(selectedDraftAttachmentKeys);
+        const selectedOptions = draftAttachmentOptions.filter((option) => selectedKeys.has(option.key));
         const resolvedFiles: DraftAttachmentFile[] = [];
-        const unresolvedFiles: DraftAttachmentOption[] = [];
-        const handled = new Set<string>();
-        const pushResolved = (file: DraftAttachmentFile) => {
-            const key = String(file.name || "").trim().toLowerCase();
+        const resolvedOptionKeys = new Set<string>();
+        const handledFiles = new Set<string>();
+        const pushResolved = (file: DraftAttachmentFile, optionKey: string, source: AttachmentLike | null | undefined) => {
+            const key = buildDraftAttachmentDedupeKey({ ...(source || {}), name: file.name, type: file.type });
             const content = String(file.content || "").trim();
-            if (!key || !content || handled.has(key)) return;
-            handled.add(key);
+            if (!key || !content || handledFiles.has(key)) return;
+            handledFiles.add(key);
+            resolvedOptionKeys.add(optionKey);
             resolvedFiles.push({
                 name: file.name,
                 type: String(file.type || "application/octet-stream").trim() || "application/octet-stream",
                 content,
             });
         };
+        const findSelectedOptionKeyForAttachment = (attachment: AttachmentLike | null | undefined, fallbackSource: string): string => {
+            const exactKey = buildDraftAttachmentKey(attachment, fallbackSource);
+            if (selectedKeys.has(exactKey)) return exactKey;
+            const name = String(attachment?.name || "").trim().toLowerCase();
+            const size = Number(attachment?.size || 0) || 0;
+            const match = selectedOptions.find((option) => {
+                if (option.name.trim().toLowerCase() !== name) return false;
+                const optionSize = Number(option.size || 0) || 0;
+                return optionSize === size || optionSize === 0 || size === 0;
+            });
+            return match?.key || "";
+        };
 
         for (const attachment of persistedEmailAttachments) {
             const name = String(attachment?.name || "").trim();
-            if (!name || !selectedNames.has(name)) continue;
+            const optionKey = findSelectedOptionKeyForAttachment(attachment, "persisted");
+            if (!name || !optionKey) continue;
             const content = await resolvePersistedAttachmentContent(attachment);
             if (content) {
                 pushResolved({
                     name,
                     type: String(attachment?.contentType || "application/octet-stream").trim() || "application/octet-stream",
                     content,
-                });
-            } else {
-                unresolvedFiles.push({
-                    key: name,
-                    name,
-                    type: String(attachment?.contentType || "application/octet-stream").trim() || "application/octet-stream",
-                    size: Number(attachment?.size || 0) || undefined,
-                    source: "historico",
-                    isInline: Boolean(attachment?.isInline),
-                    hasContent: false,
-                    statusLabel: "pode exigir anexacao manual",
-                });
+                }, optionKey, attachment);
             }
         }
 
         for (const attachment of liveAttachments || []) {
             const name = String((attachment as any)?.name || "").trim();
-            if (!name || !selectedNames.has(name) || handled.has(name.toLowerCase())) continue;
+            const optionKey = findSelectedOptionKeyForAttachment(attachment, "live");
+            if (!name || !optionKey) continue;
             const content = String((attachment as any)?.content || "").trim();
             if (content) {
                 pushResolved({
                     name,
                     type: String((attachment as any)?.contentType || "application/octet-stream").trim() || "application/octet-stream",
                     content,
-                });
+                }, optionKey, attachment);
             }
         }
 
         for (const file of files || []) {
             const name = String((file as any)?.name || "").trim();
-            if (!name || !selectedNames.has(name) || handled.has(name.toLowerCase())) continue;
+            const optionKey = findSelectedOptionKeyForAttachment(file, "manual");
+            if (!name || !optionKey) continue;
             const content = String((file as any)?.content || "").trim();
             if (!content) continue;
             pushResolved({
                 name,
                 type: String((file as any)?.type || (file as any)?.contentType || "application/octet-stream").trim() || "application/octet-stream",
                 content,
-            });
+            }, optionKey, file);
+        }
+
+        const unresolvedFiles = selectedOptions.filter((option) => !resolvedOptionKeys.has(option.key));
+        for (const option of unresolvedFiles) {
+            console.warn("[AiCockpit] Selected draft attachment has no content available:", option.name);
         }
 
         return {
             resolvedFiles,
-            unresolvedFiles: unresolvedFiles.filter((entry) => !handled.has(entry.name.toLowerCase())),
-            selectedCount: selectedNames.size,
+            unresolvedFiles,
+            selectedCount: selectedOptions.length,
         };
     }
 
@@ -1082,54 +1087,49 @@ export const AiCockpit: React.FC = () => {
             content: entry.content || "",
         }))
         .filter((entry: { name?: string; content?: string }) => entry.name && entry.content);
-    const selectedForwardFiles = (persistedEmailAttachments || [])
-        .filter((entry) => fileUsage[String(entry?.name || "").trim()]?.forward)
-        .map((entry) => ({
-            name: entry.name,
-            type: entry.contentType,
-            content: entry.content || "",
-            hasContent: entry.hasContent,
-        }))
-        .filter((entry) => entry.name && (entry.content || entry.hasContent));
-    const availableAttachmentCount = (persistedEmailAttachments || [])
-        .filter((entry) => String(entry?.name || "").trim() && !isLikelyInlineAttachment(entry) && (String(entry?.content || "").trim() || entry?.hasContent))
-        .length;
 
     const draftAttachmentOptions = useMemo<DraftAttachmentOption[]>(() => {
-        const byName = new Map<string, DraftAttachmentOption>();
+        const byKey = new Map<string, DraftAttachmentOption>();
+        const dedupeKeys = new Set<string>();
         const addOption = (option: DraftAttachmentOption) => {
-            const key = option.name.trim().toLowerCase();
-            if (!key || byName.has(key)) return;
-            byName.set(key, option);
+            const key = String(option.key || "").trim();
+            const dedupeKey = /^(key|id|cid):/.test(key)
+                ? key
+                : `file:${option.name.trim().toLowerCase()}|size:${Number(option.size || 0) || 0}|type:${option.type.trim().toLowerCase()}`;
+            if (!key || byKey.has(key) || dedupeKeys.has(dedupeKey)) return;
+            byKey.set(key, option);
+            dedupeKeys.add(dedupeKey);
         };
         for (const attachment of persistedEmailAttachments || []) {
             const name = String(attachment?.name || "").trim();
             if (!name) continue;
             const hasContent = Boolean(String(attachment?.content || "").trim() || attachment?.hasContent);
+            const isInline = isLikelyInlineAttachment(attachment);
             addOption({
-                key: name,
+                key: buildDraftAttachmentKey(attachment, "persisted"),
                 name,
                 type: String(attachment?.contentType || "application/octet-stream").trim() || "application/octet-stream",
                 size: Number(attachment?.size || 0) || undefined,
                 source: "historico",
-                isInline: Boolean(attachment?.isInline),
+                isInline,
                 hasContent,
-                statusLabel: hasContent ? "pronto para anexar" : "pode exigir anexacao manual",
+                statusLabel: isInline ? "inline/assinatura" : hasContent ? "pronto para anexar" : "pode exigir anexacao manual",
             });
         }
         for (const attachment of liveAttachments || []) {
             const name = String((attachment as any)?.name || "").trim();
             if (!name) continue;
             const hasContent = Boolean(String((attachment as any)?.content || "").trim());
+            const isInline = isLikelyInlineAttachment(attachment);
             addOption({
-                key: name,
+                key: buildDraftAttachmentKey(attachment, "live"),
                 name,
                 type: String((attachment as any)?.contentType || "application/octet-stream").trim() || "application/octet-stream",
                 size: Number((attachment as any)?.size || 0) || undefined,
                 source: "email",
-                isInline: Boolean((attachment as any)?.isInline),
+                isInline,
                 hasContent,
-                statusLabel: hasContent ? "pronto para anexar" : "pode exigir anexacao manual",
+                statusLabel: isInline ? "inline/assinatura" : hasContent ? "pronto para anexar" : "pode exigir anexacao manual",
             });
         }
         for (const file of files || []) {
@@ -1137,39 +1137,46 @@ export const AiCockpit: React.FC = () => {
             if (!name) continue;
             const hasContent = Boolean(String((file as any)?.content || "").trim());
             addOption({
-                key: name,
+                key: buildDraftAttachmentKey(file, "manual"),
                 name,
                 type: String((file as any)?.type || (file as any)?.contentType || "application/octet-stream").trim() || "application/octet-stream",
+                size: Number((file as any)?.size || 0) || undefined,
                 source: "manual",
                 hasContent,
                 statusLabel: hasContent ? "pronto para anexar" : "pode exigir anexacao manual",
             });
         }
-        return Array.from(byName.values()).filter((option) => !option.isInline);
+        return Array.from(byKey.values());
     }, [files, liveAttachments, persistedEmailAttachments]);
 
-    const selectedDraftAttachmentOptions = draftAttachmentOptions.filter((option) => fileUsage[option.name]?.forward);
+    const selectedDraftAttachmentKeySet = useMemo(() => new Set(selectedDraftAttachmentKeys), [selectedDraftAttachmentKeys]);
+    const selectedDraftAttachmentOptions = draftAttachmentOptions.filter((option) => selectedDraftAttachmentKeySet.has(option.key));
+    const selectedForwardFiles = selectedDraftAttachmentOptions;
+    const nativeForwardAttachmentKeys = draftAttachmentOptions
+        .filter((entry) => entry.source !== "manual" && !entry.isInline)
+        .map((entry) => entry.key);
+    const availableAttachmentCount = draftAttachmentOptions
+        .filter((entry) => entry.source !== "manual" && !entry.isInline)
+        .length;
 
     useEffect(() => {
-        if (!draftAttachmentOptions.length) return;
-        const shouldPrimeForward = selectedAction === "forward" && !Object.values(fileUsage || {}).some((flags) => flags?.forward);
-        let changed = false;
-        setFileUsage((prev) => {
-            const next: Record<string, FileUsageState> = { ...(prev || {}) };
-            for (const option of draftAttachmentOptions) {
-                if (!next[option.name]) {
-                    next[option.name] = { analyze: false, forward: shouldPrimeForward && !option.isInline };
-                    changed = true;
-                    continue;
-                }
-                if (shouldPrimeForward && !option.isInline && !next[option.name].forward) {
-                    next[option.name] = { ...next[option.name], forward: true };
-                    changed = true;
-                }
-            }
-            return changed ? next : prev;
+        setDraftAttachmentsTouched(false);
+        setSelectedDraftAttachmentKeys([]);
+        setAttachmentSearch("");
+    }, [emailKey, selectedAction]);
+
+    useEffect(() => {
+        if (draftAttachmentsTouched) return;
+        const defaultKeys = selectedAction === "forward"
+            ? draftAttachmentOptions
+                .filter((option) => option.source !== "manual" && !option.isInline)
+                .map((option) => option.key)
+            : [];
+        setSelectedDraftAttachmentKeys((current) => {
+            if (current.length === defaultKeys.length && current.every((key, index) => key === defaultKeys[index])) return current;
+            return defaultKeys;
         });
-    }, [draftAttachmentOptions, fileUsage, selectedAction]);
+    }, [draftAttachmentOptions, draftAttachmentsTouched, selectedAction]);
 
     function setGenerationAction(nextAction: "reply" | "forward") {
         setAiState({ action: nextAction });
@@ -1235,6 +1242,20 @@ export const AiCockpit: React.FC = () => {
     function setAttachmentUsage(name: string, patch: Partial<FileUsageState>) {
         const fileName = String(name || "").trim();
         if (!fileName) return;
+        if (Object.prototype.hasOwnProperty.call(patch, "forward")) {
+            const matchingKeys = draftAttachmentOptions
+                .filter((option) => option.name === fileName)
+                .map((option) => option.key);
+            setDraftAttachmentsTouched(true);
+            setSelectedDraftAttachmentKeys((current) => {
+                const next = new Set(current);
+                for (const key of matchingKeys) {
+                    if (patch.forward) next.add(key);
+                    else next.delete(key);
+                }
+                return Array.from(next);
+            });
+        }
         setFileUsage((prev) => {
             const current = prev[fileName] || { analyze: false, forward: false };
             const next = { ...current, ...patch };
@@ -2104,9 +2125,9 @@ export const AiCockpit: React.FC = () => {
             };
 
             if (effectiveAction === "forward") {
-                const selectedAllNativeForwardAttachments = draftAttachments.selectedCount > 0
-                    && draftAttachments.selectedCount === availableAttachmentCount
-                    && draftAttachments.unresolvedFiles.length === 0;
+                const selectedAllNativeForwardAttachments = nativeForwardAttachmentKeys.length > 0
+                    && draftAttachments.selectedCount === nativeForwardAttachmentKeys.length
+                    && nativeForwardAttachmentKeys.every((key) => selectedDraftAttachmentKeySet.has(key));
                 if (selectedAllNativeForwardAttachments && (!replyTargetEmail || isCurrentReplyTarget)) {
                     try {
                         await displayForwardForm(output, true);
@@ -3092,14 +3113,18 @@ export const AiCockpit: React.FC = () => {
 
     function renderDraftAttachmentField() {
         const query = attachmentSearch.trim().toLowerCase();
-        const selectedNames = new Set(selectedDraftAttachmentOptions.map((option) => option.name.toLowerCase()));
         const visibleOptions = draftAttachmentOptions
             .filter((option) => !query || option.name.toLowerCase().includes(query) || option.type.toLowerCase().includes(query))
             .slice(0, 20);
         const showDropdown = attachmentsDropdownOpen;
-        const toggleAttachment = (name: string) => {
-            const current = Boolean(fileUsage[name]?.forward);
-            setAttachmentUsage(name, { forward: !current });
+        const toggleAttachment = (attachment: DraftAttachmentOption) => {
+            setDraftAttachmentsTouched(true);
+            setSelectedDraftAttachmentKeys((current) => {
+                const next = new Set(current);
+                if (next.has(attachment.key)) next.delete(attachment.key);
+                else next.add(attachment.key);
+                return Array.from(next);
+            });
         };
 
         return (
@@ -3119,14 +3144,15 @@ export const AiCockpit: React.FC = () => {
                     }}
                 >
                     {selectedDraftAttachmentOptions.map((attachment) => (
-                        <span key={attachment.name} style={S.recipientChip} title={`${attachment.name} - ${attachment.statusLabel}`}>
+                        <span key={attachment.key} style={S.recipientChip} title={`${attachment.name} - ${attachment.statusLabel}`}>
                             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "145px" }}>{attachment.name}</span>
                             <button
                                 type="button"
                                 style={S.recipientChipRemove}
                                 onClick={(event) => {
                                     event.stopPropagation();
-                                    setAttachmentUsage(attachment.name, { forward: false });
+                                    setDraftAttachmentsTouched(true);
+                                    setSelectedDraftAttachmentKeys((current) => current.filter((key) => key !== attachment.key));
                                 }}
                                 aria-label={`Remover anexo ${attachment.name}`}
                             >
@@ -3154,7 +3180,7 @@ export const AiCockpit: React.FC = () => {
                     <div style={S.recipientDropdown}>
                         <div style={S.recipientDropdownTitle}>Anexos disponiveis</div>
                         {visibleOptions.map((attachment) => {
-                            const selected = selectedNames.has(attachment.name.toLowerCase());
+                            const selected = selectedDraftAttachmentKeySet.has(attachment.key);
                             const meta = [
                                 attachment.type,
                                 formatAttachmentSize(attachment.size),
@@ -3169,7 +3195,7 @@ export const AiCockpit: React.FC = () => {
                                         background: selected ? "rgba(37, 99, 235, 0.08)" : "transparent",
                                     }}
                                     onMouseDown={(event) => event.preventDefault()}
-                                    onClick={() => toggleAttachment(attachment.name)}
+                                    onClick={() => toggleAttachment(attachment)}
                                 >
                                     <span style={{ display: "grid", gap: "2px", minWidth: 0 }}>
                                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 700 }}>{attachment.name}</span>
