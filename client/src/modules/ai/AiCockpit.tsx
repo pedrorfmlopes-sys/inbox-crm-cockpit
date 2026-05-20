@@ -1087,13 +1087,16 @@ export const AiCockpit: React.FC = () => {
     useEffect(() => {
         if (!settings) return;
         if (!aiState.prompt && !aiState.output && !aiState.history.length) {
+            const defaultAction = ctx.itemUnavailableReason === "compose-without-readable-message-identity" && ctx.composeIntent === "forward"
+                ? "forward"
+                : "reply";
             setAiState({
                 tone: settings.tone || "neutro",
                 locale: (settings.replyLanguage || "auto") as AiLocale,
-                action: "reply",
+                action: defaultAction,
             });
         }
-    }, [emailKey, settings]);
+    }, [emailKey, settings, ctx.itemUnavailableReason, ctx.composeIntent]);
 
     const selectedLocale = ((aiState.locale || settings?.replyLanguage || "auto") as AiLocale);
     const effectiveLocale = (selectedLocale !== "auto"
@@ -1231,6 +1234,13 @@ export const AiCockpit: React.FC = () => {
     function setGenerationAction(nextAction: "reply" | "forward") {
         setAiState({ action: nextAction });
     }
+
+    useEffect(() => {
+        if (ctx.itemUnavailableReason !== "compose-without-readable-message-identity") return;
+        if (ctx.composeIntent !== "forward" && ctx.composeIntent !== "reply") return;
+        if (selectedAction === ctx.composeIntent) return;
+        setAiState({ action: ctx.composeIntent });
+    }, [ctx.itemUnavailableReason, ctx.composeIntent, selectedAction, setAiState]);
 
     function applyHistoryEntry(entry: HistoryEntry) {
         setOutput(entry.output || "");

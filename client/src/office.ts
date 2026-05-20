@@ -29,6 +29,7 @@ import {
 
 
 export type Recipient = { name: string; email: string };
+export type OutlookComposeIntent = "reply" | "forward" | "new" | "unknown";
 
 export type OutlookMessageContext = {
   subject?: string;
@@ -43,6 +44,7 @@ export type OutlookMessageContext = {
   toRecipients?: Recipient[];
   ccRecipients?: Recipient[];
   isCompose?: boolean;
+  composeIntent?: OutlookComposeIntent;
 };
 
 export type OutlookAttachment = {
@@ -1119,6 +1121,14 @@ function normalizeRecipients(arr: any): Recipient[] {
     .filter((r) => r.email);
 }
 
+function inferComposeIntentFromSubject(subject: string): OutlookComposeIntent {
+  const normalized = String(subject || "").trim().toLowerCase();
+  if (!normalized) return "unknown";
+  if (/^(fw|fwd|enc|reen|reenc|rv|tr|wg)\s*:/i.test(normalized)) return "forward";
+  if (/^(re|res|resp|aw|sv)\s*:/i.test(normalized)) return "reply";
+  return "unknown";
+}
+
 export async function getOutlookContext(): Promise<OutlookMessageContext> {
   try {
     const OfficeAny = await ensureOfficeReady();
@@ -1197,6 +1207,7 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
     } catch {
       isCompose = false;
     }
+    const composeIntent = isCompose ? inferComposeIntentFromSubject(subject) : undefined;
 
     if (isCompose && !itemId && !internetMessageId) {
       return {
@@ -1206,6 +1217,7 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
         toRecipients,
         ccRecipients,
         isCompose: true,
+        composeIntent,
         itemUnavailableReason: "compose-without-readable-message-identity",
       };
     }
@@ -1221,6 +1233,7 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
       toRecipients,
       ccRecipients,
       isCompose,
+      composeIntent,
     };
   } catch (error) {
     clientLog.error("[office] getOutlookContext error", error);

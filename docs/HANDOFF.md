@@ -1,5 +1,34 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: alinhar compose nativo Forward com modo FORWARD (Maio 2026)
+- **Causa raiz**:
+  - a hotfix anterior preservava corretamente o email ancora quando o Outlook abria um compose nativo sem `itemId`/`internetMessageId`;
+  - esse estado ficava visualmente laranja, mas o contexto preservado perdia a intencao do compose (`Reply` vs `Forward`);
+  - como o `AiCockpit` continuava a ver apenas o email ancora e o estado IA anterior, podia manter `REPLY` selecionado e gerar/inserir uma resposta quando o utilizador estava numa janela nativa de reencaminhamento.
+- **Solucao implementada**:
+  - `office.ts` passa a inferir `composeIntent` em compose por prefixos de assunto conhecidos (`FW`, `FWD`, `ENC`, `RV`, `TR`, `WG` para forward; `RE`, `RES`, `RESP`, `AW`, `SV` para reply);
+  - `CockpitProvider` preserva o email ancora confirmado, mas junta o `composeIntent` e o estado controlado `compose-without-readable-message-identity` ao contexto exposto;
+  - `AiCockpit` usa esse metadado para selecionar automaticamente `FORWARD` ou `REPLY` quando o Outlook esta num compose nativo sem identidade legivel;
+  - compose sem intencao clara fica como `unknown` e nao força `FORWARD`.
+- **Impacto esperado**:
+  - ao abrir `Reencaminhar` nativo depois de uma leitura verde, a linha laranja passa a estar alinhada com o estado funcional e `FORWARD` fica selecionado;
+  - gerar email nesse estado usa o fluxo `forward`/body-only ja existente;
+  - `Reply` nativo continua a alinhar para `REPLY`.
+- **Ficheiros alterados**:
+  - `client/src/office.ts`
+  - `client/src/components/shell/CockpitProvider.tsx`
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `docs/HANDOFF.md`
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx src/components/shell/CockpitProvider.tsx src/office.ts` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - a inferencia depende do prefixo de assunto que o host Outlook aplica ao compose nativo; hosts/idiomas com prefixos diferentes podem ficar como `unknown`;
+  - validacao final de Reply/Forward precisa de teste manual no Outlook real.
+- **Fora de scope confirmado**:
+  - sem alteracoes em IA/prompt backend, destinatarios Para/CC/Bcc, dropdowns, anexos, Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes ou package scripts.
+
 ## HOTFIX Outlook: preservar email ancora ao abrir compose nativo sem identidade (Maio 2026)
 - **Causa raiz**:
   - quando o utilizador abria `Responder`/`Reencaminhar` nativo do Outlook, o add-in podia receber um `mailbox.item` existente mas em modo compose;
