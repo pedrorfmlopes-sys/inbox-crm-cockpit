@@ -1033,7 +1033,15 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     ? lastConfirmedEmailAnchorRef.current
                     : (lastConfirmedEmailAnchorRef.current || lastValidReadSnapshotRef.current);
                 if (snapshot) {
-                    setCtx(snapshot.ctx);
+                    const preservedAnchorCtx = unavailableReason === "compose-without-readable-message-identity"
+                        ? {
+                            ...snapshot.ctx,
+                            isCompose: c.isCompose === true,
+                            composeIntent: c.composeIntent || snapshot.ctx.composeIntent,
+                            itemUnavailableReason: unavailableReason,
+                        }
+                        : snapshot.ctx;
+                    setCtx(preservedAnchorCtx);
                     setBodyText(snapshot.bodyText);
                     setBodyHtml(snapshot.bodyHtml);
                     setAttachments(snapshot.attachments);
