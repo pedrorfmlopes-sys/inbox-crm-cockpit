@@ -1,5 +1,21 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: Reply e Forward totalmente controlados pelo utilizador (Maio 2026)
+- **Causa raiz**:
+  - a ronda anterior ainda deixava `composeIntent` influenciar `selectedAction` no `AiCockpit`;
+  - mesmo como sugestao inicial, isso continuava a criar estados em que a app podia voltar a `Reply`/`Forward` sem decisao explicita do utilizador.
+- **Solucao implementada**:
+  - removida do `AiCockpit` toda a logica que aplicava `ctx.composeIntent` como `action`;
+  - removido o efeito que fazia `setAiState({ action: ctx.composeIntent })`;
+  - removida a logica de `defaultAction` baseada em `composeIntent`;
+  - os botoes `Reply` e `Forward` continuam sempre clicaveis e a acao passa a ser apenas a que existe no estado IA ou a escolhida manualmente pelo utilizador.
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Fora de scope confirmado**:
+  - sem alteracoes em IA backend, anexos, Para/CC/Bcc, Odoo, Grupos, categorias Outlook, manifest, permissoes ou package scripts.
+
 ## HOTFIX IA/OUTLOOK: permitir override manual do modo Forward (Maio 2026)
 - **Causa raiz**:
   - `composeIntent` estava a ser tratado como ordem permanente no `AiCockpit`;
