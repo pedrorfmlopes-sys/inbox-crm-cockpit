@@ -1,5 +1,32 @@
 # HANDOFF
 
+## HOTFIX IA/DRAFTS: anexos sem duplicados, dropdown visivel e attach com espera (Maio 2026)
+- **Causa raiz da duplicacao**:
+  - o mesmo anexo podia chegar por `persistedEmailAttachments` e `liveAttachments` com chaves diferentes;
+  - a deduplicacao anterior ainda dependia demasiado da chave de origem, permitindo duas opcoes para o mesmo ficheiro.
+- **Causa raiz da dropdown escondida/cortada**:
+  - o campo `Anexos` reutilizava a dropdown absoluta dos campos de contactos dentro do card `Detalhes do Rascunho`;
+  - com chips removidos e em sidebar estreita, o overlay podia ficar invisivel ou cortado pelo card.
+- **Causa raiz provavel da falha de anexacao**:
+  - a app chamava `addBase64AttachmentToCompose(...)` imediatamente apos `displayNewMessageForm(...)` / `displayReplyForm(...)`;
+  - em alguns hosts Outlook, o compose ainda nao disponibilizou `addFileAttachmentFromBase64Async` nesse instante.
+- **Solucao implementada**:
+  - anexos passam a ter deduplicacao canonica por `contentId`, `id/attachmentId`, `nome+tamanho`, `nome+tipo` e nome;
+  - se o mesmo anexo existir em persisted/live, a UI mostra uma unica opcao e prefere a versao com conteudo, dando prioridade a `liveAttachments` quando aplicavel;
+  - a dropdown de `Anexos` passa a ser bloco inline dentro do card, sem alterar dropdowns de contactos;
+  - a anexacao espera o compose ficar pronto e tenta cada anexo com retry antes de reportar falha.
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - a anexacao automatica continua dependente do host Outlook e da disponibilidade de base64/conteudo para cada anexo;
+  - se o host nunca disponibilizar compose com API de anexacao, a app avisa e o utilizador pode ter de anexar manualmente.
+- **Fora de scope confirmado**:
+  - sem alteracoes em Para/CC/Bcc, touched state de destinatarios ou dropdowns de contactos;
+  - sem alteracoes em Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes, package scripts ou backend;
+  - sem alteracoes na regra `FORWARD body-only`.
+
 ## HOTFIX IA/DRAFTS: selecao de anexos do rascunho isolada e estavel (Maio 2026)
 - **Causa raiz identificada**:
   - a selecao de anexos a incluir no rascunho estava acoplada a `fileUsage.forward`, estado tambem usado pelos controlos de ficheiros/anexos;

@@ -47,6 +47,7 @@ type AttachmentLike = { [key: string]: unknown };
 type PersistedEmailAttachment = NonNullable<RelatedEmailEntry["attachments"]>[number];
 type DraftAttachmentOption = {
     key: string;
+    canonicalKey: string;
     name: string;
     type: string;
     size?: number;
@@ -121,16 +122,34 @@ function buildDraftAttachmentKey(attachment: AttachmentLike | null | undefined, 
 }
 
 function buildDraftAttachmentDedupeKey(attachment: AttachmentLike | null | undefined): string {
-    const explicitKey = String(attachment?.key || "").trim();
-    if (explicitKey) return `key:${explicitKey}`;
-    const id = String(attachment?.id || attachment?.attachmentId || "").trim();
-    if (id) return `id:${id}`;
     const contentId = String(attachment?.contentId || "").trim();
     if (contentId) return `cid:${contentId}`;
     const name = String(attachment?.name || "").trim().toLowerCase();
     const size = Number(attachment?.size || 0) || 0;
+    if (name && size > 0) return `file:${name}|size:${size}`;
+    const id = String(attachment?.id || attachment?.attachmentId || "").trim();
+    if (id) return `id:${id}`;
     const type = String(attachment?.contentType || attachment?.type || "").trim().toLowerCase();
-    return `file:${name}|size:${size}|type:${type}`;
+    return `file:${name}|type:${type}`;
+}
+
+function buildDraftAttachmentDedupeKeys(attachment: AttachmentLike | null | undefined): string[] {
+    const keys: string[] = [];
+    const push = (value: string) => {
+        const key = value.trim();
+        if (key && !keys.includes(key)) keys.push(key);
+    };
+    const contentId = String(attachment?.contentId || "").trim();
+    const id = String(attachment?.id || attachment?.attachmentId || "").trim();
+    const name = String(attachment?.name || "").trim().toLowerCase();
+    const size = Number(attachment?.size || 0) || 0;
+    const type = String(attachment?.contentType || attachment?.type || "").trim().toLowerCase();
+    if (contentId) push(`cid:${contentId}`);
+    if (id) push(`id:${id}`);
+    if (name && size > 0) push(`file:${name}|size:${size}`);
+    if (name && type) push(`file:${name}|type:${type}`);
+    if (name) push(`file:${name}`);
+    return keys;
 }
 
 function normalizeHistoryEntry(raw: any, now = Date.now()): HistoryEntry | null {
@@ -930,6 +949,7 @@ export const AiCockpit: React.FC = () => {
     async function resolveSelectedDraftAttachments(): Promise<DraftAttachmentResolution> {
         const selectedKeys = new Set(selectedDraftAttachmentKeys);
         const selectedOptions = draftAttachmentOptions.filter((option) => selectedKeys.has(option.key));
+        const selectedCanonicalKeys = new Set(selectedOptions.map((option) => option.canonicalKey));
         const resolvedFiles: DraftAttachmentFile[] = [];
         const resolvedOptionKeys = new Set<string>();
         const handledFiles = new Set<string>();
@@ -948,6 +968,11 @@ export const AiCockpit: React.FC = () => {
         const findSelectedOptionKeyForAttachment = (attachment: AttachmentLike | null | undefined, fallbackSource: string): string => {
             const exactKey = buildDraftAttachmentKey(attachment, fallbackSource);
             if (selectedKeys.has(exactKey)) return exactKey;
+            const canonicalKeys = buildDraftAttachmentDedupeKeys(attachment);
+            const canonicalMatch = canonicalKeys.find((key) => selectedCanonicalKeys.has(key));
+            if (canonicalMatch) {
+                return selectedOptions.find((option) => option.canonicalKey === canonicalMatch)?.key || "";
+            }
             const name = String(attachment?.name || "").trim().toLowerCase();
             const size = Number(attachment?.size || 0) || 0;
             const match = selectedOptions.find((option) => {
@@ -1090,15 +1115,37 @@ export const AiCockpit: React.FC = () => {
 
     const draftAttachmentOptions = useMemo<DraftAttachmentOption[]>(() => {
         const byKey = new Map<string, DraftAttachmentOption>();
-        const dedupeKeys = new Set<string>();
-        const addOption = (option: DraftAttachmentOption) => {
-            const key = String(option.key || "").trim();
-            const dedupeKey = /^(key|id|cid):/.test(key)
-                ? key
-                : `file:${option.name.trim().toLowerCase()}|size:${Number(option.size || 0) || 0}|type:${option.type.trim().toLowerCase()}`;
-            if (!key || byKey.has(key) || dedupeKeys.has(dedupeKey)) return;
-            byKey.set(key, option);
-            dedupeKeys.add(dedupeKey);
+        const canonicalToKey = new Map<string, string>();
+        const shouldPreferDraftAttachmentOption = (incoming: DraftAttachmentOption, current: DraftAttachmentOption) => {
+            if (incoming.hasContent !== current.hasContent) return incoming.hasContent;
+            if (incoming.source === "email" && current.source !== "email") return true;
+            if (incoming.source !== "manual" && current.source === "manual") return true;
+            return false;
+        };
+        const addOption = (option: DraftAttachmentOption, sourceAttachment: AttachmentLike | null | undefined) => {
+            const optionKeys = buildDraftAttachmentDedupeKeys(sourceAttachment);
+            const canonicalKey = optionKeys[0] || option.canonicalKey || option.key;
+            const duplicateKey = optionKeys.map((key) => canonicalToKey.get(key)).find(Boolean);
+            const targetKey = duplicateKey || option.key;
+            const nextOption = { ...option, key: targetKey, canonicalKey };
+            if (duplicateKey) {
+                const current = byKey.get(duplicateKey);
+                if (current && shouldPreferDraftAttachmentOption(nextOption, current)) {
+                    byKey.set(duplicateKey, {
+                        ...nextOption,
+                        key: duplicateKey,
+                        canonicalKey: current.canonicalKey || canonicalKey,
+                        size: nextOption.size || current.size,
+                    });
+                } else if (current && nextOption.hasContent && !current.hasContent) {
+                    byKey.set(duplicateKey, { ...current, hasContent: true, statusLabel: current.isInline ? "inline/assinatura" : "pronto para anexar" });
+                }
+                for (const key of optionKeys) canonicalToKey.set(key, duplicateKey);
+                return;
+            }
+            if (!targetKey || byKey.has(targetKey)) return;
+            byKey.set(targetKey, nextOption);
+            for (const key of optionKeys) canonicalToKey.set(key, targetKey);
         };
         for (const attachment of persistedEmailAttachments || []) {
             const name = String(attachment?.name || "").trim();
@@ -1107,6 +1154,7 @@ export const AiCockpit: React.FC = () => {
             const isInline = isLikelyInlineAttachment(attachment);
             addOption({
                 key: buildDraftAttachmentKey(attachment, "persisted"),
+                canonicalKey: buildDraftAttachmentDedupeKey(attachment),
                 name,
                 type: String(attachment?.contentType || "application/octet-stream").trim() || "application/octet-stream",
                 size: Number(attachment?.size || 0) || undefined,
@@ -1114,7 +1162,7 @@ export const AiCockpit: React.FC = () => {
                 isInline,
                 hasContent,
                 statusLabel: isInline ? "inline/assinatura" : hasContent ? "pronto para anexar" : "pode exigir anexacao manual",
-            });
+            }, attachment);
         }
         for (const attachment of liveAttachments || []) {
             const name = String((attachment as any)?.name || "").trim();
@@ -1123,6 +1171,7 @@ export const AiCockpit: React.FC = () => {
             const isInline = isLikelyInlineAttachment(attachment);
             addOption({
                 key: buildDraftAttachmentKey(attachment, "live"),
+                canonicalKey: buildDraftAttachmentDedupeKey(attachment),
                 name,
                 type: String((attachment as any)?.contentType || "application/octet-stream").trim() || "application/octet-stream",
                 size: Number((attachment as any)?.size || 0) || undefined,
@@ -1130,7 +1179,7 @@ export const AiCockpit: React.FC = () => {
                 isInline,
                 hasContent,
                 statusLabel: isInline ? "inline/assinatura" : hasContent ? "pronto para anexar" : "pode exigir anexacao manual",
-            });
+            }, attachment);
         }
         for (const file of files || []) {
             const name = String((file as any)?.name || "").trim();
@@ -1138,13 +1187,14 @@ export const AiCockpit: React.FC = () => {
             const hasContent = Boolean(String((file as any)?.content || "").trim());
             addOption({
                 key: buildDraftAttachmentKey(file, "manual"),
+                canonicalKey: buildDraftAttachmentDedupeKey(file),
                 name,
                 type: String((file as any)?.type || (file as any)?.contentType || "application/octet-stream").trim() || "application/octet-stream",
                 size: Number((file as any)?.size || 0) || undefined,
                 source: "manual",
                 hasContent,
                 statusLabel: hasContent ? "pronto para anexar" : "pode exigir anexacao manual",
-            });
+            }, file);
         }
         return Array.from(byKey.values());
     }, [files, liveAttachments, persistedEmailAttachments]);
@@ -2016,28 +2066,61 @@ export const AiCockpit: React.FC = () => {
             const draftAttachments = await resolveSelectedDraftAttachments();
             const forwardFiles = draftAttachments.resolvedFiles;
             console.log("[AiCockpit] isComposeMode:", isCompose);
-            const buildAttachmentMessage = (base: string, attachedCount: number, failedCount: number, unresolvedCount = 0) => {
+            const waitForComposeAttachmentReady = async (attempts = 15, delayMs = 400) => {
+                for (let attempt = 0; attempt < attempts; attempt += 1) {
+                    const composeReady = await isComposeMode().catch(() => false);
+                    const item = (globalThis as any)?.Office?.context?.mailbox?.item;
+                    if (composeReady && item && typeof item.addFileAttachmentFromBase64Async === "function") return true;
+                    await new Promise((resolve) => setTimeout(resolve, delayMs));
+                }
+                return false;
+            };
+            const buildAttachmentMessage = (base: string, attachedCount: number, failedCount: number, unresolvedCount = 0, composeUnavailable = false) => {
                 const parts = [base];
                 if (attachedCount > 0) parts.push(`${attachedCount} anexo(s).`);
                 if (failedCount > 0) parts.push(`${failedCount} anexo(s) nao puderam ser adicionados automaticamente.`);
-                if (unresolvedCount > 0) parts.push("Alguns anexos selecionados nao tem conteudo disponivel.");
-                if (failedCount > 0 || unresolvedCount > 0) parts.push("O Outlook pode exigir anexacao manual de alguns ficheiros.");
+                if (unresolvedCount > 0) parts.push(`Nao foi possivel obter o conteudo de ${unresolvedCount} anexo(s).`);
+                if (composeUnavailable) parts.push("O Outlook ainda nao disponibilizou o rascunho para anexacao. Tenta novamente dentro de alguns segundos.");
+                if (failedCount > 0 || unresolvedCount > 0 || composeUnavailable) parts.push("O Outlook pode exigir anexacao manual de alguns ficheiros.");
+                if (draftAttachments.selectedCount === 0) parts.push("Nenhum anexo selecionado para incluir.");
                 return parts.join(" ");
             };
-            const attachSelectedDraftFilesBestEffort = async (delayMs = 900) => {
+            const attachSelectedDraftFilesBestEffort = async () => {
                 let attachedCount = 0;
                 let failedCount = 0;
-                if (forwardFiles.length) await new Promise((resolve) => setTimeout(resolve, delayMs));
-                for (const attachment of forwardFiles) {
-                    try {
-                        await addBase64AttachmentToCompose(attachment.name, attachment.content);
-                        attachedCount += 1;
-                    } catch (attachError) {
-                        failedCount += 1;
-                        console.warn("[AiCockpit] Could not attach selected draft file automatically:", attachment.name, attachError);
+                const failedNames: string[] = [];
+                let composeUnavailable = false;
+                if (forwardFiles.length) {
+                    const ready = await waitForComposeAttachmentReady();
+                    if (!ready) {
+                        composeUnavailable = true;
+                        return {
+                            attachedCount,
+                            failedCount: forwardFiles.length,
+                            failedNames: forwardFiles.map((attachment) => attachment.name),
+                            unresolvedCount: draftAttachments.unresolvedFiles.length,
+                            composeUnavailable,
+                        };
                     }
                 }
-                return { attachedCount, failedCount, unresolvedCount: draftAttachments.unresolvedFiles.length };
+                for (const attachment of forwardFiles) {
+                    let attached = false;
+                    for (let attempt = 0; attempt < 3 && !attached; attempt += 1) {
+                        try {
+                            if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 450));
+                            await addBase64AttachmentToCompose(attachment.name, attachment.content);
+                            attached = true;
+                            attachedCount += 1;
+                        } catch (attachError) {
+                            if (attempt >= 2) {
+                                failedCount += 1;
+                                failedNames.push(attachment.name);
+                                console.warn("[AiCockpit] Could not attach selected draft file automatically:", attachment.name, attachError);
+                            }
+                        }
+                    }
+                }
+                return { attachedCount, failedCount, failedNames, unresolvedCount: draftAttachments.unresolvedFiles.length, composeUnavailable };
             };
             setDebugLog(`Modo Edição: ${isCompose}`);
 
@@ -2054,7 +2137,7 @@ export const AiCockpit: React.FC = () => {
 
                 // Insert body
                 await insertTextToBody(output);
-                const composeAttachmentResult = await attachSelectedDraftFilesBestEffort(250);
+                const composeAttachmentResult = await attachSelectedDraftFilesBestEffort();
 
                 const composeDraftCategories = await loadDraftLinkCategories().catch(() => null);
                 if (composeDraftCategories) {
@@ -2074,7 +2157,7 @@ export const AiCockpit: React.FC = () => {
                 }).catch(e => console.warn("[AiCockpit] Learning log failed:", e));
 
                 setDebugLog("Atualizado com sucesso!");
-                setMsg(buildAttachmentMessage("Draft atualizado com sucesso.", composeAttachmentResult.attachedCount, composeAttachmentResult.failedCount, composeAttachmentResult.unresolvedCount));
+                setMsg(buildAttachmentMessage("Draft atualizado com sucesso.", composeAttachmentResult.attachedCount, composeAttachmentResult.failedCount, composeAttachmentResult.unresolvedCount, composeAttachmentResult.composeUnavailable));
                 setTimeout(() => setMsg(""), 5000);
                 return;
             }
@@ -2107,9 +2190,9 @@ export const AiCockpit: React.FC = () => {
                     body: output,
                     isHtml: true,
                 });
-                const { attachedCount, failedCount, unresolvedCount } = await attachSelectedDraftFilesBestEffort();
+                const { attachedCount, failedCount, unresolvedCount, composeUnavailable } = await attachSelectedDraftFilesBestEffort();
                 if (failedCount > 0 || unresolvedCount > 0) {
-                    setMsg(buildAttachmentMessage("Nova mensagem aberta.", attachedCount, failedCount, unresolvedCount));
+                    setMsg(buildAttachmentMessage("Nova mensagem aberta.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
                 } else if (attachedCount > 0) {
                     setMsg(nativeForwardError
                         ? `O Outlook nao permitiu o reencaminhamento nativo. Foi aberta uma nova mensagem com o corpo gerado e ${attachedCount} anexo(s).`
@@ -2119,7 +2202,7 @@ export const AiCockpit: React.FC = () => {
                 } else if (replyTargetEmail && !isCurrentReplyTarget) {
                     setMsg("Rascunho criado para o email guardado selecionado.");
                 } else {
-                    setMsg("Nova mensagem aberta com o corpo gerado.");
+                    setMsg(buildAttachmentMessage("Nova mensagem aberta com o corpo gerado.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
                 }
                 setTimeout(() => setMsg(""), 6000);
             };
@@ -2174,11 +2257,11 @@ export const AiCockpit: React.FC = () => {
                         isHtml: true,
                     });
                     queueDraftCategorySync();
-                    const { attachedCount, failedCount, unresolvedCount } = await attachSelectedDraftFilesBestEffort();
+                    const { attachedCount, failedCount, unresolvedCount, composeUnavailable } = await attachSelectedDraftFilesBestEffort();
                     if (attachedCount || failedCount || unresolvedCount) {
-                        setMsg(buildAttachmentMessage("Rascunho criado para o email selecionado.", attachedCount, failedCount, unresolvedCount));
+                        setMsg(buildAttachmentMessage("Rascunho criado para o email selecionado.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
                     } else {
-                        setMsg("Rascunho criado para o email guardado selecionado.");
+                        setMsg(buildAttachmentMessage("Rascunho criado para o email guardado selecionado.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
                     }
                 } else {
                     // Default to Reply (including for refine, rewrite, etc.)
@@ -2191,10 +2274,8 @@ export const AiCockpit: React.FC = () => {
                             console.warn("[AiCockpit] Could not update reply draft subject with ticket code:", subjectError);
                         }
                     }
-                    const { attachedCount, failedCount, unresolvedCount } = await attachSelectedDraftFilesBestEffort();
-                    if (attachedCount || failedCount || unresolvedCount) {
-                        setMsg(buildAttachmentMessage("Rascunho aberto.", attachedCount, failedCount, unresolvedCount));
-                    }
+                    const { attachedCount, failedCount, unresolvedCount, composeUnavailable } = await attachSelectedDraftFilesBestEffort();
+                    setMsg(buildAttachmentMessage("Rascunho aberto.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
                     queueDraftCategorySync();
                 }
             }
@@ -2720,6 +2801,18 @@ export const AiCockpit: React.FC = () => {
             overflow: "auto",
             padding: "4px",
         },
+        attachmentDropdown: {
+            position: "static",
+            zIndex: 1,
+            marginTop: "4px",
+            background: "#fff",
+            border: "1px solid #dbe3f3",
+            borderRadius: "6px",
+            boxShadow: "0 4px 12px rgba(15, 23, 42, 0.08)",
+            maxHeight: "170px",
+            overflow: "auto",
+            padding: "4px",
+        },
         recipientDropdownTitle: {
             fontSize: "9px",
             color: "#64748b",
@@ -3177,7 +3270,7 @@ export const AiCockpit: React.FC = () => {
                     />
                 </div>
                 {showDropdown ? (
-                    <div style={S.recipientDropdown}>
+                    <div style={S.attachmentDropdown}>
                         <div style={S.recipientDropdownTitle}>Anexos disponiveis</div>
                         {visibleOptions.map((attachment) => {
                             const selected = selectedDraftAttachmentKeySet.has(attachment.key);
