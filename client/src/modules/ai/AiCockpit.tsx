@@ -676,6 +676,8 @@ export const AiCockpit: React.FC = () => {
     const [replyAddresseeName, setReplyAddresseeName] = useState("");
     const [replyAddresseeContext, setReplyAddresseeContext] = useState("");
     const [generationError, setGenerationError] = useState("");
+    const [generationActionTouched, setGenerationActionTouched] = useState(false);
+    const appliedComposeIntentRef = useRef("");
     const [fileUsage, setFileUsage] = useState<Record<string, FileUsageState>>({});
     const [selectedDraftAttachmentKeys, setSelectedDraftAttachmentKeys] = useState<string[]>([]);
     const [draftAttachmentsTouched, setDraftAttachmentsTouched] = useState(false);
@@ -1086,17 +1088,18 @@ export const AiCockpit: React.FC = () => {
 
     useEffect(() => {
         if (!settings) return;
-        if (!aiState.prompt && !aiState.output && !aiState.history.length) {
-            const defaultAction = ctx.itemUnavailableReason === "compose-without-readable-message-identity" && ctx.composeIntent === "forward"
-                ? "forward"
-                : "reply";
+        if (!generationActionTouched && !aiState.prompt && !aiState.output && !aiState.history.length) {
+            const defaultAction = ctx.itemUnavailableReason === "compose-without-readable-message-identity"
+                && (ctx.composeIntent === "forward" || ctx.composeIntent === "reply")
+                ? ctx.composeIntent
+                : selectedAction;
             setAiState({
                 tone: settings.tone || "neutro",
                 locale: (settings.replyLanguage || "auto") as AiLocale,
                 action: defaultAction,
             });
         }
-    }, [emailKey, settings, ctx.itemUnavailableReason, ctx.composeIntent]);
+    }, [emailKey, settings, ctx.itemUnavailableReason, ctx.composeIntent, generationActionTouched, selectedAction, aiState.prompt, aiState.output, aiState.history.length]);
 
     const selectedLocale = ((aiState.locale || settings?.replyLanguage || "auto") as AiLocale);
     const effectiveLocale = (selectedLocale !== "auto"
@@ -1232,15 +1235,26 @@ export const AiCockpit: React.FC = () => {
     }, [draftAttachmentOptions, draftAttachmentsTouched, selectedAction]);
 
     function setGenerationAction(nextAction: "reply" | "forward") {
+        setGenerationActionTouched(true);
         setAiState({ action: nextAction });
     }
 
     useEffect(() => {
         if (ctx.itemUnavailableReason !== "compose-without-readable-message-identity") return;
         if (ctx.composeIntent !== "forward" && ctx.composeIntent !== "reply") return;
+        if (generationActionTouched) return;
+        if (aiState.prompt || aiState.output || aiState.history.length) return;
+        const composeIntentKey = `${emailKey}|${ctx.itemUnavailableReason}|${ctx.composeIntent}`;
+        if (appliedComposeIntentRef.current === composeIntentKey) return;
+        appliedComposeIntentRef.current = composeIntentKey;
         if (selectedAction === ctx.composeIntent) return;
         setAiState({ action: ctx.composeIntent });
-    }, [ctx.itemUnavailableReason, ctx.composeIntent, selectedAction, setAiState]);
+    }, [emailKey, ctx.itemUnavailableReason, ctx.composeIntent, generationActionTouched, aiState.prompt, aiState.output, aiState.history.length, selectedAction]);
+
+    useEffect(() => {
+        setGenerationActionTouched(false);
+        appliedComposeIntentRef.current = "";
+    }, [emailKey]);
 
     function applyHistoryEntry(entry: HistoryEntry) {
         setOutput(entry.output || "");
@@ -2357,6 +2371,8 @@ export const AiCockpit: React.FC = () => {
         setReplyTargetEmail(null);
         setReplyAddresseeName("");
         setReplyAddresseeContext("");
+        setGenerationActionTouched(false);
+        appliedComposeIntentRef.current = "";
         clearFiles();
     };
 

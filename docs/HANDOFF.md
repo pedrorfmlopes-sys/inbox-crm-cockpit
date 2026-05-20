@@ -1,5 +1,21 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: permitir override manual do modo Forward (Maio 2026)
+- **Causa raiz**:
+  - `composeIntent` estava a ser tratado como ordem permanente no `AiCockpit`;
+  - quando o Outlook sinalizava `composeIntent = reply`, clicar manualmente em `Forward` atualizava a acao, mas o `useEffect` seguinte voltava a aplicar `reply`.
+- **Solucao implementada**:
+  - o `AiCockpit` passa a manter `generationActionTouched` e uma chave de aplicacao unica por contexto/intent;
+  - cliques manuais em `Reply` ou `Forward` marcam override manual e passam a prevalecer;
+  - `composeIntent` continua a poder sugerir o modo inicial quando o compose nativo entra sem identidade, mas so enquanto nao houver prompt/output/history e enquanto o utilizador nao tiver tocado no modo;
+  - `composeIntent = unknown` nao forca nenhuma acao.
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Fora de scope confirmado**:
+  - sem alteracoes em IA backend, anexos, Para/CC/Bcc, Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes ou package scripts.
+
 ## HOTFIX IA/OUTLOOK: alinhar compose nativo Forward com modo FORWARD (Maio 2026)
 - **Causa raiz**:
   - a hotfix anterior preservava corretamente o email ancora quando o Outlook abria um compose nativo sem `itemId`/`internetMessageId`;
