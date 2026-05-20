@@ -1,5 +1,28 @@
 # HANDOFF
 
+## DIAGNOSTICO IA/OUTLOOK: trace temporario da selecao Reply/Forward (Maio 2026)
+- **Objetivo**:
+  - recolher factos no Outlook real sobre porque o clique em `Forward` ainda nao fica ativo/respeitado no `AiCockpit` durante compose/reencaminhamento nativo.
+- **Hipotese a validar**:
+  - no momento do clique, o contexto exposto ao `AiCockpit` pode estar sem `ctx.conversationId`;
+  - nesse caso, o `CockpitProvider.setAiState(...)` ignora o update e a acao nao passa para `forward`.
+- **Diagnostico adicionado**:
+  - prefixo unico de console: `[AI_ACTION_DIAG]`;
+  - `AiCockpit` regista o clique em `Reply`/`Forward`, estado antes do clique, contexto, `emailKey`, prompt/output e tamanho do historico;
+  - `AiCockpit` agenda um log curto pos-clique para ver se `aiState.action`/`selectedAction` mudaram;
+  - `CockpitProvider` regista updates de `setAiState` com `update.action`, se vai aplicar ou ignorar, e a chave de cache usada;
+  - `CockpitProvider` regista a preservacao do email ancora quando entra em `compose-without-readable-message-identity`.
+- **Instrucoes de teste pos-deploy**:
+  - abrir DevTools/Console, abrir email, esperar barra verde, abrir reencaminhamento nativo do Outlook, clicar `Forward` na app;
+  - copiar todos os logs com `[AI_ACTION_DIAG]`;
+  - verificar especialmente `ctxConversationId`, `willApply`, `selectedAction`, `aiStateAction` e se aparece `setAiState ignored: missing conversationId`.
+- **Ficheiros alterados**:
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `client/src/components/shell/CockpitProvider.tsx`
+  - `docs/HANDOFF.md`
+- **Confirmacao**:
+  - esta ronda nao implementa correcao funcional nem altera o fluxo pretendido; adiciona apenas logs temporarios, seguros e removiveis.
+
 ## HOTFIX IA/OUTLOOK: Reply e Forward totalmente controlados pelo utilizador (Maio 2026)
 - **Causa raiz**:
   - a ronda anterior ainda deixava `composeIntent` influenciar `selectedAction` no `AiCockpit`;

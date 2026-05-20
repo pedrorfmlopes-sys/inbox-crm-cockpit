@@ -1041,6 +1041,20 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                             itemUnavailableReason: unavailableReason,
                         }
                         : snapshot.ctx;
+                    console.info("[AI_ACTION_DIAG] preserving confirmed anchor during unavailable Outlook item", {
+                        unavailableReason,
+                        composeIntent: String(c.composeIntent || ""),
+                        anchorConversationId: String(snapshot.ctx.conversationId || ""),
+                        anchorItemId: String(snapshot.ctx.itemId || ""),
+                        anchorInternetMessageId: String(snapshot.ctx.internetMessageId || ""),
+                        incomingConversationId: String(c.conversationId || ""),
+                        incomingItemId: String(c.itemId || ""),
+                        incomingInternetMessageId: String(c.internetMessageId || ""),
+                        preservedConversationId: String(preservedAnchorCtx.conversationId || ""),
+                        preservedItemId: String(preservedAnchorCtx.itemId || ""),
+                        preservedInternetMessageId: String(preservedAnchorCtx.internetMessageId || ""),
+                        preservedComposeIntent: String(preservedAnchorCtx.composeIntent || ""),
+                    });
                     setCtx(preservedAnchorCtx);
                     setBodyText(snapshot.bodyText);
                     setBodyHtml(snapshot.bodyHtml);
@@ -1867,6 +1881,26 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }, [ctx.conversationId, ctx.internetMessageId, ctx.itemId, currentOutlookCategorySource, currentOutlookCategorySourceStatus, links.length, settings?.groupLabelCatalog]);
 
     const setAiState = (update: Partial<AiState>) => {
+        const hasActionUpdate = Object.prototype.hasOwnProperty.call(update, "action");
+        if (hasActionUpdate) {
+            const cacheKey = String(ctx.conversationId || "");
+            const diagPayload = {
+                updateAction: String(update.action || ""),
+                ctxConversationId: cacheKey,
+                ctxItemId: String(ctx.itemId || ""),
+                ctxInternetMessageId: String(ctx.internetMessageId || ""),
+                ctxItemUnavailableReason: String(ctx.itemUnavailableReason || ""),
+                ctxIsCompose: ctx.isCompose === true,
+                ctxComposeIntent: String(ctx.composeIntent || ""),
+                willApply: Boolean(ctx.conversationId),
+                cacheKey,
+            };
+            if (!ctx.conversationId) {
+                console.warn("[AI_ACTION_DIAG] setAiState ignored: missing conversationId", diagPayload);
+            } else {
+                console.info("[AI_ACTION_DIAG] setAiState action update", diagPayload);
+            }
+        }
         if (!ctx.conversationId) return;
         setCurrentAiState(prev => {
             const newState = { ...prev, ...update };

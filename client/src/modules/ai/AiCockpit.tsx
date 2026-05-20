@@ -872,6 +872,38 @@ export const AiCockpit: React.FC = () => {
     }, [files, persistedEmailAttachments]);
 
     const selectedAction: AiAction = aiState.action === "forward" ? "forward" : "reply";
+    const aiActionDiagLatestRef = useRef<Record<string, unknown>>({});
+
+    useEffect(() => {
+        aiActionDiagLatestRef.current = {
+            selectedAction,
+            aiStateAction: String(aiState.action || ""),
+            ctxConversationId: String(ctx.conversationId || ""),
+            ctxItemId: String(ctx.itemId || ""),
+            ctxInternetMessageId: String(ctx.internetMessageId || ""),
+            ctxItemUnavailableReason: String(ctx.itemUnavailableReason || ""),
+            ctxIsCompose: ctx.isCompose === true,
+            ctxComposeIntent: String(ctx.composeIntent || ""),
+            emailKey,
+            hasPrompt: Boolean(String(prompt || "").trim()),
+            hasOutput: Boolean(String(output || aiState.output || "").trim()),
+            historyLength: Array.isArray(aiState.history) ? aiState.history.length : 0,
+        };
+    }, [
+        selectedAction,
+        aiState.action,
+        aiState.output,
+        aiState.history,
+        ctx.conversationId,
+        ctx.itemId,
+        ctx.internetMessageId,
+        ctx.itemUnavailableReason,
+        ctx.isCompose,
+        ctx.composeIntent,
+        emailKey,
+        prompt,
+        output,
+    ]);
 
     function hasEmailIdentity() {
         return Boolean(ctx.itemId || ctx.internetMessageId || ctx.conversationId);
@@ -1229,7 +1261,17 @@ export const AiCockpit: React.FC = () => {
     }, [draftAttachmentOptions, draftAttachmentsTouched, selectedAction]);
 
     function setGenerationAction(nextAction: "reply" | "forward") {
+        console.info("[AI_ACTION_DIAG] setGenerationAction clicked", {
+            nextAction,
+            ...aiActionDiagLatestRef.current,
+        });
         setAiState({ action: nextAction });
+        window.setTimeout(() => {
+            console.info("[AI_ACTION_DIAG] setGenerationAction post-tick", {
+                nextAction,
+                ...aiActionDiagLatestRef.current,
+            });
+        }, 100);
     }
 
     function applyHistoryEntry(entry: HistoryEntry) {
