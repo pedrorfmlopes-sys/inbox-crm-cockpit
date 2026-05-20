@@ -799,14 +799,14 @@ export const AiCockpit: React.FC = () => {
                 if (!name) continue;
 
                 if (!next[name]) {
-                    next[name] = { analyze: true, forward: shouldPrimeForward };
+                    next[name] = { analyze: false, forward: shouldPrimeForward };
                     syncAttachmentSelection(name, next[name]);
                     changed = true;
                     continue;
                 }
 
                 if (shouldPrimeForward && !next[name].forward) {
-                    next[name] = { ...next[name], analyze: true, forward: true };
+                    next[name] = { ...next[name], forward: true };
                     syncAttachmentSelection(name, next[name]);
                     changed = true;
                 }
@@ -1599,7 +1599,7 @@ export const AiCockpit: React.FC = () => {
 
         if (!finalPrompt) {
             if (resolvedAction === "forward") {
-                finalPrompt = "Cria um email novo profissional baseado no email atualmente aberto, no contexto do caso e nos anexos selecionados. Nao trates isto como resposta ao remetente nem como exigencia de email-alvo; redige o corpo pronto a enviar para destinatarios que o utilizador escolher manualmente.";
+                finalPrompt = "Cria apenas o corpo HTML de um email novo profissional baseado no email atualmente aberto. Nao trates isto como resposta ao remetente original. Nao resolvas destinatarios, emails, Para, Cc ou Bcc; a app trata desses campos depois.";
             } else if (resolvedAction === "reply") {
                 finalPrompt = replyTargetEmail
                     ? "Com base neste email, nos anexos relevantes e no contexto completo do caso, cria uma resposta final para o email-alvo selecionado. Usa o email atual como atualizacao do processo e escreve a resposta pronta a enviar."
@@ -1623,20 +1623,7 @@ export const AiCockpit: React.FC = () => {
             finalPrompt = [finalPrompt, replyTargetInstructions].filter(Boolean).join("\n\n");
         }
 
-        if (resolvedAction === "forward" && replyTargetEmail) {
-            const targetExcerpt = String(replyTargetEmail.bodyText || "").trim() || htmlToPlainText(String(replyTargetEmail.bodyHtml || ""));
-            const forwardContext = [
-                "CONTEXTO ADICIONAL DO DOSSIER PARA NOVO EMAIL:",
-                "- O email-alvo selecionado serve apenas como contexto historico; nao e destinatario automatico.",
-                `- Assunto do email-alvo: ${replyTargetEmail.subject || "(sem assunto)"}`,
-                `- Remetente do email-alvo: ${replyTargetEmail.fromName || replyTargetEmail.fromEmail || "--"}`,
-                targetExcerpt ? `- Conteudo relevante do email-alvo: ${targetExcerpt.slice(0, 1600)}` : "",
-                "- Se faltar um endereco de destinatario, nao inventes. Gera o corpo do email na mesma.",
-            ].filter(Boolean).join("\n");
-            finalPrompt = [finalPrompt, forwardContext].filter(Boolean).join("\n\n");
-        }
-
-        if (resolvedAction === "forward" || resolvedAction === "reply") {
+        if (resolvedAction === "reply") {
             const selectedRecipients = [
                 draftTo.length ? `Para selecionado: ${draftTo.join("; ")}` : "",
                 draftCc.length ? `Cc selecionado: ${draftCc.join("; ")}` : "",
@@ -1645,7 +1632,6 @@ export const AiCockpit: React.FC = () => {
             const recipientInstruction = [
                 "DESTINATARIOS DO RASCUNHO:",
                 selectedRecipients || "- Ainda nao ha destinatarios finais selecionados. Nao inventes enderecos; escreve o corpo do email de forma reutilizavel.",
-                resolvedAction === "forward" ? "- FORWARD aqui significa criar uma nova mensagem comercial baseada no email aberto." : "",
             ].filter(Boolean).join("\n");
             finalPrompt = [finalPrompt, recipientInstruction].filter(Boolean).join("\n\n");
         }
@@ -1659,11 +1645,29 @@ export const AiCockpit: React.FC = () => {
         setGenerationError("");
 
         try {
-            const bundle = await ensureContextBundle(true);
+            const bundle = resolvedAction === "forward" ? null : await ensureContextBundle(true);
             const analyzeFiles = await resolveSelectedAnalyzeFiles();
             const effectiveBodyTextForGeneration = effectiveBodyText || htmlToPlainText(effectiveBodyHtml || "");
             const freshSettings = await getSettings();
             const generationSelectedLocale = ((aiState.locale || freshSettings.replyLanguage || "auto") as AiLocale);
+            const selectedForwardAttachmentNames = resolvedAction === "forward"
+                ? Object.entries(fileUsage || {})
+                    .filter(([, flags]) => flags?.forward)
+                    .map(([name]) => String(name || "").trim())
+                    .filter(Boolean)
+                : [];
+            const forwardBodyPrompt = resolvedAction === "forward"
+                ? [
+                    finalPrompt,
+                    selectedForwardAttachmentNames.length
+                        ? `ANEXOS QUE A APP VAI REENVIAR (nomes apenas; nao gerir anexos): ${selectedForwardAttachmentNames.join("; ")}`
+                        : "",
+                    "REGRA: devolve apenas o corpo HTML do email. Nao incluas campos Para, Cc, Bcc, assunto, emails reais nem instrucoes de anexacao.",
+                    generationSelectedLocale === "auto"
+                        ? "IDIOMA: usa o idioma predominante do email base aberto, nao o idioma de uma instrucao curta do utilizador."
+                        : "",
+                ].filter(Boolean).join("\n\n")
+                : finalPrompt;
 
             // IMPORTANT:
             // In reply/forward mode, "auto" must be sent to the server as "auto".
@@ -1707,19 +1711,19 @@ export const AiCockpit: React.FC = () => {
                 tone: generationTone,
                 locale: generationEffectiveLocale,
                 length: freshSettings.length || "m",
-                inputText: finalPrompt,
+                inputText: forwardBodyPrompt,
                 files: analyzeFiles,
-                briefing: briefing, // Pass the thread summary for isolation
+                briefing: resolvedAction === "forward" ? null : briefing,
                 contextBundle: bundle?.promptContext || "",
                 email: {
                     subject: ctx.subject || "",
-                    from: ctx.fromEmail || "",
-                    fromName: String(ctx.fromName || "").trim(),
-                    fromEmail: String(ctx.fromEmail || "").trim(),
+                    from: resolvedAction === "forward" ? "" : ctx.fromEmail || "",
+                    fromName: resolvedAction === "forward" ? "" : String(ctx.fromName || "").trim(),
+                    fromEmail: resolvedAction === "forward" ? "" : String(ctx.fromEmail || "").trim(),
                     greetingName,
                     greetingEmail,
-                    to: (ctx.toRecipients || []).map((r: any) => r.email),
-                    cc: (ctx.ccRecipients || []).map((r: any) => r.email),
+                    to: resolvedAction === "forward" ? [] : (ctx.toRecipients || []).map((r: any) => r.email),
+                    cc: resolvedAction === "forward" ? [] : (ctx.ccRecipients || []).map((r: any) => r.email),
                     bodyText: effectiveBodyTextForGeneration,
                     bodyScope: freshSettings.bodyScope || "main"
                 },
@@ -1733,7 +1737,7 @@ export const AiCockpit: React.FC = () => {
                 aiKnowledge: freshSettings.aiKnowledge || [],
                 signature,
                 replyDirection,
-                contactAliases: freshSettings.contactAliases || [],
+                contactAliases: resolvedAction === "forward" ? [] : freshSettings.contactAliases || [],
                 // For refine: send the current editor content as explicit draft
                 draftText: action === "refine" ? (output || aiState.output || "") : undefined,
             }); //inputText is already extraPrompt || prompt

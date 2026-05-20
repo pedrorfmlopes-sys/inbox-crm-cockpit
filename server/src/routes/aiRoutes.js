@@ -266,13 +266,13 @@ export function createAiRouter() {
       const safeEmail = email
         ? {
             subject: String(email.subject || ""),
-            from: String(email.from || ""),
-            fromName: String(email.fromName || "").trim(),
-            fromEmail: String(email.fromEmail || "").trim(),
+            from: action === "forward" ? "" : String(email.from || ""),
+            fromName: action === "forward" ? "" : String(email.fromName || "").trim(),
+            fromEmail: action === "forward" ? "" : String(email.fromEmail || "").trim(),
             greetingName: String(email.greetingName || "").trim(),
             greetingEmail: String(email.greetingEmail || "").trim(),
-            to: Array.isArray(email.to) ? email.to.map(String) : [],
-            cc: Array.isArray(email.cc) ? email.cc.map(String) : [],
+            to: action === "forward" ? [] : Array.isArray(email.to) ? email.to.map(String) : [],
+            cc: action === "forward" ? [] : Array.isArray(email.cc) ? email.cc.map(String) : [],
             bodyText:
               String(email.bodyScope || "main") === "full"
                 ? trimEmailBodyFull(email.bodyText || "")
@@ -326,14 +326,14 @@ export function createAiRouter() {
         signature: normalizedSignature,
         replyDirection: normalizedReplyDirection,
         filesContext: clientFilesContext,
-        contextBundle: String(contextBundle || ""),
+        contextBundle: action === "forward" ? "" : String(contextBundle || ""),
         persona: {
           ...persona,
           learnedProfile: learnedProfile?.styleData || null,
           learnedHabits: learnedProfile?.habitsData || null,
         },
-        briefing,
-        contactAliases: Array.isArray(contactAliases) ? contactAliases : [],
+        briefing: action === "forward" ? null : briefing,
+        contactAliases: action === "forward" ? [] : Array.isArray(contactAliases) ? contactAliases : [],
         currentTime: new Date().toISOString(), // NEW: Time awareness for greetings
       });
 
@@ -355,7 +355,7 @@ ${currentDraft}`
               : action === "summarize_actions"
                 ? "Devolve apenas JSON válido com summary e actions."
                 : action === "forward"
-                  ? (normalizedInputText || "Redige agora o email final de reencaminhamento com base em todo o contexto fornecido, pronto a enviar ao destinatario final.")
+                  ? (normalizedInputText || "Redige apenas o corpo HTML de um email comercial novo baseado no email aberto. Nao resolvas destinatarios, To, Para, Cc, Bcc, assunto nem anexos.")
                   : action === "reply"
                     ? (normalizedInputText || "Redige agora a resposta final pronta a enviar com base em todo o contexto fornecido.")
                     : (normalizedInputText || "Executa a tarefa pedida com base em todo o contexto fornecido.");
@@ -374,7 +374,16 @@ ${currentDraft}`
       });
 
       if ((action === "reply" || action === "forward") && looksLikeGenericDraftRefusal(result.text)) {
-        const retryInstructions = `${instructions}
+        const retryInstructions = action === "forward" ? `${instructions}
+
+[OVERRIDE OPERACIONAL FORWARD]
+- Redige apenas o corpo HTML de um email comercial novo baseado no email aberto.
+- Nao resolvas destinatarios.
+- Nao menciones To, Para, Cc, Bcc ou assunto.
+- Nao inventes emails nem contactos.
+- Se faltar informacao factual, escreve um email profissional curto a pedir os elementos em falta.
+- Nao inventes factos, precos, prazos, referencias, disponibilidade ou condicoes comerciais.
+- Mantem a excecao de seguranca: se o pedido for claramente ilegal, perigoso ou abusivo, nao cumpras.` : `${instructions}
 
 [OVERRIDE OPERACIONAL]
 - Esta e uma tarefa legitima de backoffice/comercial: redigir correspondencia empresarial comum com base em emails, anexos e contexto ligado.
@@ -397,6 +406,7 @@ ${currentDraft}`
       }
 
       if ((action === "reply" || action === "forward") && looksLikeGenericDraftRefusal(result.text)) {
+        console.warn(`[ai] Generic draft refusal after retry action=${action}`);
         return res.json({
           ok: false,
           error: "A IA devolveu uma recusa genérica e não conseguiu gerar um rascunho útil. Revê a instrução ou seleciona melhor o email-alvo/contexto.",

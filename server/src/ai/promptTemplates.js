@@ -21,8 +21,9 @@ export function buildPrompt({ action, locale = "pt-PT", tone = "neutro", length 
   const lang = LOCALE_HUMAN[effectiveLocale] || effectiveLocale;
   const autoLanguageInstruction = effectiveLocale === "auto"
     ? `\nIDIOMA AUTO:\n` +
-      `- Deteta o idioma predominante do email recebido, dando prioridade ao corpo do email mais recente e relevante.\n` +
-      `- Responde nesse mesmo idioma.\n` +
+      `- Deteta o idioma predominante do email base recebido, dando prioridade ao corpo da mensagem principal/mais recente.\n` +
+      `- Ignora assinaturas, disclaimers, historico citado e mensagens reenviadas antigas sempre que possivel.\n` +
+      `- Responde nesse mesmo idioma, mesmo que a instrucao curta do utilizador esteja noutro idioma.\n` +
       `- Se o email estiver em espanhol, responde em espanhol.\n` +
       `- Se o email estiver em inglês, responde em inglês.\n` +
       `- Se o email estiver em português, responde em português de Portugal.\n` +
@@ -147,7 +148,7 @@ PERFIL DE COMUNICAÇÃO:
     : "";
 
   // Inject Contact Aliases (Forward shortcuts)
-  const contactBlock = contactAliases.length > 0
+  const contactBlock = action !== "forward" && contactAliases.length > 0
     ? `\nTABELA DE ATALHOS DE CONTACTOS (Resolve estes nomes para os respetivos emails se o utilizador os mencionar):\n${contactAliases.map(c => `- ${c.name}: ${c.email}`).join('\n')}\n`
     : "";
 
@@ -193,7 +194,9 @@ PERFIL DE COMUNICAÇÃO:
   const toneLine = `Tom: ${tone}.`;
 
   const emailBlock = email
-    ? `\n\nCONTEXTO DO EMAIL:\nAssunto: ${email.subject || ""}\nDe: ${email.from || ""}\nPara: ${(email.to || []).join("; ")}\nCc: ${(email.cc || []).join("; ")}\nCorpo (texto limpo):\n${email.bodyText || ""}\n`
+    ? action === "forward"
+      ? `\n\nEMAIL BASE ABERTO (usar apenas para escrever o corpo):\nAssunto: ${email.subject || ""}\nCorpo (texto limpo):\n${email.bodyText || ""}\n`
+      : `\n\nCONTEXTO DO EMAIL:\nAssunto: ${email.subject || ""}\nDe: ${email.from || ""}\nPara: ${(email.to || []).join("; ")}\nCc: ${(email.cc || []).join("; ")}\nCorpo (texto limpo):\n${email.bodyText || ""}\n`
     : "";
 
   if (action === "summarize") {
@@ -286,38 +289,22 @@ PERFIL DE COMUNICAÇÃO:
     return (
       finalRules +
       toneLine +
-      `\n\nTAREFA: Escreve um email novo para terceiros, pronto a enviar, com base neste tema.\n` +
-      `Usa o CONTEXTO CONSOLIDADO DO CASO para explicar o assunto a destinatarios finais que nao acompanharam o processo interno.\n` +
-      `REGRAS DE REENVIO (INTELIGENCIA SOCIAL):\n` +
-      `- ANALISA OS NOMES: Se o utilizador disser "Reenvia a Nerea", procura no historico quem e o contacto. Percebe o papel da pessoa no processo.\n` +
-      `- TRANSFORMA PEDIDOS INTERNOS EM COMUNICACAO FINAL: se o fio atual contiver um pedido interno do tipo "manda isto aos clientes", nao digas "foi pedido" nem "o colega solicitou". Converte isso diretamente num email final para os destinatarios.\n` +
-      `- RESUME PARA TERCEIROS: o destinatario pode nao ter lido o fio original completo. Se claro sobre o que estas a pedir ou informar.\n` +
-      `- PROIBIDO EXPOR CONTEXTO INTERNO: nao menciones colegas, pedidos internos, nem a cadeia interna de decisao, salvo instrucao explicita do utilizador.\n` +
-      `- ESCREVE COMO REMETENTE FINAL: o email deve soar como uma comunicacao tua/da empresa para os destinatarios finais.\n` +
-      `- Se houver anexos relevantes selecionados para reenviar, assume que seguem com o email e podes referi-los quando fizer sentido.\n` +
-      `- Se o pedido for apenas reencaminhar informacao, redige uma comunicacao profissional pronta a enviar.\n` +
-      `- Se os dados estiverem nos anexos/contexto, assume que seguem em anexo quando aplicavel.\n` +
+      `\n\nTAREFA: Redige apenas o corpo HTML de um email comercial novo baseado no EMAIL BASE ABERTO.\n` +
+      `SEPARACAO DE RESPONSABILIDADES:\n` +
+      `- A IA escreve apenas o corpo do email.\n` +
+      `- A app trata de Para, Cc, Bcc, assunto, anexos e criacao/insercao do rascunho no Outlook.\n` +
+      `- Nao menciones nem preenchas To, Para, Cc, Bcc ou assunto.\n` +
+      `- Nao inventes emails nem enderecos reais.\n` +
+      `REGRAS DE FORWARD:\n` +
+      `- Se o utilizador indicar um nome textual, como Giuseppe, podes dirigir o texto a esse nome sem resolver email.\n` +
+      `- Nao respondas ao remetente original por defeito.\n` +
+      `- Nao menciones cadeia interna, pedidos de colegas ou raciocinio interno, salvo instrucao explicita do utilizador.\n` +
+      `- Se houver nomes de anexos selecionados para reenvio, podes referir que seguem em anexo quando fizer sentido; nao gerir anexos.\n` +
       `- Se a informacao for insuficiente, escreve um email curto a pedir os elementos em falta, em vez de devolver uma recusa generica.\n` +
       `- Nao inventes precos, prazos, referencias, disponibilidade ou condicoes comerciais.\n` +
-      `- Nao comeces com "[Rascunho para Reenvio]". O resultado deve ficar pronto a usar.\n` +
-      `- Se o utilizador forneceu instrucoes em 'inputText', segue-as rigorosamente: "${inputText || ""}"\n` +
-      `- Devolve apenas o corpo do email.` +
-      emailBlock
-    );
-  }
-
-  if (action === "forward") {
-    return (
-      finalRules +
-      toneLine +
-      `\n\nTAREFA: Escreve um rascunho de email para REENVIAR a uma terceira entidade.\n` +
-      `Usa o CONTEXTO CONSOLIDADO DO CASO para explicar o tema a quem não acompanhou todo o processo.\n` +
-      `REGRAS DE REENVIO (INTELIGÊNCIA SOCIAL):\n` +
-      `- ANALISA OS NOMES: Se o utilizador disser "Reenvia à Nerea", procura no histórico quem é o contacto. Percebe o papel da pessoa no processo.\n` +
-      `- RESUME PARA TERCEIROS: O destinatário pode não ter lido o fio original completo. Sê claro sobre o que estás a pedir/informar.\n` +
-      `- O rascunho deve começar com "[Rascunho para Reenvio]".\n` +
-      `- Se o utilizador forneceu instruções em 'inputText', segue-as rigorosamente: "${inputText || ""}"\n` +
-      `- Devolve apenas o corpo do email.` +
+      `- Nao comeces com "[Rascunho para Reenvio]".\n` +
+      `- Se o utilizador forneceu instrucoes em 'inputText', segue-as rigorosamente como instrucao de escrita do corpo: "${inputText || ""}"\n` +
+      `- Devolve apenas HTML simples do corpo do email.` +
       emailBlock
     );
   }

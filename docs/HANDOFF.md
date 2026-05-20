@@ -1,5 +1,39 @@
 # HANDOFF
 
+## HOTFIX IA/FORWARD: IA gera so corpo; app gere rascunho Outlook (Maio 2026)
+- **Causa raiz conceptual**:
+  - o modo `FORWARD` ainda misturava a geracao do corpo do email com destinatarios/metadados do rascunho
+  - o prompt podia conter `Para/Cc/Bcc`, email-alvo, destinatarios finais, aliases/contactos ou contexto consolidado que fazia a IA pensar que precisava resolver o envio completo
+  - isso aumentava a probabilidade de recusa generica em pedidos simples como `reenviar pedido de cotacao para Giuseppe`
+- **Nova regra funcional**:
+  - a IA escreve apenas o corpo HTML do email
+  - a app trata de `Para`, `Cc`, `Bcc`, assunto, sugestoes de contactos, anexos e criacao/insercao no Outlook
+  - `FORWARD` significa criar um email novo baseado no email aberto, sem exigir destinatario real resolvido
+- **Regra de idioma**:
+  - idioma fixo continua a mandar integralmente no output
+  - em `AUTO`, o idioma predominante do email base aberto deve mandar sobre a instrucao curta do utilizador
+  - o prompt reforca para ignorar assinaturas, disclaimers, historico citado e mensagens reenviadas antigas sempre que possivel
+- **Regra de anexos**:
+  - no `FORWARD`, anexos do email aberto ficam marcados para `Reenviar` por defeito
+  - `Analisar` e separado de `Reenviar`: conteudo/base64 so vai para IA quando marcado para analisar
+  - nomes dos anexos marcados para reenvio podem ir para a IA apenas para permitir texto como `segue em anexo`
+  - anexacao real ao rascunho continua responsabilidade da app/Outlook
+- **Ficheiros alterados**:
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `server/src/routes/aiRoutes.js`
+  - `server/src/ai/promptTemplates.js`
+  - `docs/HANDOFF.md`
+- **Validacoes realizadas**:
+  - `npm.cmd -w client run build` passou
+  - `node --check server/src/routes/aiRoutes.js` passou
+  - `node --check server/src/ai/promptTemplates.js` passou
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; ficaram warnings antigos fora de scope
+- **Riscos remanescentes**:
+  - teste ponta-a-ponta continua dependente do Outlook/Render publicado e do provider IA real
+  - anexacao automatica continua best-effort conforme suporte do host Outlook/WebView
+- **Fora de scope / nao alterado**:
+  - sem alteracoes em Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes ou package scripts
+
 ## HOTFIX IA: cache com TTL, historico visivel e destinatarios de rascunho controlados (Maio 2026)
 - **Causa raiz da cache IA**:
   - `iccc_ai_cache_v1` / `icc_ai_cache_v1` guardavam estados por conversa sem `updatedAtMs`, `cachedAtMs` ou `expiresAt`
