@@ -12,6 +12,10 @@ import * as Icons from "@/ui/icons";
 // --- PERSISTENCE HELPERS ---
 const AI_HISTORY_KEY = "icc.ai_history.v1";
 const HISTORY_KEEP_MS = 5 * 24 * 60 * 60 * 1000; // 5 days
+const MAX_HISTORY_ENTRIES = 100;
+const MAX_HISTORY_JSON_CHARS = 120_000;
+const MAX_HISTORY_PROMPT_CHARS = 4_000;
+const MAX_HISTORY_OUTPUT_CHARS = 12_000;
 
 type HistoryEntry = {
     id: string;
@@ -24,6 +28,7 @@ type HistoryEntry = {
     locale: AiLocale;
     draftTo: string[];
     draftCc: string[];
+    draftBcc?: string[];
     draftSubject: string;
     customToneId?: string;
     replyTarget?: AiReplyTargetSelection | null;
@@ -43,22 +48,105 @@ function getEmailKey(ctx: any) {
     return ctx.conversationId || ctx.internetMessageId || "global";
 }
 
+function truncateHistoryText(value: unknown, maxChars: number): string {
+    const raw = String(value || "").trim();
+    return raw.length > maxChars ? raw.slice(0, maxChars).trimEnd() : raw;
+}
+
+function normalizeEmailListInput(value: unknown): string[] {
+    const values = Array.isArray(value)
+        ? value
+        : String(value || "").split(/[;,]/);
+    const seen = new Set<string>();
+    const result: string[] = [];
+    values.forEach((entry) => {
+        const email = String(entry || "").trim();
+        if (!email) return;
+        const key = email.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        result.push(email);
+    });
+    return result;
+}
+
+function addUniqueEmail(values: string[], email: string): string[] {
+    return normalizeEmailListInput([...values, email]);
+}
+
+function normalizeHistoryEntry(raw: any, now = Date.now()): HistoryEntry | null {
+    if (!raw || typeof raw !== "object") return null;
+    const ts = Number(raw.ts || 0);
+    if (!Number.isFinite(ts) || ts <= 0 || now - ts >= HISTORY_KEEP_MS) return null;
+    const output = truncateHistoryText(raw.output, MAX_HISTORY_OUTPUT_CHARS);
+    const prompt = truncateHistoryText(raw.prompt, MAX_HISTORY_PROMPT_CHARS);
+    if (!output && !prompt) return null;
+    return {
+        id: String(raw.id || `hist-${ts}-${Math.random().toString(36).slice(2, 8)}`),
+        emailKey: String(raw.emailKey || "global"),
+        ts,
+        output,
+        prompt,
+        action: (raw.action || "reply") as AiAction,
+        tone: (raw.tone || "neutro") as AiTone,
+        locale: (raw.locale || "auto") as AiLocale,
+        draftTo: normalizeEmailListInput(raw.draftTo),
+        draftCc: normalizeEmailListInput(raw.draftCc),
+        draftBcc: normalizeEmailListInput(raw.draftBcc),
+        draftSubject: truncateHistoryText(raw.draftSubject, 300),
+        customToneId: raw.customToneId ? String(raw.customToneId) : undefined,
+        replyTarget: raw.replyTarget || null,
+        replyDirection: raw.replyDirection || null,
+    };
+}
+
+function writeHistory(entries: HistoryEntry[]): HistoryEntry[] {
+    const normalized = entries
+        .map((entry) => normalizeHistoryEntry(entry))
+        .filter((entry): entry is HistoryEntry => Boolean(entry))
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, MAX_HISTORY_ENTRIES);
+    while (normalized.length > 0 && JSON.stringify(normalized).length > MAX_HISTORY_JSON_CHARS) {
+        normalized.pop();
+    }
+    try {
+        if (!normalized.length) localStorage.removeItem(AI_HISTORY_KEY);
+        else localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(normalized));
+    } catch {
+        while (normalized.length > 1) {
+            normalized.pop();
+            try {
+                localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(normalized));
+                break;
+            } catch {
+                // keep pruning oldest entries
+            }
+        }
+    }
+    return normalized;
+}
+
 function loadHistory(): HistoryEntry[] {
     try {
         const raw = localStorage.getItem(AI_HISTORY_KEY);
         if (!raw) return [];
         const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return [];
         const now = Date.now();
-        return arr.filter((h: any) => now - h.ts < HISTORY_KEEP_MS);
+        const normalized = arr
+            .map((entry: any) => normalizeHistoryEntry(entry, now))
+            .filter((entry: HistoryEntry | null): entry is HistoryEntry => Boolean(entry))
+            .sort((a: HistoryEntry, b: HistoryEntry) => b.ts - a.ts)
+            .slice(0, MAX_HISTORY_ENTRIES);
+        if (normalized.length !== arr.length || JSON.stringify(normalized) !== raw) {
+            writeHistory(normalized);
+        }
+        return normalized;
     } catch { return []; }
 }
 
-function saveHistory(entries: HistoryEntry[]) {
-    try {
-        const now = Date.now();
-        const pruned = entries.filter(h => now - h.ts < HISTORY_KEEP_MS).slice(-100);
-        localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(pruned));
-    } catch { }
+function saveHistory(entries: HistoryEntry[]): HistoryEntry[] {
+    return writeHistory(entries);
 }
 
 function htmlToPlainText(html: string): string {
@@ -474,10 +562,12 @@ export const AiCockpit: React.FC = () => {
     // Draft Preview State
     const [draftTo, setDraftTo] = useState<string[]>([]);
     const [draftCc, setDraftCc] = useState<string[]>([]);
+    const [draftBcc, setDraftBcc] = useState<string[]>([]);
     const [draftSubject, setDraftSubject] = useState("");
     const [draftTicketCode, setDraftTicketCode] = useState("");
     const [suggestedContacts, setSuggestedContacts] = useState<string[]>([]);
     const [showDraftPreview, setShowDraftPreview] = useState(false);
+    const [draftDetailsExpanded, setDraftDetailsExpanded] = useState(false);
     const [extractedTasks, setExtractedTasks] = useState<Array<{ title: string; dueDate?: string; owner?: string; completed?: boolean }>>([]);
     const [showTaskReview, setShowTaskReview] = useState(false);
     const [isExtractingTasks, setIsExtractingTasks] = useState(false);
@@ -557,7 +647,13 @@ export const AiCockpit: React.FC = () => {
         setReplyTargetEmail(null);
         setReplyAddresseeName("");
         setReplyAddresseeContext("");
+        setDraftTo([]);
+        setDraftCc([]);
+        setDraftBcc([]);
+        setDraftSubject("");
         setDraftTicketCode("");
+        setShowDraftPreview(false);
+        setDraftDetailsExpanded(false);
         setFileUsage({});
     }, [emailKey]);
 
@@ -910,22 +1006,24 @@ export const AiCockpit: React.FC = () => {
     function applyHistoryEntry(entry: HistoryEntry) {
         setOutput(entry.output || "");
         setPrompt(entry.prompt || "");
-        setDraftTo(Array.isArray(entry.draftTo) ? entry.draftTo : []);
-        setDraftCc(Array.isArray(entry.draftCc) ? entry.draftCc : []);
+        setDraftTo(normalizeEmailListInput(entry.draftTo));
+        setDraftCc(normalizeEmailListInput(entry.draftCc));
+        setDraftBcc(normalizeEmailListInput(entry.draftBcc));
         setDraftSubject(String(entry.draftSubject || ""));
         setSelectedCustomToneId(String(entry.customToneId || ""));
         setReplyTargetEmail(entry.replyTarget || null);
         setReplyAddresseeName(String(entry.replyDirection?.addresseeName || ""));
         setReplyAddresseeContext(String(entry.replyDirection?.addresseeContext || ""));
         setShowDraftPreview(true);
+        setDraftDetailsExpanded(true);
         setAiState({
             prompt: entry.prompt || "",
             output: entry.output || "",
             action: entry.action || "reply",
             tone: entry.tone || "neutro",
             locale: entry.locale || "auto",
-            suggestedTo: Array.isArray(entry.draftTo) ? entry.draftTo : [],
-            suggestedCc: Array.isArray(entry.draftCc) ? entry.draftCc : [],
+            suggestedTo: normalizeEmailListInput(entry.draftTo),
+            suggestedCc: normalizeEmailListInput(entry.draftCc),
             suggestedSubject: String(entry.draftSubject || ""),
         });
     }
@@ -1156,6 +1254,7 @@ export const AiCockpit: React.FC = () => {
             if (!selection?.emailKey) return;
             setReplyTargetEmail(selection);
             setShowDraftPreview(true);
+            setDraftDetailsExpanded(true);
             setMsg(`Email-alvo selecionado: ${selection.subject || selection.fromEmail || selection.emailKey}`);
         } catch (error: any) {
             setMsg(String(error?.message || error || "Nao foi possivel abrir a selecao de emails relacionados."));
@@ -1312,33 +1411,25 @@ export const AiCockpit: React.FC = () => {
         const applyDraftSubjectTicketCode = (subject: string) => buildTicketEmailSubject(subject, draftTicketCode, includeTicketCodeInSubject);
 
         if (selectedAction === "forward") {
-            if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
-                setDraftTo(aiState.suggestedTo || (replyTargetEmail?.fromEmail ? [replyTargetEmail.fromEmail] : []));
-                setDraftCc(aiState.suggestedCc || []);
-                setDraftSubject(
-                    applyDraftSubjectTicketCode(
-                        String(aiState.suggestedSubject || "").trim() || normalizeForwardSubject(replyTargetEmail?.subject || ctx.subject || "")
-                    )
-                );
-            } else {
-                setDraftTo(replyTargetEmail?.fromEmail ? [replyTargetEmail.fromEmail] : []);
-                setDraftCc([]);
-                setDraftSubject(applyDraftSubjectTicketCode(normalizeForwardSubject(replyTargetEmail?.subject || ctx.subject || "")));
-            }
+            setDraftSubject(
+                applyDraftSubjectTicketCode(
+                    String(aiState.suggestedSubject || "").trim() || normalizeForwardSubject(ctx.subject || replyTargetEmail?.subject || "")
+                )
+            );
             return;
         }
 
         if (replyTargetEmail?.fromEmail) {
             if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
-                setDraftTo(aiState.suggestedTo || [replyTargetEmail.fromEmail]);
-                setDraftCc(aiState.suggestedCc || []);
+                setDraftTo(normalizeEmailListInput(aiState.suggestedTo?.length ? aiState.suggestedTo : [replyTargetEmail.fromEmail]));
+                setDraftCc(normalizeEmailListInput(aiState.suggestedCc));
                 setDraftSubject(
                     applyDraftSubjectTicketCode(
                         String(aiState.suggestedSubject || "").trim() || normalizeReplySubject(replyTargetEmail.subject || ctx.subject || "")
                     )
                 );
             } else {
-                setDraftTo([replyTargetEmail.fromEmail]);
+                setDraftTo(normalizeEmailListInput([replyTargetEmail.fromEmail]));
                 setDraftCc([]);
                 setDraftSubject(applyDraftSubjectTicketCode(normalizeReplySubject(replyTargetEmail.subject || ctx.subject || "")));
             }
@@ -1346,12 +1437,12 @@ export const AiCockpit: React.FC = () => {
         }
 
         if (hasSuggestedRecipients || hasSuggestedCc || hasSuggestedSubject) {
-            setDraftTo(aiState.suggestedTo || []);
-            setDraftCc(aiState.suggestedCc || []);
+            setDraftTo(normalizeEmailListInput(aiState.suggestedTo));
+            setDraftCc(normalizeEmailListInput(aiState.suggestedCc));
             setDraftSubject(applyDraftSubjectTicketCode(aiState.suggestedSubject || ""));
         } else {
-            setDraftTo((ctx.toRecipients || []).map((r: any) => r.email));
-            setDraftCc((ctx.ccRecipients || []).map((r: any) => r.email));
+            setDraftTo(normalizeEmailListInput([ctx.fromEmail]));
+            setDraftCc(normalizeEmailListInput((ctx.ccRecipients || []).map((r: any) => r.email)));
             setDraftSubject(applyDraftSubjectTicketCode(ctx.subject || ""));
         }
     }, [ctx, aiState.suggestedSubject, aiState.suggestedTo, aiState.suggestedCc, selectedAction, replyTargetEmail, draftTicketCode, settings?.groupTicketUi?.includeTicketCodeInSubject]);
@@ -1508,9 +1599,7 @@ export const AiCockpit: React.FC = () => {
 
         if (!finalPrompt) {
             if (resolvedAction === "forward") {
-                finalPrompt = replyTargetEmail
-                    ? "Com base neste email, nos anexos selecionados e no contexto completo do caso, cria um email final para o destinatario do email-alvo selecionado. Nao respondas ao pedido interno nem menciones colegas; escreve a comunicacao final pronta a enviar."
-                    : "Cria um email novo para terceiros com base neste tema. Nao respondas ao pedido interno; escreve para os destinatarios finais, usando o contexto completo do assunto e os anexos relevantes.";
+                finalPrompt = "Cria um email novo profissional baseado no email atualmente aberto, no contexto do caso e nos anexos selecionados. Nao trates isto como resposta ao remetente nem como exigencia de email-alvo; redige o corpo pronto a enviar para destinatarios que o utilizador escolher manualmente.";
             } else if (resolvedAction === "reply") {
                 finalPrompt = replyTargetEmail
                     ? "Com base neste email, nos anexos relevantes e no contexto completo do caso, cria uma resposta final para o email-alvo selecionado. Usa o email atual como atualizacao do processo e escreve a resposta pronta a enviar."
@@ -1518,31 +1607,47 @@ export const AiCockpit: React.FC = () => {
             }
         }
 
-        if ((resolvedAction === "reply" || resolvedAction === "forward") && replyTargetEmail) {
+        if (resolvedAction === "reply" && replyTargetEmail) {
             const targetExcerpt = String(replyTargetEmail.bodyText || "").trim() || htmlToPlainText(String(replyTargetEmail.bodyHtml || ""));
-            const targetActionTitle = resolvedAction === "forward"
-                ? "INSTRUCOES INTERNAS PARA O ALVO DO REENCAMINHAMENTO:"
-                : "INSTRUCOES INTERNAS PARA O ALVO DA RESPOSTA:";
-            const targetSubject = resolvedAction === "forward"
-                ? normalizeForwardSubject(replyTargetEmail.subject || ctx.subject || "")
-                : normalizeReplySubject(replyTargetEmail.subject || ctx.subject || "");
-            const actionInstruction = resolvedAction === "forward"
-                ? "- Este email deve ser escrito para o email-alvo selecionado no dossier, como comunicacao final para esse destinatario, e nao como resposta ao email atualmente aberto no Outlook."
-                : "- Esta resposta deve ser orientada ao email-alvo selecionado no dossier, e nao apenas ao email atualmente aberto no Outlook.";
-            const targetUseInstruction = resolvedAction === "forward"
-                ? "- Usa o email atual como atualizacao/contexto complementar do caso, mas escreve como mensagem nova para o destinatario final."
-                : "- Usa o email atual como atualizacao/contexto complementar do caso.";
+            const targetSubject = normalizeReplySubject(replyTargetEmail.subject || ctx.subject || "");
             const replyTargetInstructions = [
-                targetActionTitle,
-                actionInstruction,
+                "INSTRUCOES INTERNAS PARA O ALVO DA RESPOSTA:",
+                "- Esta resposta deve ser orientada ao email-alvo selecionado no dossier, e nao apenas ao email atualmente aberto no Outlook.",
                 `- Email-alvo assunto: ${replyTargetEmail.subject || "(sem assunto)"}`,
                 `- Email-alvo remetente: ${replyTargetEmail.fromName || replyTargetEmail.fromEmail || "--"}`,
                 `- Assunto a manter na resposta: ${targetSubject}`,
                 targetExcerpt ? `- Conteudo relevante do email-alvo: ${targetExcerpt.slice(0, 1600)}` : "",
-                targetUseInstruction,
+                "- Usa o email atual como atualizacao/contexto complementar do caso.",
                 "- Nao expliques este raciocinio ao destinatario final; usa-o apenas para fundamentar a resposta.",
             ].filter(Boolean).join("\n");
             finalPrompt = [finalPrompt, replyTargetInstructions].filter(Boolean).join("\n\n");
+        }
+
+        if (resolvedAction === "forward" && replyTargetEmail) {
+            const targetExcerpt = String(replyTargetEmail.bodyText || "").trim() || htmlToPlainText(String(replyTargetEmail.bodyHtml || ""));
+            const forwardContext = [
+                "CONTEXTO ADICIONAL DO DOSSIER PARA NOVO EMAIL:",
+                "- O email-alvo selecionado serve apenas como contexto historico; nao e destinatario automatico.",
+                `- Assunto do email-alvo: ${replyTargetEmail.subject || "(sem assunto)"}`,
+                `- Remetente do email-alvo: ${replyTargetEmail.fromName || replyTargetEmail.fromEmail || "--"}`,
+                targetExcerpt ? `- Conteudo relevante do email-alvo: ${targetExcerpt.slice(0, 1600)}` : "",
+                "- Se faltar um endereco de destinatario, nao inventes. Gera o corpo do email na mesma.",
+            ].filter(Boolean).join("\n");
+            finalPrompt = [finalPrompt, forwardContext].filter(Boolean).join("\n\n");
+        }
+
+        if (resolvedAction === "forward" || resolvedAction === "reply") {
+            const selectedRecipients = [
+                draftTo.length ? `Para selecionado: ${draftTo.join("; ")}` : "",
+                draftCc.length ? `Cc selecionado: ${draftCc.join("; ")}` : "",
+                draftBcc.length ? `Bcc selecionado: ${draftBcc.join("; ")}` : "",
+            ].filter(Boolean).join("\n");
+            const recipientInstruction = [
+                "DESTINATARIOS DO RASCUNHO:",
+                selectedRecipients || "- Ainda nao ha destinatarios finais selecionados. Nao inventes enderecos; escreve o corpo do email de forma reutilizavel.",
+                resolvedAction === "forward" ? "- FORWARD aqui significa criar uma nova mensagem comercial baseada no email aberto." : "",
+            ].filter(Boolean).join("\n");
+            finalPrompt = [finalPrompt, recipientInstruction].filter(Boolean).join("\n\n");
         }
 
         if (!isRefining && aiState.history.length > 0) {
@@ -1667,6 +1772,7 @@ export const AiCockpit: React.FC = () => {
                 setAiState({ output: fullText, history: newHistory });
                 setPrompt("");
                 setShowDraftPreview(true);
+                setDraftDetailsExpanded(true);
 
                 // Persist to Local History
                 const entry: HistoryEntry = {
@@ -1678,16 +1784,17 @@ export const AiCockpit: React.FC = () => {
                     action: resolvedAction,
                     tone: generationTone,
                     locale: generationSelectedLocale,
-                    draftTo,
-                    draftCc,
+                    draftTo: normalizeEmailListInput(draftTo),
+                    draftCc: normalizeEmailListInput(draftCc),
+                    draftBcc: normalizeEmailListInput(draftBcc),
                     draftSubject: buildTicketEmailSubject(draftSubject, draftTicketCode, freshSettings?.groupTicketUi?.includeTicketCodeInSubject !== false),
                     customToneId: effectiveCustomToneId || undefined,
                     replyTarget: replyTargetEmail,
                     replyDirection,
                 };
                 const fullHist = [entry, ...loadHistory()];
-                saveHistory(fullHist);
-                setHistory(fullHist.filter(h => h.emailKey === emailKey));
+                const savedHistory = saveHistory(fullHist);
+                setHistory(savedHistory.filter(h => h.emailKey === emailKey));
             } else {
                 const message = String(res.error || "Erro ao gerar resposta.");
                 setGenerationError(message);
@@ -1719,6 +1826,9 @@ export const AiCockpit: React.FC = () => {
                 // Sync metadata first
                 await setRecipients("to", draftTo);
                 await setRecipients("cc", draftCc);
+                await setRecipients("bcc", draftBcc).catch((error) => {
+                    console.warn("[AiCockpit] Could not set Bcc recipients in compose:", error);
+                });
                 await setSubjectInComposeDraft(finalDraftSubject, { attempts: 2, delayMs: 150 });
 
                 // Insert body
@@ -1766,13 +1876,16 @@ export const AiCockpit: React.FC = () => {
             if (effectiveAction === "forward") {
                 if (forwardFiles.length > 0 && (!replyTargetEmail || isCurrentReplyTarget)) {
                     await displayForwardForm(output, true);
-                    if (finalDraftSubject) {
-                        try {
-                            await new Promise((resolve) => setTimeout(resolve, 800));
-                            await setSubjectInComposeDraft(finalDraftSubject);
-                        } catch (subjectError) {
-                            console.warn("[AiCockpit] Could not update forward draft subject with ticket code:", subjectError);
-                        }
+                    try {
+                        await new Promise((resolve) => setTimeout(resolve, 800));
+                        if (finalDraftSubject) await setSubjectInComposeDraft(finalDraftSubject);
+                        await setRecipients("to", draftTo);
+                        await setRecipients("cc", draftCc);
+                        await setRecipients("bcc", draftBcc).catch((error) => {
+                            console.warn("[AiCockpit] Could not set Bcc recipients in forward:", error);
+                        });
+                    } catch (subjectError) {
+                        console.warn("[AiCockpit] Could not update forward draft metadata:", subjectError);
                     }
                     queueDraftCategorySync();
                     const usedAllOriginals = forwardFiles.length === availableAttachmentCount;
@@ -1787,8 +1900,9 @@ export const AiCockpit: React.FC = () => {
 
                 const forwardSubject = String(draftSubject || replyTargetEmail?.subject || ctx.subject || "").trim() || "Fwd";
                 await displayNewMessageForm({
-                    toRecipients: draftTo.length ? draftTo : (replyTargetEmail?.fromEmail ? [replyTargetEmail.fromEmail] : []),
+                    toRecipients: draftTo,
                     ccRecipients: draftCc,
+                    bccRecipients: draftBcc,
                     subject: buildTicketEmailSubject(forwardSubject, draftTicketCode, includeTicketCodeInSubject),
                     body: output,
                     isHtml: true,
@@ -1813,6 +1927,7 @@ export const AiCockpit: React.FC = () => {
                     await displayNewMessageForm({
                         toRecipients: draftTo.length ? draftTo : (replyTargetEmail.fromEmail ? [replyTargetEmail.fromEmail] : []),
                         ccRecipients: draftCc,
+                        bccRecipients: draftBcc,
                         subject: buildTicketEmailSubject(
                             normalizeReplySubject(draftSubject || replyTargetEmail.subject || ctx.subject || ""),
                             draftTicketCode,
@@ -1907,7 +2022,10 @@ export const AiCockpit: React.FC = () => {
         setShowTaskReview(false);
         setDraftTo([]);
         setDraftCc([]);
+        setDraftBcc([]);
         setDraftSubject("");
+        setShowDraftPreview(false);
+        setDraftDetailsExpanded(false);
         setSuggestedContacts([]);
         setSelectedCustomToneId("");
         setActivePanel(null);
@@ -2522,6 +2640,21 @@ export const AiCockpit: React.FC = () => {
             .map((entry: any) => ({ kind: "alias" as const, id: entry.id, label: entry.name, value: entry.email }))),
     ];
 
+    const draftRecipientSuggestions = useMemo(() => normalizeEmailListInput([
+        ctx.fromEmail,
+        ...(ctx.toRecipients || []).map((recipient: any) => recipient?.email),
+        ...(ctx.ccRecipients || []).map((recipient: any) => recipient?.email),
+        replyTargetEmail?.fromEmail,
+        ...suggestedContacts,
+        ...((settings?.contactAliases || []).map((entry: any) => entry?.email)),
+    ]).slice(0, 12), [ctx.ccRecipients, ctx.fromEmail, ctx.toRecipients, replyTargetEmail?.fromEmail, settings?.contactAliases, suggestedContacts]);
+
+    function addDraftRecipient(kind: "to" | "cc" | "bcc", email: string) {
+        if (kind === "to") setDraftTo((prev) => addUniqueEmail(prev, email));
+        if (kind === "cc") setDraftCc((prev) => addUniqueEmail(prev, email));
+        if (kind === "bcc") setDraftBcc((prev) => addUniqueEmail(prev, email));
+    }
+
     const filteredAttachments = (persistedEmailAttachments || [])
         .filter((entry) => {
             const name = String(entry?.name || "").trim().toLowerCase();
@@ -2687,16 +2820,23 @@ export const AiCockpit: React.FC = () => {
                                     <button
                                         type="button"
                                         style={draftTo.includes(entry.value) ? S.purposeChipOn : S.purposeChip}
-                                        onClick={() => setDraftTo((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : [...prev, entry.value])}
+                                        onClick={() => setDraftTo((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : addUniqueEmail(prev, entry.value))}
                                     >
                                         To
                                     </button>
                                     <button
                                         type="button"
                                         style={draftCc.includes(entry.value) ? S.purposeChipOn : S.purposeChip}
-                                        onClick={() => setDraftCc((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : [...prev, entry.value])}
+                                        onClick={() => setDraftCc((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : addUniqueEmail(prev, entry.value))}
                                     >
                                         Cc
+                                    </button>
+                                    <button
+                                        type="button"
+                                        style={draftBcc.includes(entry.value) ? S.purposeChipOn : S.purposeChip}
+                                        onClick={() => setDraftBcc((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : addUniqueEmail(prev, entry.value))}
+                                    >
+                                        Bcc
                                     </button>
                                 </div>
                             </div>
@@ -3551,7 +3691,7 @@ export const AiCockpit: React.FC = () => {
                                         className="iccc-glossy-pill iccc-secondary-pill"
                                         style={S.cascadeItem}
                                         onClick={() => {
-                                            if (!draftTo.includes(email)) setDraftTo([...draftTo, email]);
+                                            setDraftTo((prev) => addUniqueEmail(prev, email));
                                             setActiveMenu(null);
                                         }}
                                     >
@@ -3569,7 +3709,7 @@ export const AiCockpit: React.FC = () => {
                                         className="iccc-glossy-pill iccc-secondary-pill"
                                         style={S.cascadeItem}
                                         onClick={() => {
-                                            if (!draftTo.includes(c.email)) setDraftTo([...draftTo, c.email]);
+                                            setDraftTo((prev) => addUniqueEmail(prev, c.email));
                                             setActiveMenu(null);
                                         }}
                                     >
@@ -3692,7 +3832,7 @@ export const AiCockpit: React.FC = () => {
                                         </button>
                                         {String(activeMenu || "") === "rollback_hidden" && (
                                             <div style={{ ...S.cascadeMenu, width: "220px", right: 0, left: "auto", top: "24px" }}>
-                                                {history.slice(1).map((h, _i) => (
+                                                {history.map((h, i) => (
                                                     <button
                                                         key={h.id}
                                                         className="iccc-glossy-pill iccc-secondary-pill"
@@ -3705,6 +3845,7 @@ export const AiCockpit: React.FC = () => {
                                                         <div style={{ display: "flex", alignItems: "center", gap: "4px", width: "100%" }}>
                                                             <Icons.Clock size={10} style={{ opacity: 0.5 }} />
                                                             <span style={{ fontSize: "8px", color: "#64748b" }}>{new Date(h.ts).toLocaleString()}</span>
+                                                            <span style={{ marginLeft: "auto", fontSize: "8px", color: "#475569" }}>{i === 0 ? "Atual" : "Anterior"}</span>
                                                         </div>
                                                         <div style={{ fontSize: "10px", color: "#1e293b", fontWeight: 700, whiteSpace: "normal", textAlign: "left" }}>
                                                             {h.prompt.length > 40 ? h.prompt.substring(0, 40) + "..." : h.prompt || "(Sem instrução)"}
@@ -3777,7 +3918,7 @@ export const AiCockpit: React.FC = () => {
                                     </button>
                                 </div>
                                 <div style={S.quickPanelBody}>
-                                    {history.slice(1).map((entry) => (
+                                    {history.map((entry, i) => (
                                         <button
                                             key={entry.id}
                                             type="button"
@@ -3791,7 +3932,7 @@ export const AiCockpit: React.FC = () => {
                                             <div style={{ display: "flex", alignItems: "center", gap: "6px", width: "100%" }}>
                                                 <Icons.Clock size={10} style={{ opacity: 0.6 }} />
                                                 <span style={{ fontSize: "9px", color: "#64748b" }}>{new Date(entry.ts).toLocaleString()}</span>
-                                                <span style={{ marginLeft: "auto", fontSize: "9px", color: "#475569" }}>{String(entry.action || "reply").toUpperCase()}</span>
+                                                <span style={{ marginLeft: "auto", fontSize: "9px", color: "#475569" }}>{i === 0 ? "Atual" : String(entry.action || "reply").toUpperCase()}</span>
                                             </div>
                                             <div style={{ fontSize: "11px", fontWeight: 700, color: "#172B4D", whiteSpace: "normal" }}>
                                                 {entry.prompt.length > 64 ? `${entry.prompt.slice(0, 64)}...` : entry.prompt || "(Sem instrução)"}
@@ -3801,24 +3942,28 @@ export const AiCockpit: React.FC = () => {
                                             </div>
                                         </button>
                                     ))}
+                                    {history.length === 1 ? (
+                                        <div style={{ ...S.quickPanelItem, color: "#64748b" }}>Existe apenas a versÃ£o atual.</div>
+                                    ) : null}
                                 </div>
                             </div>
                         )}
 
                         {showDraftPreview && (
                             <div style={S.draftCard}>
-                                <div style={S.draftHeader} onClick={() => setShowDraftPreview(!showDraftPreview)}>
+                                <div style={S.draftHeader} onClick={() => setDraftDetailsExpanded((prev) => !prev)}>
                                     <Icons.Settings size={12} />
                                     <span>Detalhes do Rascunho</span>
-                                    <Icons.ArrowDown size={14} style={{ marginLeft: "auto", transform: showDraftPreview ? "rotate(180deg)" : "none" }} />
+                                    <Icons.ArrowDown size={14} style={{ marginLeft: "auto", transform: draftDetailsExpanded ? "rotate(180deg)" : "none" }} />
                                 </div>
+                                {draftDetailsExpanded && (
                                 <div style={S.draftBody}>
                                     <div style={S.draftRow}>
                                         <label style={S.draftLabel}>Para:</label>
                                         <input
                                             style={S.draftInput}
                                             value={draftTo.join("; ")}
-                                            onChange={(e) => setDraftTo(e.target.value.split(";").map(v => v.trim()))}
+                                            onChange={(e) => setDraftTo(normalizeEmailListInput(e.target.value))}
                                             placeholder="exemplo@mail.com; ..."
                                             title="Destinatários principais"
                                         />
@@ -3828,7 +3973,7 @@ export const AiCockpit: React.FC = () => {
                                         <input
                                             style={S.draftInput}
                                             value={draftCc.join("; ")}
-                                            onChange={(e) => setDraftCc(e.target.value.split(";").map(v => v.trim()))}
+                                            onChange={(e) => setDraftCc(normalizeEmailListInput(e.target.value))}
                                             placeholder="cc@mail.com; ..."
                                             title="Destinatários em cópia"
                                         />
@@ -3843,8 +3988,36 @@ export const AiCockpit: React.FC = () => {
                                             title="Assunto"
                                         />
                                     </div>
+                                    <div style={S.draftRow}>
+                                        <label style={S.draftLabel}>Bcc:</label>
+                                        <input
+                                            style={S.draftInput}
+                                            value={draftBcc.join("; ")}
+                                            onChange={(e) => setDraftBcc(normalizeEmailListInput(e.target.value))}
+                                            placeholder="bcc@mail.com; ..."
+                                            title="Destinatarios em copia oculta"
+                                        />
+                                    </div>
+                                    {draftRecipientSuggestions.length > 0 ? (
+                                        <div style={{ display: "grid", gap: "4px", marginTop: "2px" }}>
+                                            <div style={{ fontSize: "9px", color: "#64748b", fontWeight: 700, textTransform: "uppercase" }}>
+                                                Sugestoes
+                                            </div>
+                                            {draftRecipientSuggestions.map((email) => (
+                                                <div key={email} style={S.quickPanelItem}>
+                                                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", fontSize: "10px" }}>{email}</span>
+                                                    <div style={{ display: "flex", gap: "4px" }}>
+                                                        <button type="button" style={draftTo.includes(email) ? S.purposeChipOn : S.purposeChip} onClick={() => addDraftRecipient("to", email)}>Para</button>
+                                                        <button type="button" style={draftCc.includes(email) ? S.purposeChipOn : S.purposeChip} onClick={() => addDraftRecipient("cc", email)}>Cc</button>
+                                                        <button type="button" style={draftBcc.includes(email) ? S.purposeChipOn : S.purposeChip} onClick={() => addDraftRecipient("bcc", email)}>Bcc</button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : null}
 
                                 </div>
+                                )}
                             </div>
                         )}
 

@@ -1,5 +1,34 @@
 # HANDOFF
 
+## HOTFIX IA: cache com TTL, historico visivel e destinatarios de rascunho controlados (Maio 2026)
+- **Causa raiz da cache IA**:
+  - `iccc_ai_cache_v1` / `icc_ai_cache_v1` guardavam estados por conversa sem `updatedAtMs`, `cachedAtMs` ou `expiresAt`
+  - a limpeza limitava tamanho e numero de conversas, mas nao removia por idade real
+  - quando o `localStorage` entrava em `QuotaExceededError`, a chave podia ser removida mas o estado em memoria continuava a tentar persistir, repetindo o aviso em emails seguintes
+- **Causa raiz do historico vazio**:
+  - `icc.ai_history.v1` era guardado newest-first, mas a UI usava `history.slice(1)`, escondendo a unica entrada existente
+  - `saveHistory()` usava `slice(-100)`, que podia preservar entradas antigas e cortar as mais recentes
+  - nao existia teto real de tamanho JSON para o historico local
+- **Causa raiz da caixa de rascunho que desaparecia**:
+  - `showDraftPreview` controlava ao mesmo tempo a existencia do painel e o estado expandido/recolhido
+  - ao fechar, o painel era desmontado e deixava de haver cabecalho para reabrir
+- **Nova regra funcional de REPLY/FORWARD**:
+  - `REPLY` passa a usar por defeito o remetente original como `Para`, e deixa de usar `toRecipients` do email original como destino principal
+  - `FORWARD` passa a significar "novo email baseado no email aberto": nao exige email-alvo, nao inventa destinatarios e deixa `Para/Cc/Bcc` vazios salvo selecao/edicao do utilizador
+  - `Para`, `Cc` e `Bcc` aceitam edicao manual com `;` ou `,`, normalizam espacos, removem duplicados e mostram sugestoes clicaveis sem colocar todos os contactos automaticamente em copia
+- **Ficheiros alterados**:
+  - `client/src/components/shell/CockpitProvider.tsx`
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `docs/HANDOFF.md`
+- **Validacoes realizadas**:
+  - `npm.cmd -w client run build` passou
+  - `npx.cmd eslint src/components/shell/CockpitProvider.tsx src/modules/ai/AiCockpit.tsx` passou sem erros; ficaram warnings antigos ja existentes/fora de scope
+- **Riscos remanescentes**:
+  - comportamento final de Bcc depende do suporte do host Outlook/WebView, mas a chamada e best-effort e nao deve quebrar o fluxo
+  - a validacao ponta-a-ponta de recipients e limpeza de cache continua a depender de teste no Outlook/Render publicado
+- **Fora de scope / nao alterado**:
+  - sem alteracoes em Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes, settings globais ou package scripts
+
 ## HOTFIX IA: recusa generica deixa de ser mostrada como rascunho em reply/forward (Maio 2026)
 - **Causa raiz**:
   - `server/src/routes/aiRoutes.js` ja tinha retry para recusas genericas em `reply`/`forward`, mas o detector nao apanhava respostas como `I'm sorry,\n\nI can't assist with that.`

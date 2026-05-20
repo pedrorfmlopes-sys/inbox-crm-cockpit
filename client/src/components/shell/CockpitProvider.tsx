@@ -142,6 +142,7 @@ const WARM_BOOT_MAX_AGE_MS = 10 * 60 * 1000;
 const LINKS_CACHE_PREFIX = "iccc_links_cache_v1:";
 const LINKS_CACHE_MESSAGE_PREFIX = "iccc_links_cache_msg_v1:";
 const LINKS_CACHE_ITEM_PREFIX = "iccc_links_cache_item_v1:";
+const AI_CACHE_ENTRY_TTL_MS = 5 * 24 * 60 * 60 * 1000;
 const AI_CACHE_MAX_CONVERSATIONS = 6;
 const AI_CACHE_MAX_PROMPT_CHARS = 2000;
 const AI_CACHE_MAX_OUTPUT_CHARS = 6000;
@@ -152,6 +153,12 @@ const AI_CACHE_MAX_SMART_REPLY_CHARS = 300;
 const AI_CACHE_MAX_RECIPIENTS = 8;
 const AI_CACHE_MAX_SUBJECT_CHARS = 500;
 const AI_CACHE_MAX_TOTAL_CHARS = 120_000;
+type PersistedAiCacheEntry = {
+    state: AiState;
+    updatedAtMs: number;
+};
+type PersistedAiCache = Record<string, PersistedAiCacheEntry>;
+let aiCacheQuotaWarningLogged = false;
 const INITIAL_EMAIL_INGESTION_STATUS: EmailIngestionStatus = {
     identity: "",
     tone: "red",
@@ -233,18 +240,64 @@ function normalizePersistedAiState(state: Partial<AiState> | null | undefined, c
     };
 }
 
+function hasUsefulAiState(state: AiState): boolean {
+    return Boolean(
+        state.prompt ||
+        state.output ||
+        state.history.length ||
+        state.smartReplies.length ||
+        state.suggestedTo?.length ||
+        state.suggestedCc?.length ||
+        state.suggestedSubject
+    );
+}
+
+function coerceAiCacheTimestamp(value: unknown): number | null {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+    if (typeof value === "string") {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric) && numeric > 0) return numeric;
+        const parsed = Date.parse(value);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    return null;
+}
+
 function normalizeAiCacheForPersistence(
-    cache: Record<string, AiState> | null | undefined,
+    cache: Record<string, AiState | PersistedAiCacheEntry> | null | undefined,
     compact = false
-): Record<string, AiState> {
+): PersistedAiCache {
+    const now = Date.now();
     const entries = Object.entries(cache || {})
-        .map(([conversationId, state]) => [String(conversationId || "").trim(), normalizePersistedAiState(state, compact)] as const)
-        .filter(([conversationId]) => conversationId)
+        .map(([conversationId, rawEntry]) => {
+            const normalizedConversationId = String(conversationId || "").trim();
+            if (!normalizedConversationId || !rawEntry || typeof rawEntry !== "object") return null;
+            const rawObject = rawEntry as Partial<PersistedAiCacheEntry> & Partial<AiState> & {
+                cachedAtMs?: unknown;
+                createdAtMs?: unknown;
+                updatedAt?: unknown;
+                createdAt?: unknown;
+            };
+            const hasWrappedState = rawObject.state && typeof rawObject.state === "object";
+            const rawState = hasWrappedState ? rawObject.state : rawObject;
+            const normalizedState = normalizePersistedAiState(rawState, compact);
+            if (!hasUsefulAiState(normalizedState)) return null;
+            const timestamp = coerceAiCacheTimestamp(rawObject.updatedAtMs)
+                ?? coerceAiCacheTimestamp(rawObject.cachedAtMs)
+                ?? coerceAiCacheTimestamp(rawObject.createdAtMs)
+                ?? coerceAiCacheTimestamp(rawObject.updatedAt)
+                ?? coerceAiCacheTimestamp(rawObject.createdAt)
+                ?? now;
+            if (now - timestamp > AI_CACHE_ENTRY_TTL_MS) return null;
+            return [normalizedConversationId, { state: normalizedState, updatedAtMs: timestamp }] as const;
+        })
+        .filter((entry): entry is readonly [string, PersistedAiCacheEntry] => Boolean(entry))
+        .sort((a, b) => a[1].updatedAtMs - b[1].updatedAtMs)
         .slice(-AI_CACHE_MAX_CONVERSATIONS);
     return Object.fromEntries(entries);
 }
 
-function serializeAiCacheForPersistence(cache: Record<string, AiState>): string {
+function serializeAiCacheForPersistence(cache: PersistedAiCache): string {
     const fullSnapshot = normalizeAiCacheForPersistence(cache, false);
     const fullJson = JSON.stringify(fullSnapshot);
     if (fullJson.length <= AI_CACHE_MAX_TOTAL_CHARS) return fullJson;
@@ -260,7 +313,7 @@ function serializeAiCacheForPersistence(cache: Record<string, AiState>): string 
     return JSON.stringify(Object.fromEntries(compactEntries));
 }
 
-function readPersistedAiCache(): Record<string, AiState> {
+function readPersistedAiCache(): PersistedAiCache {
     try {
         const saved = localStorage.getItem(AI_CACHE_STORAGE_KEY)
             || localStorage.getItem(AI_CACHE_LEGACY_STORAGE_KEY);
@@ -281,18 +334,18 @@ function isQuotaExceededStorageError(error: unknown): boolean {
         || /quota/i.test(String(candidate.message || ""));
 }
 
-function persistAiCacheSnapshot(cache: Record<string, AiState>) {
+function persistAiCacheSnapshot(cache: PersistedAiCache): PersistedAiCache {
     const normalizedCache = normalizeAiCacheForPersistence(cache);
     if (!Object.keys(normalizedCache).length) {
         localStorage.removeItem(AI_CACHE_STORAGE_KEY);
         localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
-        return;
+        return {};
     }
 
     try {
         localStorage.setItem(AI_CACHE_STORAGE_KEY, serializeAiCacheForPersistence(normalizedCache));
         localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
-        return;
+        return normalizedCache;
     } catch (error) {
         if (!isQuotaExceededStorageError(error)) throw error;
     }
@@ -301,26 +354,36 @@ function persistAiCacheSnapshot(cache: Record<string, AiState>) {
     if (!Object.keys(compactCache).length) {
         localStorage.removeItem(AI_CACHE_STORAGE_KEY);
         localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
-        return;
+        return {};
     }
 
     try {
         localStorage.setItem(AI_CACHE_STORAGE_KEY, serializeAiCacheForPersistence(compactCache));
         localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
+        return compactCache;
     } catch (error) {
         if (!isQuotaExceededStorageError(error)) throw error;
         localStorage.removeItem(AI_CACHE_STORAGE_KEY);
         localStorage.removeItem(AI_CACHE_LEGACY_STORAGE_KEY);
-        clientLog("warn", "[Cockpit] AI cache exceeded localStorage quota and was cleared", error);
+        if (!aiCacheQuotaWarningLogged) {
+            aiCacheQuotaWarningLogged = true;
+            clientLog("warn", "[Cockpit] AI cache exceeded localStorage quota and was cleared", error);
+        }
+        return {};
     }
 }
 
-function upsertAiCacheEntry(cache: Record<string, AiState>, conversationId: string, nextState: AiState): Record<string, AiState> {
+function upsertAiCacheEntry(cache: PersistedAiCache, conversationId: string, nextState: AiState): PersistedAiCache {
     const normalizedConversationId = String(conversationId || "").trim();
     if (!normalizedConversationId) return cache;
-    const nextEntries = Object.entries(cache || {}).filter(([key]) => key !== normalizedConversationId);
-    nextEntries.push([normalizedConversationId, nextState]);
-    return Object.fromEntries(nextEntries.slice(-AI_CACHE_MAX_CONVERSATIONS));
+    const normalizedState = normalizePersistedAiState(nextState);
+    const nextCache = { ...(cache || {}) };
+    if (!hasUsefulAiState(normalizedState)) {
+        delete nextCache[normalizedConversationId];
+        return normalizeAiCacheForPersistence(nextCache);
+    }
+    nextCache[normalizedConversationId] = { state: normalizedState, updatedAtMs: Date.now() };
+    return normalizeAiCacheForPersistence(nextCache);
 }
 
 function isSettingsPanelSection(value: string | null): value is SettingsPanelSection {
@@ -695,8 +758,8 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }, []);
 
     // AI History Persistence
-    const aiCacheRef = useRef<Record<string, AiState>>({});
-    const [aiCache, setAiCache] = useState<Record<string, AiState>>(() => {
+    const aiCacheRef = useRef<PersistedAiCache>({});
+    const [aiCache, setAiCache] = useState<PersistedAiCache>(() => {
         const persisted = readPersistedAiCache();
         aiCacheRef.current = persisted;
         return persisted;
@@ -705,8 +768,11 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     // Save AI cache whenever it changes
     useEffect(() => {
         try {
-            aiCacheRef.current = aiCache;
-            persistAiCacheSnapshot(aiCache);
+            const persisted = persistAiCacheSnapshot(aiCache);
+            aiCacheRef.current = persisted;
+            if (Object.keys(aiCache).length && !Object.keys(persisted).length) {
+                setAiCache({});
+            }
         } catch (e) {
             clientLog("error", "[Cockpit] Failed to save AI cache to localStorage", e);
         }
@@ -1160,7 +1226,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             if (c.conversationId) {
                 const cached = aiCacheRef.current[c.conversationId];
-                setCurrentAiState(cached ? normalizePersistedAiState(cached) : createEmptyAiState());
+                setCurrentAiState(cached ? normalizePersistedAiState(cached.state) : createEmptyAiState());
             } else {
                 setCurrentAiState(createEmptyAiState());
             }
