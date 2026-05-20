@@ -38,7 +38,7 @@ export type OutlookMessageContext = {
   conversationId?: string;
   itemId?: string;
   receivedDateTimeIso?: string;
-  itemUnavailableReason?: "mailbox-item-empty" | "compose-or-empty" | string;
+  itemUnavailableReason?: "mailbox-item-empty" | "compose-or-empty" | "compose-without-readable-message-identity" | string;
 
   toRecipients?: Recipient[];
   ccRecipients?: Recipient[];
@@ -1198,6 +1198,18 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
       isCompose = false;
     }
 
+    if (isCompose && !itemId && !internetMessageId) {
+      return {
+        subject,
+        conversationId,
+        receivedDateTimeIso,
+        toRecipients,
+        ccRecipients,
+        isCompose: true,
+        itemUnavailableReason: "compose-without-readable-message-identity",
+      };
+    }
+
     return {
       subject,
       fromEmail,
@@ -1646,6 +1658,12 @@ export async function waitForStableSelectedMessageContext(options?: {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const context = await getSelectedMessageContext().catch(() => ({} as OutlookMessageContext));
     const itemToken = await getCurrentItemToken().catch(() => "");
+    if (context.itemUnavailableReason) {
+      return {
+        context,
+        itemToken: itemToken || String(context.itemUnavailableReason || ""),
+      };
+    }
     const identity = [
       String(context.itemId || "").trim(),
       normalizeOutlookIdentityString(context.internetMessageId),

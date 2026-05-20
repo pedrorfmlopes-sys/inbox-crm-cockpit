@@ -414,6 +414,12 @@ function getContextUnavailableReason(ctx: OutlookMessageContext): string {
     return String(ctx.itemUnavailableReason || "").trim();
 }
 
+function isComposeWithoutReadableMessageIdentity(ctx: OutlookMessageContext): boolean {
+    return ctx.isCompose === true
+        && !String(ctx.itemId || "").trim()
+        && !String(ctx.internetMessageId || "").trim();
+}
+
 function buildOutlookCategorySyncIdentity(ctx: OutlookMessageContext): string {
     const internetMessageId = String(ctx.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
     const itemId = String(ctx.itemId || "").trim();
@@ -797,6 +803,16 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         bodyText: string;
         bodyHtml: string;
         attachments: OutlookAttachment[];
+        confirmedAtMs?: number;
+        source?: "read-email";
+    } | null>(null);
+    const lastConfirmedEmailAnchorRef = useRef<{
+        ctx: OutlookMessageContext;
+        bodyText: string;
+        bodyHtml: string;
+        attachments: OutlookAttachment[];
+        confirmedAtMs: number;
+        source: "read-email";
     } | null>(null);
 
     async function fetchPersistedLinks(messageCtx: OutlookMessageContext): Promise<{
@@ -1008,11 +1024,14 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 itemToken: "",
             }));
             const c: OutlookMessageContext = stableSelection.context || {};
-            const unavailableReason = getContextUnavailableReason(c);
+            const unavailableReason = getContextUnavailableReason(c)
+                || (isComposeWithoutReadableMessageIdentity(c) ? "compose-without-readable-message-identity" : "");
             if (unavailableReason) {
                 outlookItemUnavailableReasonRef.current = unavailableReason;
                 lastItemTokenRef.current = stableSelection.itemToken || lastItemTokenRef.current;
-                const snapshot = lastValidReadSnapshotRef.current;
+                const snapshot = unavailableReason === "compose-without-readable-message-identity"
+                    ? lastConfirmedEmailAnchorRef.current
+                    : (lastConfirmedEmailAnchorRef.current || lastValidReadSnapshotRef.current);
                 if (snapshot) {
                     setCtx(snapshot.ctx);
                     setBodyText(snapshot.bodyText);
@@ -1127,6 +1146,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     bodyText: b,
                     bodyHtml: bh,
                     attachments: atts || [],
+                    source: "read-email",
                 };
             }
             if (!hasPreciseContextIdentity) {
@@ -1247,6 +1267,18 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const attachmentLoadFailed = emailLoadFailures.includes("attachments");
             const bodyLoadFailed = emailLoadFailures.includes("body-text") || emailLoadFailures.includes("body-html");
             if (!shouldRegisterEmailRemotely) {
+                if (!emailLoadFailures.length) {
+                    const confirmedAnchor = {
+                        ctx: c,
+                        bodyText: b,
+                        bodyHtml: bh,
+                        attachments: atts || [],
+                        confirmedAtMs: Date.now(),
+                        source: "read-email" as const,
+                    };
+                    lastConfirmedEmailAnchorRef.current = confirmedAnchor;
+                    lastValidReadSnapshotRef.current = confirmedAnchor;
+                }
                 commitEmailIngestionStatus({
                     identity: ingestionIdentity,
                     tone: emailLoadFailures.length ? "orange" : "green",
@@ -1279,6 +1311,16 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     isRunning: false,
                 });
             } else {
+                const confirmedAnchor = {
+                    ctx: c,
+                    bodyText: b,
+                    bodyHtml: bh,
+                    attachments: atts || [],
+                    confirmedAtMs: Date.now(),
+                    source: "read-email" as const,
+                };
+                lastConfirmedEmailAnchorRef.current = confirmedAnchor;
+                lastValidReadSnapshotRef.current = confirmedAnchor;
                 commitEmailIngestionStatus({
                     identity: ingestionIdentity,
                     tone: "green",

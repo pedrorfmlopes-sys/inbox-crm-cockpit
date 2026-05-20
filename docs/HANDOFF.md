@@ -1,5 +1,33 @@
 # HANDOFF
 
+## HOTFIX Outlook: preservar email ancora ao abrir compose nativo sem identidade (Maio 2026)
+- **Causa raiz**:
+  - quando o utilizador abria `Responder`/`Reencaminhar` nativo do Outlook, o add-in podia receber um `mailbox.item` existente mas em modo compose;
+  - esse item podia nao ter `itemId` nem `internetMessageId`, mas ainda assim era tratado como contexto novo/incompleto;
+  - com isso, o Provider podia substituir o email lido com sucesso por dados parciais do rascunho e a barra de leitura passava a vermelho.
+- **Solucao implementada**:
+  - `office.ts` passa a devolver `itemUnavailableReason: "compose-without-readable-message-identity"` quando o item ativo esta em compose sem identidade de mensagem legivel;
+  - `waitForStableSelectedMessageContext(...)` devolve imediatamente esse estado controlado, em vez de o deixar cair como selecao instavel comum;
+  - `CockpitProvider` passa a manter um `lastConfirmedEmailAnchorRef`, atualizado apenas quando a leitura real do email terminou em verde;
+  - quando entra em compose sem identidade, o Provider preserva esse email ancora confirmado e nao limpa `ctx`, corpo, HTML ou anexos.
+- **Impacto esperado**:
+  - ao abrir resposta/reencaminhamento nativo depois de uma leitura verde, a app mantem o email original em memoria;
+  - a barra deixa de passar a erro fatal por causa do rascunho transitorio;
+  - syncs indevidos continuam bloqueados por `outlookItemUnavailableReasonRef`.
+- **Ficheiros alterados**:
+  - `client/src/office.ts`
+  - `client/src/components/shell/CockpitProvider.tsx`
+  - `docs/HANDOFF.md`
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/components/shell/CockpitProvider.tsx src/office.ts` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - validacao real depende do host Outlook, porque o estado compose/identity varia entre Outlook desktop, web e novo Outlook;
+  - se o utilizador arrancar a app ja dentro de um compose sem email ancora previo, a app continua a pedir para voltar ao email em leitura.
+- **Fora de scope confirmado**:
+  - sem alteracoes em IA, geracao de texto, Para/CC/Bcc, dropdowns, anexos, Odoo, Grupos, `Preparar`, `Classificar`, manifest, permissoes ou package scripts.
+
 ## HOTFIX IA/DRAFTS: anexos sem duplicados, dropdown visivel e attach com espera (Maio 2026)
 - **Causa raiz da duplicacao**:
   - o mesmo anexo podia chegar por `persistedEmailAttachments` e `liveAttachments` com chaves diferentes;
