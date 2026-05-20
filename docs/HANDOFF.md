@@ -1,5 +1,38 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: dropdowns de destinatarios e item vazio controlado (Maio 2026)
+- **Causa raiz da lista de sugestoes fora dos campos**:
+  - a caixa `Detalhes do Rascunho` tinha uma lista separada de sugestoes por baixo de `Para/Cc/Bcc`, o que duplicava o fluxo e parecia uma area independente
+  - contactos da thread e contactos guardados podiam surgir juntos fora do campo ativo, sem contexto claro sobre a origem da sugestao
+- **Causa raiz do erro `displayForwardForm` indisponivel**:
+  - o caminho `FORWARD` assumia que `item.displayForwardForm` existia quando havia anexos a reenviar
+  - alguns hosts/itens Outlook nao disponibilizam esse metodo, deixando apenas erro no console e sem feedback util na UI
+- **Causa raiz do loop `mailbox.item is empty`**:
+  - ao abrir o reencaminhamento nativo do Outlook, o add-in podia passar por um estado compose/empty transitorio
+  - esse estado era tratado como contexto fatal vazio, limpando o email valido anterior e mantendo tentativas/syncs indevidos
+- **Solucao implementada**:
+  - `Para`, `CC` e `Bcc` agora usam campos multi-email compactos com chips e dropdown por campo
+  - a dropdown separa `Thread atual` de `Contactos guardados`; contactos guardados aparecem quando ha pesquisa
+  - a lista externa de sugestoes foi removida da UI
+  - `FORWARD` tenta o reencaminhamento nativo quando aplicavel, mas faz fallback para nova mensagem com `Para/Cc/Bcc`, assunto, corpo HTML e anexos best-effort
+  - `office.ts` sinaliza `itemUnavailableReason` e limita logs repetidos de `mailbox.item is empty`
+  - `CockpitProvider` preserva o ultimo email valido em memoria e sai cedo de leituras/syncs quando o Outlook esta em compose/empty
+- **Ficheiros alterados**:
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `client/src/components/shell/CockpitProvider.tsx`
+  - `client/src/office.ts`
+  - `docs/HANDOFF.md`
+- **Validacoes realizadas**:
+  - `npm.cmd -w client run build` passou
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx src/components/shell/CockpitProvider.tsx src/office.ts` passou sem erros; ficaram warnings antigos fora de scope
+  - `git diff --check` passou
+- **Riscos remanescentes**:
+  - comportamento real de `displayForwardForm`, Bcc e anexacao automatica depende do host Outlook/WebView
+  - o estado compose/empty precisa de confirmacao manual no Outlook depois do deploy Render
+- **Fora de scope / nao alterado**:
+  - sem alteracoes em Odoo, Grupos, `Preparar`, `Classificar`, manifest, permissoes ou package scripts
+  - sem alteracoes funcionais na geracao IA body-only do `FORWARD`
+
 ## HOTFIX IA/FORWARD: IA gera so corpo; app gere rascunho Outlook (Maio 2026)
 - **Causa raiz conceptual**:
   - o modo `FORWARD` ainda misturava a geracao do corpo do email com destinatarios/metadados do rascunho

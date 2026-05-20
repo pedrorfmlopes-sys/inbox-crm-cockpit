@@ -36,6 +36,7 @@ type HistoryEntry = {
 };
 
 type QuickPanelId = "lang" | "mode" | "presets" | "intents" | "contacts" | "files" | null;
+type RecipientFieldKind = "to" | "cc" | "bcc";
 
 type FileUsageState = {
     analyze: boolean;
@@ -568,6 +569,8 @@ export const AiCockpit: React.FC = () => {
     const [suggestedContacts, setSuggestedContacts] = useState<string[]>([]);
     const [showDraftPreview, setShowDraftPreview] = useState(false);
     const [draftDetailsExpanded, setDraftDetailsExpanded] = useState(false);
+    const [activeRecipientField, setActiveRecipientField] = useState<RecipientFieldKind | null>(null);
+    const [recipientSearch, setRecipientSearch] = useState<Record<RecipientFieldKind, string>>({ to: "", cc: "", bcc: "" });
     const [extractedTasks, setExtractedTasks] = useState<Array<{ title: string; dueDate?: string; owner?: string; completed?: boolean }>>([]);
     const [showTaskReview, setShowTaskReview] = useState(false);
     const [isExtractingTasks, setIsExtractingTasks] = useState(false);
@@ -1876,10 +1879,58 @@ export const AiCockpit: React.FC = () => {
                         console.warn("[AiCockpit] Could not sync managed categories to draft:", error);
                     });
             };
+            const attachForwardFilesBestEffort = async () => {
+                let attachedCount = 0;
+                let failedCount = 0;
+                if (!forwardFiles.length) return { attachedCount, failedCount };
+                await new Promise((resolve) => setTimeout(resolve, 900));
+                for (const attachment of forwardFiles) {
+                    try {
+                        await addBase64AttachmentToCompose(attachment.name, attachment.content);
+                        attachedCount += 1;
+                    } catch (attachError) {
+                        failedCount += 1;
+                        console.warn("[AiCockpit] Could not attach selected forward file automatically:", attachment.name, attachError);
+                    }
+                }
+                return { attachedCount, failedCount };
+            };
+            const openForwardAsNewMessage = async (nativeForwardError?: unknown) => {
+                if (nativeForwardError) {
+                    console.warn("[AiCockpit] Native forward unavailable; falling back to new message:", nativeForwardError);
+                }
+                const forwardSubject = String(draftSubject || replyTargetEmail?.subject || ctx.subject || "").trim() || "Fwd";
+                await displayNewMessageForm({
+                    toRecipients: draftTo,
+                    ccRecipients: draftCc,
+                    bccRecipients: draftBcc,
+                    subject: buildTicketEmailSubject(forwardSubject, draftTicketCode, includeTicketCodeInSubject),
+                    body: output,
+                    isHtml: true,
+                });
+                const { attachedCount, failedCount } = await attachForwardFilesBestEffort();
+                if (failedCount > 0) {
+                    setMsg("Nova mensagem aberta. O Outlook pode exigir anexacao manual de alguns ficheiros.");
+                } else if (attachedCount > 0) {
+                    setMsg(`O Outlook nao permitiu o reencaminhamento nativo. Foi aberta uma nova mensagem com o corpo gerado e ${attachedCount} anexo(s).`);
+                } else if (nativeForwardError) {
+                    setMsg("O Outlook nao permitiu o reencaminhamento nativo neste item. Foi aberta uma nova mensagem com o corpo gerado.");
+                } else if (replyTargetEmail && !isCurrentReplyTarget) {
+                    setMsg("Rascunho criado para o email guardado selecionado.");
+                } else {
+                    setMsg("Nova mensagem aberta com o corpo gerado.");
+                }
+                setTimeout(() => setMsg(""), 6000);
+            };
 
             if (effectiveAction === "forward") {
                 if (forwardFiles.length > 0 && (!replyTargetEmail || isCurrentReplyTarget)) {
-                    await displayForwardForm(output, true);
+                    try {
+                        await displayForwardForm(output, true);
+                    } catch (forwardError) {
+                        await openForwardAsNewMessage(forwardError);
+                        return;
+                    }
                     try {
                         await new Promise((resolve) => setTimeout(resolve, 800));
                         if (finalDraftSubject) await setSubjectInComposeDraft(finalDraftSubject);
@@ -1902,30 +1953,8 @@ export const AiCockpit: React.FC = () => {
                     return;
                 }
 
-                const forwardSubject = String(draftSubject || replyTargetEmail?.subject || ctx.subject || "").trim() || "Fwd";
-                await displayNewMessageForm({
-                    toRecipients: draftTo,
-                    ccRecipients: draftCc,
-                    bccRecipients: draftBcc,
-                    subject: buildTicketEmailSubject(forwardSubject, draftTicketCode, includeTicketCodeInSubject),
-                    body: output,
-                    isHtml: true,
-                });
+                await openForwardAsNewMessage();
                 queueDraftCategorySync();
-                if (forwardFiles.length) {
-                    try {
-                        await new Promise((resolve) => setTimeout(resolve, 900));
-                        for (const attachment of forwardFiles) {
-                            await addBase64AttachmentToCompose(attachment.name, attachment.content);
-                        }
-                        setMsg(`${forwardFiles.length} anexo(s) adicionados ao rascunho.`);
-                    } catch (attachError) {
-                        console.warn("[AiCockpit] Could not attach selected forward files automatically:", attachError);
-                        setMsg("Draft de reencaminhamento aberto. O Outlook pode exigir validação manual dos anexos nesta ação.");
-                    }
-                } else if (replyTargetEmail && !isCurrentReplyTarget) {
-                    setMsg("Rascunho criado para o email guardado selecionado.");
-                }
             } else {
                 if (replyTargetEmail && !isCurrentReplyTarget) {
                     await displayNewMessageForm({
@@ -2429,6 +2458,90 @@ export const AiCockpit: React.FC = () => {
             color: "#1e293b",
             outline: "none",
         },
+        recipientFieldWrap: {
+            flex: 1,
+            position: "relative",
+            minWidth: 0,
+        },
+        recipientFieldBox: {
+            minHeight: "25px",
+            background: "#fff",
+            border: "1px solid #e2e8f0",
+            borderRadius: "4px",
+            padding: "2px 4px",
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "3px",
+        },
+        recipientChip: {
+            maxWidth: "100%",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            border: "1px solid rgba(37, 99, 235, 0.18)",
+            background: "rgba(37, 99, 235, 0.08)",
+            borderRadius: "999px",
+            padding: "1px 5px",
+            color: "#1d4ed8",
+            fontSize: "10px",
+            lineHeight: "16px",
+        },
+        recipientChipRemove: {
+            border: "none",
+            background: "transparent",
+            color: "#1d4ed8",
+            cursor: "pointer",
+            padding: 0,
+            fontSize: "12px",
+            lineHeight: "12px",
+        },
+        recipientSearchInput: {
+            flex: 1,
+            minWidth: "70px",
+            border: "none",
+            outline: "none",
+            background: "transparent",
+            fontSize: "11px",
+            color: "#1e293b",
+            padding: "1px 2px",
+        },
+        recipientDropdown: {
+            position: "absolute",
+            top: "calc(100% + 3px)",
+            left: 0,
+            right: 0,
+            zIndex: 40,
+            background: "#fff",
+            border: "1px solid #dbe3f3",
+            borderRadius: "6px",
+            boxShadow: "0 8px 20px rgba(15, 23, 42, 0.12)",
+            maxHeight: "170px",
+            overflow: "auto",
+            padding: "4px",
+        },
+        recipientDropdownTitle: {
+            fontSize: "9px",
+            color: "#64748b",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            padding: "4px 6px 2px",
+        },
+        recipientDropdownItem: {
+            width: "100%",
+            border: "none",
+            background: "transparent",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "6px",
+            padding: "5px 6px",
+            borderRadius: "4px",
+            cursor: "pointer",
+            color: "#172B4D",
+            fontSize: "10px",
+            textAlign: "left",
+        },
         suggestedChip: {
             background: "#dbeafe",
             color: "#1e40af",
@@ -2644,19 +2757,158 @@ export const AiCockpit: React.FC = () => {
             .map((entry: any) => ({ kind: "alias" as const, id: entry.id, label: entry.name, value: entry.email }))),
     ];
 
-    const draftRecipientSuggestions = useMemo(() => normalizeEmailListInput([
+    const threadRecipientOptions = useMemo(() => normalizeEmailListInput([
         ctx.fromEmail,
         ...(ctx.toRecipients || []).map((recipient: any) => recipient?.email),
         ...(ctx.ccRecipients || []).map((recipient: any) => recipient?.email),
         replyTargetEmail?.fromEmail,
+    ]).slice(0, 16), [ctx.ccRecipients, ctx.fromEmail, ctx.toRecipients, replyTargetEmail?.fromEmail]);
+
+    const savedRecipientOptions = useMemo(() => normalizeEmailListInput([
         ...suggestedContacts,
         ...((settings?.contactAliases || []).map((entry: any) => entry?.email)),
-    ]).slice(0, 12), [ctx.ccRecipients, ctx.fromEmail, ctx.toRecipients, replyTargetEmail?.fromEmail, settings?.contactAliases, suggestedContacts]);
+    ]).slice(0, 24), [settings?.contactAliases, suggestedContacts]);
 
     function addDraftRecipient(kind: "to" | "cc" | "bcc", email: string) {
         if (kind === "to") setDraftTo((prev) => addUniqueEmail(prev, email));
         if (kind === "cc") setDraftCc((prev) => addUniqueEmail(prev, email));
         if (kind === "bcc") setDraftBcc((prev) => addUniqueEmail(prev, email));
+    }
+
+    function removeDraftRecipient(kind: RecipientFieldKind, email: string) {
+        const remove = (values: string[]) => values.filter((value) => value.toLowerCase() !== email.toLowerCase());
+        if (kind === "to") setDraftTo(remove);
+        if (kind === "cc") setDraftCc(remove);
+        if (kind === "bcc") setDraftBcc(remove);
+    }
+
+    function commitRecipientSearch(kind: RecipientFieldKind) {
+        const raw = recipientSearch[kind];
+        const parsed = normalizeEmailListInput(raw);
+        if (!parsed.length) return;
+        parsed.forEach((email) => addDraftRecipient(kind, email));
+        setRecipientSearch((prev) => ({ ...prev, [kind]: "" }));
+    }
+
+    function renderRecipientField(
+        kind: RecipientFieldKind,
+        values: string[],
+        placeholder: string,
+    ) {
+        const query = recipientSearch[kind] || "";
+        const normalizedQuery = query.trim().toLowerCase();
+        const filterOption = (email: string) => !normalizedQuery || email.toLowerCase().includes(normalizedQuery);
+        const selected = new Set(values.map((value) => value.toLowerCase()));
+        const threadOptions = threadRecipientOptions.filter((email) => filterOption(email) && !selected.has(email.toLowerCase())).slice(0, 8);
+        const savedOptions = normalizedQuery
+            ? savedRecipientOptions.filter((email) => filterOption(email) && !selected.has(email.toLowerCase()) && !threadOptions.some((item) => item.toLowerCase() === email.toLowerCase())).slice(0, 8)
+            : [];
+        const canAddManual = Boolean(normalizedQuery) && !selected.has(query.trim().toLowerCase());
+        const showDropdown = activeRecipientField === kind && (threadOptions.length > 0 || savedOptions.length > 0 || canAddManual);
+
+        const selectEmail = (email: string) => {
+            addDraftRecipient(kind, email);
+            setRecipientSearch((prev) => ({ ...prev, [kind]: "" }));
+            setActiveRecipientField(null);
+        };
+
+        return (
+            <div
+                style={S.recipientFieldWrap}
+                onBlur={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        setActiveRecipientField(null);
+                    }
+                }}
+            >
+                <div style={S.recipientFieldBox} onClick={() => setActiveRecipientField(kind)}>
+                    {values.map((email) => (
+                        <span key={email} style={S.recipientChip} title={email}>
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "135px" }}>{email}</span>
+                            <button
+                                type="button"
+                                style={S.recipientChipRemove}
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    removeDraftRecipient(kind, email);
+                                }}
+                                aria-label={`Remover ${email}`}
+                            >
+                                x
+                            </button>
+                        </span>
+                    ))}
+                    <input
+                        style={S.recipientSearchInput}
+                        value={query}
+                        onFocus={() => setActiveRecipientField(kind)}
+                        onChange={(event) => {
+                            const next = event.target.value;
+                            if (/[;,]/.test(next)) {
+                                normalizeEmailListInput(next).forEach((email) => addDraftRecipient(kind, email));
+                                setRecipientSearch((prev) => ({ ...prev, [kind]: "" }));
+                            } else {
+                                setRecipientSearch((prev) => ({ ...prev, [kind]: next }));
+                            }
+                        }}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === "Tab") {
+                                if (query.trim()) {
+                                    event.preventDefault();
+                                    commitRecipientSearch(kind);
+                                }
+                            } else if (event.key === "Backspace" && !query && values.length) {
+                                removeDraftRecipient(kind, values[values.length - 1]);
+                            } else if (event.key === "Escape") {
+                                setActiveRecipientField(null);
+                            }
+                        }}
+                        placeholder={values.length ? "" : placeholder}
+                    />
+                </div>
+                {showDropdown ? (
+                    <div style={S.recipientDropdown}>
+                        {threadOptions.length ? <div style={S.recipientDropdownTitle}>Thread atual</div> : null}
+                        {threadOptions.map((email) => (
+                            <button
+                                key={`thread-${kind}-${email}`}
+                                type="button"
+                                style={S.recipientDropdownItem}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => selectEmail(email)}
+                            >
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{email}</span>
+                                <span style={{ color: "#64748b" }}>Adicionar</span>
+                            </button>
+                        ))}
+                        {savedOptions.length ? <div style={S.recipientDropdownTitle}>Contactos guardados</div> : null}
+                        {savedOptions.map((email) => (
+                            <button
+                                key={`saved-${kind}-${email}`}
+                                type="button"
+                                style={S.recipientDropdownItem}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => selectEmail(email)}
+                            >
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{email}</span>
+                                <span style={{ color: "#64748b" }}>Adicionar</span>
+                            </button>
+                        ))}
+                        {canAddManual ? (
+                            <button
+                                type="button"
+                                style={S.recipientDropdownItem}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => selectEmail(query)}
+                            >
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{query.trim()}</span>
+                                <span style={{ color: "#64748b" }}>Manual</span>
+                            </button>
+                        ) : null}
+                    </div>
+                ) : null}
+            </div>
+        );
     }
 
     const filteredAttachments = (persistedEmailAttachments || [])
@@ -3964,23 +4216,11 @@ export const AiCockpit: React.FC = () => {
                                 <div style={S.draftBody}>
                                     <div style={S.draftRow}>
                                         <label style={S.draftLabel}>Para:</label>
-                                        <input
-                                            style={S.draftInput}
-                                            value={draftTo.join("; ")}
-                                            onChange={(e) => setDraftTo(normalizeEmailListInput(e.target.value))}
-                                            placeholder="exemplo@mail.com; ..."
-                                            title="Destinatários principais"
-                                        />
+                                        {renderRecipientField("to", draftTo, "exemplo@mail.com; ...")}
                                     </div>
                                     <div style={S.draftRow}>
                                         <label style={S.draftLabel}>CC:</label>
-                                        <input
-                                            style={S.draftInput}
-                                            value={draftCc.join("; ")}
-                                            onChange={(e) => setDraftCc(normalizeEmailListInput(e.target.value))}
-                                            placeholder="cc@mail.com; ..."
-                                            title="Destinatários em cópia"
-                                        />
+                                        {renderRecipientField("cc", draftCc, "cc@mail.com; ...")}
                                     </div>
                                     <div style={S.draftRow}>
                                         <label style={S.draftLabel}>Assunto:</label>
@@ -3994,32 +4234,8 @@ export const AiCockpit: React.FC = () => {
                                     </div>
                                     <div style={S.draftRow}>
                                         <label style={S.draftLabel}>Bcc:</label>
-                                        <input
-                                            style={S.draftInput}
-                                            value={draftBcc.join("; ")}
-                                            onChange={(e) => setDraftBcc(normalizeEmailListInput(e.target.value))}
-                                            placeholder="bcc@mail.com; ..."
-                                            title="Destinatarios em copia oculta"
-                                        />
+                                        {renderRecipientField("bcc", draftBcc, "bcc@mail.com; ...")}
                                     </div>
-                                    {draftRecipientSuggestions.length > 0 ? (
-                                        <div style={{ display: "grid", gap: "4px", marginTop: "2px" }}>
-                                            <div style={{ fontSize: "9px", color: "#64748b", fontWeight: 700, textTransform: "uppercase" }}>
-                                                Sugestoes
-                                            </div>
-                                            {draftRecipientSuggestions.map((email) => (
-                                                <div key={email} style={S.quickPanelItem}>
-                                                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", fontSize: "10px" }}>{email}</span>
-                                                    <div style={{ display: "flex", gap: "4px" }}>
-                                                        <button type="button" style={draftTo.includes(email) ? S.purposeChipOn : S.purposeChip} onClick={() => addDraftRecipient("to", email)}>Para</button>
-                                                        <button type="button" style={draftCc.includes(email) ? S.purposeChipOn : S.purposeChip} onClick={() => addDraftRecipient("cc", email)}>Cc</button>
-                                                        <button type="button" style={draftBcc.includes(email) ? S.purposeChipOn : S.purposeChip} onClick={() => addDraftRecipient("bcc", email)}>Bcc</button>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : null}
-
                                 </div>
                                 )}
                             </div>

@@ -38,6 +38,7 @@ export type OutlookMessageContext = {
   conversationId?: string;
   itemId?: string;
   receivedDateTimeIso?: string;
+  itemUnavailableReason?: "mailbox-item-empty" | "compose-or-empty" | string;
 
   toRecipients?: Recipient[];
   ccRecipients?: Recipient[];
@@ -75,6 +76,14 @@ const HOST_ACTION_WINDOW_RESULT_TYPE = "iccc-host-action-window-result";
 const OUTLOOK_CATEGORY_OPERATION_STORAGE_PREFIX = "iccc-outlook-category-op-v1:";
 const OUTLOOK_CATEGORY_OPERATION_ACTIVE_PREFIX = "iccc-outlook-category-op-active-v1:";
 const OUTLOOK_CATEGORY_OPERATION_DEFAULT_LEASE_MS = 45_000;
+let lastMailboxItemEmptyWarnAt = 0;
+
+function warnMailboxItemEmptyThrottled(scope: string): void {
+  const now = Date.now();
+  if (now - lastMailboxItemEmptyWarnAt < 15_000) return;
+  lastMailboxItemEmptyWarnAt = now;
+  clientLog.warn(`[office] mailbox.item is empty (${scope})`);
+}
 
 export type OutlookCategorySyncTarget = {
   itemId?: string;
@@ -1116,8 +1125,8 @@ export async function getOutlookContext(): Promise<OutlookMessageContext> {
 
     const item = OfficeAny?.context?.mailbox?.item;
     if (!item) {
-      clientLog.warn("[office] mailbox.item is empty");
-      return {};
+      warnMailboxItemEmptyThrottled("context");
+      return { itemUnavailableReason: "mailbox-item-empty" };
     }
 
     const getAsyncValue = async (obj: any, coercer: (v: any) => string): Promise<string> => {
@@ -1443,7 +1452,10 @@ export async function getCurrentItemToken(): Promise<string> {
   try {
     const OfficeAny = await ensureOfficeReady();
     const item = OfficeAny?.context?.mailbox?.item;
-    if (!item) return "";
+    if (!item) {
+      warnMailboxItemEmptyThrottled("token");
+      return "";
+    }
 
     // "Context Poke": Read a basic property to force some hosts (Outlook Desktop) 
     // to refresh the internal state of the proxy object.

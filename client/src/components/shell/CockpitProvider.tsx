@@ -406,6 +406,14 @@ function buildContextEmailKey(ctx: OutlookMessageContext): string {
     ].join("|");
 }
 
+function hasPreciseOutlookMessageIdentity(ctx: OutlookMessageContext): boolean {
+    return Boolean(String(ctx.itemId || "").trim() || String(ctx.internetMessageId || "").trim());
+}
+
+function getContextUnavailableReason(ctx: OutlookMessageContext): string {
+    return String(ctx.itemUnavailableReason || "").trim();
+}
+
 function buildOutlookCategorySyncIdentity(ctx: OutlookMessageContext): string {
     const internetMessageId = String(ctx.internetMessageId || "").trim().toLowerCase().replace(/[<>\s]/g, "");
     const itemId = String(ctx.itemId || "").trim();
@@ -783,6 +791,13 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const ctxLoadSeqRef = useRef(0);
     const lastItemTokenRef = useRef<string>("");
     const isLoadingInProgressRef = useRef(false);
+    const outlookItemUnavailableReasonRef = useRef("");
+    const lastValidReadSnapshotRef = useRef<{
+        ctx: OutlookMessageContext;
+        bodyText: string;
+        bodyHtml: string;
+        attachments: OutlookAttachment[];
+    } | null>(null);
 
     async function fetchPersistedLinks(messageCtx: OutlookMessageContext): Promise<{
         links: LinkEntry[];
@@ -993,6 +1008,49 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 itemToken: "",
             }));
             const c: OutlookMessageContext = stableSelection.context || {};
+            const unavailableReason = getContextUnavailableReason(c);
+            if (unavailableReason) {
+                outlookItemUnavailableReasonRef.current = unavailableReason;
+                lastItemTokenRef.current = stableSelection.itemToken || lastItemTokenRef.current;
+                const snapshot = lastValidReadSnapshotRef.current;
+                if (snapshot) {
+                    setCtx(snapshot.ctx);
+                    setBodyText(snapshot.bodyText);
+                    setBodyHtml(snapshot.bodyHtml);
+                    setAttachments(snapshot.attachments);
+                    commitEmailIngestionStatus({
+                        identity: buildContextEmailKey(snapshot.ctx),
+                        tone: "orange",
+                        detail: "O Outlook esta em modo rascunho/reencaminhamento ou ainda nao disponibilizou o item ativo. Mantivemos o ultimo email valido em memoria.",
+                        progress: 100,
+                        isRunning: false,
+                    });
+                    setMsg("O Outlook esta em modo rascunho/reencaminhamento ou ainda nao disponibilizou o item ativo. Mantivemos o ultimo email valido em memoria.");
+                } else {
+                    commitEmailIngestionStatus({
+                        identity: "",
+                        tone: "orange",
+                        detail: "Nao foi possivel identificar o email original. Volta ao email em leitura para gerar resposta/reenvio.",
+                        progress: 100,
+                        isRunning: false,
+                    });
+                    setMsg("Nao foi possivel identificar o email original. Volta ao email em leitura para gerar resposta/reenvio.");
+                }
+                if (reason === "init") {
+                    updateStartupCheck("email", {
+                        status: "warning",
+                        detail: snapshot
+                            ? "O Outlook abriu em modo rascunho/reencaminhamento. Foi mantido o ultimo email valido."
+                            : "Sem email original identificavel no Outlook.",
+                    });
+                    updateStartupCheck("links", {
+                        status: "success",
+                        detail: "Sincronizacao adiada ate o Outlook voltar a disponibilizar um email em leitura.",
+                    });
+                }
+                return;
+            }
+            outlookItemUnavailableReasonRef.current = "";
             const ingestionIdentity = buildContextEmailKey(c);
             const currentIngestion = emailIngestionStatusRef.current;
             const isNewIngestion = ingestionIdentity !== currentIngestion.identity;
@@ -1023,7 +1081,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     });
                 }
             }
-            const hasPreciseContextIdentity = Boolean(String(c.itemId || "").trim() || String(c.internetMessageId || "").trim());
+            const hasPreciseContextIdentity = hasPreciseOutlookMessageIdentity(c);
             if (!hasPreciseContextIdentity) {
                 retryForIdentityStabilization = true;
             }
@@ -1063,6 +1121,14 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setBodyText(b);
             setBodyHtml(bh);
             setAttachments(atts || []);
+            if (hasPreciseContextIdentity) {
+                lastValidReadSnapshotRef.current = {
+                    ctx: c,
+                    bodyText: b,
+                    bodyHtml: bh,
+                    attachments: atts || [],
+                };
+            }
             if (!hasPreciseContextIdentity) {
                 commitEmailIngestionStatus({
                     identity: ingestionIdentity,
@@ -1678,6 +1744,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
         });
         let cancelled = false;
         void (async () => {
+            if (outlookItemUnavailableReasonRef.current) return;
             const syncIdentity = buildOutlookCategorySyncIdentity(ctx);
             if (!syncIdentity) return;
             if (
@@ -1694,6 +1761,7 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (cancelled) return;
             const expectedItemToken = await getCurrentItemToken().catch(() => "");
             if (cancelled) return;
+            if (!expectedItemToken && outlookItemUnavailableReasonRef.current) return;
             const syncSource = {
                 ...currentOutlookCategorySource,
                 managedLabelNames: [
