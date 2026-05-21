@@ -1,5 +1,29 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: contexto temporario a partir do corpo do rascunho nativo (Maio 2026)
+- **Causa raiz**:
+  - em `mode=compose`, quando o Outlook abre um rascunho nativo de `Responder`/`Reencaminhar`, o add-in pode receber `ctx.conversationId`, `ctx.itemId` e `ctx.internetMessageId` vazios;
+  - nesse estado, a app nao devia procurar contexto antigo/errado nem depender cegamente do ultimo email lido;
+  - alem disso, `setAiState(...)` nao persistia alteracoes sem `conversationId`, impedindo a escolha de modo IA nesse contexto temporario.
+- **Solucao implementada**:
+  - `office.ts` passou a expor leitura segura do corpo do compose via `Office.context.mailbox.item.body.getAsync(...)` em texto e HTML;
+  - `CockpitProvider` cria um contexto temporario `compose-draft-body-context` quando o item ativo e compose sem identidade legivel;
+  - nesse contexto, a IA usa o subject/destinatarios disponiveis e o corpo do proprio rascunho aberto, sem registar email na BD, sem sincronizar categorias e sem consultar contexto relacionado;
+  - `setAiState(...)` aplica alteracoes em memoria quando nao existe `conversationId`, sem gravar cache persistente.
+- **Ficheiros alterados**:
+  - `client/src/office.ts`
+  - `client/src/components/shell/CockpitProvider.tsx`
+  - `docs/HANDOFF.md`
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx src/components/shell/CockpitProvider.tsx src/office.ts` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - a leitura do corpo em compose depende do host Outlook disponibilizar `item.body.getAsync`; se o corpo ainda nao estiver pronto, a UI mostra aviso e deve recuperar quando o Outlook disponibilizar o item/corpo;
+  - validacao completa exige teste no Outlook real/Render com rascunho nativo aberto.
+- **Fora de scope confirmado**:
+  - sem alteracoes em backend IA, anexos, Para/CC/Bcc, Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook fora da pausa de sync em compose sem identidade, manifest, permissoes ou package scripts.
+
 ## DIAGNOSTICO IA/OUTLOOK: trace temporario da selecao Reply/Forward (Maio 2026)
 - **Objetivo**:
   - recolher factos no Outlook real sobre porque o clique em `Forward` ainda nao fica ativo/respeitado no `AiCockpit` durante compose/reencaminhamento nativo.

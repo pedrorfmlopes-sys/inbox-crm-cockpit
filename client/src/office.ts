@@ -39,7 +39,7 @@ export type OutlookMessageContext = {
   conversationId?: string;
   itemId?: string;
   receivedDateTimeIso?: string;
-  itemUnavailableReason?: "mailbox-item-empty" | "compose-or-empty" | "compose-without-readable-message-identity" | string;
+  itemUnavailableReason?: "mailbox-item-empty" | "compose-or-empty" | "compose-without-readable-message-identity" | "compose-draft-body-context" | string;
 
   toRecipients?: Recipient[];
   ccRecipients?: Recipient[];
@@ -1417,15 +1417,19 @@ export async function getOutlookContactSuggestionByEmail(emailRaw: string): Prom
 }
 
 // Ler corpo do email (texto simples) — usado pela IA
-export async function getEmailBodyText(): Promise<string> {
-  clientLog.log("[office] getEmailBodyText start");
+async function getMailboxItemBody(coercion: "text" | "html", scope: string): Promise<string> {
+  clientLog.log(`[office] ${scope} start`);
   try {
     const OfficeAny = await ensureOfficeReady();
     const item: any = OfficeAny?.context?.mailbox?.item;
     if (!item?.body?.getAsync) return "";
+    const coercionType = coercion === "html"
+      ? (OfficeAny.CoercionType?.Html || "html")
+      : (OfficeAny.CoercionType?.Text || "text");
+    const timeoutMs = coercion === "html" ? 4000 : 3000;
 
     const p = new Promise<string>((resolve) => {
-      item.body.getAsync("text", (r: any) => {
+      item.body.getAsync(coercionType, (r: any) => {
         try {
           if (r?.status === OfficeAny.AsyncResultStatus.Succeeded) resolve(String(r.value ?? ""));
           else resolve("");
@@ -1435,38 +1439,41 @@ export async function getEmailBodyText(): Promise<string> {
       });
     });
 
-    const result = await withTimeout(p, 3000, "");
-    clientLog.log("[office] getEmailBodyText end");
+    const result = await withTimeout(p, timeoutMs, "");
+    clientLog.log(`[office] ${scope} end`);
     return result;
   } catch (e) {
-    clientLog.error("[office] getEmailBodyText error", e);
+    clientLog.warn(`[office] ${scope} unavailable`, e);
     return "";
   }
 }
 
+export async function getEmailBodyText(): Promise<string> {
+  return await getMailboxItemBody("text", "getEmailBodyText");
+}
+
 export async function getEmailBodyHtml(): Promise<string> {
-  clientLog.log("[office] getEmailBodyHtml start");
   try {
-    const OfficeAny = await ensureOfficeReady();
-    const item: any = OfficeAny?.context?.mailbox?.item;
-    if (!item?.body?.getAsync) return "";
+    return await getMailboxItemBody("html", "getEmailBodyHtml");
+  } catch {
+    return "";
+  }
+}
 
-    const p = new Promise<string>((resolve) => {
-      item.body.getAsync("html", (r: any) => {
-        try {
-          if (r?.status === OfficeAny.AsyncResultStatus.Succeeded) resolve(String(r.value ?? ""));
-          else resolve("");
-        } catch {
-          resolve("");
-        }
-      });
-    });
+export async function getComposeBodyText(): Promise<string> {
+  try {
+    if (!await isComposeMode().catch(() => false)) return "";
+    return await getMailboxItemBody("text", "getComposeBodyText");
+  } catch {
+    return "";
+  }
+}
 
-    const result = await withTimeout(p, 4000, "");
-    clientLog.log("[office] getEmailBodyHtml end");
-    return result;
-  } catch (e) {
-    clientLog.error("[office] getEmailBodyHtml error", e);
+export async function getComposeBodyHtml(): Promise<string> {
+  try {
+    if (!await isComposeMode().catch(() => false)) return "";
+    return await getMailboxItemBody("html", "getComposeBodyHtml");
+  } catch {
     return "";
   }
 }

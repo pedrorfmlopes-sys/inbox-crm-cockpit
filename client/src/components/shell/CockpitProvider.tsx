@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
-import { executeCurrentItemOutlookCategorySync, executeOutlookCategorySourceSync, getActiveOutlookCategoryOperation, getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY, readPendingOutlookCategorySyncRequest, syncOdooLinkedNotification, waitForStableSelectedMessageContext, type OutlookAttachment, type OutlookMessageContext } from "@/office";
+import { executeCurrentItemOutlookCategorySync, executeOutlookCategorySourceSync, getActiveOutlookCategoryOperation, getSelectedMessageContext, subscribeToItemChanges, getCurrentItemToken, getComposeBodyHtml, getComposeBodyText, getEmailBodyHtml, getEmailBodyText, getManagedOutlookCategorySnapshot, openAppSettings, OUTLOOK_CATEGORY_CONTEXT_INVALIDATED_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_EVENT, OUTLOOK_CATEGORY_SYNC_REQUEST_STORAGE_KEY, readPendingOutlookCategorySyncRequest, syncOdooLinkedNotification, waitForStableSelectedMessageContext, type OutlookAttachment, type OutlookMessageContext } from "@/office";
 import { getLinks, getOdooMeta, getRelatedEmailContext, login as apiLogin, checkAuth as apiCheckAuth, registerRelevantEmail, setApiSessionToken, type AuthCheckResponse, type LinkEntry, type OdooMeta } from "@/api";
 import { getCachedSettingsSnapshot, getSettings, saveSettings, SETTINGS_UPDATED_EVENT, type CockpitSettingsV1 } from "@/settings";
 import { clientLog } from "@/logger";
@@ -1029,6 +1029,55 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (unavailableReason) {
                 outlookItemUnavailableReasonRef.current = unavailableReason;
                 lastItemTokenRef.current = stableSelection.itemToken || lastItemTokenRef.current;
+                if (unavailableReason === "compose-without-readable-message-identity" && c.isCompose === true) {
+                    const [composeBodyText, composeBodyHtml] = await Promise.all([
+                        getComposeBodyText(),
+                        getComposeBodyHtml(),
+                    ]);
+                    const composeCtx: OutlookMessageContext = {
+                        subject: c.subject || "",
+                        toRecipients: c.toRecipients || [],
+                        ccRecipients: c.ccRecipients || [],
+                        isCompose: true,
+                        composeIntent: c.composeIntent || "unknown",
+                        itemUnavailableReason: "compose-draft-body-context",
+                    };
+                    outlookItemUnavailableReasonRef.current = "compose-draft-body-context";
+                    setCtx(composeCtx);
+                    setBodyText(composeBodyText);
+                    setBodyHtml(composeBodyHtml);
+                    setAttachments([]);
+                    setLinks([]);
+                    setMeta(null);
+                    if (ctx.itemUnavailableReason !== "compose-draft-body-context") {
+                        setCurrentAiState(createEmptyAiState());
+                    }
+                    commitEmailIngestionStatus({
+                        identity: "compose-draft-body-context",
+                        tone: composeBodyText || composeBodyHtml ? "orange" : "red",
+                        detail: composeBodyText || composeBodyHtml
+                            ? "O Outlook esta em modo rascunho. A IA vai usar temporariamente o corpo do rascunho aberto como contexto."
+                            : "O Outlook esta em modo rascunho, mas ainda nao disponibilizou o corpo para contexto IA.",
+                        progress: 100,
+                        isRunning: false,
+                    });
+                    setMsg(composeBodyText || composeBodyHtml
+                        ? "Modo rascunho Outlook: a IA vai usar o corpo do rascunho aberto como contexto temporario."
+                        : "Modo rascunho Outlook: ainda nao foi possivel ler o corpo do rascunho para contexto IA.");
+                    if (reason === "init") {
+                        updateStartupCheck("email", {
+                            status: composeBodyText || composeBodyHtml ? "warning" : "error",
+                            detail: composeBodyText || composeBodyHtml
+                                ? "Rascunho em compose detetado. Contexto temporario criado a partir do corpo do rascunho."
+                                : "Rascunho em compose detetado, mas sem corpo legivel para contexto.",
+                        });
+                        updateStartupCheck("links", {
+                            status: "success",
+                            detail: "Ligacoes e sincronizacoes foram adiadas em modo rascunho sem identidade.",
+                        });
+                    }
+                    return;
+                }
                 const snapshot = unavailableReason === "compose-without-readable-message-identity"
                     ? lastConfirmedEmailAnchorRef.current
                     : (lastConfirmedEmailAnchorRef.current || lastValidReadSnapshotRef.current);
@@ -1892,16 +1941,20 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 ctxItemUnavailableReason: String(ctx.itemUnavailableReason || ""),
                 ctxIsCompose: ctx.isCompose === true,
                 ctxComposeIntent: String(ctx.composeIntent || ""),
-                willApply: Boolean(ctx.conversationId),
+                willApply: true,
+                persistence: ctx.conversationId ? "conversation-cache" : "memory-only",
                 cacheKey,
             };
             if (!ctx.conversationId) {
-                console.warn("[AI_ACTION_DIAG] setAiState ignored: missing conversationId", diagPayload);
+                console.info("[AI_ACTION_DIAG] setAiState action update without conversationId", diagPayload);
             } else {
                 console.info("[AI_ACTION_DIAG] setAiState action update", diagPayload);
             }
         }
-        if (!ctx.conversationId) return;
+        if (!ctx.conversationId) {
+            setCurrentAiState(prev => ({ ...prev, ...update }));
+            return;
+        }
         setCurrentAiState(prev => {
             const newState = { ...prev, ...update };
             setAiCache((cache) => upsertAiCacheEntry(cache, ctx.conversationId!, newState));
