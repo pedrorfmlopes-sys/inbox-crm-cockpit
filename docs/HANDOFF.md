@@ -1,5 +1,26 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: mailbox.item vazio usa email ancora confirmado como contexto IA ativo (Maio 2026)
+- **Causa raiz**:
+  - quando o Outlook abria um `Reply`/`Forward` nativo e passava a devolver `mailbox.item is empty`, o `CockpitProvider` preservava o ultimo email confirmado, mas continuava a apresentar o estado como indisponivel/laranja;
+  - nesse cenario especifico, ja existe um `lastConfirmedEmailAnchorRef` validado com identidade, corpo e anexos, portanto a IA pode continuar a trabalhar sobre esse email sem reler o rascunho nem consultar contexto antigo/errado.
+- **Solucao implementada**:
+  - no ramo `unavailableReason`, quando o motivo e `mailbox-item-empty` e existe email ancora confirmado, o provider expoe `snapshot.ctx` como contexto ativo da IA;
+  - o estado visual passa a verde para esse caso, com mensagem de que o email original confirmado continua ativo;
+  - a sincronizacao Outlook/categorias continua pausada enquanto o item ativo estiver vazio, atraves de `outlookItemUnavailableReasonRef`;
+  - nao tenta ler o rascunho nativo, nao usa localStorage/listas de ultimos emails e nao altera emails normais com identidade propria.
+- **Ficheiros alterados**:
+  - `client/src/components/shell/CockpitProvider.tsx`
+  - `docs/HANDOFF.md`
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/components/shell/CockpitProvider.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - validacao completa exige Outlook real: abrir email ate barra verde, abrir `Responder`/`Reencaminhar` nativo, confirmar que `mailbox.item is empty` mantem o email ancora como contexto IA ativo e que a sync volta ao normal ao regressar ao modo leitura.
+- **Fora de scope confirmado**:
+  - sem alteracoes em fluxo normal de leitura, backend IA, anexos, Para/CC/Bcc, Odoo, Grupos, `Preparar`, `Classificar`, manifest, permissoes ou package scripts.
+
 ## HOTFIX IA/OUTLOOK: contexto temporario a partir do corpo do rascunho nativo (Maio 2026)
 - **Causa raiz**:
   - em `mode=compose`, quando o Outlook abre um rascunho nativo de `Responder`/`Reencaminhar`, o add-in pode receber `ctx.conversationId`, `ctx.itemId` e `ctx.internetMessageId` vazios;

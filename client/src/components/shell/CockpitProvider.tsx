@@ -1078,11 +1078,18 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     }
                     return;
                 }
-                const snapshot = unavailableReason === "compose-without-readable-message-identity"
+                const shouldActivateConfirmedAnchor = unavailableReason === "mailbox-item-empty" && Boolean(lastConfirmedEmailAnchorRef.current);
+                const snapshot = unavailableReason === "compose-without-readable-message-identity" || shouldActivateConfirmedAnchor
                     ? lastConfirmedEmailAnchorRef.current
                     : (lastConfirmedEmailAnchorRef.current || lastValidReadSnapshotRef.current);
                 if (snapshot) {
-                    const preservedAnchorCtx = unavailableReason === "compose-without-readable-message-identity"
+                    const preservedAnchorCtx = shouldActivateConfirmedAnchor
+                        ? {
+                            ...snapshot.ctx,
+                            isCompose: false,
+                            itemUnavailableReason: undefined,
+                        }
+                        : unavailableReason === "compose-without-readable-message-identity"
                         ? {
                             ...snapshot.ctx,
                             isCompose: c.isCompose === true,
@@ -1110,12 +1117,16 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                     setAttachments(snapshot.attachments);
                     commitEmailIngestionStatus({
                         identity: buildContextEmailKey(snapshot.ctx),
-                        tone: "orange",
-                        detail: "O Outlook esta em modo rascunho/reencaminhamento ou ainda nao disponibilizou o item ativo. Mantivemos o ultimo email valido em memoria.",
+                        tone: shouldActivateConfirmedAnchor ? "green" : "orange",
+                        detail: shouldActivateConfirmedAnchor
+                            ? "Email original confirmado mantido como contexto IA ativo. O Outlook esta sem item ativo; sincronizacoes ficam pausadas ate voltar ao modo leitura."
+                            : "O Outlook esta em modo rascunho/reencaminhamento ou ainda nao disponibilizou o item ativo. Mantivemos o ultimo email valido em memoria.",
                         progress: 100,
                         isRunning: false,
                     });
-                    setMsg("O Outlook esta em modo rascunho/reencaminhamento ou ainda nao disponibilizou o item ativo. Mantivemos o ultimo email valido em memoria.");
+                    setMsg(shouldActivateConfirmedAnchor
+                        ? "Email original confirmado mantido como contexto IA ativo. Podes usar Reply/Forward; a sincronizacao Outlook fica pausada enquanto o item ativo estiver vazio."
+                        : "O Outlook esta em modo rascunho/reencaminhamento ou ainda nao disponibilizou o item ativo. Mantivemos o ultimo email valido em memoria.");
                 } else {
                     commitEmailIngestionStatus({
                         identity: "",
@@ -1128,9 +1139,11 @@ export const CockpitProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 }
                 if (reason === "init") {
                     updateStartupCheck("email", {
-                        status: "warning",
+                        status: shouldActivateConfirmedAnchor ? "success" : "warning",
                         detail: snapshot
-                            ? "O Outlook abriu em modo rascunho/reencaminhamento. Foi mantido o ultimo email valido."
+                            ? shouldActivateConfirmedAnchor
+                                ? "O Outlook ficou sem item ativo, mas o email ancora confirmado continua ativo para IA."
+                                : "O Outlook abriu em modo rascunho/reencaminhamento. Foi mantido o ultimo email valido."
                             : "Sem email original identificavel no Outlook.",
                     });
                     updateStartupCheck("links", {
