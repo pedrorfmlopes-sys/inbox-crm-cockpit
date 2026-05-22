@@ -37,6 +37,7 @@ type HistoryEntry = {
 
 type QuickPanelId = "lang" | "mode" | "presets" | "intents" | "contacts" | "files" | null;
 type RecipientFieldKind = "to" | "cc" | "bcc";
+type InsertMode = "reply" | "forward";
 
 type FileUsageState = {
     analyze: boolean;
@@ -873,8 +874,15 @@ export const AiCockpit: React.FC = () => {
         });
     }, [files, persistedEmailAttachments]);
 
-    const selectedAction: AiAction = aiState.action === "forward" ? "forward" : "reply";
+    const selectedAction: InsertMode = aiState.action === "forward" ? "forward" : "reply";
+    const [insertMode, setInsertMode] = useState<InsertMode>(selectedAction);
+    const [insertModeTouched, setInsertModeTouched] = useState(false);
     const aiActionDiagLatestRef = useRef<Record<string, unknown>>({});
+
+    useEffect(() => {
+        setInsertMode(selectedAction);
+        setInsertModeTouched(false);
+    }, [emailKey, selectedAction]);
 
     useEffect(() => {
         aiActionDiagLatestRef.current = {
@@ -1267,6 +1275,8 @@ export const AiCockpit: React.FC = () => {
             nextAction,
             ...aiActionDiagLatestRef.current,
         });
+        setInsertMode(nextAction);
+        setInsertModeTouched(false);
         setAiState({ action: nextAction });
         window.setTimeout(() => {
             console.info("[AI_ACTION_DIAG] setGenerationAction post-tick", {
@@ -2208,7 +2218,7 @@ export const AiCockpit: React.FC = () => {
 
             // If not in compose mode, try to open a Draft based on action
             setDebugLog("A abrir rascunho (não é modo edição)...");
-            const effectiveAction = selectedAction;
+            const effectiveInsertMode: InsertMode = insertMode || selectedAction;
             const isCurrentReplyTarget = isSameStoredEmailTarget(ctx, replyTargetEmail);
             const draftLinkCategoriesPromise = loadDraftLinkCategories();
             const queueDraftCategorySync = () => {
@@ -2251,7 +2261,7 @@ export const AiCockpit: React.FC = () => {
                 setTimeout(() => setMsg(""), 6000);
             };
 
-            if (effectiveAction === "forward") {
+            if (effectiveInsertMode === "forward") {
                 const selectedAllNativeForwardAttachments = nativeForwardAttachmentKeys.length > 0
                     && draftAttachments.selectedCount === nativeForwardAttachmentKeys.length
                     && nativeForwardAttachmentKeys.every((key) => selectedDraftAttachmentKeySet.has(key));
@@ -2408,6 +2418,8 @@ export const AiCockpit: React.FC = () => {
         setDraftBcc([]);
         setDraftRecipientsTouched(false);
         setDraftSubject("");
+        setInsertMode("reply");
+        setInsertModeTouched(false);
         setShowDraftPreview(false);
         setDraftDetailsExpanded(false);
         setSuggestedContacts([]);
@@ -2730,6 +2742,48 @@ export const AiCockpit: React.FC = () => {
             fontSize: "11px",
             fontWeight: 600,
             cursor: "pointer",
+        },
+        insertModeMiniGroup: {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "2px",
+            border: "1px solid #dbe3f3",
+            background: "#f8fafc",
+            borderRadius: "999px",
+            padding: "2px",
+        },
+        insertModeMiniBtn: {
+            width: "20px",
+            height: "16px",
+            borderRadius: "999px",
+            border: "1px solid #dbe3f3",
+            background: "#fff",
+            color: "#64748b",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            padding: 0,
+        },
+        insertModeMiniBtnOn: {
+            width: "20px",
+            height: "16px",
+            borderRadius: "999px",
+            border: "1px solid rgba(37, 99, 235, 0.28)",
+            background: "#2563eb",
+            color: "#fff",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            padding: 0,
+        },
+        insertModeHint: {
+            fontSize: "9px",
+            color: "#64748b",
+            textTransform: "uppercase",
+            letterSpacing: 0,
+            marginTop: "-4px",
         },
         briefingCard: {
             background: "rgba(59, 130, 246, 0.05)",
@@ -4629,6 +4683,36 @@ export const AiCockpit: React.FC = () => {
                                 >
                                     <Icons.Calendar size={15} />
                                 </button>
+                                <div
+                                    style={S.insertModeMiniGroup}
+                                    aria-label="Modo de insercao Outlook"
+                                    title={insertModeTouched ? "Modo de insercao escolhido manualmente" : "Modo de insercao acompanha o modo IA"}
+                                >
+                                    <button
+                                        type="button"
+                                        title="Inserir como resposta nativa"
+                                        aria-label="Inserir como resposta nativa"
+                                        style={insertMode === "reply" ? S.insertModeMiniBtnOn : S.insertModeMiniBtn}
+                                        onClick={() => {
+                                            setInsertMode("reply");
+                                            setInsertModeTouched(true);
+                                        }}
+                                    >
+                                        <Icons.MessageSquare size={9} />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        title="Inserir como reencaminhamento"
+                                        aria-label="Inserir como reencaminhamento"
+                                        style={insertMode === "forward" ? S.insertModeMiniBtnOn : S.insertModeMiniBtn}
+                                        onClick={() => {
+                                            setInsertMode("forward");
+                                            setInsertModeTouched(true);
+                                        }}
+                                    >
+                                        <Icons.ArrowRight size={9} />
+                                    </button>
+                                </div>
                                 <button
                                     style={S.actionBtnPrimary}
                                     onClick={async () => {
@@ -4644,6 +4728,9 @@ export const AiCockpit: React.FC = () => {
                                     <Icons.Send size={15} />
                                 </button>
                             </div>
+                        </div>
+                        <div style={S.insertModeHint}>
+                            IA: {selectedAction === "forward" ? "Reencaminhamento" : "Resposta"} | Inserir: {insertMode === "forward" ? "Reencaminhamento" : "Resposta"}
                         </div>
 
                         {historyExpanded && (

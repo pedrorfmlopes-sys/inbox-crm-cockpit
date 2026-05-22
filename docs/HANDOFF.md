@@ -1,5 +1,29 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: separar modo IA do modo de insercao Outlook (Maio 2026)
+- **Causa raiz / necessidade**:
+  - o modo `Reply`/`Forward` do topo estava a controlar simultaneamente como a IA escrevia e como o Outlook abria o rascunho;
+  - isso impedia cenarios validos como gerar texto de resposta, mas inserir via fluxo de reencaminhamento.
+- **Nova regra funcional**:
+  - `selectedAction` continua a ser apenas o modo IA: `Reply` escreve como resposta, `Forward` escreve como reencaminhamento;
+  - `insertMode` passa a controlar apenas o botao `Inserir`: `reply` abre resposta nativa, `forward` abre reencaminhamento/nova mensagem pelo fluxo existente;
+  - por defeito, `insertMode` acompanha `selectedAction`;
+  - se o utilizador escolhe manualmente o modo de insercao nos mini-botoes junto ao botao `Inserir`, essa escolha e respeitada ate mudar o modo IA, mudar de email ou resetar a conversa.
+- **UI**:
+  - adicionados dois mini-botoes compactos junto ao botao `Inserir`: resposta nativa e reencaminhamento;
+  - adicionada linha discreta `IA: ... | Inserir: ...` no card do output.
+- **Ficheiros alterados**:
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `docs/HANDOFF.md`
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - validacao completa exige Outlook real para os quatro cenarios: IA Reply + Inserir Reply, IA Reply + Inserir Forward, IA Forward + Inserir Forward, IA Forward + Inserir Reply.
+- **Fora de scope confirmado**:
+  - sem alteracoes em backend IA, prompts do servidor, anexos, Para/Cc/Bcc, Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes ou package scripts.
+
 ## HOTFIX IA/OUTLOOK: Reply preserva thread ao editar destinatarios (Maio 2026)
 - **Causa raiz**:
   - a hotfix anterior respeitava `draftTo`/`draftCc`/`draftBcc` em `REPLY`, mas fazia isso com `displayNewMessageForm(...)`;
