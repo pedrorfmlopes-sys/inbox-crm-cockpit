@@ -641,6 +641,7 @@ export const AiCockpit: React.FC = () => {
     const [draftTo, setDraftTo] = useState<string[]>([]);
     const [draftCc, setDraftCc] = useState<string[]>([]);
     const [draftBcc, setDraftBcc] = useState<string[]>([]);
+    const [draftRecipientsTouched, setDraftRecipientsTouched] = useState(false);
     const [draftSubject, setDraftSubject] = useState("");
     const [draftTicketCode, setDraftTicketCode] = useState("");
     const [suggestedContacts, setSuggestedContacts] = useState<string[]>([]);
@@ -734,6 +735,7 @@ export const AiCockpit: React.FC = () => {
         setDraftTo([]);
         setDraftCc([]);
         setDraftBcc([]);
+        setDraftRecipientsTouched(false);
         setDraftSubject("");
         setDraftTicketCode("");
         setShowDraftPreview(false);
@@ -2306,6 +2308,25 @@ export const AiCockpit: React.FC = () => {
                         setMsg(buildAttachmentMessage("Rascunho criado para o email guardado selecionado.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
                     }
                 } else {
+                    if (draftRecipientsTouched) {
+                        await displayNewMessageForm({
+                            toRecipients: draftTo,
+                            ccRecipients: draftCc,
+                            bccRecipients: draftBcc,
+                            subject: buildTicketEmailSubject(
+                                normalizeReplySubject(draftSubject || ctx.subject || ""),
+                                draftTicketCode,
+                                includeTicketCodeInSubject,
+                            ),
+                            body: output,
+                            isHtml: true,
+                        });
+                        queueDraftCategorySync();
+                        const { attachedCount, failedCount, unresolvedCount, composeUnavailable } = await attachSelectedDraftFilesBestEffort();
+                        setMsg(buildAttachmentMessage("Foi criada uma nova mensagem com os destinatarios definidos.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
+                        setTimeout(() => setMsg(""), 6000);
+                        return;
+                    }
                     // Default to Reply (including for refine, rewrite, etc.)
                     await displayReplyForm(output);
                     if (finalDraftSubject) {
@@ -2379,6 +2400,7 @@ export const AiCockpit: React.FC = () => {
         setDraftTo([]);
         setDraftCc([]);
         setDraftBcc([]);
+        setDraftRecipientsTouched(false);
         setDraftSubject("");
         setShowDraftPreview(false);
         setDraftDetailsExpanded(false);
@@ -3105,12 +3127,14 @@ export const AiCockpit: React.FC = () => {
     ]).slice(0, 24), [settings?.contactAliases, suggestedContacts]);
 
     function addDraftRecipient(kind: "to" | "cc" | "bcc", email: string) {
+        setDraftRecipientsTouched(true);
         if (kind === "to") setDraftTo((prev) => addUniqueEmail(prev, email));
         if (kind === "cc") setDraftCc((prev) => addUniqueEmail(prev, email));
         if (kind === "bcc") setDraftBcc((prev) => addUniqueEmail(prev, email));
     }
 
     function removeDraftRecipient(kind: RecipientFieldKind, email: string) {
+        setDraftRecipientsTouched(true);
         const remove = (values: string[]) => values.filter((value) => value.toLowerCase() !== email.toLowerCase());
         if (kind === "to") setDraftTo(remove);
         if (kind === "cc") setDraftCc(remove);
@@ -3180,6 +3204,7 @@ export const AiCockpit: React.FC = () => {
                         onChange={(event) => {
                             const next = event.target.value;
                             if (/[;,]/.test(next)) {
+                                setDraftRecipientsTouched(true);
                                 normalizeEmailListInput(next).forEach((email) => addDraftRecipient(kind, email));
                                 setRecipientSearch((prev) => ({ ...prev, [kind]: "" }));
                             } else {
@@ -3515,21 +3540,30 @@ export const AiCockpit: React.FC = () => {
                                     <button
                                         type="button"
                                         style={draftTo.includes(entry.value) ? S.purposeChipOn : S.purposeChip}
-                                        onClick={() => setDraftTo((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : addUniqueEmail(prev, entry.value))}
+                                        onClick={() => {
+                                            setDraftRecipientsTouched(true);
+                                            setDraftTo((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : addUniqueEmail(prev, entry.value));
+                                        }}
                                     >
                                         To
                                     </button>
                                     <button
                                         type="button"
                                         style={draftCc.includes(entry.value) ? S.purposeChipOn : S.purposeChip}
-                                        onClick={() => setDraftCc((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : addUniqueEmail(prev, entry.value))}
+                                        onClick={() => {
+                                            setDraftRecipientsTouched(true);
+                                            setDraftCc((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : addUniqueEmail(prev, entry.value));
+                                        }}
                                     >
                                         Cc
                                     </button>
                                     <button
                                         type="button"
                                         style={draftBcc.includes(entry.value) ? S.purposeChipOn : S.purposeChip}
-                                        onClick={() => setDraftBcc((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : addUniqueEmail(prev, entry.value))}
+                                        onClick={() => {
+                                            setDraftRecipientsTouched(true);
+                                            setDraftBcc((prev) => prev.includes(entry.value) ? prev.filter((value) => value !== entry.value) : addUniqueEmail(prev, entry.value));
+                                        }}
                                     >
                                         Bcc
                                     </button>
@@ -4386,6 +4420,7 @@ export const AiCockpit: React.FC = () => {
                                         className="iccc-glossy-pill iccc-secondary-pill"
                                         style={S.cascadeItem}
                                         onClick={() => {
+                                            setDraftRecipientsTouched(true);
                                             setDraftTo((prev) => addUniqueEmail(prev, email));
                                             setActiveMenu(null);
                                         }}
@@ -4404,6 +4439,7 @@ export const AiCockpit: React.FC = () => {
                                         className="iccc-glossy-pill iccc-secondary-pill"
                                         style={S.cascadeItem}
                                         onClick={() => {
+                                            setDraftRecipientsTouched(true);
                                             setDraftTo((prev) => addUniqueEmail(prev, c.email));
                                             setActiveMenu(null);
                                         }}

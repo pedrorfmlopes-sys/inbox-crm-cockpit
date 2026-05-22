@@ -1,5 +1,26 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: Reply respeita destinatarios editados no card do rascunho (Maio 2026)
+- **Causa raiz**:
+  - no fluxo normal de `REPLY`, o `AiCockpit` usava `displayReplyForm(output)`;
+  - esse caminho deixa o Outlook decidir os destinatarios e, no helper atual, pode cair em `reply-all`, ignorando `draftTo`/`draftCc`/`draftBcc` definidos no card "Detalhes do rascunho".
+- **Solucao implementada**:
+  - `AiCockpit` passa a manter `draftRecipientsTouched` apenas para interacoes manuais nos campos `Para`/`Cc`/`Bcc`;
+  - se o utilizador nao mexeu nos destinatarios, `REPLY` continua a usar `displayReplyForm(output)`;
+  - se o utilizador mexeu nos destinatarios, `REPLY` abre `displayNewMessageForm(...)` com `draftTo`, `draftCc`, `draftBcc`, assunto normalizado de resposta e corpo HTML gerado;
+  - `FORWARD` fica inalterado.
+- **Ficheiros alterados**:
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `docs/HANDOFF.md`
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - validacao completa exige Outlook real: gerar `REPLY`, editar `Para`/`Cc`/`Bcc`, inserir e confirmar que abre nova mensagem com esses destinatarios; sem edicao manual, confirmar que continua a abrir reply nativo.
+- **Fora de scope confirmado**:
+  - sem alteracoes em `FORWARD`, anexos, backend IA, Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes ou package scripts.
+
 ## HOTFIX IA/OUTLOOK: mailbox.item vazio usa email ancora confirmado como contexto IA ativo (Maio 2026)
 - **Causa raiz**:
   - quando o Outlook abria um `Reply`/`Forward` nativo e passava a devolver `mailbox.item is empty`, o `CockpitProvider` preservava o ultimo email confirmado, mas continuava a apresentar o estado como indisponivel/laranja;
