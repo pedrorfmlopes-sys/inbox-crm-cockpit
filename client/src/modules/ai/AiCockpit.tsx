@@ -39,6 +39,24 @@ type QuickPanelId = "lang" | "mode" | "presets" | "intents" | "contacts" | "file
 type RecipientFieldKind = "to" | "cc" | "bcc";
 type InsertMode = "reply" | "forward";
 
+const ReplyInsertIcon: React.FC<{ size?: number }> = ({ size = 9 }) => (
+    <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+    >
+        <path d="M9 7 4 12l5 5" />
+        <path d="M4 12h10a5 5 0 0 1 5 5v1" />
+    </svg>
+);
+
 type FileUsageState = {
     analyze: boolean;
     forward: boolean;
@@ -2115,6 +2133,27 @@ export const AiCockpit: React.FC = () => {
         setDebugLog("Botão clicado. A verificar modo...");
         try {
             const isCompose = await isComposeMode();
+            const effectiveInsertMode: InsertMode = insertMode || selectedAction;
+            console.info("[INSERT_MODE_DIAG] handleInsert", {
+                selectedAction,
+                insertMode,
+                insertModeTouched,
+                effectiveInsertMode,
+                isCompose,
+            });
+            if (isCompose && insertModeTouched && effectiveInsertMode === "forward") {
+                setDebugLog("A tentar abrir reencaminhamento a partir do rascunho...");
+                try {
+                    await displayForwardForm(output, true);
+                    setMsg("Reencaminhamento aberto.");
+                    setTimeout(() => setMsg(""), 4000);
+                } catch (forwardError) {
+                    console.warn("[AiCockpit] Forward insert mode unavailable from compose draft:", forwardError);
+                    setDebugLog("O Outlook não permitiu abrir reencaminhamento a partir deste rascunho.");
+                    setMsg("O Outlook não permitiu abrir reencaminhamento a partir deste rascunho. Volta ao email original ou usa nova mensagem controlada.");
+                }
+                return;
+            }
             const includeTicketCodeInSubject = settings?.groupTicketUi?.includeTicketCodeInSubject !== false;
             const finalDraftSubject = buildTicketEmailSubject(draftSubject, draftTicketCode, includeTicketCodeInSubject);
             const draftAttachments = await resolveSelectedDraftAttachments();
@@ -2218,7 +2257,6 @@ export const AiCockpit: React.FC = () => {
 
             // If not in compose mode, try to open a Draft based on action
             setDebugLog("A abrir rascunho (não é modo edição)...");
-            const effectiveInsertMode: InsertMode = insertMode || selectedAction;
             const isCurrentReplyTarget = isSameStoredEmailTarget(ctx, replyTargetEmail);
             const draftLinkCategoriesPromise = loadDraftLinkCategories();
             const queueDraftCategorySync = () => {
@@ -2652,12 +2690,31 @@ export const AiCockpit: React.FC = () => {
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
+            flexWrap: "wrap" as const,
+            gap: "6px",
             padding: "6px 0",
             fontSize: "10px",
             fontWeight: 400,
             textTransform: "uppercase",
-            letterSpacing: "0.5px",
+            letterSpacing: 0,
             color: "var(--iccc-text-muted)",
+        },
+        outputToolbarLeft: {
+            display: "flex",
+            alignItems: "center",
+            gap: isNarrow ? "4px" : "8px",
+            flex: "1 1 128px",
+            minWidth: 0,
+            flexWrap: "wrap" as const,
+        },
+        outputToolbarInsertGroup: {
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: "4px",
+            flex: "0 0 auto",
+            flexShrink: 0,
+            marginLeft: "auto",
         },
         outputText: {
             fontSize: "13px",
@@ -2742,6 +2799,7 @@ export const AiCockpit: React.FC = () => {
             fontSize: "11px",
             fontWeight: 600,
             cursor: "pointer",
+            flexShrink: 0,
         },
         insertModeMiniGroup: {
             display: "inline-flex",
@@ -2751,6 +2809,7 @@ export const AiCockpit: React.FC = () => {
             background: "#f8fafc",
             borderRadius: "999px",
             padding: "2px",
+            flexShrink: 0,
         },
         insertModeMiniBtn: {
             width: "20px",
@@ -2764,6 +2823,7 @@ export const AiCockpit: React.FC = () => {
             justifyContent: "center",
             cursor: "pointer",
             padding: 0,
+            flexShrink: 0,
         },
         insertModeMiniBtnOn: {
             width: "20px",
@@ -2777,13 +2837,7 @@ export const AiCockpit: React.FC = () => {
             justifyContent: "center",
             cursor: "pointer",
             padding: 0,
-        },
-        insertModeHint: {
-            fontSize: "9px",
-            color: "#64748b",
-            textTransform: "uppercase",
-            letterSpacing: 0,
-            marginTop: "-4px",
+            flexShrink: 0,
         },
         briefingCard: {
             background: "rgba(59, 130, 246, 0.05)",
@@ -4598,11 +4652,11 @@ export const AiCockpit: React.FC = () => {
                 (output || isGenerating || aiState.history.length > 0 || history.length > 0) && (
                     <div style={S.outputCard}>
                         <div style={S.outputHeader}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }} title="Sugestões da IA">
+                            <div style={S.outputToolbarLeft}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }} title="Sugestões da IA">
                                 <Icons.Sparkles size={15} style={{ opacity: 0.6 }} />
                                 {isGenerating && <div style={S.typingDots}><span>.</span><span>.</span><span>.</span></div>}
                             </div>
-                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                                 {history.length > 0 && (
                                     <div style={{ position: "relative" }}>
                                         <button
@@ -4683,6 +4737,8 @@ export const AiCockpit: React.FC = () => {
                                 >
                                     <Icons.Calendar size={15} />
                                 </button>
+                            </div>
+                            <div style={S.outputToolbarInsertGroup}>
                                 <div
                                     style={S.insertModeMiniGroup}
                                     aria-label="Modo de insercao Outlook"
@@ -4698,7 +4754,7 @@ export const AiCockpit: React.FC = () => {
                                             setInsertModeTouched(true);
                                         }}
                                     >
-                                        <Icons.MessageSquare size={9} />
+                                        <ReplyInsertIcon size={9} />
                                     </button>
                                     <button
                                         type="button"
@@ -4728,9 +4784,6 @@ export const AiCockpit: React.FC = () => {
                                     <Icons.Send size={15} />
                                 </button>
                             </div>
-                        </div>
-                        <div style={S.insertModeHint}>
-                            IA: {selectedAction === "forward" ? "Reencaminhamento" : "Resposta"} | Inserir: {insertMode === "forward" ? "Reencaminhamento" : "Resposta"}
                         </div>
 
                         {historyExpanded && (

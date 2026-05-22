@@ -1,5 +1,34 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: modo de insercao funcional e responsivo (Maio 2026)
+- **Causa raiz grafica**:
+  - os mini-botoes de modo de insercao foram adicionados na mesma linha dos restantes icones do output;
+  - em taskpane estreito, esse grupo podia empurrar o botao principal `Inserir` para fora da area visivel.
+- **Causa raiz funcional**:
+  - `handleInsert()` calculava `insertMode` tarde demais, depois do ramo `isCompose`;
+  - em compose mode, a app podia atualizar o rascunho existente antes de respeitar a escolha manual `Inserir como Forward`.
+- **Solucao implementada**:
+  - a toolbar do output passa a ter zona esquerda para acoes secundarias e zona direita para mini-botoes de insercao + botao principal `Inserir`;
+  - o grupo de insercao tem `flexShrink: 0`, fica alinhado a direita e pode cair para segunda linha em taskpane estreito sem esconder o botao principal;
+  - removida a linha visual `IA: ... | Inserir: ...`; o modo fica comunicado apenas por estado ativo dos mini-botoes e tooltips;
+  - `handleInsert()` calcula `effectiveInsertMode` no inicio, adiciona log `[INSERT_MODE_DIAG]` e da prioridade real a `insertMode`;
+  - quando `isCompose === true` e o utilizador escolheu manualmente `forward`, a app tenta abrir reencaminhamento e, se o Outlook bloquear, mostra aviso visivel sem atualizar silenciosamente o rascunho atual.
+- **Regra final**:
+  - `selectedAction` controla apenas a escrita IA;
+  - `insertMode` controla apenas a insercao Outlook;
+  - `insertMode` tem prioridade real em `handleInsert`.
+- **Ficheiros alterados**:
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `docs/HANDOFF.md`
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - validacao completa exige Outlook real em taskpane estreito e em compose nativo para confirmar que o host permite ou bloqueia `displayForwardForm` como esperado.
+- **Fora de scope confirmado**:
+  - sem alteracoes em backend IA, prompts do servidor, anexos, Para/Cc/Bcc, Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes ou package scripts.
+
 ## HOTFIX IA/OUTLOOK: separar modo IA do modo de insercao Outlook (Maio 2026)
 - **Causa raiz / necessidade**:
   - o modo `Reply`/`Forward` do topo estava a controlar simultaneamente como a IA escrevia e como o Outlook abria o rascunho;
