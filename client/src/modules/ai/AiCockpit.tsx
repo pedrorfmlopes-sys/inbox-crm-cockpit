@@ -1262,9 +1262,6 @@ export const AiCockpit: React.FC = () => {
     const selectedDraftAttachmentKeySet = useMemo(() => new Set(selectedDraftAttachmentKeys), [selectedDraftAttachmentKeys]);
     const selectedDraftAttachmentOptions = draftAttachmentOptions.filter((option) => selectedDraftAttachmentKeySet.has(option.key));
     const selectedForwardFiles = selectedDraftAttachmentOptions;
-    const nativeForwardAttachmentKeys = draftAttachmentOptions
-        .filter((entry) => entry.source !== "manual" && !entry.isInline)
-        .map((entry) => entry.key);
     const availableAttachmentCount = draftAttachmentOptions
         .filter((entry) => entry.source !== "manual" && !entry.isInline)
         .length;
@@ -2140,6 +2137,7 @@ export const AiCockpit: React.FC = () => {
                 insertModeTouched,
                 effectiveInsertMode,
                 isCompose,
+                willTryNativeForward: effectiveInsertMode === "forward",
             });
             if (isCompose && insertModeTouched && effectiveInsertMode === "forward") {
                 setDebugLog("A tentar abrir reencaminhamento a partir do rascunho...");
@@ -2287,10 +2285,10 @@ export const AiCockpit: React.FC = () => {
                     setMsg(buildAttachmentMessage("Nova mensagem aberta.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
                 } else if (attachedCount > 0) {
                     setMsg(nativeForwardError
-                        ? `O Outlook nao permitiu o reencaminhamento nativo. Foi aberta uma nova mensagem com o corpo gerado e ${attachedCount} anexo(s).`
+                        ? `O Outlook nao permitiu abrir reencaminhamento nativo. Foi aberta uma nova mensagem controlada com o corpo gerado e ${attachedCount} anexo(s).`
                         : `Rascunho aberto com ${attachedCount} anexo(s).`);
                 } else if (nativeForwardError) {
-                    setMsg("O Outlook nao permitiu o reencaminhamento nativo neste item. Foi aberta uma nova mensagem com o corpo gerado.");
+                    setMsg("O Outlook nao permitiu abrir reencaminhamento nativo. Foi aberta uma nova mensagem controlada.");
                 } else if (replyTargetEmail && !isCurrentReplyTarget) {
                     setMsg("Rascunho criado para o email guardado selecionado.");
                 } else {
@@ -2300,40 +2298,35 @@ export const AiCockpit: React.FC = () => {
             };
 
             if (effectiveInsertMode === "forward") {
-                const selectedAllNativeForwardAttachments = nativeForwardAttachmentKeys.length > 0
-                    && draftAttachments.selectedCount === nativeForwardAttachmentKeys.length
-                    && nativeForwardAttachmentKeys.every((key) => selectedDraftAttachmentKeySet.has(key));
-                if (selectedAllNativeForwardAttachments && (!replyTargetEmail || isCurrentReplyTarget)) {
-                    try {
-                        await displayForwardForm(output, true);
-                    } catch (forwardError) {
-                        await openForwardAsNewMessage(forwardError);
-                        return;
-                    }
-                    try {
-                        await new Promise((resolve) => setTimeout(resolve, 800));
-                        if (finalDraftSubject) await setSubjectInComposeDraft(finalDraftSubject);
-                        await setRecipients("to", draftTo);
-                        await setRecipients("cc", draftCc);
-                        await setRecipients("bcc", draftBcc).catch((error) => {
-                            console.warn("[AiCockpit] Could not set Bcc recipients in forward:", error);
-                        });
-                    } catch (subjectError) {
-                        console.warn("[AiCockpit] Could not update forward draft metadata:", subjectError);
-                    }
-                    queueDraftCategorySync();
-                    const usedAllOriginals = forwardFiles.length === availableAttachmentCount;
-                    setMsg(
-                        usedAllOriginals
-                            ? `Reencaminhamento aberto com ${forwardFiles.length} anexo(s) original(is).`
-                            : "Reencaminhamento aberto com os anexos originais do email. Remove manualmente os que não quiseres enviar."
-                    );
-                    setTimeout(() => setMsg(""), 4000);
+                try {
+                    await displayForwardForm(output, true);
+                } catch (forwardError) {
+                    await openForwardAsNewMessage(forwardError);
                     return;
                 }
-
-                await openForwardAsNewMessage();
+                try {
+                    await new Promise((resolve) => setTimeout(resolve, 800));
+                    if (finalDraftSubject) await setSubjectInComposeDraft(finalDraftSubject);
+                    await setRecipients("to", draftTo);
+                    await setRecipients("cc", draftCc);
+                    await setRecipients("bcc", draftBcc).catch((error) => {
+                        console.warn("[AiCockpit] Could not set Bcc recipients in forward:", error);
+                    });
+                } catch (subjectError) {
+                    console.warn("[AiCockpit] Could not update forward draft metadata:", subjectError);
+                }
                 queueDraftCategorySync();
+                const selectedAllAvailableAttachments = availableAttachmentCount > 0
+                    && draftAttachments.selectedCount === availableAttachmentCount;
+                if (availableAttachmentCount > 0 && !selectedAllAvailableAttachments) {
+                    setMsg("Reencaminhamento nativo aberto. O reencaminhamento nativo inclui os anexos originais. Remove manualmente os que não quiseres enviar.");
+                } else if (availableAttachmentCount > 0) {
+                    setMsg(`Reencaminhamento aberto com ${availableAttachmentCount} anexo(s) original(is).`);
+                } else {
+                    setMsg("Reencaminhamento aberto.");
+                }
+                setTimeout(() => setMsg(""), 5000);
+                return;
             } else {
                 if (replyTargetEmail && !isCurrentReplyTarget) {
                     await displayNewMessageForm({
@@ -2690,9 +2683,9 @@ export const AiCockpit: React.FC = () => {
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            flexWrap: "wrap" as const,
-            gap: "6px",
-            padding: "6px 0",
+            flexWrap: "nowrap" as const,
+            gap: "3px",
+            padding: "4px 0",
             fontSize: "10px",
             fontWeight: 400,
             textTransform: "uppercase",
@@ -2702,19 +2695,47 @@ export const AiCockpit: React.FC = () => {
         outputToolbarLeft: {
             display: "flex",
             alignItems: "center",
-            gap: isNarrow ? "4px" : "8px",
-            flex: "1 1 128px",
+            gap: isNarrow ? "1px" : "3px",
+            flex: "1 1 auto",
             minWidth: 0,
-            flexWrap: "wrap" as const,
+            maxWidth: "calc(100% - 64px)",
+            overflow: "hidden",
+            flexWrap: "nowrap" as const,
         },
         outputToolbarInsertGroup: {
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "flex-end",
-            gap: "4px",
+            gap: "2px",
             flex: "0 0 auto",
             flexShrink: 0,
             marginLeft: "auto",
+        },
+        outputToolbarIconBtn: {
+            background: "none",
+            border: "none",
+            color: "var(--iccc-text-muted)",
+            width: "18px",
+            height: "18px",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            padding: 0,
+            flexShrink: 0,
+        },
+        outputToolbarPrimaryIconBtn: {
+            background: "none",
+            border: "none",
+            color: "#3b82f6",
+            width: "18px",
+            height: "18px",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            padding: 0,
+            flexShrink: 0,
         },
         outputText: {
             fontSize: "13px",
@@ -2804,16 +2825,16 @@ export const AiCockpit: React.FC = () => {
         insertModeMiniGroup: {
             display: "inline-flex",
             alignItems: "center",
-            gap: "2px",
+            gap: "1px",
             border: "1px solid #dbe3f3",
             background: "#f8fafc",
             borderRadius: "999px",
-            padding: "2px",
+            padding: "1px",
             flexShrink: 0,
         },
         insertModeMiniBtn: {
-            width: "20px",
-            height: "16px",
+            width: "18px",
+            height: "15px",
             borderRadius: "999px",
             border: "1px solid #dbe3f3",
             background: "#fff",
@@ -2826,8 +2847,8 @@ export const AiCockpit: React.FC = () => {
             flexShrink: 0,
         },
         insertModeMiniBtnOn: {
-            width: "20px",
-            height: "16px",
+            width: "18px",
+            height: "15px",
             borderRadius: "999px",
             border: "1px solid rgba(37, 99, 235, 0.28)",
             background: "#2563eb",
@@ -4653,10 +4674,10 @@ export const AiCockpit: React.FC = () => {
                     <div style={S.outputCard}>
                         <div style={S.outputHeader}>
                             <div style={S.outputToolbarLeft}>
-                                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }} title="Sugestões da IA">
-                                <Icons.Sparkles size={15} style={{ opacity: 0.6 }} />
-                                {isGenerating && <div style={S.typingDots}><span>.</span><span>.</span><span>.</span></div>}
-                            </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }} title="Sugestões da IA">
+                                    <Icons.Sparkles size={13} style={{ opacity: 0.6 }} />
+                                    {isGenerating && <div style={S.typingDots}><span>.</span><span>.</span><span>.</span></div>}
+                                </div>
                                 {history.length > 0 && (
                                     <div style={{ position: "relative" }}>
                                         <button
@@ -4673,7 +4694,7 @@ export const AiCockpit: React.FC = () => {
                                             title="Histórico"
                                             aria-label="Histórico"
                                         >
-                                            <Icons.RotateCcw size={15} />
+                                            <Icons.RotateCcw size={13} />
                                         </button>
                                         {String(activeMenu || "") === "rollback_hidden" && (
                                             <div style={{ ...S.cascadeMenu, width: "220px", right: 0, left: "auto", top: "24px" }}>
@@ -4701,14 +4722,14 @@ export const AiCockpit: React.FC = () => {
                                         )}
                                     </div>
                                 )}
-                                <button style={S.actionBtn} onClick={handleResetConversation} title="Eliminar" aria-label="Eliminar">
-                                    <Icons.Trash size={15} />
+                                <button style={S.outputToolbarIconBtn} onClick={handleResetConversation} title="Eliminar" aria-label="Eliminar">
+                                    <Icons.Trash size={13} />
                                 </button>
-                                <button style={S.actionBtn} onClick={handleExport} title="Download" aria-label="Download">
-                                    <Icons.Download size={15} />
+                                <button style={S.outputToolbarIconBtn} onClick={handleExport} title="Download" aria-label="Download">
+                                    <Icons.Download size={13} />
                                 </button>
                                 <button
-                                    style={S.actionBtn}
+                                    style={S.outputToolbarIconBtn}
                                     onClick={async () => {
                                         const ok = await copyTextWithFallback(output);
                                         setMsg(ok ? "Texto copiado." : "Nao foi possivel copiar automaticamente.");
@@ -4716,10 +4737,10 @@ export const AiCockpit: React.FC = () => {
                                     title="Copiar"
                                     aria-label="Copiar"
                                 >
-                                    <Icons.Clipboard size={15} />
+                                    <Icons.Clipboard size={13} />
                                 </button>
                                 <button
-                                    style={S.actionBtnPrimary}
+                                    style={S.outputToolbarPrimaryIconBtn}
                                     onClick={async () => {
                                         const settings = await getSettings();
                                         const mLinks = settings.meetingLinks;
@@ -4735,7 +4756,7 @@ export const AiCockpit: React.FC = () => {
                                     title="Agendar"
                                     aria-label="Agendar"
                                 >
-                                    <Icons.Calendar size={15} />
+                                    <Icons.Calendar size={13} />
                                 </button>
                             </div>
                             <div style={S.outputToolbarInsertGroup}>
@@ -4770,7 +4791,7 @@ export const AiCockpit: React.FC = () => {
                                     </button>
                                 </div>
                                 <button
-                                    style={S.actionBtnPrimary}
+                                    style={S.outputToolbarPrimaryIconBtn}
                                     onClick={async () => {
                                         try {
                                             await handleInsert();
@@ -4781,7 +4802,7 @@ export const AiCockpit: React.FC = () => {
                                     title="Inserir"
                                     aria-label="Inserir"
                                 >
-                                    <Icons.Send size={15} />
+                                    <Icons.Send size={14} />
                                 </button>
                             </div>
                         </div>

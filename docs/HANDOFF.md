@@ -1,5 +1,33 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: Forward nativo sempre que o modo de insercao e Forward (Maio 2026)
+- **Causa raiz funcional**:
+  - no ramo `effectiveInsertMode === "forward"`, o `AiCockpit` so tentava `displayForwardForm(...)` quando `selectedAllNativeForwardAttachments` era verdadeiro;
+  - sem anexos, ou com selecao parcial de anexos, o fluxo caia em `openForwardAsNewMessage()` e abria `displayNewMessageForm(...)`, quebrando a promessa de `Inserir como Forward`.
+- **Correcao funcional**:
+  - `effectiveInsertMode === "forward"` passa a tentar sempre `displayForwardForm(output, true)` primeiro, com ou sem anexos;
+  - se o forward nativo abrir, a app tenta aplicar assunto e destinatarios best-effort e nao troca para nova mensagem;
+  - se o Outlook bloquear o forward nativo, o fallback existente abre nova mensagem controlada com mensagem visivel;
+  - anexos deixam de decidir o tipo de rascunho e ficam apenas como aviso posterior quando o forward nativo incluir anexos originais que o utilizador pode ter de remover manualmente.
+- **Causa raiz visual**:
+  - a toolbar anterior podia quebrar em bloco alto/desorganizado em taskpane estreito, criando espaco vazio e deslocando o botao principal `Inserir`.
+- **Correcao visual**:
+  - a toolbar do output fica compacta e em linha sempre que possivel;
+  - a zona esquerda encolhe com gaps menores, enquanto o grupo de insercao fica protegido;
+  - mini-botoes `Reply`/`Forward` foram reduzidos e o botao principal `Inserir` fica com `flexShrink: 0`;
+  - continua removido qualquer texto visual `IA: ... | Inserir: ...`; o estado e comunicado por botao ativo e tooltips.
+- **Ficheiros alterados**:
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `docs/HANDOFF.md`
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - validacao completa exige Outlook real para confirmar `displayForwardForm(...)` sem anexos, com anexos, e em taskpane estreito.
+- **Fora de scope confirmado**:
+  - sem alteracoes em backend IA, prompts do servidor, logica de anexos alem de remover o gate errado do forward nativo, Para/Cc/Bcc, Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes ou package scripts.
+
 ## HOTFIX IA/OUTLOOK: modo de insercao funcional e responsivo (Maio 2026)
 - **Causa raiz grafica**:
   - os mini-botoes de modo de insercao foram adicionados na mesma linha dos restantes icones do output;
