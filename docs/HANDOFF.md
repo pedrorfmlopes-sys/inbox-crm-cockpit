@@ -1,5 +1,27 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: Reply preserva thread ao editar destinatarios (Maio 2026)
+- **Causa raiz**:
+  - a hotfix anterior respeitava `draftTo`/`draftCc`/`draftBcc` em `REPLY`, mas fazia isso com `displayNewMessageForm(...)`;
+  - esse fallback criava uma mensagem nova e podia perder o historico/thread do email original.
+- **Solucao implementada**:
+  - o `REPLY` normal volta sempre a abrir `displayReplyForm(output)` para preservar o historico;
+  - quando `draftRecipientsTouched` esta ativo, o `AiCockpit` aguarda o compose e tenta aplicar `setRecipients("to" | "cc" | "bcc", ...)`;
+  - `Bcc` continua best-effort;
+  - se o Outlook nao permitir alterar destinatarios, a app mostra aviso visivel para ajustar manualmente antes de enviar;
+  - `FORWARD` fica inalterado.
+- **Ficheiros alterados**:
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `docs/HANDOFF.md`
+- **Validacoes desta ronda**:
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - validacao completa exige Outlook real: gerar `REPLY`, editar `Para`/`Cc`/`Bcc`, inserir e confirmar que a resposta mantem historico e que os destinatarios sao atualizados ou que aparece aviso visivel quando o host bloquear a alteracao.
+- **Fora de scope confirmado**:
+  - sem alteracoes em `FORWARD`, anexos, backend IA, Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes ou package scripts.
+
 ## HOTFIX IA/OUTLOOK: Reply respeita destinatarios editados no card do rascunho (Maio 2026)
 - **Causa raiz**:
   - no fluxo normal de `REPLY`, o `AiCockpit` usava `displayReplyForm(output)`;

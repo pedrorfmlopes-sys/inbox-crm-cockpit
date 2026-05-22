@@ -2308,27 +2308,23 @@ export const AiCockpit: React.FC = () => {
                         setMsg(buildAttachmentMessage("Rascunho criado para o email guardado selecionado.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
                     }
                 } else {
-                    if (draftRecipientsTouched) {
-                        await displayNewMessageForm({
-                            toRecipients: draftTo,
-                            ccRecipients: draftCc,
-                            bccRecipients: draftBcc,
-                            subject: buildTicketEmailSubject(
-                                normalizeReplySubject(draftSubject || ctx.subject || ""),
-                                draftTicketCode,
-                                includeTicketCodeInSubject,
-                            ),
-                            body: output,
-                            isHtml: true,
-                        });
-                        queueDraftCategorySync();
-                        const { attachedCount, failedCount, unresolvedCount, composeUnavailable } = await attachSelectedDraftFilesBestEffort();
-                        setMsg(buildAttachmentMessage("Foi criada uma nova mensagem com os destinatarios definidos.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
-                        setTimeout(() => setMsg(""), 6000);
-                        return;
-                    }
                     // Default to Reply (including for refine, rewrite, etc.)
                     await displayReplyForm(output);
+                    let recipientUpdateFailed = false;
+                    if (draftRecipientsTouched) {
+                        try {
+                            await new Promise((resolve) => setTimeout(resolve, 800));
+                            await setRecipients("to", draftTo);
+                            await setRecipients("cc", draftCc);
+                            await setRecipients("bcc", draftBcc).catch((error) => {
+                                recipientUpdateFailed = true;
+                                console.warn("[AiCockpit] Could not set Bcc recipients in reply:", error);
+                            });
+                        } catch (recipientError) {
+                            recipientUpdateFailed = true;
+                            console.warn("[AiCockpit] Could not update reply recipients:", recipientError);
+                        }
+                    }
                     if (finalDraftSubject) {
                         try {
                             await new Promise((resolve) => setTimeout(resolve, 800));
@@ -2338,7 +2334,17 @@ export const AiCockpit: React.FC = () => {
                         }
                     }
                     const { attachedCount, failedCount, unresolvedCount, composeUnavailable } = await attachSelectedDraftFilesBestEffort();
-                    setMsg(buildAttachmentMessage("Rascunho aberto.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
+                    setMsg(buildAttachmentMessage(
+                        recipientUpdateFailed
+                            ? "O Outlook abriu a resposta com historico, mas nao permitiu alterar todos os destinatarios automaticamente. Ajusta os destinatarios manualmente antes de enviar."
+                            : draftRecipientsTouched
+                                ? "Resposta aberta com historico e destinatarios definidos."
+                                : "Rascunho aberto.",
+                        attachedCount,
+                        failedCount,
+                        unresolvedCount,
+                        composeUnavailable
+                    ));
                     queueDraftCategorySync();
                 }
             }
