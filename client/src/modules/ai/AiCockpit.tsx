@@ -2267,41 +2267,14 @@ export const AiCockpit: React.FC = () => {
                         console.warn("[AiCockpit] Could not sync managed categories to draft:", error);
                     });
             };
-            const openForwardAsNewMessage = async (nativeForwardError?: unknown) => {
-                if (nativeForwardError) {
-                    console.warn("[AiCockpit] Native forward unavailable; falling back to new message:", nativeForwardError);
-                }
-                const forwardSubject = String(draftSubject || replyTargetEmail?.subject || ctx.subject || "").trim() || "Fwd";
-                await displayNewMessageForm({
-                    toRecipients: draftTo,
-                    ccRecipients: draftCc,
-                    bccRecipients: draftBcc,
-                    subject: buildTicketEmailSubject(forwardSubject, draftTicketCode, includeTicketCodeInSubject),
-                    body: output,
-                    isHtml: true,
-                });
-                const { attachedCount, failedCount, unresolvedCount, composeUnavailable } = await attachSelectedDraftFilesBestEffort();
-                if (failedCount > 0 || unresolvedCount > 0) {
-                    setMsg(buildAttachmentMessage("Nova mensagem aberta.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
-                } else if (attachedCount > 0) {
-                    setMsg(nativeForwardError
-                        ? `O Outlook nao permitiu abrir reencaminhamento nativo. Foi aberta uma nova mensagem controlada com o corpo gerado e ${attachedCount} anexo(s).`
-                        : `Rascunho aberto com ${attachedCount} anexo(s).`);
-                } else if (nativeForwardError) {
-                    setMsg("O Outlook nao permitiu abrir reencaminhamento nativo. Foi aberta uma nova mensagem controlada.");
-                } else if (replyTargetEmail && !isCurrentReplyTarget) {
-                    setMsg("Rascunho criado para o email guardado selecionado.");
-                } else {
-                    setMsg(buildAttachmentMessage("Nova mensagem aberta com o corpo gerado.", attachedCount, failedCount, unresolvedCount, composeUnavailable));
-                }
-                setTimeout(() => setMsg(""), 6000);
-            };
-
             if (effectiveInsertMode === "forward") {
                 try {
                     await displayForwardForm(output, true);
                 } catch (forwardError) {
-                    await openForwardAsNewMessage(forwardError);
+                    console.warn("[AiCockpit] Native forward unavailable; not falling back to new message:", forwardError);
+                    setDebugLog("O Outlook não permitiu abrir reencaminhamento nativo.");
+                    setMsg("O Outlook não permitiu abrir reencaminhamento nativo. Volta ao email original ou tenta abrir o email numa janela própria.");
+                    setTimeout(() => setMsg(""), 7000);
                     return;
                 }
                 try {

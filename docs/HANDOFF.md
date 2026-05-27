@@ -1,5 +1,34 @@
 # HANDOFF
 
+## HOTFIX IA/OUTLOOK: Forward nativo sem fallback e idioma fixo estrito (Maio 2026)
+- **Causa raiz Forward**:
+  - no caminho `effectiveInsertMode === "forward"`, a app tentava `displayForwardForm(...)`, mas se o Outlook bloqueasse caia em `openForwardAsNewMessage(...)`;
+  - esse fallback usava `displayNewMessageForm(...)`, criando uma nova mensagem/novo thread disfarçado de reencaminhamento.
+- **Correcao Forward**:
+  - `Inserir como Forward` tenta apenas reencaminhamento nativo real com `displayForwardForm(output, true)`;
+  - se o Outlook bloquear, a app para e mostra aviso visivel para voltar ao email original ou abrir o email numa janela propria;
+  - nao ha fallback automatico para nova mensagem no modo Forward.
+- **Causa raiz idioma**:
+  - o prompt de `reply` ainda acrescentava regras condicionais baseadas no idioma do email recebido, mesmo quando o utilizador escolhia idioma fixo;
+  - isso podia contrariar `es-ES`/outros idiomas fixos e levar a respostas misturadas.
+- **Correcao idioma**:
+  - as regras "se o email recebido estiver em espanhol/portugues" ficam restritas a `locale === "auto"`;
+  - quando ha idioma fixo, o prompt reforca que o idioma selecionado prevalece sobre o email original e nao deve mudar a meio da resposta.
+- **Ficheiros alterados**:
+  - `client/src/modules/ai/AiCockpit.tsx`
+  - `server/src/ai/promptTemplates.js`
+  - `docs/HANDOFF.md`
+- **Validacoes desta ronda**:
+  - `node --check server/src/ai/promptTemplates.js` passou;
+  - `npm.cmd -w client run build` passou; manteve avisos antigos do Vite sobre imports dinamicos/chunk grande;
+  - `npx.cmd eslint src/modules/ai/AiCockpit.tsx` passou sem erros; manteve warnings antigos fora de scope;
+  - `git diff --check` passou.
+- **Riscos remanescentes**:
+  - validacao completa exige Outlook real para confirmar que hosts que bloqueiam `displayForwardForm(...)` mostram apenas o aviso e nao criam mensagem nova;
+  - validacao linguistica final exige chamada IA real com `locale=es-ES` sobre email base em portugues/espanhol.
+- **Fora de scope confirmado**:
+  - sem alteracoes em conversao plain text/HTML, bug visual de HTML literal, anexos alem da mensagem/fluxo de Forward nativo, Para/Cc/Bcc, Odoo, Grupos, `Preparar`, `Classificar`, categorias Outlook, manifest, permissoes ou package scripts.
+
 ## HOTFIX IA/OUTLOOK: Forward nativo sempre que o modo de insercao e Forward (Maio 2026)
 - **Causa raiz funcional**:
   - no ramo `effectiveInsertMode === "forward"`, o `AiCockpit` so tentava `displayForwardForm(...)` quando `selectedAllNativeForwardAttachments` era verdadeiro;

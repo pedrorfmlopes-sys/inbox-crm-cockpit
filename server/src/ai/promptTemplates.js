@@ -192,6 +192,10 @@ PERFIL DE COMUNICAÇÃO:
 
   const finalRules = baseRules + knowledgeBlock + filesBlock + personaBlock + briefingBlock + contactBlock + contextBundleBlock + replyDirectionBlock + greetingBlock + signatureBlock;
   const toneLine = `Tom: ${tone}.`;
+  const replyLanguageContextRules = effectiveLocale === "auto"
+    ? `- Se o email recebido estiver em espanhol, a resposta deve ser integralmente em espanhol, incluindo saudacao e fecho.\n` +
+      `- Se o email recebido estiver em português, a resposta deve ser em português de Portugal.\n`
+    : `- O idioma fixo selecionado (${lang}) prevalece sobre o idioma do email original; nao mudes de idioma a meio da resposta.\n`;
 
   const emailBlock = email
     ? action === "forward"
@@ -252,8 +256,7 @@ PERFIL DE COMUNICAÇÃO:
       `- Nao uses listas se o texto couber em paragrafos curtos.\n` +
       `- Nao repitas o que o remetente acabou de dizer.\n` +
       `- Garante que e uma resposta pronta a enviar.\n` +
-      `- Se o email recebido estiver em espanhol, a resposta deve ser integralmente em espanhol, incluindo saudacao e fecho.\n` +
-      `- Se o email recebido estiver em português, a resposta deve ser em português de Portugal.\n` +
+      replyLanguageContextRules +
       (inputText ? `\n\nINSTRUÇÃO CRÍTICA DO UTILIZADOR (OBRIGATÓRIO SEGUIR): "${inputText}"\n` : "") +
       emailBlock
     );
